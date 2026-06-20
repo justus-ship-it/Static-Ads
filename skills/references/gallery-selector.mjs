@@ -18,10 +18,24 @@
 import { readdirSync, statSync, writeFileSync, existsSync } from "fs";
 import { join, relative, basename, extname } from "path";
 import { parseArgs } from "util";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const RATIO_FOLDERS = ["1x1", "9x16", "4x5", "16x9"]; // all known ratio folder names
+
+// ── XSS hardening (defense in depth; filenames/titles come from disk) ──────
+const escHtml = (s) => String(s ?? "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+// Safe inside a single-quoted JS string that itself sits in a double-quoted HTML attribute:
+// only \ ' \n < > are touched, all of which survive HTML-attribute decoding intact.
+const jsStr = (s) => String(s ?? "")
+  .replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\r?\n/g, "\\n")
+  .replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+const safeJson = (obj) => JSON.stringify(obj)
+  .replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026")
+  .split(String.fromCharCode(0x2028)).join("\\u2028")
+  .split(String.fromCharCode(0x2029)).join("\\u2029");
 
 // ---------------------------------------------------------------------------
 // Scan output dir
@@ -289,19 +303,19 @@ function buildGalleryHtml(outputDir, templates, brandName) {
             &nbsp;|&nbsp; Click an image to select it for each ratio. One pick per group.
         </p>
 
-${templates.map((t) => `        <div class="template-section" id="section-${t.folderName}">
+${templates.map((t) => `        <div class="template-section" id="section-${escHtml(t.folderName)}">
             <h2 class="template-header">
-                #${t.templateNum.padStart(2, "0")} ${t.templateTitle}
+                #${escHtml(t.templateNum.padStart(2, "0"))} ${escHtml(t.templateTitle)}
                 <span>${t.ratios.reduce((s, r) => s + r.images.length, 0)} images</span>
-                <button class="exclude-btn" id="exclude-btn-${t.folderName}" onclick="toggleExclude('${t.folderName}')">Exclude</button>
+                <button class="exclude-btn" id="exclude-btn-${escHtml(t.folderName)}" onclick="toggleExclude('${jsStr(t.folderName)}')">Exclude</button>
                 <span class="excluded-badge">EXCLUDED</span>
             </h2>
 ${t.ratios.map((r) => {
   const groupId = `${t.folderName}-${r.ratio}`;
-  return `            <div class="ratio-section" data-group="${groupId}">
+  return `            <div class="ratio-section" data-group="${escHtml(groupId)}">
                 <div class="ratio-label">
-                    <span class="badge">${r.ratio === "1x1" ? "1:1" : r.ratio === "9x16" ? "9:16" : r.ratio}</span>
-                    <span class="pick-status" id="status-${groupId}">— none selected</span>
+                    <span class="badge">${escHtml(r.ratio === "1x1" ? "1:1" : r.ratio === "9x16" ? "9:16" : r.ratio)}</span>
+                    <span class="pick-status" id="status-${escHtml(groupId)}">— none selected</span>
                 </div>
                 <div class="image-grid">
 ${r.images.map((img, idx) => {
@@ -311,16 +325,16 @@ ${r.images.map((img, idx) => {
     : `${t.folderName}/${img}`;
   const cardId = `card-${t.folderName}-${r.ratio}-${idx}`;
   const isDefault = idx === 0;
-  return `                    <div class="image-card${isDefault ? " selected" : ""}" id="${cardId}"
-                         data-group="${groupId}"
-                         data-path="${imgPath}"
-                         data-filename="${img}"
-                         onclick="selectCard('${groupId}', '${cardId}', '${imgPath}', '${img}')">
-                        <button class="expand-btn" onclick="event.stopPropagation(); openLightbox('${imgPath}')" title="View full size">⤢</button>
+  return `                    <div class="image-card${isDefault ? " selected" : ""}" id="${escHtml(cardId)}"
+                         data-group="${escHtml(groupId)}"
+                         data-path="${escHtml(imgPath)}"
+                         data-filename="${escHtml(img)}"
+                         onclick="selectCard('${jsStr(groupId)}', '${jsStr(cardId)}', '${jsStr(imgPath)}', '${jsStr(img)}')">
+                        <button class="expand-btn" onclick="event.stopPropagation(); openLightbox('${jsStr(imgPath)}')" title="View full size">⤢</button>
                         <div class="radio-dot"></div>
-                        <img src="${imgPath}" alt="${t.templateTitle} ${r.ratio} v${idx + 1}" loading="lazy">
+                        <img src="${escHtml(imgPath)}" alt="${escHtml(t.templateTitle + " " + r.ratio + " v" + (idx + 1))}" loading="lazy">
                         <div class="info">
-                            <span>${img}</span>
+                            <span>${escHtml(img)}</span>
                             <span>v${idx + 1}</span>
                         </div>
                     </div>`;
@@ -342,7 +356,7 @@ ${r.images.map((img, idx) => {
         // ── State ──
         const selections = {};
         const excluded = new Set();
-        const groupsPerTemplate = ${JSON.stringify(groupsPerTemplateObj)};
+        const groupsPerTemplate = ${safeJson(groupsPerTemplateObj)};
 
         // ── Init defaults (v1 for each group) ──
         document.querySelectorAll('.image-card.selected').forEach(card => {
@@ -500,11 +514,12 @@ async function main() {
   console.log("  5. Run: /ad-copy-builder --brand {name} --output-dir", outputDir);
 
   if (values["open"]) {
+    // execFile (no shell): path passed as an argument, never interpolated into a command.
     const platform = process.platform;
-    const cmd = platform === "win32" ? `start "" "${galleryPath}"` :
-                platform === "darwin" ? `open "${galleryPath}"` :
-                `xdg-open "${galleryPath}"`;
-    exec(cmd);
+    const [cmd, cmdArgs] = platform === "win32" ? ["cmd", ["/c", "start", "", galleryPath]] :
+                platform === "darwin" ? ["open", [galleryPath]] :
+                ["xdg-open", [galleryPath]];
+    execFile(cmd, cmdArgs);
     console.log("\nOpening gallery in browser...");
   }
 }

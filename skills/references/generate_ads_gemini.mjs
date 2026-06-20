@@ -305,6 +305,19 @@ async function generateAllParallel(prompts, refPartsMap, allRefParts, outputDir,
 // HTML Gallery with image selection UI
 // ---------------------------------------------------------------------------
 
+// ── XSS hardening (defense in depth; names/filenames come from prompts.json + disk) ──
+const escHtml = (s) => String(s ?? "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+// Safe inside a single-quoted JS string nested in a double-quoted HTML attribute.
+const jsStr = (s) => String(s ?? "")
+  .replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\r?\n/g, "\\n")
+  .replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+const safeJson = (obj) => JSON.stringify(obj)
+  .replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026")
+  .split(String.fromCharCode(0x2028)).join("\\u2028")
+  .split(String.fromCharCode(0x2029)).join("\\u2029");
+
 function generateGallery(outputDir, results, brandName, selectedRatios) {
   const totalImages = results.reduce((sum, r) => sum + r.images.length, 0);
   const totalGroups = results.reduce((sum, r) => {
@@ -328,7 +341,7 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${brandName} — Ad Selector (Gemini)</title>
+    <title>${escHtml(brandName)} — Ad Selector (Gemini)</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -431,7 +444,7 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
 <body>
     <div id="toolbar">
         <div style="display:flex;align-items:center;gap:1rem;">
-            <h1>${brandName} — Ad Selector</h1>
+            <h1>${escHtml(brandName)} — Ad Selector</h1>
             <div id="progress">0 / ${totalGroups} selected</div>
         </div>
         <div style="display:flex;align-items:center;gap:1rem;">
@@ -446,10 +459,10 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
   for (const r of results) {
     const title = r.template_name.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
     html += `
-    <div class="template-section" id="section-${r.folder}">
-        <h2 class="template-header">#${String(r.template_number).padStart(2, "0")} ${title}
+    <div class="template-section" id="section-${escHtml(r.folder)}">
+        <h2 class="template-header">#${String(r.template_number).padStart(2, "0")} ${escHtml(title)}
             <span>${r.images.length} images</span>
-            <button class="exclude-btn" id="exclude-btn-${r.folder}" onclick="toggleExclude('${r.folder}')">Exclude</button>
+            <button class="exclude-btn" id="exclude-btn-${escHtml(r.folder)}" onclick="toggleExclude('${jsStr(r.folder)}')">Exclude</button>
             <span class="excluded-badge">EXCLUDED</span></h2>
 `;
 
@@ -460,8 +473,8 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
       const groupId = `${r.folder}-${ratioFolder}`;
       html += `        <div class="ratio-section">
             <div class="ratio-label">
-                <span class="badge">${ratio}</span>
-                <span class="pick-status" id="status-${groupId}">— none selected</span>
+                <span class="badge">${escHtml(ratio)}</span>
+                <span class="pick-status" id="status-${escHtml(groupId)}">— none selected</span>
             </div>
             <div class="image-grid">
 `;
@@ -469,13 +482,13 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
         const imgPath = `${r.folder}/${ratioFolder}/${img.filename}`;
         const cardId = `card-${r.folder}-${ratioFolder}-${idx}`;
         const isDefault = idx === 0;
-        html += `                <div class="image-card${isDefault ? " selected" : ""}" id="${cardId}"
-                     data-group="${groupId}" data-path="${imgPath}" data-filename="${img.filename}"
-                     onclick="selectCard('${groupId}','${cardId}','${imgPath}','${img.filename}')">
-                    <button class="expand-btn" onclick="event.stopPropagation(); openLightbox('${imgPath}')" title="View full size">⤢</button>
+        html += `                <div class="image-card${isDefault ? " selected" : ""}" id="${escHtml(cardId)}"
+                     data-group="${escHtml(groupId)}" data-path="${escHtml(imgPath)}" data-filename="${escHtml(img.filename)}"
+                     onclick="selectCard('${jsStr(groupId)}','${jsStr(cardId)}','${jsStr(imgPath)}','${jsStr(img.filename)}')">
+                    <button class="expand-btn" onclick="event.stopPropagation(); openLightbox('${jsStr(imgPath)}')" title="View full size">⤢</button>
                     <div class="radio-dot"></div>
-                    <img src="${imgPath}" alt="${r.template_name} ${ratio} v${idx + 1}" loading="lazy">
-                    <div class="info"><span>${img.filename}</span><span>v${idx + 1}</span></div>
+                    <img src="${escHtml(imgPath)}" alt="${escHtml(r.template_name + " " + ratio + " v" + (idx + 1))}" loading="lazy">
+                    <div class="info"><span>${escHtml(img.filename)}</span><span>v${idx + 1}</span></div>
                 </div>
 `;
       });
@@ -497,7 +510,7 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
     <script>
         const selections = {};
         const excluded = new Set();
-        const groupsPerTemplate = ${JSON.stringify(groupsPerTemplateObj)};
+        const groupsPerTemplate = ${safeJson(groupsPerTemplateObj)};
 
         document.querySelectorAll('.image-card.selected').forEach(c => {
             selections[c.dataset.group] = { path: c.dataset.path, filename: c.dataset.filename };
