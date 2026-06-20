@@ -566,6 +566,12 @@ Creates urgency through visual scarcity signals — countdown timer, inventory b
 
 Template: Use the attached images as brand reference. Match the exact product design and brand colors. Create: a scarcity-driven urgency ad on a [BACKGROUND like bold PRIMARY BRAND COLOR / dark dramatic gradient / high-energy split-tone] background. Top: a prominent [URGENCY INDICATOR like realistic digital countdown timer showing HH:MM:SS in bold LED-style numbers / horizontal progress bar showing "87% Claimed" nearly full / "Edition 247 of 500" in stencil-style numbering / "DROPPING [DATE]" in bold stencil text] in [CONTRAST COLOR] — large and impossible to miss. Center: [YOUR PRODUCT] hero-lit with dramatic [LIGHTING like tight spotlight / volumetric glow / rim lighting], presented as the scarce object of desire. Below product: bold [CONTRAST TEXT COLOR] sans-serif "[HEADLINE like Don't Miss This / Limited Release / Selling Fast / Final Hours / Almost Gone]". Bottom: [CTA like "Shop Now Before It's Gone" / "Claim Yours" / "Get It While It Lasts"] in a [ACCENT COLOR] button or banner. [BRAND] logo bottom right. High energy, high contrast. The urgency mechanic IS the hook.
 
+### 51. Facility Hero Offer Banner
+Real gym-interior photo with a bold bottom offer banner and logo — the dominant long-running gym format.
+
+Template: Use the attached images as brand reference. Match the brand's exact colors and logo. Create: an authentic, true-to-life wide photograph of [GYM INTERIOR — e.g. the weight floor / studio / turf / cardio deck] shot at ~24mm with bright even overhead lighting, uncluttered and inviting. Across the bottom ~18% of the frame, a solid [PRIMARY BRAND COLOR] banner containing large bold condensed sans-serif text in white reading "[OFFER — e.g. TRY US FOR FREE]". Place the [BRAND] logo centered just below or within the banner. Keep it realistic, not over-stylized — it should look like a genuine photo of the space.
+
+
 ## Tips for Best Results
 
 - **Copy quality**: The template prompts generate functional copy, but for top-tier results, mine customer reviews first and inject real customer language into the prompts
