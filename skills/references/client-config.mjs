@@ -111,7 +111,15 @@ function validate(profile, offer, resolved, gymDir) {
 
   // --- offer: price. `display` is the exact string writers must use — never re-derive it. ---
   const price = offer.price || {};
-  if (!price.display) E('offer: missing "price.display" — the exact price string ad copy must use');
+  // Some clients deliberately keep price out of the creative and qualify on the form instead.
+  // display_in_ads:false makes price.display optional AND bans price from generated copy.
+  const showsPrice = price.display_in_ads !== false;
+  if (showsPrice && !price.display) {
+    E('offer: missing "price.display" — the exact price string ad copy must use. If price is deliberately kept out of the ads, set price.display_in_ads = false');
+  }
+  if (!showsPrice && price.display) {
+    W('offer: price.display_in_ads is false but price.display is set — copy generation will ignore it');
+  }
   if (price.currency && currency && price.currency !== currency) {
     E(`offer: price.currency "${price.currency}" disagrees with gym locale.currency "${currency}"`);
   }
@@ -119,7 +127,7 @@ function validate(profile, offer, resolved, gymDir) {
     E(`offer: price.qualifier "${price.qualifier}" is not one of ${PRICE_QUALIFIERS.join(", ")}`);
   }
   // SG advertisers must be unambiguous about GST in a displayed price.
-  if (!price.gst_treatment) W('offer: no "price.gst_treatment" — SG ads should state whether the price includes GST');
+  if (showsPrice && !price.gst_treatment) W('offer: no "price.gst_treatment" — SG ads showing a price should state whether it includes GST');
   if (price.compare_at && !price.compare_at.basis) {
     W('offer: price.compare_at has no "basis" — a struck-through price needs a defensible derivation');
   }
@@ -156,8 +164,20 @@ function validate(profile, offer, resolved, gymDir) {
 
   // --- offer: destination ---
   const dest = offer.destination || {};
-  if (!dest.landing_url) E('offer: missing "destination.landing_url"');
-  else {
+  const FLOWS = ["leadgen_form", "calendly", "whatsapp", "form", "phone", "website"];
+  if (dest.booking_flow && !FLOWS.includes(dest.booking_flow)) {
+    E(`offer: destination.booking_flow "${dest.booking_flow}" is not one of ${FLOWS.join(", ")}`);
+  }
+  // A Meta instant form is the destination — there is no landing page to validate.
+  const isLeadForm = dest.booking_flow === "leadgen_form";
+  if (isLeadForm) {
+    if (!dest.lead_form_name) {
+      E('offer: booking_flow is "leadgen_form" but destination.lead_form_name is not set (the instant form to attach in Ads Manager)');
+    }
+    if (dest.landing_url) W('offer: booking_flow is "leadgen_form" — destination.landing_url is ignored');
+  } else if (!dest.landing_url) {
+    E('offer: missing "destination.landing_url" (or set destination.booking_flow = "leadgen_form")');
+  } else {
     try {
       const u = new URL(dest.landing_url);
       if (u.protocol !== "https:") W(`offer: destination.landing_url is not https (${u.protocol})`);
@@ -193,8 +213,13 @@ function validate(profile, offer, resolved, gymDir) {
     E("gym-profile.json: brand_lock.logo.always_include_as_reference is true but logo.files.primary is unset");
   }
   if (logo.files?.primary) {
-    const p = join(gymDir, logo.files.primary);
-    if (!existsSync(p)) E(`gym-profile.json: brand_lock.logo.files.primary not found on disk: ${p}`);
+    // Logo paths are relative to the reference-image root, the same way a prompt's
+    // reference_images are — not to the brand folder.
+    const roots = ["brand-assets", "reference-images", "product-images"];
+    const tried = roots.map((r) => join(gymDir, r, logo.files.primary));
+    if (!tried.some((t) => existsSync(t)) && !existsSync(join(gymDir, logo.files.primary))) {
+      E(`gym-profile.json: brand_lock.logo.files.primary "${logo.files.primary}" not found under ${gymDir}/{${roots.join(",")}}/`);
+    }
   }
 
   // --- reference images: the pipeline cannot generate without them ---
@@ -217,6 +242,16 @@ function validate(profile, offer, resolved, gymDir) {
   if (budget.amount != null && !(budget.amount > 0)) E("campaign.budget.amount must be greater than 0");
   if (budget.currency && currency && budget.currency !== currency) {
     E(`campaign.budget.currency "${budget.currency}" disagrees with locale.currency "${currency}"`);
+  }
+  if (isLeadForm) {
+    const obj = get(resolved, "campaign.objective");
+    if (obj && obj !== "OUTCOME_LEADS") {
+      E(`campaign.objective is "${obj}" but the destination is a Meta instant form — that requires OUTCOME_LEADS`);
+    }
+    const goal = get(resolved, "targeting.optimization.goal");
+    if (goal === "OFFSITE_CONVERSIONS") {
+      E('targeting.optimization.goal is OFFSITE_CONVERSIONS but there is no website to convert on — use LEAD_GENERATION for an instant form');
+    }
   }
   if (get(resolved, "campaign.status_on_create") && resolved.campaign.status_on_create !== "PAUSED") {
     E('campaign.status_on_create must be "PAUSED" — ads are always reviewed before going live');

@@ -190,9 +190,9 @@
         "ecom"
       ],
       "sets": [
-        "gym"
+        "ecom"
       ],
-      "status": "needs-rewrite",
+      "status": "excluded",
       "gym_format": "transformation-journey",
       "source": "core",
       "funnel_fit": [
@@ -205,7 +205,8 @@
         "before-after-body-claim",
         "requires-results-vary"
       ],
-      "gym_adaptation": "Rewrite as same-activity progression: [WEEK 1 MOMENT - first session, learning the lift] to [WEEK N MOMENT - same person, same lift, better form]. Never a body-shape comparison."
+      "gym_adaptation": "Rewrite as same-activity progression: [WEEK 1 MOMENT - first session, learning the lift] to [WEEK N MOMENT - same person, same lift, better form]. Never a body-shape comparison.",
+      "excluded_reason": "Before/after body imagery is excluded by client policy (2026-09-05) and restricted by Meta. Do not fill for any gym client. Use journey/community framing via other transformation-journey templates instead."
     },
     {
       "number": 9,
