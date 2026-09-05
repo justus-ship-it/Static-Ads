@@ -11,7 +11,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from "fs";
-import { join, extname, resolve, dirname } from "path";
+import { join, extname, resolve, dirname, isAbsolute } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 
@@ -227,15 +227,18 @@ async function runJob(promptData, allRefParts, promptRefParts, outputDir, numIma
 /**
  * Generate all templates + ratios with concurrency control.
  */
-async function generateAllParallel(prompts, refPartsMap, allRefParts, outputDir, numImages, maxConcurrent, selectedRatios) {
+async function generateAllParallel(prompts, refPartsMap, allRefParts, outputDir, numImages, maxConcurrent, selectedRatios, alwaysRefs = []) {
   // Build flat list of jobs (template × ratio)
   const jobs = [];
   for (const promptData of prompts) {
     // Build per-prompt reference image parts
-    const promptRefNames = promptData.reference_images || [];
+    // alwaysRefs (from prompts.json "always_include_refs") are merged into every prompt.
+    // This is how a locked logo actually reaches the model on every single generation.
+    const promptRefNames = [...new Set([...(alwaysRefs || []), ...(promptData.reference_images || [])])];
     const promptRefParts = [];
     for (const name of promptRefNames) {
       if (refPartsMap.has(name)) promptRefParts.push(refPartsMap.get(name));
+      else console.warn(`  ! ${promptData.template_name}: reference image "${name}" not found in reference folder`);
     }
 
     for (const { ratio, folder: ratioFolder, instruction } of selectedRatios) {
@@ -615,6 +618,7 @@ async function main() {
       "num-images": { type: "string", default: String(DEFAULT_NUM_IMAGES) },
       "max-concurrent": { type: "string", default: "2" },
       ratios: { type: "string", default: "1x1,9x16" },
+      "ref-dir": { type: "string", default: "" },
     },
   });
 
@@ -659,17 +663,52 @@ async function main() {
     process.exit(1);
   }
 
-  // Load product images as base64
-  const imgDir = join(brandDir, "product-images");
+  // Load reference images as base64.
+  // A gym has no product, so the canonical folder is brand-assets/ with subfolders
+  // (logo/, facility/, coaches/, members/). The older flat folders still work.
   const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
-  const allImageNames = existsSync(imgDir)
-    ? readdirSync(imgDir).filter((f) => imageExtensions.has(extname(f).toLowerCase())).sort()
-    : [];
+  const REF_DIR_CANDIDATES = values["ref-dir"]
+    ? [values["ref-dir"]]
+    : ["brand-assets", "reference-images", "product-images"];
+
+  let imgDir = null;
+  for (const cand of REF_DIR_CANDIDATES) {
+    const dir = isAbsolute(cand) ? cand : join(brandDir, cand);
+    if (existsSync(dir)) { imgDir = dir; break; }
+  }
+
+  /** Scan a folder and one level of subfolders. Subfolder files are named "sub/file.jpg"
+   *  so a prompt's reference_images can target e.g. "facility/weight-floor.jpg". */
+  const scanRefs = (dir) => {
+    const out = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isFile() && imageExtensions.has(extname(entry.name).toLowerCase())) {
+        out.push(entry.name);
+      } else if (entry.isDirectory()) {
+        for (const f of readdirSync(join(dir, entry.name))) {
+          if (imageExtensions.has(extname(f).toLowerCase())) out.push(`${entry.name}/${f}`);
+        }
+      }
+    }
+    return out.sort();
+  };
+
+  const allImageNames = imgDir ? scanRefs(imgDir) : [];
 
   if (allImageNames.length === 0) {
-    console.error("Error: No product images found in product-images/ folder.");
+    const looked = REF_DIR_CANDIDATES.map((c) => `  - ${join(brandDir, c)}`).join("\n");
+    console.error(
+      `Error: no reference images found.\n\nLooked in:\n${looked}\n\n` +
+      `Add real photos, e.g.:\n` +
+      `  ${join(brandDir, "brand-assets")}/logo/      logo files\n` +
+      `  ${join(brandDir, "brand-assets")}/facility/  the gym space\n` +
+      `  ${join(brandDir, "brand-assets")}/coaches/   trainers\n` +
+      `  ${join(brandDir, "brand-assets")}/members/   classes and members (with a signed release)\n`
+    );
     process.exit(1);
   }
+
+  console.log(`Reference folder: ${imgDir}`);
 
   console.log(`\nLoading ${allImageNames.length} reference images as base64...`);
   const refPartsMap = new Map();
@@ -719,7 +758,7 @@ async function main() {
   console.log(`  Output:      ${outputDir}`);
   console.log(sep);
 
-  const { results, failed } = await generateAllParallel(prompts, refPartsMap, allRefParts, outputDir, numImages, maxConcurrent, selectedRatios);
+  const { results, failed } = await generateAllParallel(prompts, refPartsMap, allRefParts, outputDir, numImages, maxConcurrent, selectedRatios, data.always_include_refs || []);
 
   if (results.length > 0) {
     generateGallery(outputDir, results, brandName, selectedRatios);

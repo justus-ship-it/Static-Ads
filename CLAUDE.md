@@ -130,6 +130,8 @@ Also: `rebuild-upload-csv.mjs` expects the old dual-row CSV format — do NOT us
 
 ## Brand Research Rules
 
-- **Screenshots are the primary source of truth** for brand colors and visual identity. Text-scraped CSS is secondary. If screenshots and CSS disagree, trust the screenshots.
+- **Source-of-truth precedence** (highest wins): `gym_profile.brand_lock` (client-declared, `locked: true` is final) → client-supplied brand guidelines → screenshots → scraped CSS → web research.
+- **Screenshots beat scraped CSS** for anything *not* locked — rendered colours often differ from CSS.
+- Anything in `brand_lock.hard_overrides.ignore_auto_detected` is off-limits to detection entirely.
 - Use Firecrawl for site scraping and screenshots
 - Always visually inspect downloaded screenshots with Claude's multimodal capability before writing brand-dna.md
