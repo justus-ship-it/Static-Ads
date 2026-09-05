@@ -1,0 +1,1040 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-09-05",
+  "note": "Phase 2 fills only status:'active' templates whose sets include the requested set. Templates are tagged, never deleted, because promote-swipe-templates.mjs numbers new entries from the highest '### N.' in SKILL.md.",
+  "sets": {
+    "gym": "Service-business templates usable by a gym client",
+    "gym-core": "The default first batch - highest-confidence gym formats",
+    "ecom": "Product-shaped templates, dormant for gym clients"
+  },
+  "gym_formats": [
+    "offer-promo",
+    "facility-proof",
+    "class-energy",
+    "testimonial",
+    "social-proof",
+    "transformation-journey",
+    "trainer-authority",
+    "program-explainer",
+    "objection-handling",
+    "native-organic",
+    "curiosity-hook",
+    "local-proximity"
+  ],
+  "templates": [
+    {
+      "number": 1,
+      "slug": "headline",
+      "name": "Headline",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "curiosity-hook",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 2,
+      "slug": "offer-promotion",
+      "name": "Offer/Promotion",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "offer-promo",
+      "source": "core",
+      "funnel_fit": [
+        "BOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 3,
+      "slug": "testimonials",
+      "name": "Testimonials",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "testimonial",
+      "source": "core",
+      "funnel_fit": [
+        "MOF",
+        "BOF"
+      ],
+      "asset_needs": [
+        "members"
+      ],
+      "compliance_flags": [
+        "requires-results-vary"
+      ],
+      "gym_adaptation": "[SETTING] is the gym floor or studio. [CREDENTIAL] is 'member since 2024', never a weight figure."
+    },
+    {
+      "number": 4,
+      "slug": "features-benefits-point-out",
+      "name": "Features/Benefits Point-Out",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "program-explainer",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 5,
+      "slug": "bullet-points",
+      "name": "Bullet-Points",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "program-explainer",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 6,
+      "slug": "social-proof",
+      "name": "Social Proof",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "social-proof",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "members"
+      ]
+    },
+    {
+      "number": 7,
+      "slug": "us-vs-them",
+      "name": "Us vs Them",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "objection-handling",
+      "source": "core",
+      "funnel_fit": [
+        "MOF",
+        "BOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 8,
+      "slug": "before-after-ugc-native",
+      "name": "Before & After (UGC Native)",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "excluded",
+      "gym_format": "transformation-journey",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "members"
+      ],
+      "compliance_flags": [
+        "before-after-body-claim",
+        "requires-results-vary"
+      ],
+      "gym_adaptation": "Rewrite as same-activity progression: [WEEK 1 MOMENT - first session, learning the lift] to [WEEK N MOMENT - same person, same lift, better form]. Never a body-shape comparison.",
+      "excluded_reason": "Before/after body imagery is excluded by client policy (2026-09-05) and restricted by Meta. Do not fill for any gym client. Use journey/community framing via other transformation-journey templates instead."
+    },
+    {
+      "number": 9,
+      "slug": "negative-marketing",
+      "name": "Negative Marketing (Bait & Switch)",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Bait-and-switch framing is a policy risk in a restricted category."
+    },
+    {
+      "number": 10,
+      "slug": "press-editorial",
+      "name": "Press/Editorial",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "social-proof",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 11,
+      "slug": "pull-quote-review-card",
+      "name": "Pull-Quote Review Card",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "testimonial",
+      "source": "core",
+      "funnel_fit": [
+        "MOF",
+        "BOF"
+      ],
+      "asset_needs": [
+        "members"
+      ],
+      "compliance_flags": [
+        "requires-results-vary"
+      ]
+    },
+    {
+      "number": 12,
+      "slug": "lifestyle-action-colorway-array",
+      "name": "Lifestyle Action + Product Colorway Array",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Requires product colorways."
+    },
+    {
+      "number": 13,
+      "slug": "stat-surround-product-hero",
+      "name": "Stat Surround (Product Hero)",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Built around a product hero shot."
+    },
+    {
+      "number": 14,
+      "slug": "bundle-showcase",
+      "name": "Bundle Showcase + Benefit Bar",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Requires physical bundled products."
+    },
+    {
+      "number": 15,
+      "slug": "social-comment-screenshot",
+      "name": "Social Comment Screenshot + Product",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "native-organic",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ],
+      "gym_adaptation": "Drop the product inset; pair the comment with a facility or class photo."
+    },
+    {
+      "number": 16,
+      "slug": "curiosity-gap-testimonial",
+      "name": "Curiosity Gap / Hook Quote Testimonial",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "curiosity-hook",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": [
+        "members"
+      ]
+    },
+    {
+      "number": 17,
+      "slug": "verified-review-card",
+      "name": "Verified Review Card",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "testimonial",
+      "source": "core",
+      "funnel_fit": [
+        "MOF",
+        "BOF"
+      ],
+      "asset_needs": [
+        "members"
+      ],
+      "compliance_flags": [
+        "requires-results-vary"
+      ]
+    },
+    {
+      "number": 18,
+      "slug": "stat-surround-lifestyle-flatlay",
+      "name": "Stat Surround (Lifestyle Flatlay)",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Flatlay of product objects."
+    },
+    {
+      "number": 19,
+      "slug": "highlighted-annotated-testimonial",
+      "name": "Highlighted / Annotated Testimonial",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "testimonial",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "members"
+      ],
+      "compliance_flags": [
+        "requires-results-vary"
+      ]
+    },
+    {
+      "number": 20,
+      "slug": "advertorial-editorial-card",
+      "name": "Advertorial / Editorial Content Card",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "trainer-authority",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "coaches"
+      ]
+    },
+    {
+      "number": 21,
+      "slug": "bold-statement",
+      "name": "Bold Statement / Reaction Headline",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "curiosity-hook",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 22,
+      "slug": "flavor-story",
+      "name": "Flavor Story / Tastes Like",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Requires an ingestible product."
+    },
+    {
+      "number": 23,
+      "slug": "manifesto",
+      "name": "Long-Form Manifesto / Letter Ad",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "curiosity-hook",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 24,
+      "slug": "product-comment-callout",
+      "name": "Product + Comment Callout",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Built around a product hero with comment overlay."
+    },
+    {
+      "number": 25,
+      "slug": "us-vs-them-color-split",
+      "name": "Us vs. Them Color Split",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "objection-handling",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 26,
+      "slug": "stat-callout-lifestyle",
+      "name": "Stat Callout (Data-Driven Lifestyle)",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Stat framing here implies product efficacy claims."
+    },
+    {
+      "number": 27,
+      "slug": "benefit-checklist-showcase",
+      "name": "Benefit Checklist Showcase",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Split layout is anchored on a product shot."
+    },
+    {
+      "number": 28,
+      "slug": "feature-arrow-callout",
+      "name": "Feature Arrow Callout / Product Annotation",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Annotates a physical product."
+    },
+    {
+      "number": 29,
+      "slug": "ugc-viral-post-overlay",
+      "name": "UGC + Viral Post Overlay",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "native-organic",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": [
+        "members"
+      ]
+    },
+    {
+      "number": 30,
+      "slug": "hero-statement-icon-benefit-bar",
+      "name": "Hero Statement + Icon Benefit Bar",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "facility-proof",
+      "source": "core",
+      "funnel_fit": [
+        "TOF",
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 31,
+      "slug": "comparison-grid",
+      "name": "Comparison Grid / Table",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "objection-handling",
+      "source": "core",
+      "funnel_fit": [
+        "MOF",
+        "BOF"
+      ],
+      "asset_needs": []
+    },
+    {
+      "number": 32,
+      "slug": "ugc-story-callout",
+      "name": "UGC Story Callout / Text Bubble Explainer",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "native-organic",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": [
+        "members"
+      ]
+    },
+    {
+      "number": 33,
+      "slug": "faux-press-news-screenshot",
+      "name": "Faux Press / News Articles Screenshot",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "social-proof",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 34,
+      "slug": "faux-iphone-notes",
+      "name": "Faux iPhone Notes / App Screenshot",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "native-organic",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": []
+    },
+    {
+      "number": 35,
+      "slug": "hero-product-showcase-stat-bar",
+      "name": "Hero Product Showcase + Stat Bar",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Product hero."
+    },
+    {
+      "number": 36,
+      "slug": "whiteboard-before-after",
+      "name": "Whiteboard Before / After + Product Hold",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Product-hold framing plus a before/after device."
+    },
+    {
+      "number": 37,
+      "slug": "hero-statement-offer-burst",
+      "name": "Hero Statement + Icon Bar + Offer Burst",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "offer-promo",
+      "source": "core",
+      "funnel_fit": [
+        "BOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 38,
+      "slug": "ugc-lifestyle-review-split",
+      "name": "UGC Lifestyle + Product + Review Card",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Split layout requires a product panel."
+    },
+    {
+      "number": 39,
+      "slug": "curiosity-gap-scroll-stopper",
+      "name": "Curiosity Gap + Scroll-Stopper Hook",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "curiosity-hook",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 40,
+      "slug": "native-post-it-note",
+      "name": "Native / Ugly Post-It Note Style",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "native-organic",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 41,
+      "slug": "visual-metaphor-symbol-hero",
+      "name": "Visual Metaphor / Symbol Hero",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "curiosity-hook",
+      "source": "core",
+      "funnel_fit": [
+        "TOF"
+      ],
+      "asset_needs": []
+    },
+    {
+      "number": 42,
+      "slug": "authority-figure-warning",
+      "name": "Authority Figure Warning / Expert Intervention",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "needs-rewrite",
+      "gym_format": "trainer-authority",
+      "source": "core",
+      "funnel_fit": [
+        "TOF",
+        "MOF"
+      ],
+      "asset_needs": [
+        "coaches"
+      ],
+      "compliance_flags": [
+        "health-outcome-claim"
+      ],
+      "gym_adaptation": "Rewrite as coach-on-the-floor authority: credential band plus coaching in action. Drop the warning gesture and the 'bad product' object - it reads as a health claim."
+    },
+    {
+      "number": 43,
+      "slug": "clinical-data-visualization",
+      "name": "Clinical Data Visualization / Chart Hero",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Clinical charting implies medical efficacy claims."
+    },
+    {
+      "number": 44,
+      "slug": "luxury-product-isolation",
+      "name": "Luxury Product Isolation / Beauty Shot",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Product beauty shot."
+    },
+    {
+      "number": 45,
+      "slug": "environmental-mockup",
+      "name": "Environmental Mockup / Real-World Context",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "facility-proof",
+      "source": "core",
+      "funnel_fit": [
+        "TOF",
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ]
+    },
+    {
+      "number": 46,
+      "slug": "ingredient-transparency",
+      "name": "Ingredient Transparency / What's Inside",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Requires product ingredients."
+    },
+    {
+      "number": 47,
+      "slug": "guarantee-risk-reversal",
+      "name": "Guarantee / Risk Reversal Badge",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "objection-handling",
+      "source": "core",
+      "funnel_fit": [
+        "BOF"
+      ],
+      "asset_needs": [],
+      "compliance_flags": [
+        "guarantee"
+      ],
+      "gym_adaptation": "No outcome guarantee. Frame as trial, first-class-free, or no-lock-in risk reversal."
+    },
+    {
+      "number": 48,
+      "slug": "how-it-works-process-steps",
+      "name": "How It Works / Process Steps",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "program-explainer",
+      "source": "core",
+      "funnel_fit": [
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility",
+        "coaches"
+      ]
+    },
+    {
+      "number": 49,
+      "slug": "unboxing-first-impression",
+      "name": "Unboxing / First Impression",
+      "verticals": [
+        "ecom"
+      ],
+      "sets": [
+        "ecom"
+      ],
+      "status": "dormant-for-gym",
+      "gym_format": null,
+      "source": "core",
+      "dormant_reason": "Requires a physical package."
+    },
+    {
+      "number": 50,
+      "slug": "countdown-scarcity",
+      "name": "Countdown / Scarcity / Limited Drop",
+      "verticals": [
+        "gym",
+        "ecom"
+      ],
+      "sets": [
+        "gym"
+      ],
+      "status": "active",
+      "gym_format": "urgency",
+      "source": "core",
+      "funnel_fit": [
+        "BOF"
+      ],
+      "asset_needs": [
+        "facility"
+      ],
+      "gym_adaptation": "Only usable when offer.scarcity.honest is true and the deadline or spot count is real."
+    },
+    {
+      "number": 51,
+      "slug": "facility-hero-offer-banner",
+      "name": "Facility Hero Offer Banner",
+      "verticals": [
+        "gym"
+      ],
+      "sets": [
+        "gym",
+        "gym-core"
+      ],
+      "status": "active",
+      "gym_format": "facility-proof",
+      "source": "swipe",
+      "funnel_fit": [
+        "TOF",
+        "MOF"
+      ],
+      "asset_needs": [
+        "facility",
+        "logo"
+      ]
+    }
+  ]
+}

@@ -60,26 +60,57 @@ brands/{brand-name}/
 
 When the user invokes this skill, follow these steps:
 
-### Step 1: Gather Inputs
+### Step 1: Load the client config (do NOT interview if it exists)
 
-Parse the arguments for:
-- **Brand Name** (required)
-- **Brand URL** (required)
-- **Product Name** (optional — if not provided, ask the user)
-- **Pricing & Offer Details** (required) — Ask the user:
-  - What is the advertised price and billing structure? (e.g., "$99/mo billed annually at $1,188")
-  - Does the price need a qualifier? ("starting at" / "as low as" / flat monthly)
-  - Is there an upfront payment? (annual billing paid in full, setup fees, etc.)
-  - Any introductory/promotional pricing vs ongoing rate?
-  - Subscription terms: auto-renewal, minimum commitment, cancellation policy?
-  - Geographic restrictions on pricing or availability?
-  - Required legal/regulatory disclaimers for advertising? (especially health, finance, supplements)
+The client is **declared data**, not a conversation. Re-asking stable facts every campaign is
+the failure this replaces.
 
-Ask the user to drop product images into `brands/{brand-name}/product-images/` if they have them. Create the folder structure:
+**1. Look for the config first:**
 ```
-brands/{brand-name}/
-└── product-images/
+brands/{gym}/gym-profile.json      identity, brand lock, targeting defaults  (changes yearly)
+brands/{gym}/offers/{slug}.json    the offer being sold                      (changes per campaign)
 ```
+
+**2. If `gym-profile.json` is missing**, scaffold it and interview the user field by field
+using the schema, then show the file back for confirmation:
+```bash
+node skills/references/client-config.mjs --gym {gym} --offer {offer-slug} --init
+```
+Fields to fill: `display_name`, `gym_abbr` (2-4 caps), `website`, a `locations[]` entry with a
+**postal code** (radius targeting depends on it), `brand_lock.colors.*.hex`, and the
+`brand-assets/logo/` file.
+
+**3. If the offer file is missing**, interview using the offer schema **only** — the profile is
+already known, so never re-ask identity, branding or location.
+
+Offer fields that matter: `offer_type` (challenge / trial / intro_pack / membership /
+pt_package / class_pass / free_session / referral), `name`, `duration`, `price.display` (the
+exact string copy must use — never re-derive it from the number), `price.gst_treatment`,
+`mechanics.whats_included`, `scarcity` (must be real), `guarantee.posture`,
+`destination.landing_url`, `destination.primary_cta`.
+
+**4. Validate. This is a hard gate — do not proceed past a failure:**
+```bash
+node skills/references/client-config.mjs --gym {gym} --offer {offer-slug}
+```
+It writes `brands/{gym}/.resolved/{offer-slug}.json`. **Every later step reads that file**, so
+prompts, copy and campaign config cannot disagree about price, CTA, colours or budget.
+
+It blocks: outcome guarantees, fabricated scarcity, capacity claims with no real spot count,
+CTAs outside the Ads Uploader enum, price/locale currency mismatches, and em dashes in name
+fields (they break the importer).
+
+**5. Reference images.** Ask the user to drop **real photos** into:
+```
+brands/{gym}/brand-assets/
+  logo/       logo files
+  facility/   the gym space, equipment, studio
+  coaches/    trainers
+  members/    classes and members (signed release required)
+```
+This is a compliance-sensitive category — use the client's real photos, not AI-invented people.
+
+> There is also a UI for all of the above: `node ui/server.mjs` → http://localhost:4310
 
 ### Step 2: Download Brand Images from Website
 
@@ -133,7 +164,22 @@ Save an `image-index.md` file in the `brand-images/` folder listing each downloa
 - Observe **photography style** — lighting, color grading, subject matter, mood
 - Check **overall aesthetic** — clean/minimal vs bold/dense, color temperature, spacing
 
-**CRITICAL:** The visual analysis from screenshots is the **primary source of truth** for brand colors and visual identity in the Brand DNA document. Text-scraped CSS/color references are secondary. If there's a conflict between what text scraping suggests and what the screenshots actually show, **always trust the screenshots.**
+**CRITICAL — source-of-truth precedence.** Highest wins:
+
+1. **`gym_profile.brand_lock`** — client-declared. Any colour, font, logo rule or photography
+   rule with `locked: true` is final. Never substitute a value you inferred, and never write a
+   competing value elsewhere in the Brand DNA document.
+2. **Client-supplied brand guidelines** (a PDF or deck the client sent)
+3. **Screenshots** — for anything not locked, the rendered page beats scraped CSS
+4. **Scraped CSS / text**
+5. **Web research**
+
+Anything listed in `brand_lock.hard_overrides.ignore_auto_detected` is off-limits to detection
+entirely — a client whose website is a stale build will lock colours precisely so the scrape
+cannot override them.
+
+For unlocked fields the old rule still holds: screenshots beat text-scraped CSS, because CSS
+colours often do not match the rendered brand palette.
 
 Save screenshots to `brand-images/` and add them to the `image-index.md` index file.
 
@@ -188,6 +234,11 @@ Combine into this format:
 BRAND DNA DOCUMENT
 ==================
 
+BRAND LOCK (CLIENT-AUTHORITATIVE)
+Render mechanically from gym_profile.brand_lock. Mark every field [LOCKED] or [detected].
+Any field in hard_overrides.ignore_auto_detected is [LOCKED — auto-detection suppressed].
+Do not write a competing value for a locked field anywhere else in this document.
+
 BRAND OVERVIEW
 Name / Tagline / Design Agency / Voice Adjectives [5] / Positioning / Competitive Differentiation
 
@@ -197,8 +248,14 @@ Primary Font / Secondary Font / Primary Color [hex] / Secondary Color [hex] / Ac
 PHOTOGRAPHY DIRECTION
 Lighting / Color Grading / Composition / Subject Matter / Props and Surfaces / Mood
 
-PRODUCT DETAILS
-Physical Description / Label-Logo Placement / Distinctive Features / Packaging System
+FACILITY & PROGRAM DETAILS
+(For a service business. Replaces the product section — a gym has no product.)
+Signature Spaces (weight floor / studio / turf / recovery) / Equipment Character / Class Formats
+and Levels / Coach Credentials usable in ads / Member Experience / What's Physically Included
+
+AUDIENCE & LOCAL CONTEXT
+Catchment (from locations[]: postal code, nearest MRT, home vs office district) / Who Trains Here
+/ Known Objections (from business.known_objections) / Local Competitors and how they position
 
 AD CREATIVE STYLE
 Typical formats / Text overlay style / Photo vs illustration / UGC usage / Offer presentation
@@ -207,7 +264,17 @@ PRICING & OFFER STRUCTURE
 Advertised price / Billing cadence (monthly vs annual vs one-time) / Actual upfront cost / Price qualifier language ("starting at" / "as low as" / flat) / Introductory offers vs ongoing rate / Subscription terms / Required ad disclaimers / Why this structure matters for ad compliance
 
 IMAGE GENERATION PROMPT MODIFIER
-Write a single 50-75 word paragraph to prepend to any image prompt to match this brand's visual identity. Include exact colors, font descriptions, photography direction, and mood.
+Do NOT free-write this. COMPOSE it from brand_lock so it cannot drift from the locked values,
+and save it to brands/{gym}/brand-modifier.txt:
+
+  Brand: {display_name}. Use ONLY these colours: {primary hex + name}, {secondary hex + name},
+  {accent hex + name}. Never use: {colors.forbidden}. Headline type:
+  {typography.headline.fallback_description}, {case}. Body type:
+  {typography.body.fallback_description}. Photography: {photography.must}. Never depict:
+  {photography.never}. People: {photography.people}. Logo: use the attached logo file exactly as
+  supplied — never redraw, recolour or restyle it; place {logo.placement}.
+
+Describe fonts by appearance, not by family name — image models cannot render a named font.
 ```
 
 Save output as: `brands/{brand-name}/brand-dna.md`
@@ -234,26 +301,63 @@ Save output as: `brands/{brand-name}/brand-dna.md`
 
 ### Step 4: Generate Prompts (Phase 2)
 
-After the Brand DNA is complete and reference images are confirmed, generate brand-specific prompts from the 50 templates below.
+**Select templates from the manifest, not from the full list below.**
+Read `.claude/skills/static-ads/references/template-index.json`. About a third of the numbered
+templates are product-shaped (Unboxing, Flavor Story, Ingredient Transparency, Colorway Array)
+and cannot be filled by a gym.
 
-For each template:
-1. Replace all [BRACKETED PLACEHOLDERS] with brand-specific details from the Brand DNA
-2. Prepend the Image Generation Prompt Modifier from the Brand DNA
-3. **Do NOT set an `aspect_ratio`** — the script automatically generates both 1:1 and 9:16 for every prompt
-4. Include the product name and any specific product details
+Selection rules:
+- Fill only templates with `status: "active"` whose `sets` include the requested set.
+- Default set is **`gym-core`** (14 highest-confidence gym formats). Use `gym` for the full
+  ~32-template run. Never fill `status: "dormant-for-gym"` or `"needs-rewrite"`.
+- Prefer templates whose `funnel_fit` and `asset_needs` match what the client actually has —
+  a `testimonial` template needs photos in `brand-assets/members/`, `facility-proof` needs
+  `facility/`. Skip a template whose `asset_needs` cannot be met and say which and why.
+- Honour `gym_adaptation` where present — it says how to bend a generic template to a gym.
+- Carry `compliance_flags` through into `prompts.json` so the copy stage can enforce them.
+
+**Fill every placeholder from the resolved brief**, not from judgement. Read
+`brands/{gym}/.resolved/{offer-slug}.json`:
+
+| Placeholder | Source |
+|---|---|
+| `[OFFER]`, `[HEADLINE]` | `offer.name`, `offer.messaging.primary_promise` |
+| price text | `offer.price.display` — the exact string, never re-derived |
+| `[INCLUDED ITEMS]` | `offer.mechanics.whats_included` |
+| `[COUNTDOWN]`, `[DEADLINE]` | `offer.scarcity` — only if `honest: true` |
+| `[PRIMARY BRAND COLOR]` etc. | `brand_lock.colors.*.hex` — verbatim when `locked: true` |
+| `[GYM INTERIOR]`, `[FACILITY]` | Facility & Program Details in the Brand DNA |
+| `[N] minutes from [MRT]` | `gym.locations[].nearest_mrt` |
+
+Then:
+1. Prepend `brands/{gym}/brand-modifier.txt` (composed in Step 3) to every prompt
+2. **Do NOT set an `aspect_ratio`** — the script generates both 1:1 and 9:16 for every prompt
+3. Set `reference_images` per prompt from the template's `asset_needs`, using paths relative to
+   `brand-assets/` (e.g. `"facility/weight-floor.jpg"`, `"members/class-01.jpg"`)
+4. Set top-level `always_include_refs` to the logo file when
+   `brand_lock.logo.always_include_as_reference` is true — the generator merges it into every
+   prompt, which is how a locked logo actually reaches the model every time
+
+**Never** write a competitor's name, a banned term from `offer.messaging.must_not_say`, or any
+colour that is not in the locked palette.
 
 **Output as a JSON file** with this structure and save to `brands/{brand-name}/prompts.json`:
 
 ```json
 {
-  "brand": "Brand Name",
-  "product": "Specific Product Name",
+  "brand": "Gym Display Name",
+  "offer_id": "6wk-challenge-2026q4",
+  "set": "gym-core",
   "generated_at": "ISO timestamp",
+  "always_include_refs": ["logo/logo-primary.png"],
   "prompts": [
     {
-      "template_number": 1,
-      "template_name": "headline",
-      "prompt": "Full completed prompt text ready for Nano Banana 2...",
+      "template_number": 51,
+      "template_name": "facility-hero-offer-banner",
+      "gym_format": "facility-proof",
+      "prompt": "Full completed prompt text, brand modifier already prepended...",
+      "reference_images": ["facility/weight-floor.jpg"],
+      "compliance_flags": [],
       "notes": "Any generation notes"
     }
   ]
@@ -565,6 +669,12 @@ Template: Use the attached images as brand reference. Match the exact product de
 Creates urgency through visual scarcity signals — countdown timer, inventory bar, or limited edition numbering. Drives action through FOMO. Different from #2/#37 which present offers without visual urgency mechanics.
 
 Template: Use the attached images as brand reference. Match the exact product design and brand colors. Create: a scarcity-driven urgency ad on a [BACKGROUND like bold PRIMARY BRAND COLOR / dark dramatic gradient / high-energy split-tone] background. Top: a prominent [URGENCY INDICATOR like realistic digital countdown timer showing HH:MM:SS in bold LED-style numbers / horizontal progress bar showing "87% Claimed" nearly full / "Edition 247 of 500" in stencil-style numbering / "DROPPING [DATE]" in bold stencil text] in [CONTRAST COLOR] — large and impossible to miss. Center: [YOUR PRODUCT] hero-lit with dramatic [LIGHTING like tight spotlight / volumetric glow / rim lighting], presented as the scarce object of desire. Below product: bold [CONTRAST TEXT COLOR] sans-serif "[HEADLINE like Don't Miss This / Limited Release / Selling Fast / Final Hours / Almost Gone]". Bottom: [CTA like "Shop Now Before It's Gone" / "Claim Yours" / "Get It While It Lasts"] in a [ACCENT COLOR] button or banner. [BRAND] logo bottom right. High energy, high contrast. The urgency mechanic IS the hook.
+
+### 51. Facility Hero Offer Banner
+Real gym-interior photo with a bold bottom offer banner and logo — the dominant long-running gym format.
+
+Template: Use the attached images as brand reference. Match the brand's exact colors and logo. Create: an authentic, true-to-life wide photograph of [GYM INTERIOR — e.g. the weight floor / studio / turf / cardio deck] shot at ~24mm with bright even overhead lighting, uncluttered and inviting. Across the bottom ~18% of the frame, a solid [PRIMARY BRAND COLOR] banner containing large bold condensed sans-serif text in white reading "[OFFER — e.g. TRY US FOR FREE]". Place the [BRAND] logo centered just below or within the banner. Keep it realistic, not over-stylized — it should look like a genuine photo of the space.
+
 
 ## Tips for Best Results
 

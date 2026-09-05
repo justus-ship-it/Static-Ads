@@ -12,10 +12,28 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
+import * as fs from "fs";
 import { join, basename } from "path";
-import XLSX from "xlsx";
+import * as XLSX from "xlsx";
 import { parseArgs } from "util";
-import { exec } from "child_process";
+import { execFile } from "child_process";
+
+XLSX.set_fs(fs); // patched SheetJS CDN build is fs-agnostic; wire Node fs for readFile
+
+// ── XSS hardening ─────────────────────────────────────────────────────────
+// CSV-sourced strings (campaign/copy/page names) are untrusted. Escape before
+// injecting into HTML, and escape JSON embedded in <script> against </script> breakout.
+function escHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function safeJson(obj) {
+  return JSON.stringify(obj)
+    .replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026")
+    .split(String.fromCharCode(0x2028)).join("\\u2028")
+    .split(String.fromCharCode(0x2029)).join("\\u2029");
+}
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -266,7 +284,7 @@ const html = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ad Library — ${brandName} ${batchId}</title>
+<title>Ad Library — ${escHtml(brandName)} ${escHtml(batchId)}</title>
 <style>
 /* ── Reset & Base ───────────────────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -409,11 +427,11 @@ body{padding-top:120px;padding-bottom:40px}
     <div class="toolbar-top">
       <div class="toolbar-brand">
         ${hasLogo
-          ? `<img class="brand-logo-sm" src="${logoRelPath}" alt="${brandName}">`
-          : `<div class="brand-initials-sm">${brandInitials}</div>`
+          ? `<img class="brand-logo-sm" src="${escHtml(logoRelPath)}" alt="${escHtml(brandName)}">`
+          : `<div class="brand-initials-sm">${escHtml(brandInitials)}</div>`
         }
         <div>
-          <div class="toolbar-title">Ad Library <span class="toolbar-batch">— ${brandName} ${batchId}</span></div>
+          <div class="toolbar-title">Ad Library <span class="toolbar-batch">— ${escHtml(brandName)} ${escHtml(batchId)}</span></div>
         </div>
       </div>
       <div class="toolbar-count" id="adCount">${ads.length} ads</div>
@@ -432,11 +450,11 @@ body{padding-top:120px;padding-bottom:40px}
       ` : ""}
       <select class="filter-select" id="hookFilter">
         <option value="">All Hooks</option>
-        ${hookTypes.map((h) => `<option value="${h}">${h}</option>`).join("")}
+        ${hookTypes.map((h) => `<option value="${escHtml(h)}">${escHtml(h)}</option>`).join("")}
       </select>
       <select class="filter-select" id="templateFilter">
         <option value="">All Templates</option>
-        ${templates.map((t) => `<option value="${t}">${t}</option>`).join("")}
+        ${templates.map((t) => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join("")}
       </select>
       <div class="filter-sep"></div>
       <div class="pill-group" id="ratioToggle">
@@ -458,11 +476,11 @@ body{padding-top:120px;padding-bottom:40px}
 
 <script>
 // ── Data ────────────────────────────────────────────────────
-const ADS = ${JSON.stringify(ads)};
-const BRAND_NAME = ${JSON.stringify(brandName)};
-const BRAND_INITIALS = ${JSON.stringify(brandInitials)};
+const ADS = ${safeJson(ads)};
+const BRAND_NAME = ${safeJson(brandName)};
+const BRAND_INITIALS = ${safeJson(brandInitials)};
 const HAS_LOGO = ${hasLogo};
-const LOGO_PATH = ${JSON.stringify(logoRelPath)};
+const LOGO_PATH = ${safeJson(logoRelPath)};
 const HAS_FUNNEL = ${hasFunnel};
 
 // ── CTA mapping ─────────────────────────────────────────────
@@ -652,13 +670,15 @@ writeFileSync(outPath, html, "utf-8");
 console.log(`\nWrote: ${outPath}`);
 
 if (args.open) {
-  const cmd =
+  // execFile (no shell): the path is an argument, never interpolated into a command string,
+  // so a crafted --output-dir can't inject shell commands.
+  const [cmd, cmdArgs] =
     process.platform === "win32"
-      ? `start "" "${outPath}"`
+      ? ["cmd", ["/c", "start", "", outPath]]
       : process.platform === "darwin"
-      ? `open "${outPath}"`
-      : `xdg-open "${outPath}"`;
-  exec(cmd, (err) => {
+      ? ["open", [outPath]]
+      : ["xdg-open", [outPath]];
+  execFile(cmd, cmdArgs, (err) => {
     if (err) console.error("Could not open browser:", err.message);
   });
 }

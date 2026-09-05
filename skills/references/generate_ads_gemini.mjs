@@ -11,7 +11,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from "fs";
-import { join, extname, resolve, dirname } from "path";
+import { join, extname, resolve, dirname, isAbsolute } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 
@@ -152,13 +152,24 @@ async function generateImage(prompt, referenceImageParts) {
 
 const ASPECT_RATIOS = [
   { ratio: "1:1", folder: "1x1", instruction: "The output image MUST be square (1:1 aspect ratio)." },
-  { ratio: "9:16", folder: "9x16", instruction: "The output image MUST be vertical/portrait (9:16 aspect ratio, taller than wide). IMPORTANT for vertical format: Keep the top ~15% and bottom ~25% of the image free of text, logos, and key visual elements — this area gets covered by platform UI (profile icons, captions, CTA buttons) on Meta Stories and Reels placements. Center all critical copy and branding in the middle 60% of the frame vertically." },
+  { ratio: "9:16", folder: "9x16", instruction: [
+      "The output image MUST be vertical/portrait (9:16 aspect ratio, taller than wide).",
+      "",
+      "VERTICAL LAYOUT GEOMETRY - follow these positions exactly. Measuring from the top of the frame, where 0% is the very top edge and 100% is the very bottom edge:",
+      "- 0% to 20%: DEAD ZONE. Completely empty of text, logos, banners and any element that must be read. Background imagery only. Meta covers this with the profile icon and account name.",
+      "- 20% to 70%: the LIVE AREA. Every headline, offer banner, logo, price, badge and call to action must sit entirely inside this band.",
+      "- 70% to 100%: DEAD ZONE. Completely empty of text, logos, banners and any element that must be read. Background imagery only. Meta covers this with the caption, the profile row and the CTA button.",
+      "",
+      "Concretely: the LOWEST edge of the lowest piece of text or graphic element must sit no lower than 70% of the image height. If a banner would normally sit at the bottom of the frame, move it UP so its bottom edge lands at 70%, and let plain background fill everything below it. The HIGHEST edge of the topmost text or logo must sit no higher than 20%.",
+      "",
+      "Compose the photograph so the interesting part of the scene falls in the middle of the frame, and treat the top fifth and bottom third as deliberate breathing room."
+    ].join("\n") },
 ];
 
 /**
  * Run a single job: generate one image for one template + one ratio.
  */
-async function runSingleImage(promptData, referenceImageParts, outputDir, ratio, ratioFolder, ratioInstruction, imageIdx) {
+async function runSingleImage(promptData, referenceImageParts, outputDir, ratio, ratioFolder, ratioInstruction, imageIdx, isAnchored = false) {
   const templateNum = promptData.template_number;
   const templateName = promptData.template_name;
   const label = `[${String(templateNum).padStart(2, "0")}] ${templateName} ${ratio} v${imageIdx + 1}`;
@@ -171,8 +182,13 @@ async function runSingleImage(promptData, referenceImageParts, outputDir, ratio,
   const ratioDir = join(templateDir, ratioFolder);
   mkdirSync(ratioDir, { recursive: true });
 
-  // Append aspect ratio instruction to the prompt
-  const fullPrompt = `${promptData.prompt}\n\n${ratioInstruction}`;
+  // Append aspect ratio instruction to the prompt. When anchored, the FIRST reference image
+  // is the take the human approved, so say so explicitly — otherwise the model treats it as
+  // just another mood reference and the two ratios drift apart.
+  const anchorNote = isAnchored
+    ? "\n\nThe FIRST attached image is an already-approved version of this exact ad. Keep its scene, subject, colours, and its on-image wording exactly. Do NOT copy its element positions - the new aspect ratio has different layout rules, stated below, and those rules take priority over matching the original placement. Reposition the text, banner and logo as the layout geometry requires while keeping everything else identical."
+    : "";
+  const fullPrompt = `${promptData.prompt}${anchorNote}\n\n${ratioInstruction}`;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -202,14 +218,14 @@ async function runSingleImage(promptData, referenceImageParts, outputDir, ratio,
 /**
  * Run all images for one template + one ratio.
  */
-async function runJob(promptData, allRefParts, promptRefParts, outputDir, numImages, ratio, ratioFolder, ratioInstruction) {
+async function runJob(promptData, allRefParts, promptRefParts, outputDir, numImages, ratio, ratioFolder, ratioInstruction, isAnchored = false) {
   const refParts = promptRefParts.length > 0 ? promptRefParts : allRefParts;
   const downloaded = [];
 
   for (let i = 0; i < numImages; i++) {
     if (i > 0) await sleep(REQUEST_DELAY_MS);
     try {
-      const img = await runSingleImage(promptData, refParts, outputDir, ratio, ratioFolder, ratioInstruction, i);
+      const img = await runSingleImage(promptData, refParts, outputDir, ratio, ratioFolder, ratioInstruction, i, isAnchored);
       downloaded.push(img);
     } catch (err) {
       console.error(`  ERROR [${promptData.template_name} ${ratio} v${i + 1}]: ${err.message.slice(0, 150)}`);
@@ -227,19 +243,25 @@ async function runJob(promptData, allRefParts, promptRefParts, outputDir, numIma
 /**
  * Generate all templates + ratios with concurrency control.
  */
-async function generateAllParallel(prompts, refPartsMap, allRefParts, outputDir, numImages, maxConcurrent, selectedRatios) {
+async function generateAllParallel(prompts, refPartsMap, allRefParts, outputDir, numImages, maxConcurrent, selectedRatios, alwaysRefs = [], anchorMap = new Map()) {
   // Build flat list of jobs (template × ratio)
   const jobs = [];
   for (const promptData of prompts) {
     // Build per-prompt reference image parts
-    const promptRefNames = promptData.reference_images || [];
+    // alwaysRefs (from prompts.json "always_include_refs") are merged into every prompt.
+    // This is how a locked logo actually reaches the model on every single generation.
+    const promptRefNames = [...new Set([...(alwaysRefs || []), ...(promptData.reference_images || [])])];
     const promptRefParts = [];
     for (const name of promptRefNames) {
       if (refPartsMap.has(name)) promptRefParts.push(refPartsMap.get(name));
+      else console.warn(`  ! ${promptData.template_name}: reference image "${name}" not found in reference folder`);
     }
+    // The anchor leads the reference list — it is the image the human actually chose.
+    const anchor = anchorMap.get(promptData.template_name);
+    if (anchor) promptRefParts.unshift(anchor);
 
     for (const { ratio, folder: ratioFolder, instruction } of selectedRatios) {
-      jobs.push({ promptData, promptRefParts, ratio, ratioFolder, instruction });
+      jobs.push({ promptData, promptRefParts, ratio, ratioFolder, instruction, isAnchored: anchorMap.has(promptData.template_name) });
     }
   }
 
@@ -260,7 +282,7 @@ async function generateAllParallel(prompts, refPartsMap, allRefParts, outputDir,
         const job = jobs[jobIdx];
         active++;
 
-        runJob(job.promptData, allRefParts, job.promptRefParts, outputDir, numImages, job.ratio, job.ratioFolder, job.instruction)
+        runJob(job.promptData, allRefParts, job.promptRefParts, outputDir, numImages, job.ratio, job.ratioFolder, job.instruction, job.isAnchored)
           .then((result) => {
             jobResults[jobIdx] = { ok: true, result };
           })
@@ -305,6 +327,19 @@ async function generateAllParallel(prompts, refPartsMap, allRefParts, outputDir,
 // HTML Gallery with image selection UI
 // ---------------------------------------------------------------------------
 
+// ── XSS hardening (defense in depth; names/filenames come from prompts.json + disk) ──
+const escHtml = (s) => String(s ?? "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+// Safe inside a single-quoted JS string nested in a double-quoted HTML attribute.
+const jsStr = (s) => String(s ?? "")
+  .replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\r?\n/g, "\\n")
+  .replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+const safeJson = (obj) => JSON.stringify(obj)
+  .replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026")
+  .split(String.fromCharCode(0x2028)).join("\\u2028")
+  .split(String.fromCharCode(0x2029)).join("\\u2029");
+
 function generateGallery(outputDir, results, brandName, selectedRatios) {
   const totalImages = results.reduce((sum, r) => sum + r.images.length, 0);
   const totalGroups = results.reduce((sum, r) => {
@@ -328,7 +363,7 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${brandName} — Ad Selector (Gemini)</title>
+    <title>${escHtml(brandName)} — Ad Selector (Gemini)</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -431,7 +466,7 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
 <body>
     <div id="toolbar">
         <div style="display:flex;align-items:center;gap:1rem;">
-            <h1>${brandName} — Ad Selector</h1>
+            <h1>${escHtml(brandName)} — Ad Selector</h1>
             <div id="progress">0 / ${totalGroups} selected</div>
         </div>
         <div style="display:flex;align-items:center;gap:1rem;">
@@ -446,10 +481,10 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
   for (const r of results) {
     const title = r.template_name.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
     html += `
-    <div class="template-section" id="section-${r.folder}">
-        <h2 class="template-header">#${String(r.template_number).padStart(2, "0")} ${title}
+    <div class="template-section" id="section-${escHtml(r.folder)}">
+        <h2 class="template-header">#${String(r.template_number).padStart(2, "0")} ${escHtml(title)}
             <span>${r.images.length} images</span>
-            <button class="exclude-btn" id="exclude-btn-${r.folder}" onclick="toggleExclude('${r.folder}')">Exclude</button>
+            <button class="exclude-btn" id="exclude-btn-${escHtml(r.folder)}" onclick="toggleExclude('${jsStr(r.folder)}')">Exclude</button>
             <span class="excluded-badge">EXCLUDED</span></h2>
 `;
 
@@ -460,8 +495,8 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
       const groupId = `${r.folder}-${ratioFolder}`;
       html += `        <div class="ratio-section">
             <div class="ratio-label">
-                <span class="badge">${ratio}</span>
-                <span class="pick-status" id="status-${groupId}">— none selected</span>
+                <span class="badge">${escHtml(ratio)}</span>
+                <span class="pick-status" id="status-${escHtml(groupId)}">— none selected</span>
             </div>
             <div class="image-grid">
 `;
@@ -469,13 +504,13 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
         const imgPath = `${r.folder}/${ratioFolder}/${img.filename}`;
         const cardId = `card-${r.folder}-${ratioFolder}-${idx}`;
         const isDefault = idx === 0;
-        html += `                <div class="image-card${isDefault ? " selected" : ""}" id="${cardId}"
-                     data-group="${groupId}" data-path="${imgPath}" data-filename="${img.filename}"
-                     onclick="selectCard('${groupId}','${cardId}','${imgPath}','${img.filename}')">
-                    <button class="expand-btn" onclick="event.stopPropagation(); openLightbox('${imgPath}')" title="View full size">⤢</button>
+        html += `                <div class="image-card${isDefault ? " selected" : ""}" id="${escHtml(cardId)}"
+                     data-group="${escHtml(groupId)}" data-path="${escHtml(imgPath)}" data-filename="${escHtml(img.filename)}"
+                     onclick="selectCard('${jsStr(groupId)}','${jsStr(cardId)}','${jsStr(imgPath)}','${jsStr(img.filename)}')">
+                    <button class="expand-btn" onclick="event.stopPropagation(); openLightbox('${jsStr(imgPath)}')" title="View full size">⤢</button>
                     <div class="radio-dot"></div>
-                    <img src="${imgPath}" alt="${r.template_name} ${ratio} v${idx + 1}" loading="lazy">
-                    <div class="info"><span>${img.filename}</span><span>v${idx + 1}</span></div>
+                    <img src="${escHtml(imgPath)}" alt="${escHtml(r.template_name + " " + ratio + " v" + (idx + 1))}" loading="lazy">
+                    <div class="info"><span>${escHtml(img.filename)}</span><span>v${idx + 1}</span></div>
                 </div>
 `;
       });
@@ -497,7 +532,7 @@ function generateGallery(outputDir, results, brandName, selectedRatios) {
     <script>
         const selections = {};
         const excluded = new Set();
-        const groupsPerTemplate = ${JSON.stringify(groupsPerTemplateObj)};
+        const groupsPerTemplate = ${safeJson(groupsPerTemplateObj)};
 
         document.querySelectorAll('.image-card.selected').forEach(c => {
             selections[c.dataset.group] = { path: c.dataset.path, filename: c.dataset.filename };
@@ -602,6 +637,11 @@ async function main() {
       "num-images": { type: "string", default: String(DEFAULT_NUM_IMAGES) },
       "max-concurrent": { type: "string", default: "2" },
       ratios: { type: "string", default: "1x1,9x16" },
+      "ref-dir": { type: "string", default: "" },
+      // Staged generation: browse in one ratio, select, then render the winners in the other.
+      "output-dir": { type: "string", default: "" },
+      "from-selections": { type: "string", default: "" },
+      anchor: { type: "boolean", default: false },
     },
   });
 
@@ -646,17 +686,52 @@ async function main() {
     process.exit(1);
   }
 
-  // Load product images as base64
-  const imgDir = join(brandDir, "product-images");
+  // Load reference images as base64.
+  // A gym has no product, so the canonical folder is brand-assets/ with subfolders
+  // (logo/, facility/, coaches/, members/). The older flat folders still work.
   const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp"]);
-  const allImageNames = existsSync(imgDir)
-    ? readdirSync(imgDir).filter((f) => imageExtensions.has(extname(f).toLowerCase())).sort()
-    : [];
+  const REF_DIR_CANDIDATES = values["ref-dir"]
+    ? [values["ref-dir"]]
+    : ["brand-assets", "reference-images", "product-images"];
+
+  let imgDir = null;
+  for (const cand of REF_DIR_CANDIDATES) {
+    const dir = isAbsolute(cand) ? cand : join(brandDir, cand);
+    if (existsSync(dir)) { imgDir = dir; break; }
+  }
+
+  /** Scan a folder and one level of subfolders. Subfolder files are named "sub/file.jpg"
+   *  so a prompt's reference_images can target e.g. "facility/weight-floor.jpg". */
+  const scanRefs = (dir) => {
+    const out = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isFile() && imageExtensions.has(extname(entry.name).toLowerCase())) {
+        out.push(entry.name);
+      } else if (entry.isDirectory()) {
+        for (const f of readdirSync(join(dir, entry.name))) {
+          if (imageExtensions.has(extname(f).toLowerCase())) out.push(`${entry.name}/${f}`);
+        }
+      }
+    }
+    return out.sort();
+  };
+
+  const allImageNames = imgDir ? scanRefs(imgDir) : [];
 
   if (allImageNames.length === 0) {
-    console.error("Error: No product images found in product-images/ folder.");
+    const looked = REF_DIR_CANDIDATES.map((c) => `  - ${join(brandDir, c)}`).join("\n");
+    console.error(
+      `Error: no reference images found.\n\nLooked in:\n${looked}\n\n` +
+      `Add real photos, e.g.:\n` +
+      `  ${join(brandDir, "brand-assets")}/logo/      logo files\n` +
+      `  ${join(brandDir, "brand-assets")}/facility/  the gym space\n` +
+      `  ${join(brandDir, "brand-assets")}/coaches/   trainers\n` +
+      `  ${join(brandDir, "brand-assets")}/members/   classes and members (with a signed release)\n`
+    );
     process.exit(1);
   }
+
+  console.log(`Reference folder: ${imgDir}`);
 
   console.log(`\nLoading ${allImageNames.length} reference images as base64...`);
   const refPartsMap = new Map();
@@ -686,7 +761,12 @@ async function main() {
     }
   }
 
-  const outputDir = join(outputsRoot, `${dateStr}-V${version}`);
+  // --output-dir writes into an existing batch so a render stage lands beside the browse
+  // stage it came from. Without it, stage 3 would create a new V-folder and the 1:1 and 9:16
+  // of the same selection would live in different batches (and stop pairing on Meta).
+  const outputDir = values["output-dir"]
+    ? (isAbsolute(values["output-dir"]) ? values["output-dir"] : resolve(process.cwd(), values["output-dir"]))
+    : join(outputsRoot, `${dateStr}-V${version}`);
   mkdirSync(outputDir, { recursive: true });
 
   const maxConcurrent = parseInt(values["max-concurrent"] || "2", 10);
@@ -706,7 +786,37 @@ async function main() {
   console.log(`  Output:      ${outputDir}`);
   console.log(sep);
 
-  const { results, failed } = await generateAllParallel(prompts, refPartsMap, allRefParts, outputDir, numImages, maxConcurrent, selectedRatios);
+  // --from-selections narrows the run to the templates the human picked in the gallery, and
+  // --anchor feeds each pick's own image back in as a reference so the second ratio is a
+  // sibling of the selected image rather than an unrelated take on the same prompt.
+  let anchorMap = new Map();
+  if (values["from-selections"]) {
+    const selPath = resolve(process.cwd(), values["from-selections"]);
+    if (!existsSync(selPath)) { console.error(`Error: selections file not found: ${selPath}`); process.exit(1); }
+    const sel = JSON.parse(readFileSync(selPath, "utf-8"));
+    // gallery-selector keys groups as `${folderName}-${ratio}`, e.g.
+    // "51-facility-hero-offer-banner-1x1". Strip the leading number and trailing ratio to
+    // recover the template_name that prompts.json uses.
+    const picked = new Map();
+    for (const [group, v] of Object.entries(sel)) {
+      const slug = String(group).replace(/^\d+-/, "").replace(/-(1x1|9x16)$/, "");
+      const abs = isAbsolute(v.path) ? v.path : join(outputDir, v.path);
+      if (!picked.has(slug)) picked.set(slug, abs);
+    }
+    const before = prompts.length;
+    prompts = prompts.filter((p) => picked.has(p.template_name));
+    if (values.anchor) {
+      for (const p of prompts) {
+        const src = picked.get(p.template_name);
+        if (existsSync(src)) anchorMap.set(p.template_name, loadImageAsInlineData(src));
+        else console.warn(`  ! ${p.template_name}: selected image not found at ${src} — no anchor`);
+      }
+    }
+    console.log(`\nSelections: ${prompts.length} of ${before} templates picked${values.anchor ? `, ${anchorMap.size} anchored` : ""}`);
+    if (!prompts.length) { console.error("No prompts matched the selections file."); process.exit(1); }
+  }
+
+  const { results, failed } = await generateAllParallel(prompts, refPartsMap, allRefParts, outputDir, numImages, maxConcurrent, selectedRatios, data.always_include_refs || [], anchorMap);
 
   if (results.length > 0) {
     generateGallery(outputDir, results, brandName, selectedRatios);

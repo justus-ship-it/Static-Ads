@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gym-ads-ui",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["ui/server.mjs", "--port", "4310"],
+      "port": 4310
+    }
+  ]
+}
