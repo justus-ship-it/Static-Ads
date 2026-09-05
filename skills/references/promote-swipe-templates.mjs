@@ -31,6 +31,9 @@ const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), "..", "..");
 
 const SKILL_MD = join(REPO_ROOT, ".claude", "skills", "static-ads", "SKILL.md");
+// Slash-command copy of the skill. Must stay byte-identical to SKILL_MD — a promotion that
+// writes only one of the pair silently drifts the two (this is how template 51 went missing).
+const SKILL_CMD = join(REPO_ROOT, ".claude", "commands", "static-ads.md");
 const HOOK_MAP = join(REPO_ROOT, ".claude", "skills", "ad-copy-builder", "references", "template-hook-map.md");
 const HOOK_BANK = join(REPO_ROOT, "hook-bank.md");
 const TIPS_HEADING = "## Tips for Best Results";
@@ -195,6 +198,7 @@ function main() {
     ? skill.slice(0, tipsIdx) + insertBlock + "\n" + skill.slice(tipsIdx)
     : skill.replace(/\s*$/, "\n\n") + insertBlock;
   writeFileSync(SKILL_MD, skill);
+  writeFileSync(SKILL_CMD, skill);
 
   // ── Write: template-hook-map.md (append section) ──
   let map = readFileSync(HOOK_MAP, "utf-8");

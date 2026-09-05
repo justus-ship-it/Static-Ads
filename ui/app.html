@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gym Ads Control Panel</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel-2:#1c2128; --line:#30363d;
+    --text:#e6edf3; --dim:#8b949e; --accent:#e8501f; --accent-dim:#7a2a10;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149; --link:#58a6ff;
+    --radius:8px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  a{color:var(--link)}
+  button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--text);padding:7px 13px}
+  button:hover:not(:disabled){border-color:var(--dim)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.primary:hover:not(:disabled){filter:brightness(1.1)}
+  input,select,textarea{font:inherit;background:#0d1117;color:var(--text);
+    border:1px solid var(--line);border-radius:6px;padding:7px 9px;width:100%}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  textarea{resize:vertical;min-height:64px}
+  label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px;font-weight:500}
+
+  .app{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
+  .side{background:var(--panel);border-right:1px solid var(--line);padding:16px;display:flex;flex-direction:column;gap:18px}
+  .brand{font-weight:700;font-size:15px;letter-spacing:-.2px}
+  .brand span{color:var(--accent)}
+  .main{padding:22px 26px;max-width:1100px}
+
+  .clients{display:flex;flex-direction:column;gap:3px}
+  .client{padding:8px 10px;border-radius:6px;cursor:pointer;border:1px solid transparent;font-size:13px}
+  .client:hover{background:var(--panel-2)}
+  .client.sel{background:var(--panel-2);border-color:var(--accent)}
+  .client .nm{font-weight:600}
+  .client .sub{font-size:11px;color:var(--dim)}
+
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:20px;flex-wrap:wrap}
+  .tab{padding:8px 14px;cursor:pointer;border-bottom:2px solid transparent;color:var(--dim);font-size:13px;font-weight:500}
+  .tab:hover{color:var(--text)}
+  .tab.sel{color:var(--text);border-bottom-color:var(--accent)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+  .card h3{margin:0 0 4px;font-size:14px}
+  .card .hint{color:var(--dim);font-size:12px;margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .spacer{flex:1}
+
+  .chk{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line)}
+  .chk:last-child{border-bottom:none}
+  .dot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex:none}
+  .dot.ok{background:var(--ok)} .dot.bad{background:var(--err)} .dot.opt{background:var(--dim)}
+  .chk .t{font-weight:600;font-size:13px}
+  .chk .d{color:var(--dim);font-size:12px}
+  .chk .fix{font-family:ui-monospace,monospace;font-size:11px;color:var(--warn);margin-top:3px}
+
+  .msg{padding:8px 11px;border-radius:6px;font-size:12.5px;margin-bottom:6px;border-left:3px solid}
+  .msg.err{background:rgba(248,81,73,.09);border-color:var(--err)}
+  .msg.warn{background:rgba(210,153,34,.09);border-color:var(--warn)}
+  .msg.ok{background:rgba(63,185,80,.09);border-color:var(--ok)}
+
+  .log{background:#010409;border:1px solid var(--line);border-radius:6px;padding:11px;
+    height:300px;overflow:auto;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap}
+  .log .out{color:#c9d1d9} .log .err{color:var(--err)} .log .meta{color:var(--accent)}
+
+  .pill{display:inline-block;padding:1px 7px;border-radius:99px;font-size:11px;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--dim)}
+  .pill.on{border-color:var(--ok);color:var(--ok)}
+  .empty{color:var(--dim);text-align:center;padding:40px 20px}
+  fieldset{border:1px solid var(--line);border-radius:6px;padding:12px;margin:0 0 12px}
+  legend{font-size:12px;color:var(--dim);padding:0 6px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">Gym Ads <span>Control Panel</span></div>
+    <div>
+      <div class="row" style="margin-bottom:8px">
+        <strong style="font-size:12px;color:var(--dim)">CLIENTS</strong>
+        <div class="spacer"></div>
+        <button onclick="newClient()" style="padding:3px 9px;font-size:12px">+ New</button>
+      </div>
+      <div class="clients" id="clients"></div>
+    </div>
+    <div class="spacer"></div>
+    <div id="sideStatus" style="font-size:11px;color:var(--dim)"></div>
+  </aside>
+
+  <main class="main">
+    <div class="tabs" id="tabs"></div>
+    <div id="view"></div>
+  </main>
+</div>
+
+<script>
+const $ = (s,r=document)=>r.querySelector(s);
+const api = async (path, opts={}) => {
+  const r = await fetch(path, { headers:{'content-type':'application/json'}, ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const j = await r.json().catch(()=>({error:'bad response'}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+};
+const esc = s => String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let STATE = { clients:[], sel:null, offer:null, tab:'setup', status:null, enums:null, profile:null, offerDoc:null, run:null };
+
+const TABS = [
+  ['setup','Setup'], ['brand','Brand'], ['offer','Offer'],
+  ['targeting','Targeting & Budget'], ['generate','Generate'], ['review','Review'],
+];
+
+async function boot(){
+  STATE.status = await api('/api/status');
+  STATE.enums  = await api('/api/enums');
+  await loadClients();
+  render();
+}
+
+async function loadClients(){
+  const { clients } = await api('/api/clients');
+  STATE.clients = clients;
+  if (STATE.sel && !clients.find(c=>c.gym===STATE.sel)) STATE.sel = null;
+  if (!STATE.sel && clients.length) selectClient(clients[0].gym, false);
+}
+
+async function selectClient(gym, doRender=true){
+  STATE.sel = gym;
+  const c = STATE.clients.find(x=>x.gym===gym);
+  STATE.offer = c?.offers?.[0] || null;
+  const d = await api('/api/client/'+gym);
+  STATE.profile = d.profile;
+  STATE.offerDoc = STATE.offer ? await api(`/api/client/${gym}/offer/${STATE.offer}`) : null;
+  if (doRender) render();
+}
+
+async function loadOffer(slug){
+  STATE.offer = slug;
+  STATE.offerDoc = await api(`/api/client/${STATE.sel}/offer/${slug}`);
+  render();
+}
+
+function render(){
+  // sidebar
+  $('#clients').innerHTML = STATE.clients.length ? STATE.clients.map(c=>`
+    <div class="client ${c.gym===STATE.sel?'sel':''}" onclick="selectClient('${esc(c.gym)}')">
+      <div class="nm">${esc(c.display_name||c.gym)}</div>
+      <div class="sub">${c.offers.length} offer${c.offers.length===1?'':'s'} · ${c.outputs.length} batch${c.outputs.length===1?'':'es'}</div>
+    </div>`).join('') : '<div style="color:var(--dim);font-size:12px">No clients yet</div>';
+
+  const bad = STATE.status.checks.filter(c=>!c.ok && !c.optional).length;
+  $('#sideStatus').innerHTML = `Node ${esc(STATE.status.node)}<br>` +
+    (bad ? `<span style="color:var(--err)">${bad} setup item${bad===1?'':'s'} blocking</span>` : `<span style="color:var(--ok)">setup complete</span>`);
+
+  $('#tabs').innerHTML = TABS.map(([k,l])=>
+    `<div class="tab ${STATE.tab===k?'sel':''}" onclick="STATE.tab='${k}';render()">${l}</div>`).join('');
+
+  const v = $('#view');
+  if (STATE.tab==='setup') return viewSetup(v);
+  if (!STATE.sel) { v.innerHTML = `<div class="empty">No client selected.<br><br><button class="primary" onclick="newClient()">Create your first gym</button></div>`; return; }
+  if (STATE.tab==='brand') return viewBrand(v);
+  if (STATE.tab==='offer') return viewOffer(v);
+  if (STATE.tab==='targeting') return viewTargeting(v);
+  if (STATE.tab==='generate') return viewGenerate(v);
+  if (STATE.tab==='review') return viewReview(v);
+}
+
+// ── Setup ────────────────────────────────────────────────────────────────────
+function viewSetup(v){
+  v.innerHTML = `
+  <div class="card">
+    <h3>Setup status</h3>
+    <p class="hint">What is configured on this machine, and what each missing piece blocks.</p>
+    ${STATE.status.checks.map(c=>`
+      <div class="chk">
+        <div class="dot ${c.ok?'ok':(c.optional?'opt':'bad')}"></div>
+        <div style="flex:1">
+          <div class="t">${esc(c.label)} ${c.ok?'<span class="pill on">ready</span>':(c.optional?'<span class="pill">optional</span>':'<span class="pill">missing</span>')}</div>
+          <div class="d">Blocks: ${esc(c.blocks)}</div>
+          ${c.ok?'':`<div class="fix">${esc(c.fix)}</div>`}
+        </div>
+      </div>`).join('')}
+    <div class="row" style="margin-top:12px">
+      <button onclick="boot()">Re-check</button>
+      <button onclick="run({kind:'checksync'})">Check skill/command sync</button>
+    </div>
+  </div>
+  <div id="runbox"></div>`;
+  renderRunBox();
+}
+
+// ── Brand ────────────────────────────────────────────────────────────────────
+function viewBrand(v){
+  const p = STATE.profile;
+  if (!p) { v.innerHTML = '<div class="empty">No gym-profile.json for this client.</div>'; return; }
+  const L = p.brand_lock ||= {};
+  const C = L.colors ||= {};
+  const loc = (p.locations ||= [{}])[0];
+  const col = (k,lbl) => `
+    <div>
+      <label>${lbl} hex</label>
+      <div class="row" style="gap:6px;flex-wrap:nowrap">
+        <input type="color" style="width:42px;padding:2px;flex:none" value="${esc(C[k]?.hex||'#000000')}"
+          oninput="setP('brand_lock.colors.${k}.hex',this.value); this.nextElementSibling.value=this.value">
+        <input class="mono" value="${esc(C[k]?.hex||'')}" placeholder="#000000"
+          oninput="setP('brand_lock.colors.${k}.hex',this.value); this.previousElementSibling.value=/^#[0-9a-fA-F]{6}$/.test(this.value)?this.value:'#000000'">
+      </div>
+      <input style="margin-top:6px" placeholder="name, e.g. Iron Navy" value="${esc(C[k]?.name||'')}"
+        oninput="setP('brand_lock.colors.${k}.name',this.value)">
+    </div>`;
+
+  v.innerHTML = `
+  <div class="card">
+    <h3>Identity</h3>
+    <p class="hint">Used to build campaign and ad names, so these must be importer-safe (no em dashes).</p>
+    <div class="grid">
+      <div><label>Display name</label><input value="${esc(p.display_name||'')}" oninput="setP('display_name',this.value)"></div>
+      <div><label>Abbreviation (2-4 caps)</label><input class="mono" value="${esc(p.gym_abbr||'')}" oninput="setP('gym_abbr',this.value.toUpperCase())"></div>
+      <div><label>Website</label><input value="${esc(p.website||'')}" oninput="setP('website',this.value)"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Location</h3>
+    <p class="hint">The postal code drives radius targeting — the single most important field for a gym.</p>
+    <div class="grid">
+      <div><label>Label</label><input value="${esc(loc.label||'')}" oninput="setP('locations.0.label',this.value)"></div>
+      <div><label>Address</label><input value="${esc(loc.address||'')}" oninput="setP('locations.0.address',this.value)"></div>
+      <div><label>Postal code</label><input class="mono" value="${esc(loc.postal_code||'')}" oninput="setP('locations.0.postal_code',this.value)"></div>
+      <div><label>Nearest MRT</label><input value="${esc(loc.nearest_mrt||'')}" oninput="setP('locations.0.nearest_mrt',this.value)"></div>
+      <div><label>Latitude</label><input class="mono" value="${esc(loc.lat??'')}" oninput="setP('locations.0.lat',parseFloat(this.value)||null)"></div>
+      <div><label>Longitude</label><input class="mono" value="${esc(loc.lng??'')}" oninput="setP('locations.0.lng',parseFloat(this.value)||null)"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Brand lock <span class="pill on">overrides auto-detection</span></h3>
+    <p class="hint">These colours win over anything the website scrape guesses. This is the gym's jurisdiction over its own look.</p>
+    <div class="grid">${col('primary','Primary')}${col('secondary','Secondary')}${col('accent','Accent')}</div>
+    <fieldset style="margin-top:14px"><legend>Photography</legend>
+      <div class="grid">
+        <div><label>Must show (one per line)</label><textarea oninput="setP('brand_lock.photography.must',this.value.split('\\n').filter(Boolean))">${esc((L.photography?.must||[]).join('\n'))}</textarea></div>
+        <div><label>Never show (one per line)</label><textarea oninput="setP('brand_lock.photography.never',this.value.split('\\n').filter(Boolean))">${esc((L.photography?.never||[]).join('\n'))}</textarea></div>
+      </div>
+    </fieldset>
+    <div class="row"><span style="font-size:12px;color:var(--dim)">Assets on disk:</span>
+      ${Object.entries(STATE.clients.find(c=>c.gym===STATE.sel)?.asset_counts||{}).map(([k,n])=>
+        `<span class="pill ${n>0?'on':''}">${k}: ${n}</span>`).join('')}
+    </div>
+  </div>
+  ${saveBar('profile')}`;
+}
+
+// ── Offer ────────────────────────────────────────────────────────────────────
+function viewOffer(v){
+  const c = STATE.clients.find(x=>x.gym===STATE.sel);
+  const o = STATE.offerDoc;
+  const picker = `
+    <div class="card"><div class="row">
+      <label style="margin:0">Offer</label>
+      <select style="width:auto;min-width:200px" onchange="loadOffer(this.value)">
+        ${(c?.offers||[]).map(s=>`<option ${s===STATE.offer?'selected':''}>${esc(s)}</option>`).join('')}
+      </select>
+      <button onclick="newOffer()">+ New offer</button>
+    </div></div>`;
+  if (!o) { v.innerHTML = picker + '<div class="empty">No offer yet. Create one to define what this campaign sells.</div>'; return; }
+  const P = o.price ||= {}, M = o.mechanics ||= {}, S = o.scarcity ||= {}, D = o.destination ||= {}, G = o.guarantee ||= {}, MSG = o.messaging ||= {};
+
+  v.innerHTML = picker + `
+  <div class="card">
+    <h3>The offer</h3>
+    <p class="hint">This is what your ads sell. Phase 2 fills image prompts from it and Phase 4 writes copy from it.</p>
+    <div class="grid">
+      <div><label>Name</label><input value="${esc(o.name||'')}" oninput="setO('name',this.value)"></div>
+      <div><label>Type</label><select onchange="setO('offer_type',this.value)">
+        ${STATE.enums.offerTypes.map(t=>`<option ${t===o.offer_type?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div><label>Duration</label><div class="row" style="flex-wrap:nowrap">
+        <input type="number" value="${esc(o.duration?.value??'')}" oninput="setO('duration.value',parseInt(this.value)||null)">
+        <select style="width:110px" onchange="setO('duration.unit',this.value)">
+          ${['weeks','days','months','sessions'].map(u=>`<option ${u===o.duration?.unit?'selected':''}>${u}</option>`).join('')}</select>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Price</h3>
+    <p class="hint">"Display" is the exact string copy must use — it is never re-derived from the number.</p>
+    <div class="grid">
+      <div><label>Amount (SGD)</label><input type="number" value="${esc(P.amount??'')}" oninput="setO('price.amount',parseFloat(this.value)||null)"></div>
+      <div><label>Display string</label><input class="mono" placeholder="$397" value="${esc(P.display||'')}" oninput="setO('price.display',this.value)"></div>
+      <div><label>Qualifier</label><select onchange="setO('price.qualifier',this.value)">
+        ${STATE.enums.priceQualifiers.map(q=>`<option ${q===P.qualifier?'selected':''}>${q}</option>`).join('')}</select></div>
+      <div><label>GST treatment</label><select onchange="setO('price.gst_treatment',this.value)">
+        ${['inclusive','exclusive','not_registered'].map(g=>`<option ${g===P.gst_treatment?'selected':''}>${g}</option>`).join('')}</select></div>
+      <div><label>Compare-at amount</label><input type="number" value="${esc(P.compare_at?.amount??'')}" oninput="setO('price.compare_at.amount',parseFloat(this.value)||null)"></div>
+      <div><label>Compare-at basis</label><input placeholder="12 x $60 drop-in" value="${esc(P.compare_at?.basis||'')}" oninput="setO('price.compare_at.basis',this.value)"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>What's included</h3>
+    <div class="grid">
+      <div><label>Included items (one per line)</label><textarea oninput="setO('mechanics.whats_included',this.value.split('\\n').filter(Boolean))">${esc((M.whats_included||[]).join('\n'))}</textarea></div>
+      <div><label>Who it's for</label><textarea oninput="setO('mechanics.who_its_for',this.value)">${esc(M.who_its_for||'')}</textarea></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Urgency <span class="pill">must be real</span></h3>
+    <p class="hint">Fabricated scarcity is blocked at validation. A capacity claim needs a real spot count.</p>
+    <div class="grid">
+      <div><label>Type</label><select onchange="setO('scarcity.type',this.value);render()">
+        ${['none','deadline','cohort_start','capacity'].map(t=>`<option ${t===S.type?'selected':''}>${t}</option>`).join('')}</select></div>
+      ${S.type==='deadline'?`<div><label>Signup deadline</label><input type="date" value="${esc((S.signup_deadline||'').slice(0,10))}" oninput="setO('scarcity.signup_deadline',this.value)"></div>`:''}
+      ${S.type==='cohort_start'?`<div><label>Cohort start date</label><input type="date" value="${esc((S.cohort_start_date||'').slice(0,10))}" oninput="setO('scarcity.cohort_start_date',this.value)"></div>`:''}
+      ${S.type==='capacity'?`
+        <div><label>Spots available</label><input type="number" value="${esc(M.capacity?.spots??'')}" oninput="setO('mechanics.capacity.spots',parseInt(this.value)||null);setO('mechanics.capacity.limited',true)"></div>
+        <div><label>Verifiable?</label><select onchange="setO('mechanics.capacity.claim_verifiable',this.value==='yes')">
+          <option value="yes" ${M.capacity?.claim_verifiable!==false?'selected':''}>yes</option>
+          <option value="no" ${M.capacity?.claim_verifiable===false?'selected':''}>no</option></select></div>`:''}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Destination & compliance</h3>
+    <div class="grid">
+      <div><label>Landing / booking URL</label><input value="${esc(D.landing_url||'')}" oninput="setO('destination.landing_url',this.value)"></div>
+      <div><label>Call to action</label><select onchange="setO('destination.primary_cta',this.value)">
+        ${STATE.enums.cta.map(t=>`<option ${t===D.primary_cta?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div><label>Guarantee posture</label><select onchange="setO('guarantee.posture',this.value)">
+        ${['none','satisfaction','conditional_refund','free_trial_only'].map(t=>`<option ${t===G.posture?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div><label>Guarantee text</label><input value="${esc(G.text||'')}" oninput="setO('guarantee.text',this.value)"></div>
+      <div style="grid-column:1/-1"><label>Never say (one per line) — enforced on generated copy</label>
+        <textarea oninput="setO('messaging.must_not_say',this.value.split('\\n').filter(Boolean))">${esc((MSG.must_not_say||[]).join('\n'))}</textarea></div>
+    </div>
+  </div>
+  ${saveBar('offer')}`;
+}
+
+// ── Targeting ────────────────────────────────────────────────────────────────
+function viewTargeting(v){
+  const p = STATE.profile; if(!p){v.innerHTML='<div class="empty">No profile.</div>';return;}
+  const T = p.targeting_defaults ||= {}, C = p.campaign_defaults ||= {};
+  const dem = T.demographics ||= {}, B = C.budget ||= {};
+  const pin = (T.geo ||= {}).radius_pins?.[0] || {};
+  v.innerHTML = `
+  <div class="card">
+    <h3>Budget <span class="pill">had no representation before</span></h3>
+    <div class="grid">
+      <div><label>Daily / lifetime</label><select onchange="setP('campaign_defaults.budget.type',this.value)">
+        ${['daily','lifetime'].map(t=>`<option ${t===B.type?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div><label>Amount (SGD)</label><input type="number" value="${esc(B.amount??'')}" oninput="setP('campaign_defaults.budget.amount',parseFloat(this.value)||null)"></div>
+      <div><label>Budget level</label><select onchange="setP('campaign_defaults.budget.level',this.value)">
+        ${['campaign','adset'].map(t=>`<option ${t===B.level?'selected':''}>${t==='campaign'?'campaign (CBO)':'adset (ABO)'}</option>`).join('')}</select></div>
+      <div><label>Objective</label><select onchange="setP('campaign_defaults.objective',this.value)">
+        ${['OUTCOME_LEADS','OUTCOME_TRAFFIC','OUTCOME_SALES','OUTCOME_AWARENESS','OUTCOME_ENGAGEMENT'].map(t=>`<option ${t===C.objective?'selected':''}>${t}</option>`).join('')}</select></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Geo radius</h3>
+    <p class="hint">Gyms are radius businesses. Pin the postal code and pick how far people will travel.</p>
+    <div class="grid">
+      <div><label>Postal code</label><input class="mono" value="${esc(pin.postal_code||p.locations?.[0]?.postal_code||'')}" oninput="setPin('postal_code',this.value)"></div>
+      <div><label>Radius (km)</label><input type="number" step="0.5" value="${esc(pin.radius_km??5)}" oninput="setPin('radius_km',parseFloat(this.value)||null)"></div>
+      <div><label>Location type</label><select onchange="setPin('location_types',this.value==='both'?['home','recent']:[this.value])">
+        <option value="both" ${(pin.location_types||[]).length===2?'selected':''}>home + recent</option>
+        <option value="home" ${JSON.stringify(pin.location_types)==='["home"]'?'selected':''}>home (heartland gyms)</option>
+        <option value="recent" ${JSON.stringify(pin.location_types)==='["recent"]'?'selected':''}>recent (CBD gyms)</option>
+      </select></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Audience</h3>
+    <div class="grid">
+      <div><label>Age min</label><input type="number" value="${esc(dem.age_min??'')}" oninput="setP('targeting_defaults.demographics.age_min',parseInt(this.value)||null)"></div>
+      <div><label>Age max</label><input type="number" value="${esc(dem.age_max??'')}" oninput="setP('targeting_defaults.demographics.age_max',parseInt(this.value)||null)"></div>
+      <div><label>Genders</label><select onchange="setP('targeting_defaults.demographics.genders',this.value)">
+        ${['all','men','women'].map(t=>`<option ${t===dem.genders?'selected':''}>${t}</option>`).join('')}</select></div>
+    </div>
+  </div>
+  ${saveBar('profile')}`;
+}
+
+// ── Generate ─────────────────────────────────────────────────────────────────
+function viewGenerate(v){
+  const gemini = STATE.status.checks.find(c=>c.key==='GEMINI_KEY');
+  v.innerHTML = `
+  <div class="card">
+    <h3>Validate</h3>
+    <p class="hint">Merges the profile and offer, checks every compliance gate, and writes the resolved brief the later phases read.</p>
+    <div class="row"><button class="primary" onclick="validate()">Validate ${esc(STATE.sel)} / ${esc(STATE.offer||'—')}</button></div>
+    <div id="valout" style="margin-top:12px"></div>
+  </div>
+  <div class="card">
+    <h3>Generate images (Phase 3)</h3>
+    ${gemini.ok?'':`<div class="msg err">Blocked: no Gemini API key. ${esc(gemini.fix)}</div>`}
+    <div class="grid">
+      <div><label>Templates (comma-separated)</label><input class="mono" id="gTpl" placeholder="51,3,2" value="51,3,2"></div>
+      <div><label>Images per prompt</label><input type="number" id="gNum" value="1" min="1" max="99"></div>
+      <div><label>Ratios</label><select id="gRatio">
+        <option value="1x1">1x1 only (cheap test)</option>
+        <option value="9x16">9x16 only</option>
+        <option value="1x1,9x16">both</option>
+      </select></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" ${gemini.ok?'':'disabled'} onclick="run({kind:'images',gym:STATE.sel,templates:$('#gTpl').value,numImages:$('#gNum').value,ratios:$('#gRatio').value})">Run generation</button>
+      <span style="font-size:12px;color:var(--dim)">Costs API credits. Start small.</span>
+    </div>
+  </div>
+  <div id="runbox"></div>`;
+  renderRunBox();
+}
+
+// ── Review ───────────────────────────────────────────────────────────────────
+async function viewReview(v){
+  v.innerHTML = '<div class="card"><h3>Review</h3><p class="hint">Loading…</p></div>';
+  const { artifacts } = await api('/api/artifacts');
+  v.innerHTML = `
+  <div class="card">
+    <h3>Generated pages</h3>
+    <p class="hint">Image galleries and the competitor swipe review, served from disk.</p>
+    ${artifacts.length ? artifacts.map(a=>`
+      <div class="chk"><div class="dot ok"></div><div style="flex:1">
+        <div class="t">${esc(a.gym)} <span class="pill">${esc(a.version)}</span></div>
+        <div class="d"><a href="${esc(a.url)}" target="_blank">Open →</a></div>
+      </div></div>`).join('')
+      : '<div class="empty">Nothing generated yet. Run a batch from the Generate tab.</div>'}
+  </div>`;
+}
+
+// ── Edit + save ──────────────────────────────────────────────────────────────
+const setPath = (obj,path,val) => {
+  const ks = path.split('.'); let o = obj;
+  for (let i=0;i<ks.length-1;i++){ const k=ks[i], nk=ks[i+1];
+    if (o[k]==null) o[k] = /^\d+$/.test(nk)?[]:{}; o=o[k]; }
+  o[ks.at(-1)] = val;
+};
+const setP = (path,val)=>{ setPath(STATE.profile,path,val); dirty('profile'); };
+const setO = (path,val)=>{ setPath(STATE.offerDoc,path,val); dirty('offer'); };
+const setPin = (k,val)=>{
+  const g = STATE.profile.targeting_defaults.geo ||= {};
+  (g.radius_pins ||= [])[0] ||= { label:'', location_types:['home','recent'] };
+  g.radius_pins[0][k] = val; dirty('profile');
+};
+
+let DIRTY = {};
+function dirty(which){ DIRTY[which]=true; const b=$('#saveBtn_'+which); if(b){b.disabled=false;b.textContent='Save changes';} }
+function saveBar(which){
+  return `<div class="row" style="position:sticky;bottom:0;background:var(--bg);padding:12px 0;border-top:1px solid var(--line)">
+    <button class="primary" id="saveBtn_${which}" ${DIRTY[which]?'':'disabled'} onclick="save('${which}')">${DIRTY[which]?'Save changes':'Saved'}</button>
+    <span id="saveMsg_${which}" style="font-size:12px;color:var(--dim)"></span></div>`;
+}
+async function save(which){
+  const btn=$('#saveBtn_'+which), msg=$('#saveMsg_'+which);
+  btn.disabled=true; btn.textContent='Saving…';
+  try{
+    if (which==='profile') await api('/api/client/'+STATE.sel, {method:'PUT', body:STATE.profile});
+    else await api(`/api/client/${STATE.sel}/offer/${STATE.offer}`, {method:'PUT', body:STATE.offerDoc});
+    DIRTY[which]=false; btn.textContent='Saved'; msg.textContent='written to disk';
+    await loadClients(); render();
+  }catch(e){ btn.disabled=false; btn.textContent='Save changes'; msg.innerHTML=`<span style="color:var(--err)">${esc(e.message)}</span>`; }
+}
+
+async function validate(){
+  const out=$('#valout'); out.innerHTML='<div class="msg">Validating…</div>';
+  try{
+    const r = await api('/api/validate',{method:'POST',body:{gym:STATE.sel,offer:STATE.offer}});
+    out.innerHTML =
+      r.errors.map(e=>`<div class="msg err">${esc(e)}</div>`).join('') +
+      r.warnings.map(w=>`<div class="msg warn">${esc(w)}</div>`).join('') +
+      (r.errors.length?'':`<div class="msg ok">Valid. Resolved brief written — budget ${esc(r.resolved?.campaign?.budget?.amount??'—')} ${esc(r.resolved?.campaign?.budget?.currency??'')}, radius ${esc(r.resolved?.targeting?.geo?.radius_pins?.[0]?.radius_km??'—')}km.</div>`);
+  }catch(e){ out.innerHTML=`<div class="msg err">${esc(e.message)}</div>`; }
+}
+
+// ── Runs ─────────────────────────────────────────────────────────────────────
+/** Paint the current run from STATE, so a re-render never destroys the log. */
+function renderRunBox(){
+  const box=$('#runbox'); if(!box) return;
+  const r=STATE.run; if(!r){ box.innerHTML=''; return; }
+  box.innerHTML=`<div class="card">
+    <div class="row"><h3 style="margin:0">${esc(r.label)}</h3>
+      <span class="pill ${r.done&&r.code===0?'on':''}">${r.done?(r.code===0?'finished':'exit '+r.code):'running…'}</span>
+      <div class="spacer"></div>
+      <button onclick="STATE.run=null;renderRunBox()" style="padding:3px 9px;font-size:12px">Clear</button></div>
+    <div class="log" id="log">${r.lines.map(l=>`<div class="${esc(l.stream)}">${esc(l.line)}</div>`).join('')}</div>
+  </div>`;
+  const log=$('#log'); if(log) log.scrollTop=log.scrollHeight;
+}
+
+async function run(params){
+  STATE.run = { label:'Starting…', lines:[], done:false, code:null };
+  renderRunBox();
+  try{
+    const { id, label } = await api('/api/run',{method:'POST',body:params});
+    STATE.run.label = label; renderRunBox();
+    const es = new EventSource(`/api/run/${id}/stream`);
+    es.onmessage = e => {
+      STATE.run.lines.push(JSON.parse(e.data));
+      const log=$('#log');
+      if (log){ const d=STATE.run.lines.at(-1); const div=document.createElement('div');
+        div.className=d.stream; div.textContent=d.line; log.appendChild(div); log.scrollTop=log.scrollHeight; }
+      else renderRunBox();
+    };
+    es.addEventListener('done', async e => {
+      es.close();
+      STATE.run.done = true; STATE.run.code = JSON.parse(e.data).code;
+      // Refresh underlying data, then repaint — the log survives because it lives in STATE.
+      STATE.status = await api('/api/status');
+      await loadClients();
+      render();
+    });
+    es.onerror = ()=>{ es.close(); STATE.run.done=true; renderRunBox(); };
+  }catch(e){
+    STATE.run = { label:'Failed to start', lines:[{stream:'err',line:e.message}], done:true, code:1 };
+    renderRunBox();
+  }
+}
+
+// ── Creation ─────────────────────────────────────────────────────────────────
+async function newClient(){
+  const gym = prompt('Client slug (lowercase, hyphens):\ne.g. ironhaus'); if(!gym) return;
+  const offer = prompt('First offer slug:\ne.g. 6wk-challenge') || null;
+  try{ await api('/api/clients',{method:'POST',body:{gym:gym.trim(),offer:offer?.trim()||null}});
+    await loadClients(); await selectClient(gym.trim()); STATE.tab='brand'; render();
+  }catch(e){ alert(e.message); }
+}
+async function newOffer(){
+  const offer = prompt('Offer slug:\ne.g. 12wk-challenge'); if(!offer) return;
+  try{ await api('/api/clients',{method:'POST',body:{gym:STATE.sel,offer:offer.trim()}});
+    await loadClients(); await selectClient(STATE.sel); await loadOffer(offer.trim());
+  }catch(e){ alert(e.message); }
+}
+
+boot().catch(e=>{ document.body.innerHTML=`<div style="padding:40px;color:#f85149">Failed to start: ${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>
