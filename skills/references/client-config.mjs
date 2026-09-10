@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
+import { loadCatalogue } from "./render-composites.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -229,6 +230,15 @@ function validate(profile, offer, resolved, gymDir) {
     W(`no reference-image folder yet (looked for brand-assets/, reference-images/, product-images/ in ${gymDir}) — image generation will fail until real photos are added`);
   }
 
+  // --- creative: looks a client has switched off for the offer-first creative (assign-variants.mjs) ---
+  const creative = profile.creative || {};
+  const cat = loadCatalogue();
+  for (const [k, known] of [["exclude_layouts", cat.treatments.treatments], ["exclude_styles", cat.styles.styles], ["exclude_palettes", cat.palettes.palettes]]) {
+    if (creative[k] == null) continue;
+    if (!Array.isArray(creative[k])) { E(`gym-profile.json: creative.${k} must be a list`); continue; }
+    for (const id of creative[k]) if (!known[id]) E(`gym-profile.json: creative.${k} names "${id}", which is not in the catalogue (${Object.keys(known).join(", ")})`);
+  }
+
   // --- targeting ---
   const tg = resolved.targeting || {};
   const dem = tg.demographics || {};
@@ -298,6 +308,7 @@ export function loadClientConfig(gym, offerSlug, { root = REPO_ROOT } = {}) {
       meta_assets: profile.meta_assets || {},
     },
     brand_lock: profile.brand_lock || {},
+    creative: profile.creative || {},
     offer,
     targeting,
     campaign,

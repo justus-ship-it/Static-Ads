@@ -84,7 +84,7 @@ export function splitOffer(offer, freePrefix = false) {
 
 const loadJson = (p) => JSON.parse(readFileSync(p, "utf-8"));
 
-function imageDataUrl(pathOrUrl) {
+export function imageDataUrl(pathOrUrl) {
   if (pathOrUrl.startsWith("data:")) return pathOrUrl;
   const p = resolve(pathOrUrl);
   const mime = MIME[extname(p).toLowerCase()];
