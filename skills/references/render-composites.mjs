@@ -22,6 +22,7 @@
  *
  * Usage:
  *   node skills/references/render-composites.mjs --image <photo> \
+ *     [--image <photo2> …  (T7 collage: 4+ photos, T8 panels: 2)] \
  *     --location "BISHAN" --audience "LADIES WANTED" \
  *     --offer "12 Week Confidence Comeback Challenge" [--free] \
  *     [--treatment t1-bottom-stack] [--style s1-heavy-sans] [--palette cyan-pink] [--ratio 1x1] \
@@ -109,10 +110,11 @@ const TEXT_BLOCKS = ["location", "audience", "duration", "offer_name"];
 const ANCHORS = ["top", "center", "bottom"];
 const ALIGNS = ["left", "center", "right"];
 const SCRIMS = ["none", "top", "bottom", "left", "right", "even"];
+const BACKGROUNDS = ["single", "collage", "panels"];
 
 /** Geometry rules every layout must meet before anything renders. Returns a list of problems.
  *  Regions are in % of the canvas, so these hold at any canvas size. */
-export function validateLayout(layout, id = "layout") {
+export function validateLayout(layout, id = "layout", canvas = [1, 1]) {
   const e = [];
   const m = EDGE_MARGIN * 100;
   const box = ([x, y, w, h]) => ({ x0: x, y0: y, x1: x + w, y1: y + h });
@@ -181,21 +183,55 @@ export function validateLayout(layout, id = "layout") {
     if (!z.name || !Array.isArray(z.rect) || z.rect.length !== 4) { e.push(`${id}: clear zones need a name and rect`); continue; }
     for (const g of valid) if (meets(box(z.rect), box(g.region))) e.push(`${id}: group "${g.id}" touches the clear zone "${z.name}"`);
   }
+  const bg = layout.background;
+  if (bg) {
+    if (!BACKGROUNDS.includes(bg.type)) e.push(`${id}: background.type must be one of ${BACKGROUNDS.join(", ")}`);
+    if (bg.type === "collage") {
+      if (!(Number.isInteger(bg.cols) && bg.cols >= 1 && Number.isInteger(bg.rows) && bg.rows >= 1)) e.push(`${id}: a collage needs whole-number cols and rows`);
+      // Tiles take the photos in order, repeating. With more photos than columns, no tile ever
+      // has the same photo beside or above it.
+      if (!(bg.min_images > bg.cols)) e.push(`${id}: a ${bg.cols}-column collage needs min_images of at least ${bg.cols + 1}, or a photo would repeat next to itself`);
+    }
+    if (bg.type === "panels") {
+      if (!/^#[0-9A-Fa-f]{6}$/.test(bg.backdrop || "")) e.push(`${id}: panels need a backdrop colour`);
+      if (!bg.panels?.length) e.push(`${id}: panels need at least one panel`);
+      if (bg.min_images !== bg.panels?.length) e.push(`${id}: panels need one photo each (min_images = ${bg.panels?.length})`);
+      (bg.panels || []).forEach((pn, i) => {
+        const ry = (pn.r * canvas[0]) / canvas[1]; // r is a % of the width; the circle is round on any canvas
+        const pb = { x0: pn.cx - pn.r, y0: pn.cy - ry, x1: pn.cx + pn.r, y1: pn.cy + ry };
+        if (pn.shape !== "circle") e.push(`${id}: panel ${i + 1} shape must be circle`);
+        if (pb.x0 < 0 || pb.y0 < 0 || pb.x1 > 100 || pb.y1 > 100) e.push(`${id}: panel ${i + 1} leaves the canvas`);
+        for (const g of valid) if (meets(pb, box(g.region))) e.push(`${id}: panel ${i + 1} touches group "${g.id}"`);
+      });
+    }
+  }
   return e;
+}
+
+/** How many photos a layout needs: one for a single photo, more for a collage or panels. */
+export function imagesNeeded(layout) {
+  const bg = layout?.background;
+  return !bg || bg.type === "single" ? 1 : bg.min_images;
 }
 
 /** Merge layout × style × palette into one render spec. Everything that can be rejected before
  *  opening a browser is rejected here, with a message saying what to change. `styleSpec` and
  *  `treatmentSpec` let a caller pass a style or layout object directly instead of an id (used by
  *  the UI preview and the tests). */
-export function buildSpec({ image, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, debug = false }) {
+export function buildSpec({ image, images, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, debug = false }) {
   const { treatments: T, palettes: P, styles: S } = loadCatalogue();
   const tr = treatmentSpec || T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}". Known: ${Object.keys(T.treatments).join(", ")}`);
   const layout = tr.layouts[ratio];
   if (!layout) throw new Error(`treatment "${treatment}" has no ${ratio} layout yet`);
-  const layoutErrors = validateLayout(layout, treatmentSpec ? "custom layout" : treatment);
+  const layoutErrors = validateLayout(layout, treatmentSpec ? "custom layout" : treatment, T.canvas[ratio]);
   if (layoutErrors.length) throw new Error(layoutErrors.join("; "));
+  const photos = images?.length ? images : image ? [image] : [];
+  const need = imagesNeeded(layout);
+  if (photos.length < need) {
+    const what = layout.background?.type === "collage" ? "for its photo collage" : layout.background?.type === "panels" ? "for its photo panels" : "";
+    throw new Error(`${treatmentSpec ? "this layout" : `"${treatment}"`} needs ${need} photo${need > 1 ? "s" : ""} ${what}; ${photos.length} supplied`.replace(/ ;/, ";"));
+  }
   const pal = P.palettes[palette];
   if (!pal) throw new Error(`unknown palette "${palette}". Known: ${Object.keys(P.palettes).join(", ")}`);
   const st = styleSpec || S.styles[style];
@@ -256,7 +292,8 @@ export function buildSpec({ image, text, treatment = "t1-bottom-stack", treatmen
     fonts: [...used.values()],
     script_min_px: S.script_rules.min_px,
     divider_contrast: DIVIDER_CONTRAST,
-    image: imageDataUrl(image),
+    background: layout.background || { type: "single" },
+    images: photos.slice(0, layout.background?.type === "panels" ? need : undefined).map(imageDataUrl),
     focus: focus || [0.5, 0.5],
     text,
     debug, // review overlay only; drawn after measurement, never affects layout or checks
@@ -409,7 +446,12 @@ export function verifyReport(spec, report) {
   const inside = (k, R) => k.x >= R.x - TOL && k.y >= R.y - TOL && k.x + k.w <= R.x + R.w + TOL && k.y + k.h <= R.y + R.h + TOL;
   const meets = (a, z) => a.x < z.x + z.w - TOL && z.x < a.x + a.w - TOL && a.y < z.y + z.h - TOL && z.y < a.y + a.h - TOL;
   const zones = report.clear_zones || [];
-  const clear = (k, what) => { for (const z of zones) if (meets(k, z)) f.push(`${what} enters the clear zone "${z.name}"`); };
+  // Photo panels (T8) are keep-out areas too: nothing may be set over a panel.
+  const panels = (report.background?.panels || []).map((p, i) => ({ name: `photo panel ${i + 1}`, x: p.cx - p.r, y: p.cy - p.r, w: 2 * p.r, h: 2 * p.r }));
+  const clear = (k, what) => {
+    for (const z of zones) if (meets(k, z)) f.push(`${what} enters the clear zone "${z.name}"`);
+    for (const z of panels) if (meets(k, z)) f.push(`${what} overlaps ${z.name}`);
+  };
   // Which group each line belongs to, according to the layout that was asked for.
   const wantGroup = {};
   for (const g of spec.layout?.groups || []) for (const it of g.stack) if (!it.divider) wantGroup[it.block] = g.id;
@@ -459,20 +501,20 @@ export function verifyReport(spec, report) {
 
 // ── High-level: inputs → verified PNG ─────────────────────────────────────
 
-export async function renderComposite(browser, { image, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug = false }) {
+export async function renderComposite(browser, { image, images, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug = false }) {
   const inputErrors = validateInputs({ location, audience, offer });
   if (inputErrors.length) return { ok: false, failures: inputErrors };
   const { duration, offer_name } = splitOffer(offer, free);
   const text = { location, audience, duration, offer_name };
   let spec;
   try {
-    spec = buildSpec({ image, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug });
+    spec = buildSpec({ image, images, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug });
   } catch (e) {
     return { ok: false, failures: [e.message] }; // rejected before any browser work
   }
   const { png, report } = await renderSpec(browser, spec);
   const failures = verifyReport(spec, report);
-  return { ok: failures.length === 0, failures, png, report, spec: { ...spec, image: "(data url omitted)" } };
+  return { ok: failures.length === 0, failures, png, report, spec: { ...spec, images: spec.images.map(() => "(data url omitted)") } };
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────
@@ -481,7 +523,7 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLTo
 if (isMain) {
   const { values: v } = parseArgs({
     options: {
-      image: { type: "string" }, location: { type: "string" }, audience: { type: "string" },
+      image: { type: "string", multiple: true }, location: { type: "string" }, audience: { type: "string" },
       offer: { type: "string" }, free: { type: "boolean", default: false },
       treatment: { type: "string", default: "t1-bottom-stack" }, palette: { type: "string", default: "cyan-pink" },
       style: { type: "string", default: "s1-heavy-sans" },
@@ -489,15 +531,15 @@ if (isMain) {
       debug: { type: "boolean", default: false },
     },
   });
-  if (!v.image || !v.out) {
-    console.error("Usage: render-composites.mjs --image <photo> --location <text> [--audience <text>] --offer <text> [--free] --out <file.png>");
+  if (!v.image?.length || !v.out) {
+    console.error("Usage: render-composites.mjs --image <photo> [--image <photo> …] --location <text> [--audience <text>] --offer <text> [--free] --out <file.png>\n  (T7 collage needs 4+ photos, T8 panels needs 2: repeat --image)");
     process.exit(1);
   }
   const browser = await launchBrowser();
   let code = 0;
   try {
     const r = await renderComposite(browser, {
-      image: v.image, location: v.location, audience: v.audience ?? null, offer: v.offer,
+      images: v.image, location: v.location, audience: v.audience ?? null, offer: v.offer,
       free: v.free, treatment: v.treatment, palette: v.palette, style: v.style, ratio: v.ratio, debug: v.debug,
     });
     if (v.report) writeFileSync(resolve(v.report), JSON.stringify({ ok: r.ok, failures: r.failures, report: r.report }, null, 2) + "\n");

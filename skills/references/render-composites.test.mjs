@@ -431,7 +431,7 @@ test("E2 golden: T1 reproduces the approved Step 1 renders exactly", async () =>
 // ── Step 2a — the layout engine (groups, dividers, scrim directions, bands, clear zones) ──
 // These use small test layouts passed as `treatmentSpec`, so the engine is proven on its own
 // before the real layouts T2–T8 are added to the catalogue (Step 2b/2c, with their own tests).
-import { validateLayout } from "./render-composites.mjs";
+import { validateLayout, imagesNeeded } from "./render-composites.mjs";
 
 const T1 = CAT.treatments.treatments["t1-bottom-stack"];
 const layoutOf = (groups, clear_zones = []) => ({ layouts: { "1x1": { groups, clear_zones } }, contrast: T1.contrast });
@@ -468,7 +468,10 @@ function painted(png, test) {
   }
   return n;
 }
-const within = (R) => (x, y) => x >= R.x && x <= R.x + R.w && y >= R.y && y <= R.y + R.h;
+// Pixel (x, y) is the square [x, x+1) × [y, y+1). It is inside a rect if the two overlap: regions
+// sit on fractional pixels (6% of 1080 = 64.8), and the pixel row a region edge passes through is
+// partly inside it. (Comparing only the pixel's corner miscounted those rows on top/left edges.)
+const within = (R) => (x, y) => x + 1 > R.x && x < R.x + R.w && y + 1 > R.y && y < R.y + R.h;
 
 test("2a layout rules: T1 and every test layout are valid; bad geometry is refused before rendering", () => {
   assert.deepEqual(validateLayout(T1.layouts["1x1"], "t1"), []);
@@ -620,12 +623,14 @@ test("2a verifier: catches a line in a clear zone, a stray divider, a weak divid
 // background, so any painted pixel is text, a band or a divider) and shared by B4, C and D.
 const LAYOUT_IDS = Object.keys(CAT.treatments.treatments);
 const LY = (id) => CAT.treatments.treatments[id];
+// As many copies of a background as the layout needs photos (T7's collage takes 4, T8's panels 2).
+const photos = (treatment, image) => Array(imagesNeeded(LY(treatment).layouts["1x1"])).fill(image);
 const LONG_OFFER = { location: "BISHAN / THOMSON", audience: "LADIES WANTED", offer: "12 Week Strength and Confidence Comeback Challenge For Busy Parents" };
 const grid = new Map(); // `${layout}|${style}|short|long` → { r, png }
 const gridRender = async (treatment, style, len) => {
   const key = `${treatment}|${style}|${len}`;
   if (!grid.has(key)) {
-    const r = await renderComposite(browser, { image: SOLID_BG, ...(len === "long" ? LONG_OFFER : BASE), treatment, style, palette: "white-on-dark" });
+    const r = await renderComposite(browser, { images: photos(treatment, SOLID_BG), ...(len === "long" ? LONG_OFFER : BASE), treatment, style, palette: "white-on-dark" });
     grid.set(key, { r, png: r.ok ? decodePNG(r.png) : null });
   }
   return grid.get(key);
@@ -638,8 +643,8 @@ const allGrid = async (layouts = LAYOUT_IDS) => {
 const blk = (r, id) => r.report.blocks.find((b) => b.block === id);
 const bottomOf = (k) => k.y + k.h;
 
-test("A1 catalogue: the layouts so far, numbered in order, each attributed and with a visual hint", () => {
-  assert.deepEqual(LAYOUT_IDS, ["t1-bottom-stack", "t2-top-bottom-split", "t3-right-column", "t4-centred-stack", "t5-offer-band", "t6-left-column"]);
+test("A1 catalogue: all 8 layouts, numbered in order, each attributed and with a visual hint", () => {
+  assert.deepEqual(LAYOUT_IDS, ["t1-bottom-stack", "t2-top-bottom-split", "t3-right-column", "t4-centred-stack", "t5-offer-band", "t6-left-column", "t7-collage", "t8-panels-band"]);
   LAYOUT_IDS.forEach((id, i) => {
     const t = LY(id);
     assert.equal(t.number, 101 + i, `${id} number`);
@@ -664,7 +669,7 @@ test("A2/A3 catalogue: every layout is geometrically sound and carries the whole
 test(`A4 catalogue: all ${LAYOUT_IDS.length * 9 * 10} layout × style × palette combinations build a valid spec`, () => {
   let n = 0;
   for (const treatment of LAYOUT_IDS) for (const style of STYLES) for (const palette of PALETTES) {
-    const spec = buildSpec({ image: DARK, text: TEXT, treatment, style, palette });
+    const spec = buildSpec({ images: photos(treatment, DARK), text: TEXT, treatment, style, palette });
     assert.equal(spec.layout.stack.length, 4);
     n++;
   }
@@ -674,7 +679,7 @@ test(`A4 catalogue: all ${LAYOUT_IDS.length * 9 * 10} layout × style × palette
 test("B1 every layout renders and verifies on dark, light and striped backgrounds", async () => {
   for (const [li, treatment] of LAYOUT_IDS.entries()) for (const [bi, [bg, image]] of Object.entries({ DARK, LIGHT, STRIPES }).entries()) {
     const palette = PALETTES[(li * 3 + bi) % PALETTES.length];
-    const r = await renderComposite(browser, { image, ...BASE, treatment, palette });
+    const r = await renderComposite(browser, { images: photos(treatment, image), ...BASE, treatment, palette });
     assert.equal(r.ok, true, `${treatment} / ${bg} / ${palette}:\n${r.failures.join("\n")}`);
   }
 });
@@ -683,7 +688,7 @@ test("B3 every layout × every palette holds contrast (backgrounds rotate dark /
   const BGS = [["DARK", DARK], ["LIGHT", LIGHT], ["STRIPES", STRIPES]];
   for (const [li, treatment] of LAYOUT_IDS.entries()) for (const [pi, palette] of PALETTES.entries()) {
     const [bg, image] = BGS[(li + pi) % 3];
-    const r = await renderComposite(browser, { image, ...BASE, treatment, palette });
+    const r = await renderComposite(browser, { images: photos(treatment, image), ...BASE, treatment, palette });
     assert.equal(r.ok, true, `${treatment} / ${palette} / ${bg}:\n${r.failures.join("\n")}`);
   }
 });
@@ -701,7 +706,7 @@ test("B2/B4 every layout × every style, short and long offer names: fits, exact
 
 test("B5 the audience line can be left out of every layout", async () => {
   for (const treatment of LAYOUT_IDS) {
-    const r = await renderComposite(browser, { image: DARK, ...BASE, audience: null, treatment });
+    const r = await renderComposite(browser, { images: photos(treatment, DARK), ...BASE, audience: null, treatment });
     assert.equal(r.ok, true, `${treatment}:\n${r.failures.join("\n")}`);
     assert.deepEqual(r.report.blocks.map((b) => b.block).sort(), ["duration", "location", "offer_name"]);
     // Dividers sit between the audience and the offer; with no audience they still have text on both sides.
@@ -711,7 +716,7 @@ test("B5 the audience line can be left out of every layout", async () => {
 
 test("B6 text that cannot fit fails loudly in every layout, never clips", async () => {
   for (const treatment of LAYOUT_IDS) {
-    const r = await renderComposite(browser, { image: DARK, ...BASE, offer: "12 Week " + "Supercalifragilisticexpialidocious".repeat(2), treatment });
+    const r = await renderComposite(browser, { images: photos(treatment, DARK), ...BASE, offer: "12 Week " + "Supercalifragilisticexpialidocious".repeat(2), treatment });
     assert.equal(r.ok, false, treatment);
     assert.match(r.failures.join(), /does not fit/, treatment);
   }
@@ -764,8 +769,8 @@ test("C3/C4 T3 and T6: a real column — edges aligned, the subject's side free 
   }
 });
 
-test("C5 T4: every line centred (±2px) and the stack centred vertically", async () => {
-  for (const { s, len, r } of await allGrid(["t4-centred-stack"])) {
+test("C5 T4 and T7: every line centred (±2px) and the stack centred vertically", async () => {
+  for (const { s, len, r } of await allGrid(["t4-centred-stack", "t7-collage"])) {
     const R = r.report.groups[0].region, mid = R.x + R.w / 2;
     for (const b of r.report.blocks) assert.ok(Math.abs(b.edge - mid) <= 2, `${s} / ${len}: ${b.block} centre ${b.edge.toFixed(1)} vs ${mid.toFixed(1)}`);
     const top = r.report.blocks[0].layout_rect.y - R.y, bottom = bottomOf(R) - bottomOf(r.report.blocks.at(-1).layout_rect);
@@ -787,15 +792,15 @@ test("C6 T5: the offer name sits on a pill per line, inside its region, at 4.5:1
   }
 });
 
-test("C9 dividers (T3, T4, T6): between the audience and the offer, inside the region, never text", async () => {
-  for (const { t, s, len, r } of await allGrid(["t3-right-column", "t4-centred-stack", "t6-left-column"])) {
+test("C9 dividers (T3, T4, T6, T7): between the audience and the offer, inside the region, never text", async () => {
+  for (const { t, s, len, r } of await allGrid(["t3-right-column", "t4-centred-stack", "t6-left-column", "t7-collage"])) {
     const tag = `${t} / ${s} / ${len}`;
     const [d] = r.report.groups[0].dividers;
     assert.ok(d, `${tag}: divider drawn`);
     assert.ok(d.y >= bottomOf(blk(r, "audience").rect) && bottomOf(d) <= blk(r, "duration").rect.y, `${tag}: between audience and duration`);
     assert.ok(!r.report.blocks.some((b) => b.block === "divider"));
   }
-  for (const t of ["t1-bottom-stack", "t2-top-bottom-split", "t5-offer-band"]) {
+  for (const t of ["t1-bottom-stack", "t2-top-bottom-split", "t5-offer-band", "t8-panels-band"]) {
     assert.equal(grid.get(`${t}|s1-heavy-sans|short`).r.report.groups.flatMap((g) => g.dividers).length, 0, `${t} has no divider`);
   }
 });
@@ -832,4 +837,96 @@ test("D3 pixels: on a light photo each layout darkens the side its text is on", 
   p = await shoot("t4-centred-stack");
   const corners = [meanLum(p, 0, 0, e, e), meanLum(p, W - e, 0, W, e), meanLum(p, 0, H - e, e, H), meanLum(p, W - e, H - e, W, H)];
   assert.ok(Math.max(...corners) - Math.min(...corners) < 2 && corners[0] < 200, `T4 evenly darkened: ${corners.map((c) => c.toFixed(0))}`);
+});
+
+// ── Step 2c — multi-photo layouts: T7 collage, T8 panels + band ─────────────
+const tile = (c) => svg(`<rect width="100%" height="100%" fill="${c}"/>`);
+const TILE_HEX = ["#E53935", "#43A047", "#1E88E5", "#FDD835", "#8E24AA"];
+const TILES = TILE_HEX.map(tile);
+const rgbOf = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+const pixel = (png, x, y) => { const i = (Math.round(y) * png.w + Math.round(x)) * png.ch; return [png.px[i], png.px[i + 1], png.px[i + 2]]; };
+const near = (a, b, tol = 6) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
+// Points covered by nothing the text layer draws: no line's ink, band or divider.
+const uncovered = (r, x, y) => {
+  const inside = (k) => k && x >= k.x - 4 && x <= k.x + k.w + 4 && y >= k.y - 4 && y <= k.y + k.h + 4;
+  return !r.report.blocks.some((b) => inside(b.rect) || inside(b.band)) && !r.report.groups.some((g) => g.dividers.some(inside) || (g.band?.rects || []).some(inside));
+};
+
+test("A5 multi-photo layouts refuse too few photos, before rendering, with a clear message", async () => {
+  const t7 = await renderComposite(browser, { images: TILES.slice(0, 3), ...BASE, treatment: "t7-collage" });
+  assert.equal(t7.ok, false);
+  assert.equal(t7.png, undefined, "nothing rendered");
+  assert.match(t7.failures.join(), /"t7-collage" needs 4 photos for its photo collage; 3 supplied/);
+  const t8 = await renderComposite(browser, { image: DARK, ...BASE, treatment: "t8-panels-band" });
+  assert.equal(t8.ok, false);
+  assert.match(t8.failures.join(), /"t8-panels-band" needs 2 photos for its photo panels; 1 supplied/);
+  assert.match(validateLayout({ ...LY("t7-collage").layouts["1x1"], background: { type: "collage", cols: 3, rows: 3, min_images: 3 } }).join(), /would repeat next to itself/);
+  assert.match(validateLayout({ ...LY("t8-panels-band").layouts["1x1"], background: { ...LY("t8-panels-band").layouts["1x1"].background, panels: [{ shape: "circle", cx: 27, cy: 40, r: 20 }, { shape: "circle", cx: 73, cy: 53, r: 20 }] } }).join(), /panel 1 touches group "top"/);
+});
+
+test("C7 T7: 9 tiles filled from the photos in order, repeating, never beside or above the same photo", async () => {
+  for (const n of [4, 5]) {
+    const r = await renderComposite(browser, { images: TILES.slice(0, n), ...BASE, treatment: "t7-collage", palette: "white-on-dark" });
+    assert.equal(r.ok, true, r.failures.join("\n"));
+    const T = r.report.background.tiles;
+    assert.equal(T.length, 9);
+    assert.deepEqual(T.map((t) => t.image), [...Array(9).keys()].map((i) => i % n), `${n} photos, in order`);
+    for (let i = 0; i < 9; i++) {
+      if (i % 3 < 2) assert.notEqual(T[i].image, T[i + 1].image, `tile ${i} repeats beside`);
+      if (i < 6) assert.notEqual(T[i].image, T[i + 3].image, `tile ${i} repeats below`);
+    }
+    // Every tile shows its own photo, in the pixels, wherever the text layer leaves it uncovered.
+    // The even scrim darkens all of it by the same known amount.
+    const png = decodePNG(r.png), A = r.report.scrim.alpha;
+    let checked = 0;
+    for (const t of T) {
+      const want = rgbOf(TILE_HEX[t.image]).map((v) => v * (1 - A));
+      const f = [0.04, 0.2, 0.35, 0.5, 0.65, 0.8, 0.96]; // dense enough to find gaps between lines on the centre tile
+      const pts = f.flatMap((fx) => f.map((fy) => [t.x + fx * t.w, t.y + fy * t.h])).filter(([x, y]) => uncovered(r, x, y));
+      assert.ok(pts.length, `tile ${t.x},${t.y} has an uncovered point`);
+      for (const [x, y] of pts) assert.ok(near(pixel(png, x, y), want), `tile at ${x.toFixed(0)},${y.toFixed(0)}: ${pixel(png, x, y)} vs ${want.map(Math.round)}`);
+      checked++;
+    }
+    assert.equal(checked, 9);
+  }
+});
+
+test("C8 T8: two round photo panels on a solid backdrop, clear of the text; the offer on a band at the bottom", async () => {
+  for (const style of STYLES) {
+    const r = await renderComposite(browser, { images: [TILES[0], TILES[2]], ...BASE, treatment: "t8-panels-band", style, palette: "yellow-accent" });
+    assert.equal(r.ok, true, `${style}: ${r.failures.join("\n")}`);
+    const png = decodePNG(r.png), bgd = r.report.background;
+    assert.equal(bgd.type, "panels");
+    assert.equal(r.report.scrim.alpha, 0, "a solid backdrop needs no scrim");
+    const backdrop = rgbOf(bgd.backdrop);
+    for (const [x, y] of [[3, 3], [1076, 3], [3, 1076], [1076, 1076]]) assert.ok(near(pixel(png, x, y), backdrop, 2), `${style}: corner ${x},${y} is the backdrop`);
+    bgd.panels.forEach((p, i) => {
+      assert.ok(p.cx - p.r >= 0 && p.cx + p.r <= 1080 && p.cy - p.r >= 0 && p.cy + p.r <= 1080, `panel ${i + 1} inside the canvas`);
+      assert.ok(near(pixel(png, p.cx, p.cy), rgbOf(TILE_HEX[[0, 2][i]])), `${style}: panel ${i + 1} shows photo ${i + 1}`);
+      // Inside the panel's square but outside its circle is backdrop: the panel really is round.
+      const d = p.r * 0.92;
+      assert.ok(near(pixel(png, p.cx - d, p.cy - d), backdrop, 2), `${style}: panel ${i + 1} is round`);
+      for (const b of r.report.blocks) {
+        const k = b.band || b.rect;
+        assert.ok(k.x + k.w < p.cx - p.r || k.x > p.cx + p.r || k.y + k.h < p.cy - p.r || k.y > p.cy + p.r, `${style}: ${b.block} clear of panel ${i + 1}`);
+      }
+    });
+    const bottom = r.report.groups.find((g) => g.id === "bottom");
+    assert.equal(bottom.band.mode, "full");
+    for (const id of ["duration", "offer_name"]) {
+      const b = blk(r, id);
+      assert.deepEqual(b.steps, ["layout-band"], `${style}: ${id} on the band`);
+      assert.ok(b.contrast.after >= 4.5, `${style}: ${id} ${b.contrast.after}:1`);
+      assert.ok(b.rect.y > bgd.panels[1].cy + bgd.panels[1].r, `${style}: ${id} below the panels`);
+    }
+  }
+});
+
+test("C8 verifier: a line set over a photo panel is caught", async () => {
+  const r = await renderComposite(browser, { images: [TILES[0], TILES[2]], ...BASE, treatment: "t8-panels-band" });
+  const spec = buildSpec({ images: [TILES[0], TILES[2]], text: TEXT, treatment: "t8-panels-band" });
+  assert.equal(verifyReport(spec, r.report).length, 0);
+  const rep = structuredClone(r.report);
+  rep.blocks[0].rect.y = 500;
+  assert.match(verifyReport(spec, rep).join(), /overlaps photo panel 1/);
 });

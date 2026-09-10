@@ -66,17 +66,44 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     stage.style.height = H + "px";
     const failures = [];
 
-    // 1. Background, cover-fitted into a canvas so the pixels under each line can be sampled.
+    // 1. Background, drawn into a canvas so the pixels under each line can be sampled: one photo
+    //    cover-fitted, a collage of tiles (T7), or photo panels on a solid backdrop (T8).
     const bg = document.getElementById("bg");
     bg.width = W; bg.height = H;
     const ctx = bg.getContext("2d", { willReadFrequently: true });
-    const img = new Image();
-    img.src = S.image;
-    await img.decode();
-    const sc = Math.max(W / img.naturalWidth, H / img.naturalHeight);
-    const dw = img.naturalWidth * sc, dh = img.naturalHeight * sc;
-    const [fx, fy] = S.focus || [0.5, 0.5];
-    ctx.drawImage(img, (W - dw) * fx, (H - dh) * fy, dw, dh);
+    const imgs = await Promise.all(S.images.map(async (src) => { const im = new Image(); im.src = src; await im.decode(); return im; }));
+    const cover = (im, x, y, w, h, [fx, fy]) => {
+      const sc = Math.max(w / im.naturalWidth, h / im.naturalHeight);
+      const dw = im.naturalWidth * sc, dh = im.naturalHeight * sc;
+      ctx.drawImage(im, x + (w - dw) * fx, y + (h - dh) * fy, dw, dh);
+    };
+    const BG = S.background || { type: "single" };
+    const background = { type: BG.type };
+    if (BG.type === "collage") {
+      // Photos in order, repeating to fill the grid; each tile is clipped so no photo spills into its neighbour.
+      background.tiles = [];
+      const tw = W / BG.cols, th = H / BG.rows;
+      for (let i = 0; i < BG.cols * BG.rows; i++) {
+        const x = (i % BG.cols) * tw, y = Math.floor(i / BG.cols) * th, k = i % imgs.length;
+        ctx.save(); ctx.beginPath(); ctx.rect(x, y, tw, th); ctx.clip();
+        cover(imgs[k], x, y, tw, th, [0.5, 0.5]);
+        ctx.restore();
+        background.tiles.push({ x, y, w: tw, h: th, image: k });
+      }
+    } else if (BG.type === "panels") {
+      ctx.fillStyle = BG.backdrop;
+      ctx.fillRect(0, 0, W, H);
+      background.backdrop = BG.backdrop;
+      background.panels = BG.panels.map((pn, k) => {
+        const cx = (pn.cx / 100) * W, cy = (pn.cy / 100) * H, r = (pn.r / 100) * W;
+        ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.clip();
+        cover(imgs[k], cx - r, cy - r, 2 * r, 2 * r, [0.5, 0.5]);
+        ctx.restore();
+        return { cx, cy, r, image: k };
+      });
+    } else {
+      cover(imgs[0], 0, 0, W, H, S.focus || [0.5, 0.5]);
+    }
     const px = ctx.getImageData(0, 0, W, H).data;
 
     // 2. Fonts. Every face a line uses must genuinely load — family AND style. A silent fallback,
@@ -575,6 +602,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       fontsLoaded,
       faces,
       canvas: [W, H],
+      background,
       region: allRegions.length === 1 ? allRegions[0] : union(allRegions),
       scrim: { alpha: +Math.max(...groups.map((g) => g.A)).toFixed(3) },
       groups: groups.map((g) => ({
@@ -644,6 +672,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       };
       box(W * 0.05, H * 0.05, W * 0.9, H * 0.9, "#FFD400", "5% canvas margin", true);
       for (const z of report.clear_zones) box(z.x, z.y, z.w, z.h, "#FF00FF", `clear zone: ${z.name}`, true);
+      (background.panels || []).forEach((pn, i) => box(pn.cx - pn.r, pn.cy - pn.r, 2 * pn.r, 2 * pn.r, "#FF00FF", `photo panel ${i + 1}`, true));
       for (const g of report.groups) {
         const R = g.region;
         box(R.x, R.y, R.w, R.h, "#00FF66", groups.length > 1 ? `text region (${g.id})` : "text region", true);

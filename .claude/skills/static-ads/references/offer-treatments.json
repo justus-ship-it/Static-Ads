@@ -6,7 +6,8 @@
     "stack": "Ordered items. A text line is { block, share, max_lines, min_px, optional? } where block is location | audience | duration | offer_name. A divider is { block: 'divider', width_pct (of the group's width), thickness_pct (of canvas height), space_pct? (extra room above and below it, % of canvas height) }; it is drawn only when there is text on both sides of it, and it is never counted as text.",
     "scrim": "{ direction, fade_pct }. direction is none | top | bottom | left | right | even. The scrim is full strength from the text's edge outward, and fades over fade_pct beyond it, so every letter sits on the full-strength part and the contrast maths stays exact. A group's scrim may not reach another group's region; 'even' covers the whole canvas and is only allowed in single-group layouts.",
     "band": "{ mode, shape, blocks, pad_pct, radius_pct }. A solid band behind some of the group's lines, whatever the style. mode 'full' is one band spanning the group's full width; 'line' is a bar hugging each line of text. shape 'pill' is rounded, 'bar' square. Text on a band is judged against the band colour.",
-    "clear_zones": "[{ name, rect [x, y, w, h] }] in % of the canvas: space kept free of text for the subject. No group region may touch one, and the verifier checks every line, band and divider against them."
+    "clear_zones": "[{ name, rect [x, y, w, h] }] in % of the canvas: space kept free of text for the subject. No group region may touch one, and the verifier checks every line, band and divider against them.",
+    "background": "Optional. { type: 'single' } (default: one photo, cover-fitted) · { type: 'collage', cols, rows, min_images } (the photos in order, repeating to fill the grid; min_images must exceed cols so no photo sits next to itself) · { type: 'panels', backdrop, min_images, panels: [{ shape: 'circle', cx, cy, r }] } (photos cropped to circles on a solid backdrop; cx, r in % of width, cy in % of height). Panels are keep-out areas: no text, band or divider may touch one."
   },
   "canvas": {
     "1x1": [
@@ -333,6 +334,129 @@
               "rect": [54, 5, 41, 90]
             }
           ]
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t7-collage": {
+      "number": 107,
+      "name": "Collage",
+      "seen_in": [
+        "Asheville 'MEN WANTED', collage blue"
+      ],
+      "visual_hint": "One tile of a 3×3 collage: a tight, action-filled crop with one clear subject, moody low-key lighting. No text, letters, signage, logos or watermarks anywhere.",
+      "layouts": {
+        "1x1": {
+          "background": {
+            "type": "collage",
+            "cols": 3,
+            "rows": 3,
+            "min_images": 4
+          },
+          "groups": [
+            {
+              "id": "main",
+              "region": [6, 6, 88, 88],
+              "anchor": "center",
+              "align": "center",
+              "gap_pct": 1,
+              "scrim": {
+                "direction": "even"
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.85, "max_lines": 2, "min_px": 28, "optional": true },
+                { "block": "divider", "width_pct": 34, "thickness_pct": 0.45, "space_pct": 1.4 },
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.3, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t8-panels-band": {
+      "number": 108,
+      "name": "Panels + band",
+      "seen_in": [
+        "Anchorage 'Ladies Wanted', circles"
+      ],
+      "visual_hint": "A square photo with one clear subject centred, on a plain background — it will be cropped to a circle. No text, letters, signage, logos or watermarks anywhere.",
+      "layouts": {
+        "1x1": {
+          "background": {
+            "type": "panels",
+            "backdrop": "#211E1F",
+            "min_images": 2,
+            "panels": [
+              { "shape": "circle", "cx": 27, "cy": 50, "r": 20 },
+              { "shape": "circle", "cx": 73, "cy": 53, "r": 20 }
+            ]
+          },
+          "groups": [
+            {
+              "id": "top",
+              "region": [6, 6, 88, 22],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "none"
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 1, "min_px": 34 },
+                { "block": "audience", "share": 1, "max_lines": 1, "min_px": 28, "optional": true }
+              ]
+            },
+            {
+              "id": "bottom",
+              "region": [6, 74, 88, 20],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "none"
+              },
+              "band": {
+                "mode": "full",
+                "shape": "bar",
+                "blocks": [
+                  "duration",
+                  "offer_name"
+                ],
+                "pad_pct": 1
+              },
+              "stack": [
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.4, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": []
         }
       },
       "contrast": {
