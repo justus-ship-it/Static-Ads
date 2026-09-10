@@ -21,7 +21,7 @@
 import { writeFileSync, rmSync } from "fs";
 import { join } from "path";
 import { pathToFileURL } from "url";
-import { loadCatalogue, imagesNeeded, imageDataUrl, renderComposite } from "./render-composites.mjs";
+import { loadCatalogue, imagesNeeded, imageDataUrl, renderComposite, layoutFor } from "./render-composites.mjs";
 
 // ── colour ────────────────────────────────────────────────────────────────
 
@@ -83,8 +83,8 @@ export async function measurePhotos(browser, images, { ratio = "1x1" } = {}) {
   const { treatments: T } = loadCatalogue();
   const [W, H] = T.canvas[ratio];
   const areas = Object.fromEntries(Object.entries(T.treatments)
-    .filter(([, t]) => imagesNeeded(t.layouts[ratio]) === 1)
-    .map(([id, t]) => [id, t.layouts[ratio].groups.map((g) => g.region)]));
+    .filter(([, t]) => imagesNeeded(layoutFor(t, ratio, T)) === 1)
+    .map(([id, t]) => [id, layoutFor(t, ratio, T).groups.map((g) => g.region)]));
   const out = [];
   for (const image of images) {
     const page = join(browser.work, `measure-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
@@ -172,7 +172,7 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
   // Pools: what this batch may use at all.
   const layouts = Object.keys(T.treatments).filter((id) => {
     if ((exclude.layouts || []).includes(id)) return false;
-    const need = imagesNeeded(T.treatments[id].layouts[ratio]);
+    const need = imagesNeeded(layoutFor(T.treatments[id], ratio, T));
     if (need > visuals.length) { notes.push(`${id} left out: it needs ${need} photos and the batch has ${visuals.length}`); return false; }
     return true;
   });
@@ -198,12 +198,18 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
   const byUse = (pool, c, avoid) => shuffled(pool.filter((k) => !avoid.has(k))).sort((a, b) => c[a] - c[b]);
 
   // The colour of the photo under a layout's text. Photo panels sit on a plain backdrop, so no
-  // photo is under the text. A collage is judged on all its tiles' photos together: their colour
+  // photo is under the text — unless the backdrop is a dimmed photo (T8 in 9:16), whose colour is
+  // that photo's, weakened by the dimming. A collage is judged on all its tiles' photos together: their colour
   // vectors are averaged, so four red rooms read as red and a mix of hues reads as weak.
   const statFor = (vi, layout) => {
     if (!photoStats?.[vi]) return null;
-    const L = T.treatments[layout].layouts[ratio];
-    if (L.background?.type === "panels") return null;
+    const L = layoutFor(T.treatments[layout], ratio, T);
+    if (L.background?.type === "panels") {
+      const bp = L.background.backdrop_photo;
+      if (!bp) return null;
+      const st = photoStats[(vi + bp.image) % visuals.length].overall;
+      return { hue: st.hue, strength: st.strength * (1 - bp.darken) };
+    }
     if (L.background?.type === "collage") {
       const need = imagesNeeded(L);
       const st = Array.from({ length: need }, (_, k) => photoStats[(vi + k) % visuals.length].overall);
@@ -250,7 +256,7 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
 
   slots.sort((a, b) => a.vi - b.vi || a.j - b.j);
   const candidates = slots.map((s, i) => {
-    const need = imagesNeeded(T.treatments[s.layout].layouts[ratio]);
+    const need = imagesNeeded(layoutFor(T.treatments[s.layout], ratio, T));
     // Extra photos for a collage or panels: the next photos in the batch, in order.
     const images = Array.from({ length: need }, (_, k) => visuals[(s.vi + k) % visuals.length].id);
     return {
@@ -265,7 +271,7 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
   const underused = palettes.filter((p) => count.P[p] > 0 && count.P[p] < even);
   if (photoStats && unusedPalettes.length) notes.push(`not used, because their colours clash with the photos under the text: ${unusedPalettes.join(", ")}`);
   if (photoStats && underused.length) notes.push(`used less than an even share (${even}), because their colours clash with most photos under the text: ${underused.map((p) => `${p} ×${count.P[p]}`).join(", ")}`);
-  return { candidates, pools: { layouts, styles, palettes }, counts: count, notes };
+  return { candidates, ratio, pools: { layouts, styles, palettes }, counts: count, notes };
 }
 
 /**
@@ -277,7 +283,7 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
  */
 export async function renderPlan(browser, plan, { text, imageFor, catalogue = loadCatalogue() }) {
   const { treatments: T } = catalogue;
-  const need = (la) => imagesNeeded(T.treatments[la].layouts["1x1"]);
+  const need = (la) => imagesNeeded(layoutFor(T.treatments[la], plan.ratio || "1x1", T));
   const results = [];
   const taken = new Set(plan.candidates.map((c) => `${c.treatment}|${c.style}|${c.palette}`));
   for (const c of plan.candidates) {
@@ -291,7 +297,7 @@ export async function renderPlan(browser, plan, { text, imageFor, catalogue = lo
     let done = null;
     const failures = [];
     for (const [treatment, style, palette] of tries.slice(0, 12)) {
-      const r = await renderComposite(browser, { images: c.images.slice(0, need(treatment)).map(imageFor), ...text, treatment, style, palette });
+      const r = await renderComposite(browser, { images: c.images.slice(0, need(treatment)).map(imageFor), ...text, treatment, style, palette, ratio: plan.ratio || "1x1" });
       if (r.ok) {
         done = { ...c, treatment, style, palette, images: c.images.slice(0, need(treatment)), r };
         if (treatment !== c.treatment || style !== c.style || palette !== c.palette) {

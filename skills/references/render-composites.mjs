@@ -95,6 +95,10 @@ export function imageDataUrl(pathOrUrl) {
 
 const EFFECTS = ["fill", "outline-bold", "hollow", "band"];
 const STROKE_ALLOWANCE = 0.04; // em per side: the widest outline (0.075em stroke) reaches half its width outside
+// A hollow line's outline is centred on the letter edge and Chrome joins it with sharp mitres, so
+// pointed corners reach further: measured up to 0.081em past the box (the "K" of Montserrat Black,
+// Step 3). Reserved per side instead of STROKE_ALLOWANCE for hollow lines.
+const HOLLOW_ALLOWANCE = 0.07;
 const BAND_PAD = 0.24;         // em per side reserved for a style band's padding
 
 /** The three catalogues: layouts, palettes, styles. */
@@ -113,10 +117,13 @@ const SCRIMS = ["none", "top", "bottom", "left", "right", "even"];
 const BACKGROUNDS = ["single", "collage", "panels"];
 
 /** Geometry rules every layout must meet before anything renders. Returns a list of problems.
- *  Regions are in % of the canvas, so these hold at any canvas size. */
-export function validateLayout(layout, id = "layout", canvas = [1, 1]) {
+ *  Regions are in % of the canvas, so these hold at any canvas size. `safe` is the ratio's safe
+ *  area [x, y, w, h] in % (offer-treatments.json → safe_area): 1:1 keeps a 5% margin; 9:16 is
+ *  Meta's Stories/Reels safe zone. */
+export function validateLayout(layout, id = "layout", canvas = [1, 1], safe = [5, 5, 90, 90]) {
   const e = [];
-  const m = EDGE_MARGIN * 100;
+  const sa = { x0: safe[0], y0: safe[1], x1: safe[0] + safe[2], y1: safe[1] + safe[3] };
+  const saText = safe.join() === "5,5,90,90" ? "the 5% canvas margin" : `the safe area (x ${+sa.x0.toFixed(2)}–${+sa.x1.toFixed(2)}%, y ${+sa.y0.toFixed(2)}–${+sa.y1.toFixed(2)}%)`;
   const box = ([x, y, w, h]) => ({ x0: x, y0: y, x1: x + w, y1: y + h });
   const meets = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
   const groups = layout?.groups;
@@ -129,7 +136,7 @@ export function validateLayout(layout, id = "layout", canvas = [1, 1]) {
     ids.add(g.id);
     if (!Array.isArray(g.region) || g.region.length !== 4 || g.region.some((v) => typeof v !== "number")) { e.push(`${gid}: region must be [x, y, w, h]`); continue; }
     const r = box(g.region);
-    if (r.x0 < m - 1e-9 || r.y0 < m - 1e-9 || r.x1 > 100 - m + 1e-9 || r.y1 > 100 - m + 1e-9) e.push(`${gid}: region crosses the ${m}% canvas margin`);
+    if (r.x0 < sa.x0 - 1e-9 || r.y0 < sa.y0 - 1e-9 || r.x1 > sa.x1 + 1e-9 || r.y1 > sa.y1 + 1e-9) e.push(`${gid}: region crosses ${saText}`);
     if (!ANCHORS.includes(g.anchor)) e.push(`${gid}: anchor must be one of ${ANCHORS.join(", ")}`);
     if (!ALIGNS.includes(g.align)) e.push(`${gid}: align must be one of ${ALIGNS.join(", ")}`);
     if (!SCRIMS.includes(g.scrim?.direction)) e.push(`${gid}: scrim.direction must be one of ${SCRIMS.join(", ")}`);
@@ -196,6 +203,10 @@ export function validateLayout(layout, id = "layout", canvas = [1, 1]) {
       if (!/^#[0-9A-Fa-f]{6}$/.test(bg.backdrop || "")) e.push(`${id}: panels need a backdrop colour`);
       if (!bg.panels?.length) e.push(`${id}: panels need at least one panel`);
       if (bg.min_images !== bg.panels?.length) e.push(`${id}: panels need one photo each (min_images = ${bg.panels?.length})`);
+      const bp = bg.backdrop_photo;
+      if (bp && !(Number.isInteger(bp.image) && bp.image >= 0 && bp.image < (bg.panels?.length || 0) && bp.blur_pct >= 0 && bp.darken >= 0 && bp.darken <= 1)) {
+        e.push(`${id}: backdrop_photo needs image (one of the panels' photos), blur_pct and darken (0–1)`);
+      }
       (bg.panels || []).forEach((pn, i) => {
         const ry = (pn.r * canvas[0]) / canvas[1]; // r is a % of the width; the circle is round on any canvas
         const pb = { x0: pn.cx - pn.r, y0: pn.cy - ry, x1: pn.cx + pn.r, y1: pn.cy + ry };
@@ -206,6 +217,41 @@ export function validateLayout(layout, id = "layout", canvas = [1, 1]) {
     }
   }
   return e;
+}
+
+/** Derive a layout for another canvas ratio from an approved one: the source's safe area is mapped
+ *  onto the target's, and every length in % of the canvas is scaled with it. The 9:16 safe area
+ *  (950 × 979 px) is nearly the 1:1 text area (972 × 972 px), so text comes out about as large. */
+export function deriveLayout(layout, from, to, T = loadCatalogue().treatments) {
+  const [fx, fy, fw, fh] = T.safe_area[from], [tx, ty, tw, th] = T.safe_area[to];
+  const sx = tw / fw, sy = th / fh;
+  const X = (x) => tx + (x - fx) * sx, Y = (y) => ty + (y - fy) * sy;
+  const rect = ([x, y, w, h]) => [X(x), Y(y), w * sx, h * sy];
+  const [W0, H0] = T.canvas[from], [W1, H1] = T.canvas[to];
+  const fade = (sc) => (!sc?.fade_pct ? sc : { ...sc, fade_pct: sc.fade_pct * (["left", "right"].includes(sc.direction) ? sx : sy) });
+  const bg = layout.background;
+  return {
+    ...structuredClone(layout),
+    derived_from: from,
+    groups: layout.groups.map((g) => ({
+      ...structuredClone(g),
+      region: rect(g.region),
+      gap_pct: g.gap_pct * sy,
+      scrim: fade(g.scrim),
+      ...(g.band ? { band: { ...g.band, ...(g.band.pad_pct != null ? { pad_pct: g.band.pad_pct * sy } : {}), ...(g.band.radius_pct != null ? { radius_pct: g.band.radius_pct * sy } : {}) } } : {}),
+      stack: g.stack.map((it) => (it.block !== "divider" ? { ...it } : { ...it, thickness_pct: it.thickness_pct * sy, ...(it.space_pct != null ? { space_pct: it.space_pct * sy } : {}) })),
+    })),
+    clear_zones: (layout.clear_zones || []).map((z) => ({ ...z, rect: rect(z.rect) })),
+    ...(bg?.type === "collage" ? { background: { ...bg, rows: Math.round((bg.rows * (H1 / W1)) / (H0 / W0)) } } : {}),
+    ...(bg?.type === "panels" ? { background: { ...bg, panels: bg.panels.map((pn) => ({ ...pn, cx: X(pn.cx), cy: Y(pn.cy), r: pn.r * sx })) } } : {}),
+  };
+}
+
+/** The layout a treatment uses at a ratio: its own, or one derived from its 1:1 layout. */
+export function layoutFor(tr, ratio, T = loadCatalogue().treatments) {
+  if (tr.layouts[ratio]) return tr.layouts[ratio];
+  if (tr.layouts["1x1"] && T.safe_area?.[ratio]) return deriveLayout(tr.layouts["1x1"], "1x1", ratio, T);
+  return null;
 }
 
 /** How many photos a layout needs: one for a single photo, more for a collage or panels. */
@@ -222,9 +268,11 @@ export function buildSpec({ image, images, text, treatment = "t1-bottom-stack", 
   const { treatments: T, palettes: P, styles: S } = loadCatalogue();
   const tr = treatmentSpec || T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}". Known: ${Object.keys(T.treatments).join(", ")}`);
-  const layout = tr.layouts[ratio];
+  if (!T.canvas[ratio]) throw new Error(`unknown ratio "${ratio}". Known: ${Object.keys(T.canvas).join(", ")}`);
+  const layout = layoutFor(tr, ratio, T);
   if (!layout) throw new Error(`treatment "${treatment}" has no ${ratio} layout yet`);
-  const layoutErrors = validateLayout(layout, treatmentSpec ? "custom layout" : treatment, T.canvas[ratio]);
+  const safe = T.safe_area?.[ratio] || [5, 5, 90, 90];
+  const layoutErrors = validateLayout(layout, treatmentSpec ? "custom layout" : treatment, T.canvas[ratio], safe);
   if (layoutErrors.length) throw new Error(layoutErrors.join("; "));
   const photos = images?.length ? images : image ? [image] : [];
   const need = imagesNeeded(layout);
@@ -269,7 +317,7 @@ export function buildSpec({ image, images, text, treatment = "t1-bottom-stack", 
       effect,
       line_height: face.line_height,
       // A line on a band (its style's own, or the layout's) keeps its letters clear of the band's ends.
-      pad_em: face.overhang + STROKE_ALLOWANCE + (effect === "band" || banded ? BAND_PAD : 0),
+      pad_em: face.overhang + (effect === "hollow" ? HOLLOW_ALLOWANCE : STROKE_ALLOWANCE) + (effect === "band" || banded ? BAND_PAD : 0),
       layout_band: banded,
       min_px: face.script ? Math.max(g.min_px, S.script_rules.min_px) : g.min_px,
       script: !!face.script,
@@ -291,6 +339,7 @@ export function buildSpec({ image, images, text, treatment = "t1-bottom-stack", 
     palette_spec: pal,
     fonts: [...used.values()],
     script_min_px: S.script_rules.min_px,
+    safe_area: safe,
     divider_contrast: DIVIDER_CONTRAST,
     background: layout.background || { type: "single" },
     images: photos.slice(0, layout.background?.type === "panels" ? need : undefined).map(imageDataUrl),
@@ -437,7 +486,12 @@ export function verifyReport(spec, report) {
     if (got && !got.loaded) f.push(`font face did not load: ${want.family} ${want.style}`);
   }
   const [W, H] = spec.canvas;
-  const mx = W * EDGE_MARGIN, my = H * EDGE_MARGIN;
+  // The ratio's safe area: a 5% margin in 1:1; in 9:16 what Meta's Stories/Reels UI leaves uncovered.
+  const [s0, s1, s2, s3] = spec.safe_area || [EDGE_MARGIN * 100, EDGE_MARGIN * 100, 100 - 200 * EDGE_MARGIN, 100 - 200 * EDGE_MARGIN];
+  const SAFE = { x: (s0 / 100) * W, y: (s1 / 100) * H, w: (s2 / 100) * W, h: (s3 / 100) * H };
+  const safeMsg = (what) => (s0 === 5 && s1 === 5 && s2 === 90 && s3 === 90
+    ? `${what} crosses the ${EDGE_MARGIN * 100}% canvas margin`
+    : `${what} leaves the ${spec.ratio} safe area (x ${s0}–${s0 + s2}%, y ${s1}–${s1 + s3}%): the app covers the rest`);
   const expected = Object.fromEntries(Object.entries(spec.text).filter(([, v]) => v != null && v !== ""));
 
   const rendered = new Set(report.blocks.map((b) => b.block));
@@ -464,11 +518,11 @@ export function verifyReport(spec, report) {
     if (wantGroup[b.block] && b.group !== wantGroup[b.block]) f.push(`${tag} rendered in group "${b.group}", the layout puts it in "${wantGroup[b.block]}"`);
     const r = b.rect;
     if (!inside(r, R)) f.push(`${tag} leaves its region`);
-    if (r.x < mx - TOL || r.y < my - TOL || r.x + r.w > W - mx + TOL || r.y + r.h > H - my + TOL)
-      f.push(`${tag} crosses the ${EDGE_MARGIN * 100}% canvas margin`);
+    if (!inside(r, SAFE)) f.push(safeMsg(tag));
     clear(r, tag);
     if (b.band) {
       if (!inside(b.band, R)) f.push(`${tag} band leaves the text region`);
+      if (!inside(b.band, SAFE)) f.push(safeMsg(`${tag} band`));
       clear(b.band, `${tag} band`);
     }
     if (b.script) {
@@ -483,10 +537,12 @@ export function verifyReport(spec, report) {
   for (const g of report.groups || []) {
     for (const k of g.band?.rects || []) {
       if (!inside(k, g.region)) f.push(`group "${g.id}" band leaves its region`);
+      if (!inside(k, SAFE)) f.push(safeMsg(`group "${g.id}" band`));
       clear(k, `group "${g.id}" band`);
     }
     for (const d of g.dividers || []) {
       if (!inside(d, g.region)) f.push(`group "${g.id}" divider leaves its region`);
+      if (!inside(d, SAFE)) f.push(safeMsg(`group "${g.id}" divider`));
       clear(d, `group "${g.id}" divider`);
       if (!(d.contrast >= DIVIDER_CONTRAST)) f.push(`group "${g.id}" divider contrast ${d.contrast}:1 is below ${DIVIDER_CONTRAST}:1`);
     }

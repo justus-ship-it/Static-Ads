@@ -10,15 +10,15 @@
     "background": "Optional. { type: 'single' } (default: one photo, cover-fitted) · { type: 'collage', cols, rows, min_images } (the photos in order, repeating to fill the grid; min_images must exceed cols so no photo sits next to itself) · { type: 'panels', backdrop, min_images, panels: [{ shape: 'circle', cx, cy, r }] } (photos cropped to circles on a solid backdrop; cx, r in % of width, cy in % of height). Panels are keep-out areas: no text, band or divider may touch one."
   },
   "canvas": {
-    "1x1": [
-      1080,
-      1080
-    ],
-    "9x16": [
-      1080,
-      1920
-    ]
+    "1x1": [1080, 1080],
+    "9x16": [1080, 1920]
   },
+  "safe_area": {
+    "1x1": [5, 5, 90, 90],
+    "9x16": [6, 14, 88, 51]
+  },
+  "safe_area_note": "[x, y, w, h] in % of the canvas: every line, band and divider must sit inside it, and every group region is validated against it. 1:1 keeps a 5% margin. 9:16 is Meta's unified Stories/Reels safe zone (March 2026): the top 14% (profile row), the bottom 35% (caption, like/comment/share, CTA) and 6% each side are covered by the app. Source: Meta Business Help Centre, 'About text overlays and the Safe Zone for ads in Stories and Reels'.",
+  "derivation_note": "A ratio with no explicit layout is derived from the 1:1 layout: its safe area is mapped onto the target's (x' = x0' + (x - x0) * w'/w, likewise y), and every length in % of the canvas is scaled with it — gaps, fades, divider thickness and spacing, band padding and radius, panel radius. Collage rows scale with the canvas's height, to keep tiles near-square. An explicit layouts['9x16'] overrides the derived one.",
   "treatments": {
     "t1-bottom-stack": {
       "number": 101,
@@ -449,6 +449,63 @@
                   "offer_name"
                 ],
                 "pad_pct": 1
+              },
+              "stack": [
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.4, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "9x16": {
+          "note": "Hand-tuned from the derived 9:16 layout: the text groups are unchanged; the circles are enlarged to the full width between them, and a blurred, dimmed copy of the first photo fills the frame, so the areas the app covers carry imagery instead of flat backdrop (the derived version left ~60% of the frame plain).",
+          "background": {
+            "type": "panels",
+            "backdrop": "#211E1F",
+            "min_images": 2,
+            "panels": [
+              { "shape": "circle", "cx": 27.5, "cy": 39.77, "r": 21.5 },
+              { "shape": "circle", "cx": 72.5, "cy": 40.37, "r": 21.5 }
+            ],
+            "backdrop_photo": {
+              "image": 0,
+              "blur_pct": 3,
+              "darken": 0.55
+            }
+          },
+          "groups": [
+            {
+              "id": "top",
+              "region": [6.98, 14.57, 86.04, 12.47],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.34,
+              "scrim": {
+                "direction": "none"
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 1, "min_px": 34 },
+                { "block": "audience", "share": 1, "max_lines": 1, "min_px": 28, "optional": true }
+              ]
+            },
+            {
+              "id": "bottom",
+              "region": [6.98, 53.1, 86.04, 11.33],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.34,
+              "scrim": {
+                "direction": "none"
+              },
+              "band": {
+                "mode": "full",
+                "shape": "bar",
+                "blocks": [
+                  "duration",
+                  "offer_name"
+                ],
+                "pad_pct": 0.57
               },
               "stack": [
                 { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },

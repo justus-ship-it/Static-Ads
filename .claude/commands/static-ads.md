@@ -682,6 +682,6 @@ Template: Use the attached images as brand reference. Match the brand's exact co
 - **Prompt detail**: Since we use text-to-image (no reference images), describe products precisely in each prompt — exact colors, materials, label text, hex codes. The prompt IS the reference.
 - **Test first**: Run `--templates 1,7,13` with `--resolution 1K --num-images 1` to test cheaply before doing a full run
 - **Dual ratios**: Every prompt automatically generates both 1:1 (feed) and 9:16 (stories/reels). No need to set aspect ratio per prompt.
-- **9:16 safe zones**: The Gemini script automatically appends a Meta-compliant safe zone instruction to all 9:16 prompts — top ~15% and bottom ~25% kept clear of text, logos, and key visuals to avoid overlap with Stories/Reels UI (profile icons, captions, CTA buttons). 1:1 prompts are unaffected.
+- **9:16 safe zones**: Meta's unified Stories/Reels safe zone (March 2026): the top 14%, the bottom 35% and 6% each side are covered by the app, so all text, logos and key elements stay inside x 6–94%, y 14–65%. The Gemini script appends this to every 9:16 prompt; the offer-first text layer enforces it (`offer-treatments.json → safe_area`).
 - **Resolution**: 2K is the sweet spot for production quality. Use 1K for rapid testing, 4K for hero assets only
 - **Cost control**: A full 40-template run at 4 images each at 2K (x2 ratios) = ~$38.40. Use `--templates` and `--num-images 1` to control cost during testing

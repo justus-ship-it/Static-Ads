@@ -74,7 +74,7 @@ node skills/references/generate_ads.mjs --brand-dir brands/{name} --templates 1,
 ## Script Behavior (both scripts)
 
 - Generates **both 1:1 and 9:16** aspect ratios for every prompt automatically
-- **9:16 Meta safe zones**: 9:16 images automatically get a safe zone instruction appended — top ~15% and bottom ~25% kept clear of text/logos for Meta Stories/Reels UI overlay compliance
+- **9:16 Meta safe zones**: Meta's unified Stories/Reels safe zone (March 2026) — the top 14%, the bottom 35% and 6% each side stay clear of text and logos, because the app covers them. The live area is x 6–94%, y 14–65%. The Gemini script appends this to every 9:16 prompt; the offer-first text layer (`render-composites.mjs`) enforces it and fails any 9:16 render that leaves it. One source: `offer-treatments.json → safe_area`.
 - Parallel job execution with semaphore-based concurrency limiter (`--max-concurrent`)
 - Outputs organized as `outputs/{date}-V{n}/{num}-{template-name}/{1x1,9x16}/`
 - Builds `gallery.html` with dark-theme image selection UI (radio buttons, expand icon, Save Selections button → `selections.json`)

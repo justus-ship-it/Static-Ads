@@ -155,14 +155,16 @@ const ASPECT_RATIOS = [
   { ratio: "9:16", folder: "9x16", instruction: [
       "The output image MUST be vertical/portrait (9:16 aspect ratio, taller than wide).",
       "",
+      // Meta's unified Stories/Reels safe zone (March 2026): top 14%, bottom 35%, 6% each side.
+      // Same numbers as offer-treatments.json → safe_area["9x16"], which the text layer enforces.
       "VERTICAL LAYOUT GEOMETRY - follow these positions exactly. Measuring from the top of the frame, where 0% is the very top edge and 100% is the very bottom edge:",
-      "- 0% to 20%: DEAD ZONE. Completely empty of text, logos, banners and any element that must be read. Background imagery only. Meta covers this with the profile icon and account name.",
-      "- 20% to 70%: the LIVE AREA. Every headline, offer banner, logo, price, badge and call to action must sit entirely inside this band.",
-      "- 70% to 100%: DEAD ZONE. Completely empty of text, logos, banners and any element that must be read. Background imagery only. Meta covers this with the caption, the profile row and the CTA button.",
+      "- 0% to 14%: DEAD ZONE. Completely empty of text, logos, banners and any element that must be read. Background imagery only. Meta covers this with the profile icon and account name.",
+      "- 14% to 65%: the LIVE AREA. Every headline, offer banner, logo, price, badge and call to action must sit entirely inside this band, and at least 6% in from the left and right edges.",
+      "- 65% to 100%: DEAD ZONE. Completely empty of text, logos, banners and any element that must be read. Background imagery only. Meta covers this with the caption, the like/comment/share buttons, the profile row and the CTA button.",
       "",
-      "Concretely: the LOWEST edge of the lowest piece of text or graphic element must sit no lower than 70% of the image height. If a banner would normally sit at the bottom of the frame, move it UP so its bottom edge lands at 70%, and let plain background fill everything below it. The HIGHEST edge of the topmost text or logo must sit no higher than 20%.",
+      "Concretely: the LOWEST edge of the lowest piece of text or graphic element must sit no lower than 65% of the image height. If a banner would normally sit at the bottom of the frame, move it UP so its bottom edge lands at 65%, and let plain background fill everything below it. The HIGHEST edge of the topmost text or logo must sit no higher than 14%.",
       "",
-      "Compose the photograph so the interesting part of the scene falls in the middle of the frame, and treat the top fifth and bottom third as deliberate breathing room."
+      "Compose the photograph so the interesting part of the scene falls in the middle of the frame, and treat the top seventh and bottom third as deliberate breathing room."
     ].join("\n") },
 ];
 

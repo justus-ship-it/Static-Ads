@@ -930,3 +930,179 @@ test("C8 verifier: a line set over a photo panel is caught", async () => {
   rep.blocks[0].rect.y = 500;
   assert.match(verifyReport(spec, rep).join(), /overlaps photo panel 1/);
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// Step 3 — 9:16. Each layout is derived from its approved 1:1 layout into Meta's Stories/Reels
+// safe area (top 14%, bottom 35%, 6% each side are covered by the app).
+// ══════════════════════════════════════════════════════════════════════════
+import { deriveLayout, layoutFor } from "./render-composites.mjs";
+
+const TT = CAT.treatments;
+const SAFE916 = TT.safe_area["9x16"];
+const H916 = 1920;
+const safeRect916 = { x: (SAFE916[0] / 100) * 1080, y: (SAFE916[1] / 100) * H916, w: (SAFE916[2] / 100) * 1080, h: (SAFE916[3] / 100) * H916 };
+const grid916 = new Map();
+const gridRender916 = async (treatment, style, len) => {
+  const key = `${treatment}|${style}|${len}`;
+  if (!grid916.has(key)) {
+    const r = await renderComposite(browser, { images: photos(treatment, SOLID_BG), ...(len === "long" ? LONG_OFFER : BASE), treatment, style, palette: "white-on-dark", ratio: "9x16" });
+    grid916.set(key, { r, png: r.ok ? decodePNG(r.png) : null });
+  }
+  return grid916.get(key);
+};
+const allGrid916 = async (layouts = LAYOUT_IDS) => {
+  const out = [];
+  for (const t of layouts) for (const s of STYLES) for (const len of ["short", "long"]) out.push({ t, s, len, ...(await gridRender916(t, s, len)) });
+  return out;
+};
+
+test("G1 9:16: the safe area is Meta's (top 14%, bottom 35%, 6% each side); every derived layout passes validation against it", () => {
+  assert.deepEqual(SAFE916, [6, 14, 88, 51]);
+  assert.deepEqual(TT.safe_area["1x1"], [5, 5, 90, 90]);
+  for (const id of LAYOUT_IDS) assert.deepEqual(validateLayout(layoutFor(LY(id), "9x16", TT), id, TT.canvas["9x16"], SAFE916), [], id);
+  // A region in the covered area is refused before rendering.
+  const bad = structuredClone(LY("t1-bottom-stack"));
+  bad.layouts["9x16"] = { ...structuredClone(bad.layouts["1x1"]), groups: [{ ...structuredClone(bad.layouts["1x1"].groups[0]), region: [6, 40, 88, 40] }] };
+  assert.throws(() => buildSpec({ image: DARK, text: TEXT, treatmentSpec: bad, ratio: "9x16" }), /crosses the safe area \(x 6–94%, y 14–65%\)/);
+});
+
+test("G2 9:16 derivation maps the approved 1:1 geometry exactly; an explicit 9:16 layout wins", () => {
+  const sx = 88 / 90, sy = 51 / 90, X = (x) => 6 + (x - 5) * sx, Y = (y) => 14 + (y - 5) * sy;
+  const close = (a, b, m) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-9, `${m}: ${a} vs ${b}`));
+  const t1 = layoutFor(LY("t1-bottom-stack"), "9x16", TT);
+  close(t1.groups[0].region, [X(6), Y(48), 88 * sx, 46 * sy], "T1 region");
+  assert.ok(Math.abs(t1.groups[0].gap_pct - 0.9 * sy) < 1e-9 && Math.abs(t1.groups[0].scrim.fade_pct - 12 * sy) < 1e-9, "gaps and vertical fades scale down the canvas");
+  const t3 = layoutFor(LY("t3-right-column"), "9x16", TT);
+  close(t3.clear_zones[0].rect, [X(5), Y(5), 41 * sx, 90 * sy], "T3 clear zone");
+  assert.ok(Math.abs(t3.groups[0].scrim.fade_pct - 8 * sx) < 1e-9, "a sideways fade scales across the canvas");
+  const t8 = deriveLayout(LY("t8-panels-band").layouts["1x1"], "1x1", "9x16", TT);
+  close([t8.background.panels[0].cx, t8.background.panels[0].cy, t8.background.panels[0].r], [X(27), Y(50), 20 * sx], "T8 panel");
+  assert.equal(layoutFor(LY("t7-collage"), "9x16", TT).background.rows, 5, "collage rows scale to keep tiles near-square");
+  // Only T8 carries a hand-tuned 9:16 layout (the derived one left most of the frame flat backdrop).
+  assert.deepEqual(LAYOUT_IDS.filter((id) => LY(id).layouts["9x16"]), ["t8-panels-band"]);
+  assert.equal(layoutFor(LY("t8-panels-band"), "9x16", TT), LY("t8-panels-band").layouts["9x16"], "the tuned layout is the one used");
+  // …and its text sits exactly where the derived layout put it; only the circles and backdrop differ.
+  assert.deepEqual(LY("t8-panels-band").layouts["9x16"].groups.map((g) => g.region), t8.groups.map((g) => g.region.map((v) => Math.round(v * 100) / 100)));
+  const custom = structuredClone(LY("t1-bottom-stack"));
+  custom.layouts["9x16"] = { ...structuredClone(custom.layouts["1x1"]), groups: [{ ...structuredClone(custom.layouts["1x1"].groups[0]), region: [10, 30, 80, 30] }] };
+  assert.deepEqual(buildSpec({ image: DARK, text: TEXT, treatmentSpec: custom, ratio: "9x16" }).layout.groups[0].region, [10, 30, 80, 30]);
+  assert.deepEqual(deriveLayout(LY("t1-bottom-stack").layouts["1x1"], "1x1", "1x1", TT).groups[0].region, [6, 48, 88, 46], "deriving to the same ratio changes nothing");
+});
+
+test(`G3 9:16: all ${LAYOUT_IDS.length * 90} layout × style × palette combinations build`, () => {
+  for (const treatment of LAYOUT_IDS) for (const style of STYLES) for (const palette of PALETTES) {
+    const spec = buildSpec({ images: photos(treatment, DARK), text: TEXT, treatment, style, palette, ratio: "9x16" });
+    assert.deepEqual(spec.canvas, [1080, 1920]);
+    assert.deepEqual(spec.safe_area, SAFE916);
+  }
+});
+
+test("H1 gate — 9:16, every layout × style, short and long names: zero painted pixels outside Meta's safe area", async () => {
+  for (const { t, s, len, r, png } of await allGrid916()) {
+    const tag = `${t} / ${s} / ${len}`;
+    assert.equal(r.ok, true, `${tag}:\n${r.failures.join("\n")}`);
+    assert.deepEqual([png.w, png.h], [1080, 1920]);
+    assert.equal(r.report.scrim.alpha, 0, `${tag}: no scrim on solid dark, so every painted pixel is text, band or divider`);
+    assert.equal(painted(png, (x, y) => !within(safeRect916)(x, y)), 0, `${tag}: pixels in the area the app covers`);
+    assert.equal(painted(png, (x, y) => !r.report.groups.some((g) => within(g.region)(x, y))), 0, `${tag}: pixels outside the text regions`);
+    for (const Z of r.report.clear_zones) assert.equal(painted(png, within(Z)), 0, `${tag}: pixels in clear zone "${Z.name}"`);
+    assert.ok(painted(png, () => true) > 15000, `${tag}: text was painted`);
+  }
+});
+
+test("H2 9:16 text is not shrunk: every line is at least 90% of its 1:1 size", async () => {
+  let worst = 1;
+  for (const { t, s, len, r } of await allGrid916()) {
+    const one = (await gridRender(t, s, len)).r;
+    for (const b of r.report.blocks) {
+      const k = b.size / blk(one, b.block).size;
+      worst = Math.min(worst, k);
+      assert.ok(k >= 0.9, `${t} / ${s} / ${len}: ${b.block} ${b.size}px in 9:16 vs ${blk(one, b.block).size}px in 1:1`);
+    }
+  }
+  assert.ok(worst < 1.01, `sizes compared (worst ratio ${worst.toFixed(3)})`);
+});
+
+test("H3 9:16 contrast: every layout on dark, light and stripes; every palette", async () => {
+  for (const [li, treatment] of LAYOUT_IDS.entries()) for (const [bi, [bg, image]] of Object.entries({ DARK, LIGHT, STRIPES }).entries()) {
+    const palette = PALETTES[(li * 3 + bi) % PALETTES.length];
+    const r = await renderComposite(browser, { images: photos(treatment, image), ...BASE, treatment, palette, ratio: "9x16" });
+    assert.equal(r.ok, true, `${treatment} / ${bg} / ${palette}:\n${r.failures.join("\n")}`);
+  }
+  for (const [pi, palette] of PALETTES.entries()) {
+    const treatment = LAYOUT_IDS[pi % LAYOUT_IDS.length];
+    const r = await renderComposite(browser, { images: photos(treatment, STRIPES), ...BASE, treatment, palette, ratio: "9x16" });
+    assert.equal(r.ok, true, `${treatment} / STRIPES / ${palette}:\n${r.failures.join("\n")}`);
+  }
+});
+
+test("H4 9:16 keeps each layout's shape: anchoring, columns, centring, pills, dividers, collage and panels", async () => {
+  for (const { t, s, len, r, png } of await allGrid916()) {
+    const tag = `${t} / ${s} / ${len}`, g0 = r.report.groups[0], R = g0.region;
+    if (t === "t1-bottom-stack") assert.ok(Math.abs(bottomOf(r.report.blocks.at(-1).layout_rect) - bottomOf(R)) <= 1, `${tag}: bottom-anchored`);
+    if (t === "t2-top-bottom-split" || t === "t5-offer-band") {
+      const Z = r.report.clear_zones[0];
+      for (const id of ["location", "audience"]) assert.ok(bottomOf(blk(r, id).rect) <= Z.y, `${tag}: ${id} above the subject's space`);
+      for (const id of ["duration", "offer_name"]) assert.ok(blk(r, id).rect.y >= bottomOf(Z), `${tag}: ${id} below it`);
+    }
+    if (t === "t3-right-column" || t === "t6-left-column") {
+      const side = t.startsWith("t3") ? "right" : "left", line = side === "right" ? R.x + R.w - g0.inset : R.x + g0.inset;
+      for (const b of r.report.blocks) assert.ok(Math.abs(b.edge - line) <= 2, `${tag}: ${b.block} edge`);
+      const ink = r.report.blocks.filter((b) => !b.script).map((b) => inkEdge(png, b.layout_rect, side));
+      assert.ok(Math.max(...ink) - Math.min(...ink) <= 16, `${tag}: inked ${side} edges ${ink.join(", ")}`);
+    }
+    if (t === "t4-centred-stack" || t === "t7-collage") {
+      const mid = R.x + R.w / 2;
+      for (const b of r.report.blocks) assert.ok(Math.abs(b.edge - mid) <= 2, `${tag}: ${b.block} centred`);
+      const top = r.report.blocks[0].layout_rect.y - R.y, bottom = bottomOf(R) - bottomOf(r.report.blocks.at(-1).layout_rect);
+      assert.ok(Math.abs(top - bottom) <= 2, `${tag}: vertically centred`);
+    }
+    if (t === "t5-offer-band") assert.equal(r.report.groups.find((g) => g.id === blk(r, "offer_name").group).band.rects.length, blk(r, "offer_name").lines, `${tag}: a pill per line`);
+    if (["t3-right-column", "t4-centred-stack", "t6-left-column", "t7-collage"].includes(t)) {
+      const [d] = g0.dividers;
+      assert.ok(d && d.y >= bottomOf(blk(r, "audience").rect) && bottomOf(d) <= blk(r, "duration").rect.y, `${tag}: divider between audience and duration`);
+    }
+  }
+  // Collage: 3 × 5 tiles cover the whole tall canvas.
+  const c = await renderComposite(browser, { images: TILES.slice(0, 4), ...BASE, treatment: "t7-collage", palette: "white-on-dark", ratio: "9x16" });
+  assert.equal(c.ok, true, c.failures.join("\n"));
+  const T = c.report.background.tiles;
+  assert.equal(T.length, 15);
+  assert.ok(Math.abs(T.at(-1).x + T.at(-1).w - 1080) < 1e-6 && Math.abs(T.at(-1).y + T.at(-1).h - 1920) < 1e-6, "tiles reach the canvas corner");
+  // Panels: round, showing their photos, clear of the text, inside the safe area — on a backdrop of
+  // the first photo, blurred and dimmed toward the charcoal (a solid tile blurs to itself, so the
+  // expected colour is exact).
+  const p = await renderComposite(browser, { images: [TILES[0], TILES[2]], ...BASE, treatment: "t8-panels-band", palette: "yellow-accent", ratio: "9x16" });
+  assert.equal(p.ok, true, p.failures.join("\n"));
+  const png = decodePNG(p.png), bp = p.report.background.backdrop_photo;
+  const dimmed = rgbOf(TILE_HEX[0]).map((v, i) => v * (1 - bp.darken) + rgbOf(p.report.background.backdrop)[i] * bp.darken);
+  for (const [x, y] of [[3, 3], [1076, 3], [3, 1916], [1076, 1916], [540, 1700]]) assert.ok(near(pixel(png, x, y), dimmed, 3), `backdrop at ${x},${y}: ${pixel(png, x, y)} vs ${dimmed.map(Math.round)}`);
+  p.report.background.panels.forEach((pn, i) => {
+    assert.ok(near(pixel(png, pn.cx, pn.cy), rgbOf(TILE_HEX[[0, 2][i]])), `panel ${i + 1} shows its photo`);
+    assert.ok(near(pixel(png, pn.cx - pn.r * 0.92, pn.cy - pn.r * 0.92), dimmed, 3), `panel ${i + 1} is round`);
+    assert.ok(within(safeRect916)(pn.cx - pn.r, pn.cy - pn.r) && within(safeRect916)(pn.cx + pn.r - 1, pn.cy + pn.r - 1), `panel ${i + 1} inside the safe area`);
+  });
+});
+
+test("H5 9:16 verifier: a line in the top 14%, the bottom 35% or a side 6% is caught", async () => {
+  const r = await renderComposite(browser, { image: DARK, ...BASE, ratio: "9x16" });
+  assert.equal(r.ok, true, r.failures.join("\n"));
+  const spec = buildSpec({ image: DARK, text: TEXT, ratio: "9x16" });
+  assert.equal(verifyReport(spec, r.report).length, 0, "the untampered report passes");
+  const tamper = (fn) => { const rep = structuredClone(r.report); fn(rep.blocks[0].rect); return verifyReport(spec, rep).join("\n"); };
+  const msg = /"location" leaves the 9x16 safe area \(x 6–94%, y 14–65%\): the app covers the rest/;
+  assert.match(tamper((k) => { k.y = 0.08 * H916; }), msg);
+  assert.match(tamper((k) => { k.y = 0.70 * H916; }), msg);
+  assert.match(tamper((k) => { k.x = 0.02 * 1080; }), msg);
+});
+
+test("H7 9:16 T8 fills the frame: no flat backdrop left in the areas the app covers (1:1 keeps its plain backdrop)", async () => {
+  const flat = (png, hex) => { const c = rgbOf(hex); let n = 0; for (let y = 0; y < png.h; y += 2) for (let x = 0; x < png.w; x += 2) if (near(pixel(png, x, y), c, 2)) n++; return n / ((png.w / 2) * (png.h / 2)); };
+  const photosIn = [svg(`<rect width="50%" height="100%" fill="#E53935"/><rect x="50%" width="50%" height="100%" fill="#1E88E5"/>`), TILES[1]];
+  const tall = await renderComposite(browser, { images: photosIn, ...BASE, treatment: "t8-panels-band", palette: "white-on-dark", ratio: "9x16" });
+  const sq = await renderComposite(browser, { images: photosIn, ...BASE, treatment: "t8-panels-band", palette: "white-on-dark" });
+  assert.ok(tall.ok && sq.ok, [...tall.failures, ...sq.failures].join("\n"));
+  const tallFlat = flat(decodePNG(tall.png), tall.report.background.backdrop), sqFlat = flat(decodePNG(sq.png), sq.report.background.backdrop);
+  assert.ok(tallFlat < 0.02, `9:16: ${(100 * tallFlat).toFixed(1)}% of the frame is flat backdrop`);
+  assert.ok(sqFlat > 0.4, `1:1 keeps the approved plain backdrop (${(100 * sqFlat).toFixed(0)}% flat)`);
+});
