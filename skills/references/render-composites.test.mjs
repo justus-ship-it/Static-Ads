@@ -355,3 +355,261 @@ test("pixels, per style: no letter is painted outside the region, even at full w
     assert.ok(inside > 20000, `${style}: text was painted`);
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// Step 2 — layouts
+// ══════════════════════════════════════════════════════════════════════════
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// E2 — golden snapshots of the approved T1 renders. The snapshot file was written by the engine
+// as it stood when Step 1 was approved (commit 5c39930), before the layout engine was built.
+// Every later engine change must reproduce it exactly: same sizes, line counts, positions,
+// contrast and fallbacks. Pixel hashes are compared too whenever the Chrome version matches
+// the one that wrote the snapshot (a Chrome update may legitimately change anti-aliasing).
+// Regenerate ONLY for an intended T1 change:  UPDATE_GOLDEN=1 node --test <this file>
+const GOLDEN = join(dirname(fileURLToPath(import.meta.url)), "__golden__", "t1.json");
+const LONG_TEXT = { location: "BISHAN AND UPPER THOMSON", audience: "LADIES WANTED", offer: "12 Week Strength and Confidence Comeback Challenge For Busy Parents" };
+
+function goldenCases() {
+  const cases = [];
+  const bgs = { DARK, LIGHT, STRIPES };
+  for (const [si, style] of STYLES.entries()) {
+    for (const [bi, [bg, image]] of Object.entries(bgs).entries()) {
+      const palette = PALETTES[(si + bi * 3) % PALETTES.length];
+      cases.push({ key: `${style}/${palette}/${bg}`, args: { image, ...BASE, style, palette } });
+    }
+    cases.push({ key: `${style}/white-on-dark/SOLID/long`, args: { image: SOLID_BG, ...LONG_TEXT, style, palette: "white-on-dark" } });
+  }
+  for (const palette of PALETTES) cases.push({ key: `s7-elegant-serif/${palette}/STRIPES`, args: { image: STRIPES, ...BASE, style: "s7-elegant-serif", palette } });
+  cases.push({ key: "s1/no-audience/DARK", args: { image: DARK, ...BASE, audience: null } });
+  cases.push({ key: "s1/free/LIGHT", args: { image: LIGHT, ...BASE, free: true } });
+  cases.push({ key: "s1/long-location/DARK", args: { image: DARK, ...BASE, location: "BISHAN AND UPPER THOMSON" } });
+  return cases;
+}
+
+const r2 = (v) => Math.round(v * 100) / 100;
+const rect2 = (r) => (r ? { x: r2(r.x), y: r2(r.y), w: r2(r.w), h: r2(r.h), ...(r.colour ? { colour: r.colour } : {}) } : null);
+function snapshot(r) {
+  return {
+    scrim: r.report.scrim.alpha,
+    blocks: r.report.blocks.map((b) => ({
+      block: b.block, text: b.text, face: b.face, effect: b.effect, size: b.size, lines: b.lines,
+      layout_rect: rect2(b.layout_rect), rect: rect2(b.rect), band: rect2(b.band),
+      judged_colours: b.judged_colours, contrast: b.contrast, steps: b.steps,
+    })),
+    png_sha256: createHash("sha256").update(r.png).digest("hex"),
+  };
+}
+
+test("E2 golden: T1 reproduces the approved Step 1 renders exactly", async () => {
+  const { product: chrome } = await browser.cdp.send("Browser.getVersion");
+  const got = {};
+  for (const c of goldenCases()) {
+    const r = await renderComposite(browser, c.args);
+    assert.equal(r.ok, true, `${c.key}: ${r.failures.join(" | ")}`);
+    got[c.key] = snapshot(r);
+  }
+  if (process.env.UPDATE_GOLDEN) {
+    mkdirSync(dirname(GOLDEN), { recursive: true });
+    writeFileSync(GOLDEN, JSON.stringify({ chrome, cases: got }, null, 1) + "\n");
+    return;
+  }
+  assert.ok(existsSync(GOLDEN), "golden snapshot missing");
+  const want = JSON.parse(readFileSync(GOLDEN, "utf-8"));
+  assert.deepEqual(Object.keys(got), Object.keys(want.cases), "same cases as the snapshot");
+  const pixels = chrome === want.chrome;
+  for (const [key, g] of Object.entries(got)) {
+    const { png_sha256: gh, ...gs } = g, { png_sha256: wh, ...ws } = want.cases[key];
+    assert.deepEqual(gs, ws, `${key}: layout, contrast or fallbacks changed`);
+    if (pixels) assert.equal(gh, wh, `${key}: pixels changed`);
+  }
+});
+
+// ── Step 2a — the layout engine (groups, dividers, scrim directions, bands, clear zones) ──
+// These use small test layouts passed as `treatmentSpec`, so the engine is proven on its own
+// before the real layouts T2–T8 are added to the catalogue (Step 2b/2c, with their own tests).
+import { validateLayout } from "./render-composites.mjs";
+
+const T1 = CAT.treatments.treatments["t1-bottom-stack"];
+const layoutOf = (groups, clear_zones = []) => ({ layouts: { "1x1": { groups, clear_zones } }, contrast: T1.contrast });
+const ln = (block, share, max_lines, min_px, optional) => ({ block, share, max_lines, min_px, ...(optional ? { optional: true } : {}) });
+const LOC = ln("location", 1, 1, 34), AUD = ln("audience", 0.66, 1, 28, true), DUR = ln("duration", 1.5, 1, 44), OFF = ln("offer_name", 1.4, 2, 30);
+const RULE = { block: "divider", width_pct: 30, thickness_pct: 0.5 };
+
+const SPLIT = layoutOf([
+  { id: "top", region: [8, 6, 84, 28], anchor: "top", align: "center", gap_pct: 0.9, scrim: { direction: "top", fade_pct: 10 }, stack: [LOC, AUD] },
+  { id: "bottom", region: [8, 62, 84, 32], anchor: "bottom", align: "center", gap_pct: 0.9, scrim: { direction: "bottom", fade_pct: 10 }, stack: [DUR, OFF] },
+], [{ name: "subject", rect: [5, 36, 90, 24] }]);
+const column = (align) => layoutOf([{
+  id: "col", region: align === "right" ? [52, 6, 42, 88] : [6, 6, 42, 88], anchor: "center", align, gap_pct: 1.2,
+  scrim: { direction: align, fade_pct: 8 },
+  stack: [ln("location", 1, 2, 34), AUD, RULE, DUR, ln("offer_name", 1.4, 4, 28)],
+}], [{ name: "subject", rect: align === "right" ? [5, 5, 45, 90] : [50, 5, 45, 90] }]);
+const banded = (mode, shape) => layoutOf([
+  { id: "top", region: [8, 6, 84, 26], anchor: "top", align: "center", gap_pct: 0.9, scrim: { direction: "top", fade_pct: 8 }, stack: [LOC, AUD] },
+  { id: "offer", region: [6, 58, 88, 36], anchor: "bottom", align: "center", gap_pct: 0.6, scrim: { direction: "none" },
+    band: { mode, shape, blocks: ["duration", "offer_name"], pad_pct: 1.6, radius_pct: 4 }, stack: [DUR, OFF] },
+]);
+const EVEN = layoutOf([{ id: "all", region: [8, 8, 84, 84], anchor: "center", align: "center", gap_pct: 1, scrim: { direction: "even" }, stack: [LOC, AUD, RULE, DUR, OFF] }]);
+const TEST_LAYOUTS = { SPLIT, RIGHT: column("right"), LEFT: column("left"), BAND_FULL: banded("full", "pill"), BAND_LINE: banded("line", "bar"), EVEN };
+
+const lumAt = (png, x, y) => { const i = (y * png.w + x) * png.ch; return 0.2126 * png.px[i] + 0.7152 * png.px[i + 1] + 0.0722 * png.px[i + 2]; };
+const meanLum = (png, x0, y0, x1, y1) => { let s = 0, n = 0; for (let y = Math.floor(y0); y < y1; y += 3) for (let x = Math.floor(x0); x < x1; x += 3) { s += lumAt(png, x, y); n++; } return s / n; };
+// Pixels that differ from the solid #202020 background, outside every group region (a leak), or
+// inside a given rect (text where it must not be).
+function painted(png, test) {
+  let n = 0;
+  for (let y = 0; y < png.h; y++) for (let x = 0; x < png.w; x++) {
+    const i = (y * png.w + x) * png.ch;
+    if (Math.abs(png.px[i] - 0x20) + Math.abs(png.px[i + 1] - 0x20) + Math.abs(png.px[i + 2] - 0x20) > 24 && test(x, y)) n++;
+  }
+  return n;
+}
+const within = (R) => (x, y) => x >= R.x && x <= R.x + R.w && y >= R.y && y <= R.y + R.h;
+
+test("2a layout rules: T1 and every test layout are valid; bad geometry is refused before rendering", () => {
+  assert.deepEqual(validateLayout(T1.layouts["1x1"], "t1"), []);
+  for (const [k, L] of Object.entries(TEST_LAYOUTS)) assert.deepEqual(validateLayout(L.layouts["1x1"], k), [], k);
+  const g = (over) => ({ id: "a", region: [6, 48, 88, 46], anchor: "bottom", align: "center", gap_pct: 1, scrim: { direction: "bottom", fade_pct: 12 }, stack: [LOC, DUR, OFF], ...over });
+  const bad = (groups, clear_zones) => validateLayout({ groups, clear_zones }).join(" | ");
+  assert.match(bad([g({ region: [2, 48, 88, 46] })]), /crosses the 5% canvas margin/);
+  assert.match(bad([g({ stack: [LOC, AUD, DUR] })]), /offer name must appear exactly once/);
+  assert.match(bad([g({ stack: [LOC, LOC, DUR, OFF] })]), /location line must appear exactly once/);
+  assert.match(bad([g({ stack: [LOC, DUR, OFF, RULE] })]), /divider must sit between two lines/);
+  assert.match(bad([g({ stack: [LOC, DUR], id: "a" }), g({ id: "b", region: [6, 60, 88, 30], stack: [OFF] })]), /overlap/);
+  assert.match(bad([g({ id: "a", region: [6, 6, 88, 30], stack: [LOC], scrim: { direction: "bottom", fade_pct: 12 } }),
+    g({ id: "b", region: [6, 60, 88, 30], stack: [DUR, OFF] })]), /"a"'s bottom scrim would reach group "b"/);
+  assert.match(bad([g({ id: "a", region: [6, 6, 88, 30], stack: [LOC], scrim: { direction: "even" } }),
+    g({ id: "b", region: [6, 60, 88, 30], stack: [DUR, OFF], scrim: { direction: "none" } })]), /single-group/);
+  assert.match(bad([g({ band: { mode: "full", shape: "pill", blocks: ["location", "offer_name"] } })]), /next to each other/);
+  assert.match(bad([g()], [{ name: "subject", rect: [10, 40, 80, 20] }]), /touches the clear zone "subject"/);
+  assert.throws(() => buildSpec({ image: DARK, text: TEXT, treatmentSpec: layoutOf([g({ region: [2, 48, 88, 46] })]) }), /canvas margin/);
+});
+
+test("2a groups: lines render in their own group's region; hierarchy spans groups; clear zone stays empty", async () => {
+  const r = await renderComposite(browser, { image: SOLID_BG, ...BASE, treatmentSpec: SPLIT, palette: "white-on-dark" });
+  assert.equal(r.ok, true, r.failures.join("\n"));
+  const at = Object.fromEntries(r.report.blocks.map((b) => [b.block, b]));
+  assert.deepEqual(Object.fromEntries(Object.entries(at).map(([k, b]) => [k, b.group])), { location: "top", audience: "top", duration: "bottom", offer_name: "bottom" });
+  for (const b of r.report.blocks) {
+    const R = r.report.groups.find((g) => g.id === b.group).region;
+    assert.ok(b.rect.y >= R.y - 1 && b.rect.y + b.rect.h <= R.y + R.h + 1, `${b.block} inside group "${b.group}"`);
+  }
+  assert.ok(at.location.rect.y < 1080 * 0.34 && at.offer_name.rect.y > 1080 * 0.62, "location up top, offer at the bottom");
+  for (const b of r.report.blocks) assert.ok(b.size <= at.duration.size, `${b.block} ${b.size}px > duration ${at.duration.size}px`);
+  assert.ok(at.audience.size <= at.location.size);
+  const png = decodePNG(r.png), Z = r.report.clear_zones[0];
+  assert.equal(painted(png, within(Z)), 0, "no text pixels in the subject's space");
+  assert.equal(painted(png, (x, y) => !r.report.groups.some((g) => within(g.region)(x, y))), 0, "nothing outside the groups");
+});
+
+test("2a scrim directions: each group darkens its own side, and only there", async () => {
+  const png = async (L) => {
+    const r = await renderComposite(browser, { image: LIGHT, ...BASE, treatmentSpec: L, palette: "white-on-dark" });
+    assert.equal(r.ok, true, r.failures.join("\n"));
+    return { r, p: decodePNG(r.png) };
+  };
+  const W = 1080, H = 1080, e = 30;
+  const split = await png(SPLIT);
+  assert.ok(split.r.report.groups.every((g) => g.scrim.alpha > 0), "both groups needed a scrim on cream");
+  const [top, mid, bottom] = [meanLum(split.p, 0, 0, W, e), meanLum(split.p, 0, H * 0.47, W, H * 0.49), meanLum(split.p, 0, H - e, W, H)];
+  assert.ok(top < mid - 60 && bottom < mid - 60, `top ${top.toFixed(0)} / middle ${mid.toFixed(0)} / bottom ${bottom.toFixed(0)}`);
+  for (const side of ["right", "left"]) {
+    const { r, p } = await png(column(side));
+    assert.equal(r.report.groups[0].scrim.direction, side);
+    const [l, rr] = [meanLum(p, 0, 0, e, H), meanLum(p, W - e, 0, W, H)];
+    assert.ok(side === "right" ? rr < l - 60 : l < rr - 60, `${side} column: left edge ${l.toFixed(0)}, right edge ${rr.toFixed(0)}`);
+  }
+  const even = await png(EVEN);
+  const corners = [meanLum(even.p, 0, 0, e, e), meanLum(even.p, W - e, 0, W, e), meanLum(even.p, 0, H - e, e, H), meanLum(even.p, W - e, H - e, W, H)];
+  assert.ok(Math.max(...corners) - Math.min(...corners) < 2 && corners[0] < 200, `even scrim corners ${corners.map((c) => c.toFixed(0))}`);
+});
+
+test("2a dividers: drawn between the lines, inside the region, 3:1 against the photo, never counted as text", async () => {
+  for (const [name, image] of Object.entries({ DARK, LIGHT, STRIPES })) {
+    const r = await renderComposite(browser, { image, ...BASE, treatmentSpec: column("right"), palette: "cyan-pink" });
+    assert.equal(r.ok, true, `${name}: ${r.failures.join(" | ")}`);
+    const [d] = r.report.groups[0].dividers;
+    assert.ok(d, `${name}: divider drawn`);
+    const aud = r.report.blocks.find((b) => b.block === "audience"), dur = r.report.blocks.find((b) => b.block === "duration");
+    assert.ok(d.y >= aud.rect.y + aud.rect.h && d.y + d.h <= dur.rect.y, `${name}: divider sits between audience and duration`);
+    assert.ok(d.contrast >= 3, `${name}: divider ${d.contrast}:1`);
+    assert.ok(!r.report.blocks.some((b) => b.block === "divider"), "a divider is not a text block");
+    if (name === "DARK") assert.equal(d.colour, "#FF5DBB", "the palette's divider colour when it reads");
+  }
+  // With no audience line, the divider still has text on both sides (location / duration) and stays.
+  // A divider whose only neighbour on one side is missing is dropped, so no stray rule is left.
+  const lone = layoutOf([{ id: "a", region: [6, 40, 88, 54], anchor: "bottom", align: "center", gap_pct: 1, scrim: { direction: "bottom", fade_pct: 10 },
+    stack: [LOC, DUR, OFF, RULE, AUD] }]);
+  const r = await renderComposite(browser, { image: DARK, ...BASE, audience: null, treatmentSpec: lone });
+  assert.equal(r.ok, true, r.failures.join("\n"));
+  assert.equal(r.report.groups[0].dividers.length, 0);
+});
+
+test("2a alignment: left and right columns line up their edges (±2px) with any style", async () => {
+  for (const side of ["left", "right"]) for (const style of ["s1-heavy-sans", "s4-wide-tracked", "s5-italic-heavy", "s8-script-accent"]) {
+    const r = await renderComposite(browser, { image: DARK, ...BASE, location: "UPPER THOMSON", treatmentSpec: column(side), style });
+    assert.equal(r.ok, true, `${side} ${style}: ${r.failures.join(" | ")}`);
+    const edges = r.report.blocks.map((b) => b.edge);
+    assert.ok(Math.max(...edges) - Math.min(...edges) <= 2, `${side} ${style}: edges ${edges.map((x) => x.toFixed(1)).join(", ")}`);
+    const R = r.report.groups[0].region;
+    const target = side === "left" ? R.x + r.report.groups[0].inset : R.x + R.w - r.report.groups[0].inset;
+    assert.ok(Math.abs(edges[0] - target) <= 1, `${side} ${style}: edge on the group's inset line`);
+  }
+  // Two rules can collide: a long location in a narrow column is set small, "audience ≤ location"
+  // then pulls a script audience under its 52px floor. That must fail loudly, never render.
+  const clash = await renderComposite(browser, { image: DARK, ...BASE, location: "BISHAN AND UPPER THOMSON", treatmentSpec: column("left"), style: "s8-script-accent" });
+  assert.equal(clash.ok, false);
+  assert.match(clash.failures.join(), /script is \d+px, below the 52px legibility floor/);
+});
+
+test("2a pixels: nothing leaks from any test layout, in any style, at full width", async () => {
+  // "UPPER THOMSON" wraps to fill a column's width; the longer location would clash with script (above).
+  const LONG = { location: "UPPER THOMSON", audience: "LADIES WANTED", offer: "12 Week Strength and Confidence Comeback Challenge For Busy Parents" };
+  for (const [name, L] of Object.entries(TEST_LAYOUTS)) for (const style of STYLES) {
+    const r = await renderComposite(browser, { image: SOLID_BG, ...LONG, treatmentSpec: L, style, palette: "white-on-dark" });
+    assert.equal(r.ok, true, `${name} ${style}: ${r.failures.join(" | ")}`);
+    const png = decodePNG(r.png);
+    const leaks = painted(png, (x, y) => !r.report.groups.some((g) => within(g.region)(x, y)));
+    assert.equal(leaks, 0, `${name} ${style}: ${leaks} painted pixels outside the text regions`);
+    for (const Z of r.report.clear_zones) assert.equal(painted(png, within(Z)), 0, `${name} ${style}: text in clear zone "${Z.name}"`);
+  }
+});
+
+test("2a layout bands: full-width pill and per-line bars, inside the region, 4.5:1 on every palette", async () => {
+  for (const palette of PALETTES) {
+    const full = await renderComposite(browser, { image: STRIPES, ...BASE, treatmentSpec: banded("full", "pill"), palette });
+    assert.equal(full.ok, true, `full ${palette}: ${full.failures.join(" | ")}`);
+    const g = full.report.groups.find((x) => x.id === "offer");
+    assert.equal(g.band.rects.length, 1);
+    const [k] = g.band.rects;
+    assert.ok(Math.abs(k.x - g.region.x) < 0.5 && Math.abs(k.w - g.region.w) < 0.5, `full ${palette}: band spans the group's width`);
+    assert.equal(g.scrim.alpha, 0, "no scrim behind a solid band");
+    for (const b of full.report.blocks.filter((x) => x.group === "offer")) {
+      assert.deepEqual(b.steps, ["layout-band"]);
+      assert.ok(b.contrast.after >= 4.5, `full ${palette} ${b.block}: ${b.contrast.after}:1`);
+      assert.ok(b.rect.y >= k.y && b.rect.y + b.rect.h <= k.y + k.h, `full ${palette} ${b.block}: letters inside the band`);
+    }
+    const line = await renderComposite(browser, { image: STRIPES, ...BASE, treatmentSpec: banded("line", "bar"), palette });
+    assert.equal(line.ok, true, `line ${palette}: ${line.failures.join(" | ")}`);
+    const lg = line.report.groups.find((x) => x.id === "offer");
+    const nLines = line.report.blocks.filter((x) => x.group === "offer").reduce((n, b) => n + b.lines, 0);
+    assert.equal(lg.band.rects.length, nLines, `line ${palette}: one bar per line of text`);
+    for (const b of line.report.blocks.filter((x) => x.group === "offer")) assert.ok(b.contrast.after >= 4.5, `line ${palette} ${b.block}: ${b.contrast.after}:1`);
+  }
+});
+
+test("2a verifier: catches a line in a clear zone, a stray divider, a weak divider and a line in the wrong group", async () => {
+  const r = await renderComposite(browser, { image: DARK, ...BASE, treatmentSpec: column("right") });
+  assert.equal(r.ok, true, r.failures.join("\n"));
+  const spec = buildSpec({ image: DARK, text: TEXT, treatmentSpec: column("right") });
+  const tamper = (fn) => { const rep = structuredClone(r.report); fn(rep); return verifyReport(spec, rep).join("\n"); };
+  assert.equal(verifyReport(spec, r.report).length, 0, "the untampered report passes");
+  assert.match(tamper((rep) => { rep.blocks[0].rect.x = 100; }), /enters the clear zone "subject"/);
+  assert.match(tamper((rep) => { rep.groups[0].dividers[0].x = 10; }), /divider leaves its region/);
+  assert.match(tamper((rep) => { rep.groups[0].dividers[0].contrast = 1.4; }), /divider contrast 1.4:1/);
+  assert.match(tamper((rep) => { rep.blocks[2].group = "elsewhere"; }), /the layout puts it in "col"/);
+});

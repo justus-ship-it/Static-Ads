@@ -10,6 +10,9 @@
   ×  palette (colours, per line). render-composites.mjs merges them into one spec and fills the
   two placeholders below. The page reports back through window.__renderPromise and never
   decides what the text says.
+
+  A layout is one or more text groups. Each group owns a region, an anchor, an alignment, a
+  scrim direction, and optionally a band behind some of its lines and dividers between them.
 -->
 <html>
 <head>
@@ -18,10 +21,10 @@
 /*__FONTFACES__*/
 html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 #stage { position: relative; overflow: hidden; }
-#bg, #scrim, .band, .block { position: absolute; }
+#bg, .scrim, .band, .rule, .block { position: absolute; }
 #bg { left: 0; top: 0; z-index: 0; }
-#scrim { left: 0; z-index: 1; pointer-events: none; }
-.band { z-index: 2; }
+.scrim { left: 0; z-index: 1; pointer-events: none; }
+.band, .rule { z-index: 2; }
 /* font-size 0 kills the block's own line strut, so its height is exactly the span's. */
 .block { z-index: 3; font-size: 0; line-height: 0; }
 .t {
@@ -39,7 +42,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 </style>
 </head>
 <body>
-<div id="stage"><canvas id="bg"></canvas><div id="scrim"></div></div>
+<div id="stage"><canvas id="bg"></canvas></div>
 <script id="spec" type="application/json">/*__SPEC__*/</script>
 <script>
 (() => {
@@ -78,7 +81,8 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 
     // 2. Fonts. Every face a line uses must genuinely load — family AND style. A silent fallback,
     //    or an upright face standing in for a missing italic, would still "render".
-    const present0 = L.stack.filter((b) => S.text[b.block] != null && S.text[b.block] !== "");
+    const hasText = (b) => S.text[b.block] != null && S.text[b.block] !== "";
+    const present0 = L.groups.flatMap((g) => g.stack.filter((it) => !it.divider && hasText(it)));
     await Promise.all(present0.map((b) => document.fonts.load(`${b.face.style} ${b.face.weight} 40px "${b.face.family}"`)));
     await document.fonts.ready;
     const loadedFaces = [...document.fonts].filter((f) => f.status === "loaded")
@@ -93,67 +97,97 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       return { ok: false, fontsLoaded, faces, failures: faces.filter((f) => !f.loaded).map((f) => `font face did not load: ${f.family} ${f.style}`) };
     }
 
-    // 3. Region, and each present block's share of it.
-    const [rx, ry, rw, rh] = L.region.map((v, i) => (v / 100) * (i % 2 ? H : W));
-    const gap = (L.gap_pct / 100) * H;
-    const present = L.stack.filter((b) => {
-      const t = S.text[b.block];
-      if (t == null || t === "") {
-        if (!b.optional) failures.push(`required block "${b.block}" has no text`);
-        return false;
+    // 3. Groups. Each owns a region; the lines with text share its height. A divider is kept only
+    //    when there is text on both sides of it, so a missing audience line never leaves a stray rule.
+    const groups = L.groups.map((G) => {
+      const [rx, ry, rw, rh] = G.region.map((v, i) => (v / 100) * (i % 2 ? H : W));
+      const kept = [];
+      for (const it of G.stack) {
+        if (it.divider) { kept.push(it); continue; }
+        if (!hasText(it)) {
+          if (!it.optional) failures.push(`required block "${it.block}" has no text`);
+          continue;
+        }
+        kept.push(it);
       }
-      return true;
+      const items = kept.filter((it, i) => !it.divider || (!kept[i - 1]?.divider
+        && kept.slice(0, i).some((x) => !x.divider) && kept.slice(i + 1).some((x) => !x.divider)));
+      return { G, rx, ry, rw, rh, gap: (G.gap_pct / 100) * H, items, blocks: [], dividers: [] };
     });
     if (failures.length) return { ok: false, failures, fontsLoaded, faces };
-    const shareSum = present.reduce((n, b) => n + b.share, 0);
-    const avail = rh - gap * (present.length - 1);
 
-    const blocks = present.map((spec) => {
-      const pal = S.palette.blocks[spec.block];
-      const d = document.createElement("div");
-      d.className = "block";
-      d.style.left = rx + "px";
-      d.style.width = rw + "px";
-      d.style.textAlign = L.align;
-      const sp = document.createElement("span");
-      sp.className = "t";
-      const text = S.text[spec.block];
-      if (spec.case === "title") {
-        // One span per word; spaces stay as text nodes. textContent is still exactly `text`.
-        sp.classList.add("title");
-        for (const part of text.split(/(\s+)/)) {
-          if (!part) continue;
-          if (/^\s+$/.test(part)) { sp.appendChild(document.createTextNode(part)); continue; }
-          const w = document.createElement("span");
-          w.className = "w";
-          w.textContent = part;
-          sp.appendChild(w);
+    const blocks = [];
+    for (const g of groups) {
+      const { G, rx, rw, rh, gap, items } = g;
+      const lines = items.filter((it) => !it.divider);
+      const ruleH = (it) => Math.max(2, Math.round((it.thickness_pct / 100) * H));
+      const rules = items.filter((it) => it.divider).reduce((a, it) => a + ruleH(it), 0);
+      // A layout band needs breathing room above its first line and below its last.
+      g.padY = lines.some((it) => it.layout_band) ? ((G.band.pad_pct ?? 1.2) / 100) * H : 0;
+      const shareSum = lines.reduce((n, b) => n + b.share, 0);
+      const avail = rh - gap * (items.length - 1) - rules - 2 * g.padY;
+
+      g.seq = items.map((spec) => {
+        if (spec.divider) {
+          const d = { divider: spec, h: ruleH(spec) };
+          g.dividers.push(d);
+          return d;
         }
-      } else {
-        sp.textContent = text; // textContent, never innerHTML: user strings are data
-      }
-      Object.assign(sp.style, {
-        fontFamily: `"${spec.face.family}"`,
-        fontStyle: spec.face.style,
-        fontWeight: String(spec.face.weight),
-        textTransform: spec.case === "upper" ? "uppercase" : "none",
-        letterSpacing: spec.tracking,
-        // Letter-spacing adds space after every letter, including the last on each line, which
-        // would pull centred text left. An equal space on the left keeps every line truly centred,
-        // and because it is inside the box (border-box) the fit and bounds checks include it.
-        // (A negative right margin was tried first: it shifted the box past the region edge.)
-        paddingLeft: spec.tracking,
-        boxSizing: "border-box",
-        lineHeight: String(spec.line_height),
-        // Script faces have a narrow word space and capitals whose swashes reach left, so words
-        // run together ("LadiesWanted"). Open the gap for script only.
-        wordSpacing: spec.script ? "0.22em" : "normal",
-        color: pal.fill,
+        const pal = S.palette.blocks[spec.block];
+        const d = document.createElement("div");
+        d.className = "block";
+        d.style.left = rx + "px";
+        d.style.width = rw + "px";
+        d.style.textAlign = G.align;
+        const sp = document.createElement("span");
+        sp.className = "t";
+        const text = S.text[spec.block];
+        if (spec.case === "title") {
+          // One span per word; spaces stay as text nodes. textContent is still exactly `text`.
+          sp.classList.add("title");
+          for (const part of text.split(/(\s+)/)) {
+            if (!part) continue;
+            if (/^\s+$/.test(part)) { sp.appendChild(document.createTextNode(part)); continue; }
+            const w = document.createElement("span");
+            w.className = "w";
+            w.textContent = part;
+            sp.appendChild(w);
+          }
+        } else {
+          sp.textContent = text; // textContent, never innerHTML: user strings are data
+        }
+        Object.assign(sp.style, {
+          fontFamily: `"${spec.face.family}"`,
+          fontStyle: spec.face.style,
+          fontWeight: String(spec.face.weight),
+          textTransform: spec.case === "upper" ? "uppercase" : "none",
+          letterSpacing: spec.tracking,
+          // Letter-spacing adds space after every letter, including the last on each line, which
+          // would pull centred text left. An equal space on the left keeps every line truly centred,
+          // and because it is inside the box (border-box) the fit and bounds checks include it.
+          // (A negative right margin was tried first: it shifted the box past the region edge.)
+          // Left- and right-aligned lines handle the trailing space in setSize instead.
+          paddingLeft: G.align === "center" ? spec.tracking : "0",
+          boxSizing: "border-box",
+          lineHeight: String(spec.line_height),
+          // Script faces have a narrow word space and capitals whose swashes reach left, so words
+          // run together ("LadiesWanted"). Open the gap for script only.
+          wordSpacing: spec.script ? "0.22em" : "normal",
+          color: pal.fill,
+        });
+        d.appendChild(sp);
+        stage.appendChild(d);
+        const b = { spec, pal, d, sp, g, boxH: (avail * spec.share) / shareSum };
+        g.blocks.push(b);
+        blocks.push(b);
+        return { b };
       });
-      d.appendChild(sp);
-      stage.appendChild(d);
-      return { spec, pal, d, sp, boxH: (avail * spec.share) / shareSum };
-    });
+      // Left- and right-aligned lines share one inset from the aligned edge, so their edges line
+      // up. It is the most ink overhang any line in the group could need, at the largest size it
+      // could possibly be given — so no line's letters can reach past the region edge.
+      g.inset = G.align === "center" ? 0
+        : Math.max(...g.blocks.map((b) => b.spec.pad_em * Math.floor(b.boxH / b.spec.line_height)));
+    }
 
     // 4. Fit: the largest size at which the line stays within its lines, its box and the region.
     //    Nothing is ever clipped: if the floor size still does not fit, the render fails.
@@ -161,8 +195,18 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     //    box (italic slant, script swashes) plus the widest outline, and the band padding for
     //    banded lines. The text WRAPS at that narrowed width, not just checks against it.
     const setSize = (b, size) => {
+      const g = b.g;
       b.sp.style.fontSize = size + "px";
-      b.sp.style.maxWidth = rw - 2 * b.spec.pad_em * size + "px";
+      if (g.G.align === "center") {
+        b.sp.style.maxWidth = g.rw - 2 * b.spec.pad_em * size + "px";
+        return;
+      }
+      // The aligned side is held off the edge by the group inset; the far side by this line's own
+      // overhang. On the right, the trailing letter-space is pushed past the edge so the last
+      // letter itself lines up — that space carries no ink.
+      b.sp.style.maxWidth = g.rw - g.inset - b.spec.pad_em * size + "px";
+      if (g.G.align === "left") b.sp.style.marginLeft = g.inset + "px";
+      else b.sp.style.marginRight = g.inset - b.spec.tracking_em * size + "px";
     };
     const fitsAt = (b, size) => {
       setSize(b, size);
@@ -189,30 +233,43 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     }
     if (failures.length) return { ok: false, failures, fontsLoaded, faces };
 
-    // 5. Hierarchy: the duration line is the largest; location is never smaller than audience.
-    //    Clamping only ever shrinks, so every block still fits.
+    // 5. Hierarchy, across every group: the duration line is the largest; location is never
+    //    smaller than audience. Clamping only ever shrinks, so every block still fits.
     const by = (id) => blocks.find((b) => b.spec.block === id);
     const dur = by("duration"), name = by("offer_name"), loc = by("location"), aud = by("audience");
     const lead = dur || name;
     for (const b of blocks) if (lead && b !== lead && b.size > lead.size) b.size = lead.size;
     if (loc && aud && aud.size > loc.size) aud.size = loc.size;
 
-    // 6. Stack from the anchor edge using real rendered heights, so the stack cannot leave the region.
+    // 6. Stack each group from its anchor edge using real rendered heights, so no group can leave
+    //    its region.
     for (const b of blocks) setSize(b, b.size);
-    const heights = blocks.map((b) => b.sp.getBoundingClientRect().height);
-    const total = heights.reduce((a, c) => a + c, 0) + gap * (blocks.length - 1);
-    let y = L.anchor === "bottom" ? ry + rh - total : L.anchor === "center" ? ry + (rh - total) / 2 : ry;
-    blocks.forEach((b, i) => { b.d.style.top = y + "px"; y += heights[i] + gap; });
+    for (const g of groups) {
+      const { G, seq, gap, ry, rh } = g;
+      const heights = seq.map((s) => (s.b ? s.b.sp.getBoundingClientRect().height : s.h));
+      const total = heights.reduce((a, c) => a + c, 0) + gap * (seq.length - 1) + 2 * g.padY;
+      const banded = seq.filter((s) => s.b && s.b.spec.layout_band);
+      let y = G.anchor === "bottom" ? ry + rh - total : G.anchor === "center" ? ry + (rh - total) / 2 : ry;
+      seq.forEach((s, i) => {
+        if (s === banded[0]) y += g.padY;
+        if (s.b) s.b.d.style.top = y + "px"; else s.y = y;
+        y += heights[i] + gap;
+        if (s === banded[banded.length - 1]) y += g.padY;
+      });
+      for (const d of g.dividers) {
+        const w = Math.min((d.divider.width_pct / 100) * g.rw, g.rw - g.inset);
+        const x = G.align === "center" ? g.rx + (g.rw - w) / 2 : G.align === "left" ? g.rx + g.inset : g.rx + g.rw - g.inset - w;
+        d.rect = { x, y: d.y, w, h: d.h };
+      }
+    }
 
     // 7. Contrast guard, sampled from the actual photo pixels under each line.
     //    Each line is judged on the colour that actually carries its letters: the fill for filled
     //    text, the outline for heavy-outlined and hollow text, and the band for banded text.
     const scrimRGB = hexRGB(S.palette.scrim);
-    const worst = (b, alpha) => Math.max(...b.judgeLs.map((jl) => worstFor(b, jl, alpha)));
-    const worstFor = (b, judgeL, alpha) => {
+    const sampleRatio = (rect, judgeL, alpha) => {
       // Per-pixel contrast, then the value that 85% of the pixels under the line meet or beat.
       // This handles light and dark text alike, and a bright patch under half a word still counts.
-      const rect = b.rect;
       const x0 = Math.max(0, Math.floor(rect.left)), x1 = Math.min(W, Math.ceil(rect.right));
       const y0 = Math.max(0, Math.floor(rect.top)), y1 = Math.min(H, Math.ceil(rect.bottom));
       const rs = [];
@@ -231,6 +288,8 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       rs.sort((a, c) => a - c);
       return pct(rs, 100 - C.sample_percentile);
     };
+    const worstFor = (b, judgeL, alpha) => sampleRatio(b.rect, judgeL, alpha);
+    const worst = (b, alpha) => Math.max(...b.judgeLs.map((jl) => worstFor(b, jl, alpha)));
 
     for (const b of blocks) {
       const e = b.spec.effect;
@@ -241,99 +300,182 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       b.judgeLs = b.judgeHexes.map(lumHex);
       b.judgeHex = b.judgeHexes[0];
       b.judgeL = b.judgeLs[0];
-      b.strokeable = e === "fill"; // a contrast stroke only makes sense on plain filled text
+      b.strokeable = e === "fill" && !b.spec.layout_band; // a contrast stroke only makes sense on plain filled text
       b.floor = b.strokeable ? C.stroke_min : C.target;
-      b.before = e === "band" ? null : worst(b, 0);
+      b.before = e === "band" || b.spec.layout_band ? null : worst(b, 0);
+      // On a layout band a line may be set in either of its own palette colours, fill or outline —
+      // whichever reads on the band. (Blue-white's white pill takes its blue; a dark pill its white.)
+      if (b.spec.layout_band) b.bandHexes = [...new Set([b.pal.fill, b.pal.outline])];
     }
 
-    // Candidate scrim: the smallest opacity that rescues every line needing it (capped). Only
-    // lines the scrim actually helps are considered — it darkens, so it can hurt dark text.
-    let A = 0;
-    if (C.chain.includes("scrim")) {
-      for (const b of blocks) {
-        if (b.before == null || b.before >= b.floor) continue;
-        if (worst(b, C.scrim_max_alpha) <= b.before) continue; // the scrim would not help this line
-        let lo = 0, hi = C.scrim_max_alpha;
-        if (worst(b, hi) < C.target) { A = Math.max(A, hi); continue; }
-        for (let k = 0; k < 14; k++) {
-          const mid = (lo + hi) / 2;
-          if (worst(b, mid) >= C.target) hi = mid; else lo = mid;
-        }
-        A = Math.max(A, hi);
-      }
-    }
-
-    // A scrim sits behind the whole stack, so it can help one line while hurting another. Plan
-    // both ways and keep the one that needs fewer bands (then fewer outlines).
-    // Mid-tone colours cannot reach 4.5:1 against a near-black or near-white grey, so the band
-    // may also be pure black or white. The palette's own band colour wins ties.
+    // Mid-tone colours cannot reach 4.5:1 against a near-black or near-white grey, so a band may
+    // also be pure black or white. The palette's own band colour wins ties.
     const bandScore = (b, c) => Math.max(...b.judgeLs.map((jl) => ratio(jl, lumHex(c))));
+    const onBandScore = (b, c) => Math.max(...b.bandHexes.map((h) => ratio(lumHex(h), lumHex(c))));
     const bestBand = (b, first) => [first, S.palette.band, "#000000", "#FFFFFF"]
       .filter(Boolean).reduce((a, c) => (bandScore(b, c) > bandScore(b, a) ? c : a));
-    const plan = (alpha) => blocks.map((b) => {
-      if (b.spec.effect === "band") {
-        let pill = S.palette.pill || S.palette.band;
-        if (bandScore(b, pill) < C.target) pill = bestBand(b, pill);
-        return { after: bandScore(b, pill), steps: ["style-band"], pill };
-      }
-      const after = alpha ? worst(b, alpha) : b.before;
-      const pre = alpha && b.before < C.target ? ["scrim"] : [];
-      if (after >= C.target) return { after, steps: pre };
-      if (b.strokeable && after >= C.stroke_min && C.chain.includes("stroke")) return { after, steps: [...pre, "stroke"] };
-      const band = bestBand(b, S.palette.band);
-      return { after: bandScore(b, band), steps: [...(alpha ? ["scrim"] : []), "band"], band };
-    });
-    const score = (p, alpha) => p.filter((x) => x.steps.includes("band")).length * 10
-      + p.filter((x) => x.steps.includes("stroke")).length + (alpha ? 0.5 : 0);
-    const noScrim = plan(0);
-    const withScrim = A > 0 ? plan(A) : null;
-    const useScrim = withScrim && score(withScrim, A) < score(noScrim, 0);
-    const chosen = useScrim ? withScrim : noScrim;
-    if (!useScrim) A = 0;
 
-    if (A > 0) {
-      const fade = (L.scrim.fade_pct / 100) * H;
-      const topBlock = Math.min(...blocks.map((b) => b.rect.top));
-      const top = Math.max(0, topBlock - fade);
-      const [r, g, bl] = scrimRGB;
-      const scrim = document.getElementById("scrim");
-      scrim.style.top = top + "px";
-      scrim.style.width = W + "px";
-      scrim.style.height = H - top + "px";
-      scrim.style.background = `linear-gradient(to bottom, rgba(${r},${g},${bl},0) 0px, rgba(${r},${g},${bl},${A}) ${topBlock - top}px, rgba(${r},${g},${bl},${A}) 100%)`;
+    for (const g of groups) {
+      const gb = g.blocks;
+      // A layout band carries all its lines in one colour: the palette's pill if every line reads
+      // on it, otherwise the candidate whose weakest line reads best.
+      const onBand = gb.filter((b) => b.spec.layout_band);
+      if (onBand.length) {
+        const cands = [S.palette.pill, S.palette.band, "#000000", "#FFFFFF"].filter(Boolean);
+        const weakest = (c) => Math.min(...onBand.map((b) => onBandScore(b, c)));
+        g.bandColour = cands.find((c) => weakest(c) >= C.target) || cands.reduce((a, c) => (weakest(c) > weakest(a) ? c : a));
+        for (const b of onBand) {
+          b.textHex = b.bandHexes.reduce((a, h) => (ratio(lumHex(h), lumHex(g.bandColour)) > ratio(lumHex(a), lumHex(g.bandColour)) ? h : a));
+          if (b.spec.effect !== "outline-bold") b.judgeHexes = [b.textHex]; // outline-bold draws both colours
+        }
+      }
+
+      // Candidate scrim: the smallest opacity that rescues every line needing it (capped). Only
+      // lines the scrim actually helps are considered — it darkens, so it can hurt dark text.
+      let A = 0;
+      if (C.chain.includes("scrim") && g.G.scrim.direction !== "none") {
+        for (const b of gb) {
+          if (b.before == null || b.before >= b.floor) continue;
+          if (worst(b, C.scrim_max_alpha) <= b.before) continue; // the scrim would not help this line
+          let lo = 0, hi = C.scrim_max_alpha;
+          if (worst(b, hi) < C.target) { A = Math.max(A, hi); continue; }
+          for (let k = 0; k < 14; k++) {
+            const mid = (lo + hi) / 2;
+            if (worst(b, mid) >= C.target) hi = mid; else lo = mid;
+          }
+          A = Math.max(A, hi);
+        }
+      }
+
+      // A scrim sits behind the whole group, so it can help one line while hurting another. Plan
+      // both ways and keep the one that needs fewer bands (then fewer outlines).
+      const plan = (alpha) => gb.map((b) => {
+        if (b.spec.layout_band) return { after: onBandScore(b, g.bandColour), steps: ["layout-band"] };
+        if (b.spec.effect === "band") {
+          let pill = S.palette.pill || S.palette.band;
+          if (bandScore(b, pill) < C.target) pill = bestBand(b, pill);
+          return { after: bandScore(b, pill), steps: ["style-band"], pill };
+        }
+        const after = alpha ? worst(b, alpha) : b.before;
+        const pre = alpha && b.before < C.target ? ["scrim"] : [];
+        if (after >= C.target) return { after, steps: pre };
+        if (b.strokeable && after >= C.stroke_min && C.chain.includes("stroke")) return { after, steps: [...pre, "stroke"] };
+        const band = bestBand(b, S.palette.band);
+        return { after: bandScore(b, band), steps: [...(alpha ? ["scrim"] : []), "band"], band };
+      });
+      const score = (p, alpha) => p.filter((x) => x.steps.includes("band")).length * 10
+        + p.filter((x) => x.steps.includes("stroke")).length + (alpha ? 0.5 : 0);
+      const noScrim = plan(0);
+      const withScrim = A > 0 ? plan(A) : null;
+      const useScrim = withScrim && score(withScrim, A) < score(noScrim, 0);
+      const chosen = useScrim ? withScrim : noScrim;
+      if (!useScrim) A = 0;
+      g.A = A;
+      gb.forEach((b, i) => { b.res = chosen[i]; });
+      if (A > 0) drawScrim(g, A);
     }
 
-    // Bands and pills never leave the text region: padding is clipped to it, so a band can
-    // never intrude into a margin or (in 9:16) a platform dead zone.
-    const drawBand = (b, colour, padX, padY, radius) => {
-      const x0 = Math.max(rx, b.rect.left - padX), x1 = Math.min(rx + rw, b.rect.right + padX);
-      const y0 = Math.max(ry, b.rect.top - padY), y1 = Math.min(ry + rh, b.rect.bottom + padY);
+    // The scrim is full strength from the text's edge outward and fades beyond it, so every letter
+    // sits on the full-strength part and the contrast sampled above is exactly what renders.
+    function drawScrim(g, A) {
+      const dir = g.G.scrim.direction;
+      const [r, gr, bl] = scrimRGB;
+      const c = (a) => `rgba(${r},${gr},${bl},${a})`;
+      const el = document.createElement("div");
+      el.className = "scrim";
+      const ink = g.blocks.map((b) => ({ b, pad: b.spec.pad_em * b.size }));
+      if (dir === "bottom") {
+        const fade = (g.G.scrim.fade_pct / 100) * H;
+        const topBlock = Math.min(...g.blocks.map((b) => b.rect.top));
+        const top = Math.max(0, topBlock - fade);
+        el.style.top = top + "px";
+        el.style.width = W + "px";
+        el.style.height = H - top + "px";
+        el.style.background = `linear-gradient(to bottom, ${c(0)} 0px, ${c(A)} ${topBlock - top}px, ${c(A)} 100%)`;
+        g.scrimFull = { x: 0, y: topBlock, w: W, h: H - topBlock };
+      } else if (dir === "top") {
+        const fade = (g.G.scrim.fade_pct / 100) * H;
+        const edge = Math.max(...g.blocks.map((b) => b.rect.bottom));
+        const end = Math.min(H, edge + fade);
+        Object.assign(el.style, { top: "0px", width: W + "px", height: end + "px",
+          background: `linear-gradient(to top, ${c(0)} 0px, ${c(A)} ${end - edge}px, ${c(A)} 100%)` });
+        g.scrimFull = { x: 0, y: 0, w: W, h: edge };
+      } else if (dir === "right") {
+        const fade = (g.G.scrim.fade_pct / 100) * W;
+        const edge = Math.min(...ink.map(({ b, pad }) => b.rect.left - pad));
+        const x0 = Math.max(0, edge - fade);
+        Object.assign(el.style, { left: x0 + "px", top: "0px", width: W - x0 + "px", height: H + "px",
+          background: `linear-gradient(to right, ${c(0)} 0px, ${c(A)} ${edge - x0}px, ${c(A)} 100%)` });
+        g.scrimFull = { x: edge, y: 0, w: W - edge, h: H };
+      } else if (dir === "left") {
+        const fade = (g.G.scrim.fade_pct / 100) * W;
+        const edge = Math.max(...ink.map(({ b, pad }) => b.rect.right + pad));
+        const x1 = Math.min(W, edge + fade);
+        Object.assign(el.style, { left: "0px", top: "0px", width: x1 + "px", height: H + "px",
+          background: `linear-gradient(to left, ${c(0)} 0px, ${c(A)} ${x1 - edge}px, ${c(A)} 100%)` });
+        g.scrimFull = { x: 0, y: 0, w: edge, h: H };
+      } else if (dir === "even") {
+        Object.assign(el.style, { left: "0px", top: "0px", width: W + "px", height: H + "px", background: c(A) });
+        g.scrimFull = { x: 0, y: 0, w: W, h: H };
+      }
+      stage.appendChild(el);
+      g.scrimRect = { x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0, w: parseFloat(el.style.width), h: parseFloat(el.style.height) };
+    }
+
+    // Bands and pills never leave their group's region: padding is clipped to it, so a band can
+    // never intrude into a margin, a clear zone or (in 9:16) a platform dead zone.
+    const drawBand = (g, rect, colour, padX, padY, radius) => {
+      const x0 = Math.max(g.rx, rect.left - padX), x1 = Math.min(g.rx + g.rw, rect.right + padX);
+      const y0 = Math.max(g.ry, rect.top - padY), y1 = Math.min(g.ry + g.rh, rect.bottom + padY);
       const el = document.createElement("div");
       el.className = "band";
       Object.assign(el.style, {
         left: x0 + "px", top: y0 + "px", width: x1 - x0 + "px", height: y1 - y0 + "px",
-        background: colour, borderRadius: radius + "px",
+        background: colour, borderRadius: (typeof radius === "function" ? radius(y1 - y0) : radius) + "px",
       });
       stage.appendChild(el);
       return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, colour };
     };
+    const union = (rs) => {
+      const x0 = Math.min(...rs.map((r) => r.x)), y0 = Math.min(...rs.map((r) => r.y));
+      const x1 = Math.max(...rs.map((r) => r.x + r.w)), y1 = Math.max(...rs.map((r) => r.y + r.h));
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, colour: rs[0].colour };
+    };
+    // Each rendered line of a block: its line box, and the horizontal extent of its letters.
+    const lineBoxes = (b) => {
+      const r = b.sp.getBoundingClientRect(), lh = b.size * b.spec.line_height;
+      const n = Math.max(1, Math.round(r.height / lh));
+      const range = document.createRange();
+      range.selectNodeContents(b.sp);
+      const rs = [...range.getClientRects()].filter((q) => q.width > 0.5);
+      const trail = b.spec.tracking_em * b.size;
+      return Array.from({ length: n }, (_, i) => {
+        const top = r.top + i * lh, bottom = top + lh;
+        const on = rs.filter((q) => { const m = (q.top + q.bottom) / 2; return m >= top && m < bottom; });
+        return on.length
+          ? { left: Math.min(...on.map((q) => q.left)), right: Math.max(...on.map((q) => q.right)) - trail, top, bottom }
+          : { left: r.left, right: r.right, top, bottom };
+      });
+    };
 
     // Apply each line's effect, as decided.
-    blocks.forEach((b, i) => {
-      const s = b.size, sp = b.sp, e = b.spec.effect, res = chosen[i];
+    for (const b of blocks) {
+      const s = b.size, sp = b.sp, e = b.spec.effect, res = b.res;
       b.after = res.after;
       b.steps = res.steps;
       const autoStroke = b.judgeL > 0.18 ? "#000000" : "#FFFFFF"; // dark halo round light text, and vice versa
       if (e === "hollow") {
         sp.style.webkitTextFillColor = "transparent";
-        sp.style.webkitTextStroke = `${0.05 * s}px ${b.pal.fill}`;
+        sp.style.webkitTextStroke = `${0.05 * s}px ${b.textHex || b.pal.fill}`;
         sp.style.paintOrder = "normal";
       } else if (e === "outline-bold") {
         sp.style.webkitTextStroke = `${0.075 * s}px ${b.pal.outline}`;
         sp.style.textShadow = `0 ${0.045 * s}px ${0.09 * s}px ${b.pal.shadow}`;
-      } else if (e === "band") {
+      } else if (e === "band" || b.spec.layout_band) {
+        // Text on a solid band is set clean: no outline, no shadow.
         sp.style.webkitTextStroke = "0px transparent";
-        b.band = drawBand(b, res.pill, 0.22 * s, 0.1 * s, 0.22 * s);
+        if (b.textHex) sp.style.color = b.textHex;
+        if (!b.spec.layout_band) b.band = drawBand(b.g, b.rect, res.pill, 0.22 * s, 0.1 * s, 0.22 * s);
       } else if (res.steps.includes("stroke")) {
         sp.style.webkitTextStroke = `${0.075 * s}px ${autoStroke}`;
         sp.style.textShadow = `0 ${0.05 * s}px ${0.12 * s}px rgba(0,0,0,0.85)`;
@@ -341,23 +483,87 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
         sp.style.webkitTextStroke = `${0.03 * s}px ${b.pal.outline}`;
         sp.style.textShadow = `0 ${0.045 * s}px ${0.09 * s}px ${b.pal.shadow}`;
       }
-      if (res.steps.includes("band")) b.band = drawBand(b, res.band, 0.2 * s, 0.07 * s, 0);
-    });
+      if (res.steps.includes("band")) b.band = drawBand(b.g, b.rect, res.band, 0.2 * s, 0.07 * s, 0);
+    }
+
+    // Layout bands (T5, T8): one band across the group's full width, or a bar hugging each line.
+    for (const g of groups) {
+      const onBand = g.blocks.filter((b) => b.spec.layout_band);
+      if (!onBand.length) continue;
+      const B = g.G.band;
+      const radius = (h) => (B.shape === "pill" ? Math.min(h / 2, ((B.radius_pct ?? 3) / 100) * H) : 0);
+      const rects = [];
+      if (B.mode === "full") {
+        const top = Math.min(...onBand.map((b) => b.rect.top)), bottom = Math.max(...onBand.map((b) => b.rect.bottom));
+        const band = drawBand(g, { left: g.rx, right: g.rx + g.rw, top, bottom }, g.bandColour, 0, g.padY, radius);
+        rects.push(band);
+        for (const b of onBand) b.band = band;
+      } else {
+        for (const b of onBand) {
+          const bars = lineBoxes(b).map((l) => drawBand(g, l, g.bandColour, 0.22 * b.size, g.padY, radius));
+          rects.push(...bars);
+          b.band = union(bars);
+        }
+      }
+      g.band = { mode: B.mode, shape: B.shape, colour: g.bandColour, rects };
+    }
+
+    // Dividers: a thin mark, not text. It must reach 3:1 against what is behind it (WCAG's level
+    // for non-text marks); if the palette's colour does not, white or black takes its place.
+    for (const g of groups) {
+      for (const d of g.dividers) {
+        const rect = { left: d.rect.x, right: d.rect.x + d.rect.w, top: d.rect.y, bottom: d.rect.y + d.rect.h };
+        const sr = g.scrimFull;
+        const onFull = g.A > 0 && sr && rect.left >= sr.x && rect.right <= sr.x + sr.w && rect.top >= sr.y && rect.bottom <= sr.y + sr.h;
+        const judge = (hex) => {
+          const Lh = lumHex(hex);
+          // Under the scrim's fade the darkening is partial, so take the worse of with and without it.
+          return onFull ? sampleRatio(rect, Lh, g.A) : Math.min(sampleRatio(rect, Lh, 0), g.A ? sampleRatio(rect, Lh, g.A) : Infinity);
+        };
+        const cands = [S.palette.divider || "#FFFFFF", "#FFFFFF", "#000000"];
+        const colour = cands.find((c) => judge(c) >= S.divider_contrast) || cands.reduce((a, c) => (judge(c) > judge(a) ? c : a));
+        const el = document.createElement("div");
+        el.className = "rule";
+        Object.assign(el.style, { left: d.rect.x + "px", top: d.rect.y + "px", width: d.rect.w + "px", height: d.rect.h + "px", background: colour });
+        stage.appendChild(el);
+        d.colour = colour;
+        d.contrast = +judge(colour).toFixed(2);
+      }
+    }
 
     // 8. Report everything the caller needs to verify the render independently.
+    const regionOf = (g) => ({ x: g.rx, y: g.ry, w: g.rw, h: g.rh });
+    const allRegions = groups.map(regionOf);
     const report = {
       ok: true,
       failures,
       fontsLoaded,
       faces,
       canvas: [W, H],
-      region: { x: rx, y: ry, w: rw, h: rh },
-      scrim: { alpha: +A.toFixed(3) },
+      region: allRegions.length === 1 ? allRegions[0] : union(allRegions),
+      scrim: { alpha: +Math.max(...groups.map((g) => g.A)).toFixed(3) },
+      groups: groups.map((g) => ({
+        id: g.G.id,
+        region: regionOf(g),
+        anchor: g.G.anchor,
+        align: g.G.align,
+        inset: g.inset,
+        scrim: { direction: g.G.scrim.direction, alpha: +g.A.toFixed(3), rect: g.scrimRect || null, full: g.scrimFull || null },
+        band: g.band || null,
+        dividers: g.dividers.map((d) => ({ ...d.rect, colour: d.colour, contrast: d.contrast })),
+      })),
+      clear_zones: (L.clear_zones || []).map((z) => ({
+        name: z.name, x: (z.rect[0] / 100) * W, y: (z.rect[1] / 100) * H, w: (z.rect[2] / 100) * W, h: (z.rect[3] / 100) * H,
+      })),
       blocks: blocks.map((b) => {
         const r = b.sp.getBoundingClientRect();
         const pad = b.spec.pad_em * b.size;
+        const align = b.g.G.align;
+        const trail = align === "center" ? 0 : b.spec.tracking_em * b.size;
         return {
           block: b.spec.block,
+          group: b.g.G.id,
+          region: regionOf(b.g),
           text: b.sp.textContent,
           face: `${b.spec.face.family} ${b.spec.face.style} ${b.spec.face.weight}`,
           script: b.spec.script,
@@ -367,8 +573,12 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
           max_lines: b.spec.max_lines,
           layout_rect: { x: r.left, y: r.top, w: r.width, h: r.height },
           // The extent the inked letters can reach: layout box widened by this face's overhang and
-          // the outline. This, not the layout box, is what must stay inside the region.
-          rect: { x: r.left - pad, y: r.top, w: r.width + 2 * pad, h: r.height },
+          // the outline. This, not the layout box, is what must stay inside the region. A trailing
+          // letter-space carries no ink, so it is left out.
+          rect: { x: r.left - pad, y: r.top, w: r.width - trail + 2 * pad, h: r.height },
+          // The edge the line is aligned on: letters' left edge, right edge, or centre.
+          align,
+          edge: align === "left" ? r.left : align === "right" ? r.right - trail : r.left + r.width / 2,
           band: b.band || null,
           judged_colours: b.judgeHexes,
           contrast: { before: b.before == null ? null : +b.before.toFixed(2), after: +b.after.toFixed(2) },
@@ -398,7 +608,11 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
         stage.appendChild(o);
       };
       box(W * 0.05, H * 0.05, W * 0.9, H * 0.9, "#FFD400", "5% canvas margin", true);
-      box(rx, ry, rw, rh, "#00FF66", "text region", true);
+      for (const z of report.clear_zones) box(z.x, z.y, z.w, z.h, "#FF00FF", `clear zone: ${z.name}`, true);
+      for (const g of report.groups) {
+        const R = g.region;
+        box(R.x, R.y, R.w, R.h, "#00FF66", groups.length > 1 ? `text region (${g.id})` : "text region", true);
+      }
       for (const b of report.blocks) {
         const tag = `${b.block} ${b.size}px ${b.contrast.after}:1${b.steps.length ? " " + b.steps.join("+") : ""}`;
         box(b.rect.x, b.rect.y, b.rect.w, b.rect.h, "#FF3B30", tag, false);
