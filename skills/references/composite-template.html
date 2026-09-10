@@ -1,0 +1,412 @@
+<!doctype html>
+<!--
+  composite-template.html — Layer 2 of the offer-first creative: the text layer.
+
+  The image model draws pictures only. This template sets every letter, from strings the user
+  supplied, inside fixed boxes. It is rendered headlessly by render-composites.mjs, and the
+  same file will power the control-panel preview, so what you see is what gets exported.
+
+  Three independent inputs combine here:  layout (where)  ×  style (typeface + effect, per line)
+  ×  palette (colours, per line). render-composites.mjs merges them into one spec and fills the
+  two placeholders below. The page reports back through window.__renderPromise and never
+  decides what the text says.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+/*__FONTFACES__*/
+html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+#stage { position: relative; overflow: hidden; }
+#bg, #scrim, .band, .block { position: absolute; }
+#bg { left: 0; top: 0; z-index: 0; }
+#scrim { left: 0; z-index: 1; pointer-events: none; }
+.band { z-index: 2; }
+/* font-size 0 kills the block's own line strut, so its height is exactly the span's. */
+.block { z-index: 3; font-size: 0; line-height: 0; }
+.t {
+  display: inline-block;
+  white-space: normal;
+  overflow-wrap: normal;    /* never break inside a word; an over-long word must shrink instead */
+  text-wrap: balance;       /* two-line offer names split evenly, as in the references */
+  paint-order: stroke fill; /* outlines sit outside the letterform instead of eating it */
+  font-synthesis: none;     /* never fake a bold or italic: a missing face must fail, not pretend */
+}
+/* Title case without touching the text: each word lowercases, then capitalises its first letter.
+   The underlying characters stay exactly as typed, so the exact-text check still holds. */
+.t.title .w { display: inline-block; text-transform: lowercase; }
+.t.title .w::first-letter { text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="bg"></canvas><div id="scrim"></div></div>
+<script id="spec" type="application/json">/*__SPEC__*/</script>
+<script>
+(() => {
+  const S = JSON.parse(document.getElementById("spec").textContent);
+  window.__renderPromise = render().catch((e) => ({ ok: false, failures: [String((e && e.stack) || e)] }));
+
+  // ── colour maths (WCAG relative luminance) ──────────────────────────────
+  const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const lumRGB = (r, g, b) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  const hexRGB = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  const lumHex = (h) => lumRGB(...hexRGB(h));
+  const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * sorted.length)))];
+
+  async function render() {
+    const [W, H] = S.canvas;
+    const L = S.layout;
+    const C = S.contrast;
+    const stage = document.getElementById("stage");
+    stage.style.width = W + "px";
+    stage.style.height = H + "px";
+    const failures = [];
+
+    // 1. Background, cover-fitted into a canvas so the pixels under each line can be sampled.
+    const bg = document.getElementById("bg");
+    bg.width = W; bg.height = H;
+    const ctx = bg.getContext("2d", { willReadFrequently: true });
+    const img = new Image();
+    img.src = S.image;
+    await img.decode();
+    const sc = Math.max(W / img.naturalWidth, H / img.naturalHeight);
+    const dw = img.naturalWidth * sc, dh = img.naturalHeight * sc;
+    const [fx, fy] = S.focus || [0.5, 0.5];
+    ctx.drawImage(img, (W - dw) * fx, (H - dh) * fy, dw, dh);
+    const px = ctx.getImageData(0, 0, W, H).data;
+
+    // 2. Fonts. Every face a line uses must genuinely load — family AND style. A silent fallback,
+    //    or an upright face standing in for a missing italic, would still "render".
+    const present0 = L.stack.filter((b) => S.text[b.block] != null && S.text[b.block] !== "");
+    await Promise.all(present0.map((b) => document.fonts.load(`${b.face.style} ${b.face.weight} 40px "${b.face.family}"`)));
+    await document.fonts.ready;
+    const loadedFaces = [...document.fonts].filter((f) => f.status === "loaded")
+      .map((f) => ({ family: f.family.replace(/["']/g, ""), style: f.style }));
+    const needed = [...new Map(present0.map((b) => [`${b.face.family}|${b.face.style}`, b.face])).values()];
+    const faces = needed.map((f) => ({
+      family: f.family, style: f.style,
+      loaded: loadedFaces.some((l) => l.family === f.family && l.style === f.style),
+    }));
+    const fontsLoaded = faces.every((f) => f.loaded);
+    if (!fontsLoaded) {
+      return { ok: false, fontsLoaded, faces, failures: faces.filter((f) => !f.loaded).map((f) => `font face did not load: ${f.family} ${f.style}`) };
+    }
+
+    // 3. Region, and each present block's share of it.
+    const [rx, ry, rw, rh] = L.region.map((v, i) => (v / 100) * (i % 2 ? H : W));
+    const gap = (L.gap_pct / 100) * H;
+    const present = L.stack.filter((b) => {
+      const t = S.text[b.block];
+      if (t == null || t === "") {
+        if (!b.optional) failures.push(`required block "${b.block}" has no text`);
+        return false;
+      }
+      return true;
+    });
+    if (failures.length) return { ok: false, failures, fontsLoaded, faces };
+    const shareSum = present.reduce((n, b) => n + b.share, 0);
+    const avail = rh - gap * (present.length - 1);
+
+    const blocks = present.map((spec) => {
+      const pal = S.palette.blocks[spec.block];
+      const d = document.createElement("div");
+      d.className = "block";
+      d.style.left = rx + "px";
+      d.style.width = rw + "px";
+      d.style.textAlign = L.align;
+      const sp = document.createElement("span");
+      sp.className = "t";
+      const text = S.text[spec.block];
+      if (spec.case === "title") {
+        // One span per word; spaces stay as text nodes. textContent is still exactly `text`.
+        sp.classList.add("title");
+        for (const part of text.split(/(\s+)/)) {
+          if (!part) continue;
+          if (/^\s+$/.test(part)) { sp.appendChild(document.createTextNode(part)); continue; }
+          const w = document.createElement("span");
+          w.className = "w";
+          w.textContent = part;
+          sp.appendChild(w);
+        }
+      } else {
+        sp.textContent = text; // textContent, never innerHTML: user strings are data
+      }
+      Object.assign(sp.style, {
+        fontFamily: `"${spec.face.family}"`,
+        fontStyle: spec.face.style,
+        fontWeight: String(spec.face.weight),
+        textTransform: spec.case === "upper" ? "uppercase" : "none",
+        letterSpacing: spec.tracking,
+        // Letter-spacing adds space after every letter, including the last on each line, which
+        // would pull centred text left. An equal space on the left keeps every line truly centred,
+        // and because it is inside the box (border-box) the fit and bounds checks include it.
+        // (A negative right margin was tried first: it shifted the box past the region edge.)
+        paddingLeft: spec.tracking,
+        boxSizing: "border-box",
+        lineHeight: String(spec.line_height),
+        // Script faces have a narrow word space and capitals whose swashes reach left, so words
+        // run together ("LadiesWanted"). Open the gap for script only.
+        wordSpacing: spec.script ? "0.22em" : "normal",
+        color: pal.fill,
+      });
+      d.appendChild(sp);
+      stage.appendChild(d);
+      return { spec, pal, d, sp, boxH: (avail * spec.share) / shareSum };
+    });
+
+    // 4. Fit: the largest size at which the line stays within its lines, its box and the region.
+    //    Nothing is ever clipped: if the floor size still does not fit, the render fails.
+    //    pad_em reserves, on each side, how far this face's inked letters reach past the layout
+    //    box (italic slant, script swashes) plus the widest outline, and the band padding for
+    //    banded lines. The text WRAPS at that narrowed width, not just checks against it.
+    const setSize = (b, size) => {
+      b.sp.style.fontSize = size + "px";
+      b.sp.style.maxWidth = rw - 2 * b.spec.pad_em * size + "px";
+    };
+    const fitsAt = (b, size) => {
+      setSize(b, size);
+      const r = b.sp.getBoundingClientRect();
+      const lines = Math.round(r.height / (size * b.spec.line_height));
+      const overflowX = b.sp.scrollWidth > b.sp.clientWidth + 0.5;
+      return lines <= b.spec.max_lines && r.height <= b.boxH + 0.5 && !overflowX;
+    };
+    for (const b of blocks) {
+      let lo = b.spec.min_px;
+      let hi = Math.floor(b.boxH / b.spec.line_height);
+      if (hi < lo || !fitsAt(b, lo)) {
+        b.fit = false;
+        b.size = lo;
+        failures.push(`"${b.spec.block}" does not fit its box even at the ${lo}px floor: "${S.text[b.spec.block]}"`);
+        continue;
+      }
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (fitsAt(b, mid)) lo = mid; else hi = mid - 1;
+      }
+      b.fit = true;
+      b.size = lo;
+    }
+    if (failures.length) return { ok: false, failures, fontsLoaded, faces };
+
+    // 5. Hierarchy: the duration line is the largest; location is never smaller than audience.
+    //    Clamping only ever shrinks, so every block still fits.
+    const by = (id) => blocks.find((b) => b.spec.block === id);
+    const dur = by("duration"), name = by("offer_name"), loc = by("location"), aud = by("audience");
+    const lead = dur || name;
+    for (const b of blocks) if (lead && b !== lead && b.size > lead.size) b.size = lead.size;
+    if (loc && aud && aud.size > loc.size) aud.size = loc.size;
+
+    // 6. Stack from the anchor edge using real rendered heights, so the stack cannot leave the region.
+    for (const b of blocks) setSize(b, b.size);
+    const heights = blocks.map((b) => b.sp.getBoundingClientRect().height);
+    const total = heights.reduce((a, c) => a + c, 0) + gap * (blocks.length - 1);
+    let y = L.anchor === "bottom" ? ry + rh - total : L.anchor === "center" ? ry + (rh - total) / 2 : ry;
+    blocks.forEach((b, i) => { b.d.style.top = y + "px"; y += heights[i] + gap; });
+
+    // 7. Contrast guard, sampled from the actual photo pixels under each line.
+    //    Each line is judged on the colour that actually carries its letters: the fill for filled
+    //    text, the outline for heavy-outlined and hollow text, and the band for banded text.
+    const scrimRGB = hexRGB(S.palette.scrim);
+    const worst = (b, alpha) => Math.max(...b.judgeLs.map((jl) => worstFor(b, jl, alpha)));
+    const worstFor = (b, judgeL, alpha) => {
+      // Per-pixel contrast, then the value that 85% of the pixels under the line meet or beat.
+      // This handles light and dark text alike, and a bright patch under half a word still counts.
+      const rect = b.rect;
+      const x0 = Math.max(0, Math.floor(rect.left)), x1 = Math.min(W, Math.ceil(rect.right));
+      const y0 = Math.max(0, Math.floor(rect.top)), y1 = Math.min(H, Math.ceil(rect.bottom));
+      const rs = [];
+      for (let yy = y0; yy < y1; yy += 2) {
+        for (let xx = x0; xx < x1; xx += 2) {
+          const i = (yy * W + xx) * 4;
+          let r = px[i], g = px[i + 1], bl = px[i + 2];
+          if (alpha) {
+            r = r * (1 - alpha) + scrimRGB[0] * alpha;
+            g = g * (1 - alpha) + scrimRGB[1] * alpha;
+            bl = bl * (1 - alpha) + scrimRGB[2] * alpha;
+          }
+          rs.push(ratio(judgeL, lumRGB(r, g, bl)));
+        }
+      }
+      rs.sort((a, c) => a - c);
+      return pct(rs, 100 - C.sample_percentile);
+    };
+
+    for (const b of blocks) {
+      const e = b.spec.effect;
+      b.rect = b.sp.getBoundingClientRect();
+      // A heavy outline letter reads if EITHER its fill or its outline stands out from the photo.
+      // Hollow text is drawn in its fill colour, so that is the colour judged.
+      b.judgeHexes = e === "outline-bold" ? [b.pal.fill, b.pal.outline] : [b.pal.fill];
+      b.judgeLs = b.judgeHexes.map(lumHex);
+      b.judgeHex = b.judgeHexes[0];
+      b.judgeL = b.judgeLs[0];
+      b.strokeable = e === "fill"; // a contrast stroke only makes sense on plain filled text
+      b.floor = b.strokeable ? C.stroke_min : C.target;
+      b.before = e === "band" ? null : worst(b, 0);
+    }
+
+    // Candidate scrim: the smallest opacity that rescues every line needing it (capped). Only
+    // lines the scrim actually helps are considered — it darkens, so it can hurt dark text.
+    let A = 0;
+    if (C.chain.includes("scrim")) {
+      for (const b of blocks) {
+        if (b.before == null || b.before >= b.floor) continue;
+        if (worst(b, C.scrim_max_alpha) <= b.before) continue; // the scrim would not help this line
+        let lo = 0, hi = C.scrim_max_alpha;
+        if (worst(b, hi) < C.target) { A = Math.max(A, hi); continue; }
+        for (let k = 0; k < 14; k++) {
+          const mid = (lo + hi) / 2;
+          if (worst(b, mid) >= C.target) hi = mid; else lo = mid;
+        }
+        A = Math.max(A, hi);
+      }
+    }
+
+    // A scrim sits behind the whole stack, so it can help one line while hurting another. Plan
+    // both ways and keep the one that needs fewer bands (then fewer outlines).
+    // Mid-tone colours cannot reach 4.5:1 against a near-black or near-white grey, so the band
+    // may also be pure black or white. The palette's own band colour wins ties.
+    const bandScore = (b, c) => Math.max(...b.judgeLs.map((jl) => ratio(jl, lumHex(c))));
+    const bestBand = (b, first) => [first, S.palette.band, "#000000", "#FFFFFF"]
+      .filter(Boolean).reduce((a, c) => (bandScore(b, c) > bandScore(b, a) ? c : a));
+    const plan = (alpha) => blocks.map((b) => {
+      if (b.spec.effect === "band") {
+        let pill = S.palette.pill || S.palette.band;
+        if (bandScore(b, pill) < C.target) pill = bestBand(b, pill);
+        return { after: bandScore(b, pill), steps: ["style-band"], pill };
+      }
+      const after = alpha ? worst(b, alpha) : b.before;
+      const pre = alpha && b.before < C.target ? ["scrim"] : [];
+      if (after >= C.target) return { after, steps: pre };
+      if (b.strokeable && after >= C.stroke_min && C.chain.includes("stroke")) return { after, steps: [...pre, "stroke"] };
+      const band = bestBand(b, S.palette.band);
+      return { after: bandScore(b, band), steps: [...(alpha ? ["scrim"] : []), "band"], band };
+    });
+    const score = (p, alpha) => p.filter((x) => x.steps.includes("band")).length * 10
+      + p.filter((x) => x.steps.includes("stroke")).length + (alpha ? 0.5 : 0);
+    const noScrim = plan(0);
+    const withScrim = A > 0 ? plan(A) : null;
+    const useScrim = withScrim && score(withScrim, A) < score(noScrim, 0);
+    const chosen = useScrim ? withScrim : noScrim;
+    if (!useScrim) A = 0;
+
+    if (A > 0) {
+      const fade = (L.scrim.fade_pct / 100) * H;
+      const topBlock = Math.min(...blocks.map((b) => b.rect.top));
+      const top = Math.max(0, topBlock - fade);
+      const [r, g, bl] = scrimRGB;
+      const scrim = document.getElementById("scrim");
+      scrim.style.top = top + "px";
+      scrim.style.width = W + "px";
+      scrim.style.height = H - top + "px";
+      scrim.style.background = `linear-gradient(to bottom, rgba(${r},${g},${bl},0) 0px, rgba(${r},${g},${bl},${A}) ${topBlock - top}px, rgba(${r},${g},${bl},${A}) 100%)`;
+    }
+
+    // Bands and pills never leave the text region: padding is clipped to it, so a band can
+    // never intrude into a margin or (in 9:16) a platform dead zone.
+    const drawBand = (b, colour, padX, padY, radius) => {
+      const x0 = Math.max(rx, b.rect.left - padX), x1 = Math.min(rx + rw, b.rect.right + padX);
+      const y0 = Math.max(ry, b.rect.top - padY), y1 = Math.min(ry + rh, b.rect.bottom + padY);
+      const el = document.createElement("div");
+      el.className = "band";
+      Object.assign(el.style, {
+        left: x0 + "px", top: y0 + "px", width: x1 - x0 + "px", height: y1 - y0 + "px",
+        background: colour, borderRadius: radius + "px",
+      });
+      stage.appendChild(el);
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, colour };
+    };
+
+    // Apply each line's effect, as decided.
+    blocks.forEach((b, i) => {
+      const s = b.size, sp = b.sp, e = b.spec.effect, res = chosen[i];
+      b.after = res.after;
+      b.steps = res.steps;
+      const autoStroke = b.judgeL > 0.18 ? "#000000" : "#FFFFFF"; // dark halo round light text, and vice versa
+      if (e === "hollow") {
+        sp.style.webkitTextFillColor = "transparent";
+        sp.style.webkitTextStroke = `${0.05 * s}px ${b.pal.fill}`;
+        sp.style.paintOrder = "normal";
+      } else if (e === "outline-bold") {
+        sp.style.webkitTextStroke = `${0.075 * s}px ${b.pal.outline}`;
+        sp.style.textShadow = `0 ${0.045 * s}px ${0.09 * s}px ${b.pal.shadow}`;
+      } else if (e === "band") {
+        sp.style.webkitTextStroke = "0px transparent";
+        b.band = drawBand(b, res.pill, 0.22 * s, 0.1 * s, 0.22 * s);
+      } else if (res.steps.includes("stroke")) {
+        sp.style.webkitTextStroke = `${0.075 * s}px ${autoStroke}`;
+        sp.style.textShadow = `0 ${0.05 * s}px ${0.12 * s}px rgba(0,0,0,0.85)`;
+      } else {
+        sp.style.webkitTextStroke = `${0.03 * s}px ${b.pal.outline}`;
+        sp.style.textShadow = `0 ${0.045 * s}px ${0.09 * s}px ${b.pal.shadow}`;
+      }
+      if (res.steps.includes("band")) b.band = drawBand(b, res.band, 0.2 * s, 0.07 * s, 0);
+    });
+
+    // 8. Report everything the caller needs to verify the render independently.
+    const report = {
+      ok: true,
+      failures,
+      fontsLoaded,
+      faces,
+      canvas: [W, H],
+      region: { x: rx, y: ry, w: rw, h: rh },
+      scrim: { alpha: +A.toFixed(3) },
+      blocks: blocks.map((b) => {
+        const r = b.sp.getBoundingClientRect();
+        const pad = b.spec.pad_em * b.size;
+        return {
+          block: b.spec.block,
+          text: b.sp.textContent,
+          face: `${b.spec.face.family} ${b.spec.face.style} ${b.spec.face.weight}`,
+          script: b.spec.script,
+          effect: b.spec.effect,
+          size: b.size,
+          lines: Math.round(r.height / (b.size * b.spec.line_height)),
+          max_lines: b.spec.max_lines,
+          layout_rect: { x: r.left, y: r.top, w: r.width, h: r.height },
+          // The extent the inked letters can reach: layout box widened by this face's overhang and
+          // the outline. This, not the layout box, is what must stay inside the region.
+          rect: { x: r.left - pad, y: r.top, w: r.width + 2 * pad, h: r.height },
+          band: b.band || null,
+          judged_colours: b.judgeHexes,
+          contrast: { before: b.before == null ? null : +b.before.toFixed(2), after: +b.after.toFixed(2) },
+          steps: b.steps,
+        };
+      }),
+    };
+
+    // 9. Debug overlay (review only, never shipped). Drawn after every measurement above, so it
+    //    cannot influence layout, contrast or the report.
+    if (S.debug) {
+      const box = (x, y, w, h, color, label, dashed) => {
+        const o = document.createElement("div");
+        Object.assign(o.style, {
+          position: "absolute", left: x + "px", top: y + "px", width: w + "px", height: h + "px",
+          border: `3px ${dashed ? "dashed" : "solid"} ${color}`, boxSizing: "border-box", zIndex: 10,
+        });
+        if (label) {
+          const t = document.createElement("div");
+          t.textContent = label;
+          Object.assign(t.style, {
+            position: "absolute", left: "0", top: "-24px", font: "700 16px monospace",
+            color: "#000", background: color, padding: "1px 6px", whiteSpace: "nowrap",
+          });
+          o.appendChild(t);
+        }
+        stage.appendChild(o);
+      };
+      box(W * 0.05, H * 0.05, W * 0.9, H * 0.9, "#FFD400", "5% canvas margin", true);
+      box(rx, ry, rw, rh, "#00FF66", "text region", true);
+      for (const b of report.blocks) {
+        const tag = `${b.block} ${b.size}px ${b.contrast.after}:1${b.steps.length ? " " + b.steps.join("+") : ""}`;
+        box(b.rect.x, b.rect.y, b.rect.w, b.rect.h, "#FF3B30", tag, false);
+      }
+    }
+    return report;
+  }
+})();
+</script>
+</body>
+</html>

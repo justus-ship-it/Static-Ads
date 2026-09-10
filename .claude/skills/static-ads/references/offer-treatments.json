@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "note": "Layout treatments for the offer-first text layer: WHERE the text goes. Typography and effects come from offer-styles.json and colour from offer-palettes.json, so any treatment can be combined with any style and palette. Blocks are stacked inside a fixed region: each is fitted to its share of the region, then the stack is laid out from the anchor edge using real rendered heights, so no text can leave the region.",
+  "canvas": { "1x1": [1080, 1080], "9x16": [1080, 1920] },
+  "treatments": {
+    "t1-bottom-stack": {
+      "number": 101,
+      "name": "Bottom stack",
+      "seen_in": ["Asheville, boxing ('HEY, ASHEVILLE!')", "Mount Dora, plank"],
+      "visual_hint": "Keep the lower half of the frame darker and visually uncluttered; place the subject in the upper half. No text, letters, signage, logos or watermarks anywhere.",
+      "layouts": {
+        "1x1": {
+          "region": [6, 48, 88, 46],
+          "anchor": "bottom",
+          "align": "center",
+          "gap_pct": 0.9,
+          "stack": [
+            { "block": "location",   "share": 1.00, "max_lines": 1, "min_px": 34 },
+            { "block": "audience",   "share": 0.66, "max_lines": 1, "min_px": 28, "optional": true },
+            { "block": "duration",   "share": 1.50, "max_lines": 1, "min_px": 44 },
+            { "block": "offer_name", "share": 1.40, "max_lines": 2, "min_px": 30 }
+          ],
+          "scrim": { "type": "gradient-bottom", "fade_pct": 12 }
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3.0,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": ["stroke", "scrim", "band"]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    }
+  }
+}
