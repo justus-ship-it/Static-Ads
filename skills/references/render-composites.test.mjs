@@ -613,3 +613,223 @@ test("2a verifier: catches a line in a clear zone, a stray divider, a weak divid
   assert.match(tamper((rep) => { rep.groups[0].dividers[0].contrast = 1.4; }), /divider contrast 1.4:1/);
   assert.match(tamper((rep) => { rep.blocks[2].group = "elsewhere"; }), /the layout puts it in "col"/);
 });
+
+// ── Step 2b — the catalogue layouts ────────────────────────────────────────
+// A: catalogue · B: correctness across combinations · C: each layout has its reference's shape ·
+// D: pixel checks. The 108 layout × style × short/long renders are made once (on a solid
+// background, so any painted pixel is text, a band or a divider) and shared by B4, C and D.
+const LAYOUT_IDS = Object.keys(CAT.treatments.treatments);
+const LY = (id) => CAT.treatments.treatments[id];
+const LONG_OFFER = { location: "BISHAN / THOMSON", audience: "LADIES WANTED", offer: "12 Week Strength and Confidence Comeback Challenge For Busy Parents" };
+const grid = new Map(); // `${layout}|${style}|short|long` → { r, png }
+const gridRender = async (treatment, style, len) => {
+  const key = `${treatment}|${style}|${len}`;
+  if (!grid.has(key)) {
+    const r = await renderComposite(browser, { image: SOLID_BG, ...(len === "long" ? LONG_OFFER : BASE), treatment, style, palette: "white-on-dark" });
+    grid.set(key, { r, png: r.ok ? decodePNG(r.png) : null });
+  }
+  return grid.get(key);
+};
+const allGrid = async (layouts = LAYOUT_IDS) => {
+  const out = [];
+  for (const t of layouts) for (const s of STYLES) for (const len of ["short", "long"]) out.push({ t, s, len, ...(await gridRender(t, s, len)) });
+  return out;
+};
+const blk = (r, id) => r.report.blocks.find((b) => b.block === id);
+const bottomOf = (k) => k.y + k.h;
+
+test("A1 catalogue: the layouts so far, numbered in order, each attributed and with a visual hint", () => {
+  assert.deepEqual(LAYOUT_IDS, ["t1-bottom-stack", "t2-top-bottom-split", "t3-right-column", "t4-centred-stack", "t5-offer-band", "t6-left-column"]);
+  LAYOUT_IDS.forEach((id, i) => {
+    const t = LY(id);
+    assert.equal(t.number, 101 + i, `${id} number`);
+    assert.ok(t.name && t.seen_in?.length, `${id} must name the references it came from`);
+    assert.ok(t.layouts["1x1"], `${id} has a 1:1 layout`);
+    assert.match(t.visual_hint, /No text, letters, signage, logos or watermarks/, `${id} visual hint forbids model-drawn text`);
+  });
+});
+
+test("A2/A3 catalogue: every layout is geometrically sound and carries the whole message exactly once", () => {
+  for (const id of LAYOUT_IDS) {
+    const L = LY(id).layouts["1x1"];
+    assert.deepEqual(validateLayout(L, id), [], id);
+    const lines = L.groups.flatMap((g) => g.stack.filter((it) => it.block !== "divider").map((it) => it.block)).sort();
+    assert.deepEqual(lines, ["audience", "duration", "location", "offer_name"], `${id}: each line exactly once`);
+    assert.ok(L.groups.flatMap((g) => g.stack).find((it) => it.block === "audience").optional, `${id}: audience is optional`);
+  }
+  const zones = (id) => LY(id).layouts["1x1"].clear_zones.map((z) => z.name);
+  for (const id of ["t2-top-bottom-split", "t3-right-column", "t5-offer-band", "t6-left-column"]) assert.deepEqual(zones(id), ["subject"], `${id} keeps the subject's space clear`);
+});
+
+test(`A4 catalogue: all ${LAYOUT_IDS.length * 9 * 10} layout × style × palette combinations build a valid spec`, () => {
+  let n = 0;
+  for (const treatment of LAYOUT_IDS) for (const style of STYLES) for (const palette of PALETTES) {
+    const spec = buildSpec({ image: DARK, text: TEXT, treatment, style, palette });
+    assert.equal(spec.layout.stack.length, 4);
+    n++;
+  }
+  assert.equal(n, LAYOUT_IDS.length * 90);
+});
+
+test("B1 every layout renders and verifies on dark, light and striped backgrounds", async () => {
+  for (const [li, treatment] of LAYOUT_IDS.entries()) for (const [bi, [bg, image]] of Object.entries({ DARK, LIGHT, STRIPES }).entries()) {
+    const palette = PALETTES[(li * 3 + bi) % PALETTES.length];
+    const r = await renderComposite(browser, { image, ...BASE, treatment, palette });
+    assert.equal(r.ok, true, `${treatment} / ${bg} / ${palette}:\n${r.failures.join("\n")}`);
+  }
+});
+
+test("B3 every layout × every palette holds contrast (backgrounds rotate dark / light / stripes)", async () => {
+  const BGS = [["DARK", DARK], ["LIGHT", LIGHT], ["STRIPES", STRIPES]];
+  for (const [li, treatment] of LAYOUT_IDS.entries()) for (const [pi, palette] of PALETTES.entries()) {
+    const [bg, image] = BGS[(li + pi) % 3];
+    const r = await renderComposite(browser, { image, ...BASE, treatment, palette });
+    assert.equal(r.ok, true, `${treatment} / ${palette} / ${bg}:\n${r.failures.join("\n")}`);
+  }
+});
+
+test("B2/B4 every layout × every style, short and long offer names: fits, exact, long set no larger", async () => {
+  const rows = await allGrid();
+  assert.equal(rows.length, LAYOUT_IDS.length * 9 * 2);
+  for (const { t, s, len, r } of rows) assert.equal(r.ok, true, `${t} / ${s} / ${len}:\n${r.failures.join("\n")}`);
+  for (const t of LAYOUT_IDS) for (const s of STYLES) {
+    const short = grid.get(`${t}|${s}|short`).r, long = grid.get(`${t}|${s}|long`).r;
+    assert.equal(blk(long, "offer_name").text, "Strength and Confidence Comeback Challenge For Busy Parents");
+    assert.ok(blk(long, "offer_name").size <= blk(short, "offer_name").size, `${t} / ${s}: the long name is set no larger`);
+  }
+});
+
+test("B5 the audience line can be left out of every layout", async () => {
+  for (const treatment of LAYOUT_IDS) {
+    const r = await renderComposite(browser, { image: DARK, ...BASE, audience: null, treatment });
+    assert.equal(r.ok, true, `${treatment}:\n${r.failures.join("\n")}`);
+    assert.deepEqual(r.report.blocks.map((b) => b.block).sort(), ["duration", "location", "offer_name"]);
+    // Dividers sit between the audience and the offer; with no audience they still have text on both sides.
+    for (const g of r.report.groups) for (const d of g.dividers) assert.ok(d.contrast >= 3, `${treatment}: divider ${d.contrast}:1`);
+  }
+});
+
+test("B6 text that cannot fit fails loudly in every layout, never clips", async () => {
+  for (const treatment of LAYOUT_IDS) {
+    const r = await renderComposite(browser, { image: DARK, ...BASE, offer: "12 Week " + "Supercalifragilisticexpialidocious".repeat(2), treatment });
+    assert.equal(r.ok, false, treatment);
+    assert.match(r.failures.join(), /does not fit/, treatment);
+  }
+});
+
+test("C1 T1: the stack ends on its region's bottom edge", async () => {
+  for (const { r } of await allGrid(["t1-bottom-stack"])) {
+    const R = r.report.groups[0].region, last = r.report.blocks.at(-1).layout_rect;
+    assert.ok(Math.abs(bottomOf(last) - bottomOf(R)) <= 1, `bottom ${bottomOf(last).toFixed(1)} vs region ${bottomOf(R).toFixed(1)}`);
+  }
+});
+
+test("C2 T2 and T5: callouts at the top, offer at the bottom, subject's middle band free of text", async () => {
+  for (const { t, s, len, r, png } of await allGrid(["t2-top-bottom-split", "t5-offer-band"])) {
+    const tag = `${t} / ${s} / ${len}`;
+    for (const id of ["location", "audience"]) assert.ok(bottomOf(blk(r, id).rect) <= 1080 * 0.36, `${tag}: ${id} in the top band`);
+    for (const id of ["duration", "offer_name"]) assert.ok(blk(r, id).rect.y >= 1080 * 0.55, `${tag}: ${id} in the bottom band`);
+    const Z = r.report.clear_zones[0];
+    assert.ok(Z.y <= 1080 * 0.37 && bottomOf(Z) >= 1080 * 0.54, `${tag}: the clear zone covers the middle`);
+    assert.equal(painted(png, within(Z)), 0, `${tag}: text pixels in the middle band`);
+  }
+});
+
+// The outermost inked column of a line, read from the PNG — independent of what the page reports.
+const inkEdge = (png, k, side) => {
+  let best = side === "right" ? -1 : Infinity;
+  for (let y = Math.ceil(k.y); y < k.y + k.h; y++) for (let x = 0; x < png.w; x++) {
+    const i = (y * png.w + x) * png.ch;
+    if (Math.abs(png.px[i] - 0x20) + Math.abs(png.px[i + 1] - 0x20) + Math.abs(png.px[i + 2] - 0x20) > 60) best = side === "right" ? Math.max(best, x) : Math.min(best, x);
+  }
+  return best;
+};
+
+test("C3/C4 T3 and T6: a real column — edges aligned, the subject's side free of text", async () => {
+  for (const { t, s, len, r, png } of await allGrid(["t3-right-column", "t6-left-column"])) {
+    const tag = `${t} / ${s} / ${len}`, side = t.startsWith("t3") ? "right" : "left";
+    const g = r.report.groups[0], R = g.region;
+    assert.equal(g.align, side, `${tag}: the column is ${side}-aligned`);
+    // Reported: every line's aligned edge on the group's inset line (±2px).
+    const line = side === "right" ? R.x + R.w - g.inset : R.x + g.inset;
+    for (const b of r.report.blocks) assert.ok(Math.abs(b.edge - line) <= 2, `${tag}: ${b.block} edge ${b.edge.toFixed(1)} vs ${line.toFixed(1)}`);
+    // Measured: the letters themselves end within 16px of each other. (Letter shapes differ at the
+    // edge — an "E" is square, an "N" slants in italic — measured at 1–13px for real columns vs
+    // 35–92px when a column is wrongly centred. Script flourishes are excluded: they reach ~20px.)
+    const ink = r.report.blocks.filter((b) => !b.script).map((b) => inkEdge(png, b.layout_rect, side));
+    assert.ok(Math.max(...ink) - Math.min(...ink) <= 16, `${tag}: inked ${side} edges ${ink.join(", ")}`);
+    const Z = r.report.clear_zones[0];
+    assert.ok(side === "right" ? Z.x <= 54 && Z.x + Z.w >= 1080 * 0.45 : Z.x <= 1080 * 0.55 && Z.x + Z.w >= 1026, `${tag}: clear zone covers the subject's side`);
+    assert.equal(painted(png, within(Z)), 0, `${tag}: text pixels on the subject's side`);
+  }
+});
+
+test("C5 T4: every line centred (±2px) and the stack centred vertically", async () => {
+  for (const { s, len, r } of await allGrid(["t4-centred-stack"])) {
+    const R = r.report.groups[0].region, mid = R.x + R.w / 2;
+    for (const b of r.report.blocks) assert.ok(Math.abs(b.edge - mid) <= 2, `${s} / ${len}: ${b.block} centre ${b.edge.toFixed(1)} vs ${mid.toFixed(1)}`);
+    const top = r.report.blocks[0].layout_rect.y - R.y, bottom = bottomOf(R) - bottomOf(r.report.blocks.at(-1).layout_rect);
+    assert.ok(Math.abs(top - bottom) <= 2, `${s} / ${len}: space above ${top.toFixed(1)} vs below ${bottom.toFixed(1)}`);
+  }
+});
+
+test("C6 T5: the offer name sits on a pill per line, inside its region, at 4.5:1 on every palette", async () => {
+  for (const { s, len, r } of await allGrid(["t5-offer-band"])) {
+    const off = blk(r, "offer_name"), g = r.report.groups.find((x) => x.id === off.group);
+    assert.deepEqual(off.steps, ["layout-band"], `${s} / ${len}`);
+    assert.equal(g.band.rects.length, off.lines, `${s} / ${len}: one pill per line`);
+    assert.deepEqual(blk(r, "duration").steps.includes("layout-band"), false, "the duration sits on the photo, as in the references");
+  }
+  for (const palette of PALETTES) {
+    const r = await renderComposite(browser, { image: STRIPES, ...BASE, treatment: "t5-offer-band", palette });
+    assert.equal(r.ok, true, `${palette}:\n${r.failures.join("\n")}`);
+    assert.ok(blk(r, "offer_name").contrast.after >= 4.5, `${palette}: ${blk(r, "offer_name").contrast.after}:1`);
+  }
+});
+
+test("C9 dividers (T3, T4, T6): between the audience and the offer, inside the region, never text", async () => {
+  for (const { t, s, len, r } of await allGrid(["t3-right-column", "t4-centred-stack", "t6-left-column"])) {
+    const tag = `${t} / ${s} / ${len}`;
+    const [d] = r.report.groups[0].dividers;
+    assert.ok(d, `${tag}: divider drawn`);
+    assert.ok(d.y >= bottomOf(blk(r, "audience").rect) && bottomOf(d) <= blk(r, "duration").rect.y, `${tag}: between audience and duration`);
+    assert.ok(!r.report.blocks.some((b) => b.block === "divider"));
+  }
+  for (const t of ["t1-bottom-stack", "t2-top-bottom-split", "t5-offer-band"]) {
+    assert.equal(grid.get(`${t}|s1-heavy-sans|short`).r.report.groups.flatMap((g) => g.dividers).length, 0, `${t} has no divider`);
+  }
+});
+
+test("D1/D2 pixels: nothing outside the text regions and nothing in a clear zone — every layout, style and length", async () => {
+  for (const { t, s, len, r, png } of await allGrid()) {
+    const tag = `${t} / ${s} / ${len}`;
+    assert.equal(r.report.scrim.alpha, 0, `${tag}: no scrim on solid dark, so every painted pixel is text, band or divider`);
+    assert.equal(painted(png, (x, y) => !r.report.groups.some((g) => within(g.region)(x, y))), 0, `${tag}: pixels outside the text regions`);
+    for (const Z of r.report.clear_zones) assert.equal(painted(png, within(Z)), 0, `${tag}: pixels in clear zone "${Z.name}"`);
+    assert.ok(painted(png, () => true) > 15000, `${tag}: text was painted`);
+  }
+});
+
+test("D3 pixels: on a light photo each layout darkens the side its text is on", async () => {
+  const W = 1080, H = 1080, e = 30;
+  const shoot = async (treatment) => {
+    const r = await renderComposite(browser, { image: LIGHT, ...BASE, treatment, palette: "white-on-dark" });
+    assert.equal(r.ok, true, `${treatment}:\n${r.failures.join("\n")}`);
+    return decodePNG(r.png);
+  };
+  const band = (p, y0, y1) => meanLum(p, 0, y0, W, y1), col = (p, x0, x1) => meanLum(p, x0, 0, x1, H);
+  let p = await shoot("t1-bottom-stack");
+  assert.ok(band(p, H - e, H) < band(p, 0, e) - 60, "T1 darker at the bottom");
+  for (const t of ["t2-top-bottom-split", "t5-offer-band"]) {
+    p = await shoot(t);
+    const mid = band(p, H * 0.44, H * 0.46);
+    assert.ok(band(p, 0, e) < mid - 60 && band(p, H - e, H) < mid - 60, `${t} darker at top and bottom than in the middle`);
+  }
+  p = await shoot("t3-right-column");
+  assert.ok(col(p, W - e, W) < col(p, 0, e) - 60, "T3 darker on the right");
+  p = await shoot("t6-left-column");
+  assert.ok(col(p, 0, e) < col(p, W - e, W) - 60, "T6 darker on the left");
+  p = await shoot("t4-centred-stack");
+  const corners = [meanLum(p, 0, 0, e, e), meanLum(p, W - e, 0, W, e), meanLum(p, 0, H - e, e, H), meanLum(p, W - e, H - e, W, H)];
+  assert.ok(Math.max(...corners) - Math.min(...corners) < 2 && corners[0] < 200, `T4 evenly darkened: ${corners.map((c) => c.toFixed(0))}`);
+});

@@ -121,7 +121,9 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       const { G, rx, rw, rh, gap, items } = g;
       const lines = items.filter((it) => !it.divider);
       const ruleH = (it) => Math.max(2, Math.round((it.thickness_pct / 100) * H));
-      const rules = items.filter((it) => it.divider).reduce((a, it) => a + ruleH(it), 0);
+      // A divider's slot is the rule plus its own breathing room above and below.
+      const ruleM = (it) => ((it.space_pct || 0) / 100) * H;
+      const rules = items.filter((it) => it.divider).reduce((a, it) => a + ruleH(it) + 2 * ruleM(it), 0);
       // A layout band needs breathing room above its first line and below its last.
       g.padY = lines.some((it) => it.layout_band) ? ((G.band.pad_pct ?? 1.2) / 100) * H : 0;
       const shareSum = lines.reduce((n, b) => n + b.share, 0);
@@ -129,7 +131,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 
       g.seq = items.map((spec) => {
         if (spec.divider) {
-          const d = { divider: spec, h: ruleH(spec) };
+          const d = { divider: spec, h: ruleH(spec) + 2 * ruleM(spec), rule: ruleH(spec), m: ruleM(spec) };
           g.dividers.push(d);
           return d;
         }
@@ -259,7 +261,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       for (const d of g.dividers) {
         const w = Math.min((d.divider.width_pct / 100) * g.rw, g.rw - g.inset);
         const x = G.align === "center" ? g.rx + (g.rw - w) / 2 : G.align === "left" ? g.rx + g.inset : g.rx + g.rw - g.inset - w;
-        d.rect = { x, y: d.y, w, h: d.h };
+        d.rect = { x, y: d.y + d.m, w, h: d.rule };
       }
     }
 
@@ -521,13 +523,46 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
           return onFull ? sampleRatio(rect, Lh, g.A) : Math.min(sampleRatio(rect, Lh, 0), g.A ? sampleRatio(rect, Lh, g.A) : Infinity);
         };
         const cands = [S.palette.divider || "#FFFFFF", "#FFFFFF", "#000000"];
-        const colour = cands.find((c) => judge(c) >= S.divider_contrast) || cands.reduce((a, c) => (judge(c) > judge(a) ? c : a));
+        let colour = cands.find((c) => judge(c) >= S.divider_contrast), edge = null, contrast;
+        if (colour) {
+          contrast = judge(colour);
+        } else {
+          // No single colour reads on a busy background (on hard black/white stripes, none can).
+          // Like outlined text, the rule then gets a contrasting edge, and each pixel is judged on
+          // whichever of rule or edge stands out there.
+          colour = S.palette.divider || "#FFFFFF";
+          edge = lumHex(colour) > 0.18 ? "#000000" : "#FFFFFF";
+          const E = Math.max(2, Math.round(d.rect.h / 2));
+          const Lc = lumHex(colour), Le = lumHex(edge);
+          const both = (alpha) => {
+            const rs = [];
+            for (let yy = Math.max(0, Math.floor(rect.top - E)); yy < Math.min(H, Math.ceil(rect.bottom + E)); yy += 1) {
+              for (let xx = Math.max(0, Math.floor(rect.left - E)); xx < Math.min(W, Math.ceil(rect.right + E)); xx += 2) {
+                const i = (yy * W + xx) * 4;
+                let r = px[i], gg = px[i + 1], bl = px[i + 2];
+                if (alpha) { r = r * (1 - alpha) + scrimRGB[0] * alpha; gg = gg * (1 - alpha) + scrimRGB[1] * alpha; bl = bl * (1 - alpha) + scrimRGB[2] * alpha; }
+                const Lp = lumRGB(r, gg, bl);
+                rs.push(Math.max(ratio(Lc, Lp), ratio(Le, Lp)));
+              }
+            }
+            rs.sort((a, c) => a - c);
+            return pct(rs, 100 - C.sample_percentile);
+          };
+          contrast = onFull ? both(g.A) : Math.min(both(0), g.A ? both(g.A) : Infinity);
+          d.rect = { x: d.rect.x - E, y: d.rect.y - E, w: d.rect.w + 2 * E, h: d.rect.h + 2 * E }; // the edge is part of the mark
+          d.edgePx = E;
+        }
         const el = document.createElement("div");
         el.className = "rule";
-        Object.assign(el.style, { left: d.rect.x + "px", top: d.rect.y + "px", width: d.rect.w + "px", height: d.rect.h + "px", background: colour });
+        const E = d.edgePx || 0;
+        Object.assign(el.style, {
+          left: d.rect.x + E + "px", top: d.rect.y + E + "px", width: d.rect.w - 2 * E + "px", height: d.rect.h - 2 * E + "px",
+          background: colour, boxShadow: edge ? `0 0 0 ${E}px ${edge}` : "none",
+        });
         stage.appendChild(el);
         d.colour = colour;
-        d.contrast = +judge(colour).toFixed(2);
+        d.edge = edge;
+        d.contrast = +contrast.toFixed(2);
       }
     }
 
@@ -550,7 +585,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
         inset: g.inset,
         scrim: { direction: g.G.scrim.direction, alpha: +g.A.toFixed(3), rect: g.scrimRect || null, full: g.scrimFull || null },
         band: g.band || null,
-        dividers: g.dividers.map((d) => ({ ...d.rect, colour: d.colour, contrast: d.contrast })),
+        dividers: g.dividers.map((d) => ({ ...d.rect, colour: d.colour, edge: d.edge, contrast: d.contrast })),
       })),
       clear_zones: (L.clear_zones || []).map((z) => ({
         name: z.name, x: (z.rect[0] / 100) * W, y: (z.rect[1] / 100) * H, w: (z.rect[2] / 100) * W, h: (z.rect[3] / 100) * H,

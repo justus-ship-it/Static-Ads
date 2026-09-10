@@ -3,17 +3,29 @@
   "note": "Layout treatments for the offer-first text layer: WHERE the text goes. Typography and effects come from offer-styles.json and colour from offer-palettes.json, so any treatment can be combined with any style and palette. A layout holds one or more text groups. Each group owns a fixed region; its lines are fitted to their share of that region, then stacked from the group's anchor edge using real rendered heights, so no text can leave the region.",
   "schema": {
     "groups": "Each group: id, region [x, y, w, h] in % of the canvas, anchor (top | center | bottom), align (left | center | right), gap_pct (space between items, % of canvas height), scrim, stack, and optionally band. Groups never overlap. Hierarchy and verification span every group.",
-    "stack": "Ordered items. A text line is { block, share, max_lines, min_px, optional? } where block is location | audience | duration | offer_name. A divider is { block: 'divider', width_pct (of the group's width), thickness_pct (of canvas height) }; it is drawn only when there is text on both sides of it, and it is never counted as text.",
+    "stack": "Ordered items. A text line is { block, share, max_lines, min_px, optional? } where block is location | audience | duration | offer_name. A divider is { block: 'divider', width_pct (of the group's width), thickness_pct (of canvas height), space_pct? (extra room above and below it, % of canvas height) }; it is drawn only when there is text on both sides of it, and it is never counted as text.",
     "scrim": "{ direction, fade_pct }. direction is none | top | bottom | left | right | even. The scrim is full strength from the text's edge outward, and fades over fade_pct beyond it, so every letter sits on the full-strength part and the contrast maths stays exact. A group's scrim may not reach another group's region; 'even' covers the whole canvas and is only allowed in single-group layouts.",
     "band": "{ mode, shape, blocks, pad_pct, radius_pct }. A solid band behind some of the group's lines, whatever the style. mode 'full' is one band spanning the group's full width; 'line' is a bar hugging each line of text. shape 'pill' is rounded, 'bar' square. Text on a band is judged against the band colour.",
     "clear_zones": "[{ name, rect [x, y, w, h] }] in % of the canvas: space kept free of text for the subject. No group region may touch one, and the verifier checks every line, band and divider against them."
   },
-  "canvas": { "1x1": [1080, 1080], "9x16": [1080, 1920] },
+  "canvas": {
+    "1x1": [
+      1080,
+      1080
+    ],
+    "9x16": [
+      1080,
+      1920
+    ]
+  },
   "treatments": {
     "t1-bottom-stack": {
       "number": 101,
       "name": "Bottom stack",
-      "seen_in": ["Asheville, boxing ('HEY, ASHEVILLE!')", "Mount Dora, plank"],
+      "seen_in": [
+        "Asheville, boxing ('HEY, ASHEVILLE!')",
+        "Mount Dora, plank"
+      ],
       "visual_hint": "Keep the lower half of the frame darker and visually uncluttered; place the subject in the upper half. No text, letters, signage, logos or watermarks anywhere.",
       "layouts": {
         "1x1": {
@@ -24,12 +36,15 @@
               "anchor": "bottom",
               "align": "center",
               "gap_pct": 0.9,
-              "scrim": { "direction": "bottom", "fade_pct": 12 },
+              "scrim": {
+                "direction": "bottom",
+                "fade_pct": 12
+              },
               "stack": [
-                { "block": "location",   "share": 1.00, "max_lines": 1, "min_px": 34 },
-                { "block": "audience",   "share": 0.66, "max_lines": 1, "min_px": 28, "optional": true },
-                { "block": "duration",   "share": 1.50, "max_lines": 1, "min_px": 44 },
-                { "block": "offer_name", "share": 1.40, "max_lines": 2, "min_px": 30 }
+                { "block": "location", "share": 1, "max_lines": 1, "min_px": 34 },
+                { "block": "audience", "share": 0.66, "max_lines": 1, "min_px": 28, "optional": true },
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.4, "max_lines": 2, "min_px": 30 }
               ]
             }
           ],
@@ -38,10 +53,298 @@
       },
       "contrast": {
         "target": 4.5,
-        "stroke_min": 3.0,
+        "stroke_min": 3,
         "scrim_max_alpha": 0.85,
         "sample_percentile": 85,
-        "chain": ["stroke", "scrim", "band"]
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t2-top-bottom-split": {
+      "number": 102,
+      "name": "Top / bottom split",
+      "seen_in": [
+        "Asheville BJJ ('ASHEVILLE AREA … MEN WANTED')",
+        "Mount Dora, HPA ('MOUNT DORA AREA … LADIES WANTED')",
+        "Mount Dora, ladies on bench"
+      ],
+      "visual_hint": "Subject centred in the middle band of the frame; keep the top quarter and the bottom third darker and uncluttered. No text, letters, signage, logos or watermarks anywhere.",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [6, 6, 88, 30],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.9,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 10
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.66, "max_lines": 1, "min_px": 28, "optional": true }
+              ]
+            },
+            {
+              "id": "bottom",
+              "region": [6, 60, 88, 34],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.9,
+              "scrim": {
+                "direction": "bottom",
+                "fade_pct": 10
+              },
+              "stack": [
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.4, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": [
+            {
+              "name": "subject",
+              "rect": [5, 37, 90, 22]
+            }
+          ]
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t3-right-column": {
+      "number": 103,
+      "name": "Right column",
+      "seen_in": [
+        "Anchorage, flat-lay ('Anchorage Area Men Wanted')",
+        "Mount Dora, green dumbbell",
+        "Asheville, boxing blue ('LADIES WANTED … FITNESS KICKSTART')"
+      ],
+      "visual_hint": "Subject in the left half of the frame; keep the right half darker, plain and uncluttered. No text, letters, signage, logos or watermarks anywhere.",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "column",
+              "region": [48, 6, 46, 88],
+              "anchor": "center",
+              "align": "right",
+              "gap_pct": 1.1,
+              "scrim": {
+                "direction": "right",
+                "fade_pct": 8
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.7, "max_lines": 2, "min_px": 28, "optional": true },
+                { "block": "divider", "width_pct": 34, "thickness_pct": 0.45, "space_pct": 1.4 },
+                { "block": "duration", "share": 1.3, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.8, "max_lines": 4, "min_px": 28 }
+              ]
+            }
+          ],
+          "clear_zones": [
+            {
+              "name": "subject",
+              "rect": [5, 5, 41, 90]
+            }
+          ]
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t4-centred-stack": {
+      "number": 104,
+      "name": "Centred full stack",
+      "seen_in": [
+        "Asheville 'MEN WANTED', MMA red",
+        "Anchorage 'LADIES WANTED', lat pulldown"
+      ],
+      "visual_hint": "A dark, moody frame with the subject filling it; even, low-key lighting with no bright patches, so text can sit over the whole image. No text, letters, signage, logos or watermarks anywhere.",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "main",
+              "region": [6, 6, 88, 88],
+              "anchor": "center",
+              "align": "center",
+              "gap_pct": 1,
+              "scrim": {
+                "direction": "even"
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.85, "max_lines": 2, "min_px": 28, "optional": true },
+                { "block": "divider", "width_pct": 34, "thickness_pct": 0.45, "space_pct": 1.4 },
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.3, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t5-offer-band": {
+      "number": 105,
+      "name": "Offer on a band",
+      "seen_in": [
+        "Mount Dora, purple pill ('High Performance Aging Transformation Program')",
+        "Mount Dora, black bar"
+      ],
+      "visual_hint": "Subject in the middle of the frame; keep the top fifth and the bottom third darker and uncluttered. No text, letters, signage, logos or watermarks anywhere.",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [6, 6, 88, 26],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.9,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 8
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.66, "max_lines": 1, "min_px": 28, "optional": true }
+              ]
+            },
+            {
+              "id": "bottom",
+              "region": [6, 56, 88, 38],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "bottom",
+                "fade_pct": 10
+              },
+              "band": {
+                "mode": "line",
+                "shape": "pill",
+                "blocks": [
+                  "offer_name"
+                ],
+                "pad_pct": 1,
+                "radius_pct": 3
+              },
+              "stack": [
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.6, "max_lines": 3, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": [
+            {
+              "name": "subject",
+              "rect": [5, 34, 90, 20]
+            }
+          ]
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t6-left-column": {
+      "number": 106,
+      "name": "Left column",
+      "seen_in": [
+        "Asheville ladies, muay thai",
+        "Asheville ladies, MMA cage ('ASHEVILLE LADIES WANTED … FITNESS KICKSTART')"
+      ],
+      "visual_hint": "Subject in the right half of the frame; keep the left half darker, plain and uncluttered. No text, letters, signage, logos or watermarks anywhere.",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "column",
+              "region": [6, 6, 46, 88],
+              "anchor": "center",
+              "align": "left",
+              "gap_pct": 1.1,
+              "scrim": {
+                "direction": "left",
+                "fade_pct": 8
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.7, "max_lines": 2, "min_px": 28, "optional": true },
+                { "block": "divider", "width_pct": 34, "thickness_pct": 0.45, "space_pct": 1.4 },
+                { "block": "duration", "share": 1.3, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.8, "max_lines": 4, "min_px": 28 }
+              ]
+            }
+          ],
+          "clear_zones": [
+            {
+              "name": "subject",
+              "rect": [54, 5, 41, 90]
+            }
+          ]
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
       },
       "hierarchy": "duration is the largest line; location is at least as large as audience"
     }
