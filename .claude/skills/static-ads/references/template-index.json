@@ -242,7 +242,9 @@
       ],
       "asset_needs": [
         "facility"
-      ]
+      ],
+      "requires_proof": true,
+      "proof_note": "implies press coverage"
     },
     {
       "number": 11,
@@ -334,7 +336,9 @@
       "asset_needs": [
         "facility"
       ],
-      "gym_adaptation": "Drop the product inset; pair the comment with a facility or class photo."
+      "gym_adaptation": "Drop the product inset; pair the comment with a facility or class photo.",
+      "requires_proof": true,
+      "proof_note": "renders a fabricated social comment"
     },
     {
       "number": 16,
@@ -688,7 +692,9 @@
       ],
       "asset_needs": [
         "facility"
-      ]
+      ],
+      "requires_proof": true,
+      "proof_note": "renders a fake news article"
     },
     {
       "number": 34,

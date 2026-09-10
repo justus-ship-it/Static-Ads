@@ -34,6 +34,7 @@ export const ANGLES = {
 const { values } = parseArgs({
   options: {
     gym: { type: "string" },
+    offer: { type: "string", default: "" },
     total: { type: "string", default: "25" },
     angles: { type: "string", default: "" },
     set: { type: "string", default: "gym" },
@@ -65,12 +66,39 @@ if (refRoot) {
   }
 }
 
+// An offer with no real deadline or capacity cannot honestly fill an urgency template,
+// and the config validator refuses invented scarcity — so drop those formats up front
+// rather than planning candidates that could only be filled by breaking that rule.
+let excludeFormats = new Set();
+let offerNote = "";
+let hasProof = true; // assume proof exists unless a resolved brief says otherwise
+if (values.offer) {
+  const resolvedPath = join(gymDir, ".resolved", `${values.offer}.json`);
+  if (!existsSync(resolvedPath)) {
+    console.error(`No resolved brief at ${resolvedPath} — run client-config.mjs first`);
+    process.exit(1);
+  }
+  const brief = JSON.parse(readFileSync(resolvedPath, "utf-8"));
+  const sc = brief.offer?.scarcity || {};
+  if (!sc.type || sc.type === "none") {
+    excludeFormats.add("urgency");
+    offerNote = `offer.scarcity is "${sc.type || "unset"}" — urgency formats excluded (no real deadline or capacity to claim)`;
+  }
+  const pa = brief.gym?.proof_assets || {};
+  hasProof = !!(pa.google_rating || pa.review_count || (pa.press || []).length || pa.testimonials_file);
+}
+
 const manifest = JSON.parse(readFileSync(MANIFEST, "utf-8"));
 const usable = manifest.templates.filter((t) =>
   t.status === "active" &&
   (t.sets || []).includes(values.set) &&
+  !excludeFormats.has(t.gym_format) &&
+  !(t.requires_proof && !hasProof) &&
   (t.asset_needs || []).every((a) => available.has(a))
 );
+
+const droppedForProof = manifest.templates.filter((t) =>
+  t.status === "active" && (t.sets || []).includes(values.set) && t.requires_proof && !hasProof);
 
 // ── Work out the per-format quota ──
 const byFormat = new Map();
@@ -131,6 +159,10 @@ if (values.json) {
   console.log(JSON.stringify({ gym: values.gym, set: values.set, total: totalCandidates, available_assets: [...available], plan }, null, 2));
 } else {
   console.log(`\nAssets on disk: ${[...available].join(", ") || "none"}`);
+  if (offerNote) console.log(`  ${offerNote}`);
+  if (droppedForProof.length) {
+    console.log(`  no proof assets on file — dropped ${droppedForProof.map((t) => "#" + t.number).join(", ")} (${droppedForProof.map((t) => t.proof_note).join("; ")})`);
+  }
   console.log(`Usable templates in set "${values.set}": ${usable.length} of ${manifest.templates.length}\n`);
   let angle = "";
   for (const p of plan) {

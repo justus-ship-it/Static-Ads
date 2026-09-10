@@ -313,13 +313,17 @@ async function generateAllParallel(prompts, refPartsMap, allRefParts, outputDir,
     }
     const { templateNum, templateName, folderName, downloaded } = jr.result;
     if (downloaded.length === 0) continue;
-    if (!templateMap.has(templateNum)) {
-      templateMap.set(templateNum, { template_number: templateNum, template_name: templateName, folder: folderName, images: [] });
+    // Key by folder, not template_number: several variants of one template (e.g. -a, -b)
+    // share a number but live in separate folders. Keying by number merged them into one
+    // gallery group whose image paths then pointed at the wrong folder.
+    if (!templateMap.has(folderName)) {
+      templateMap.set(folderName, { template_number: templateNum, template_name: templateName, folder: folderName, images: [] });
     }
-    templateMap.get(templateNum).images.push(...downloaded);
+    templateMap.get(folderName).images.push(...downloaded);
   }
 
-  const results = [...templateMap.values()].sort((a, b) => a.template_number - b.template_number);
+  const results = [...templateMap.values()].sort(
+    (a, b) => a.template_number - b.template_number || a.folder.localeCompare(b.folder));
   return { results, failed };
 }
 
@@ -789,6 +793,21 @@ async function main() {
   // --from-selections narrows the run to the templates the human picked in the gallery, and
   // --anchor feeds each pick's own image back in as a reference so the second ratio is a
   // sibling of the selected image rather than an unrelated take on the same prompt.
+  // Output paths are `NN-template_name`, so two prompts sharing both would overwrite each
+  // other and the run would silently produce fewer images than it reported.
+  const seenKeys = new Map();
+  for (const pr of prompts) {
+    const k = `${pr.template_number}-${pr.template_name}`;
+    seenKeys.set(k, (seenKeys.get(k) || 0) + 1);
+  }
+  const dupes = [...seenKeys].filter(([, n]) => n > 1);
+  if (dupes.length) {
+    console.error("Error: prompts.json has entries that would overwrite each other:\n");
+    for (const [k, n] of dupes) console.error(`  ${k}  x${n}`);
+    console.error("\nGive each variant a distinct template_name (e.g. append -a, -b).");
+    process.exit(1);
+  }
+
   let anchorMap = new Map();
   if (values["from-selections"]) {
     const selPath = resolve(process.cwd(), values["from-selections"]);
