@@ -27,7 +27,8 @@ import { join, resolve, extname } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { buildVisualPrompt, poseProblem } from "./visual-prompts.mjs";
-import { checkVisual, checkReference } from "./check-visual.mjs";
+import { checkVisual, checkTiled } from "./check-visual.mjs";
+import { makePixelTools } from "./clean-photo.mjs";
 import { generateImage, GEMINI_MODEL } from "./generate_ads_gemini.mjs";
 import { launchBrowser, renderComposite, layoutFor, loadCatalogue } from "./render-composites.mjs";
 
@@ -65,8 +66,18 @@ async function assess(file, v, { ratio, text, check, compositor, outDir, never =
   return { ok: failures.length === 0, failures, stray_text: pic.stray_text, excluded: pic.excluded || [], dismissed: pic.dismissed || [], placement: pic.placement, faces: pic.faces || [], focus: pic.focus || [0.5, 0.5], ad };
 }
 
+/** A reference photo's lettering and never-list items, looked for in full-resolution tiles as well as
+ *  whole (Step 5: the whole-image look missed thumb-sized marks). Returns what it found (empty = clean). */
+export async function checkRefTiled(path, { never = [] } = {}) {
+  const px = makePixelTools();
+  try {
+    const c = await checkTiled(path, { never, crop: px.crop });
+    return [...c.text, ...c.never.map((n) => ({ ...n, kind: "never-list item" }))];
+  } finally { await px.close(); }
+}
+
 /** `generate`, `check` and `compositor` are injectable, so the flow and the call budget can be tested offline. */
-export async function generateVisuals({ visuals, text = null, photography = {}, brandNames = [], outDir, ratio = "1x1", refs = [], maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkVisual, checkRef = checkReference, compositor = text ? makeCompositor() : null, log = console.log }) {
+export async function generateVisuals({ visuals, text = null, photography = {}, brandNames = [], outDir, ratio = "1x1", refs = [], maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkVisual, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log }) {
   mkdirSync(outDir, { recursive: true });
   // A reference photo carrying lettering gets it copied into every visual, so it is refused first.
   for (const r of refs) {

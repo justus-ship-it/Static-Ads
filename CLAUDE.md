@@ -27,9 +27,18 @@ Gemini makes **pictures only**; software sets every word. The offer, location an
 - `skills/references/check-visual.mjs` — vision check: stray text, the client's never-list, people count, placement at the best crop; flagged items confirmed by a second look; references text-checked; `checkTiled` for photos larger than the model looks at (full-resolution tiles)
 - `skills/references/clean-photo.mjs` — cleans a client's real photos (old-brand marks, signage, weight numbers, web-page controls): survey → crop to the model's exact shape → Gemini edit → tiled mark check, before/after vision comparison, pixel check that only the removal areas changed. Retries finish the previous edit when only marks are left. `--survey-only` previews for free. Originals are never modified; passing copies go to `brand-assets/facility-clean/`
 - `skills/references/render-composites.mjs` + `composite-template.html` — the text layer (layouts × styles × palettes, contrast guard, safe areas, faces as keep-outs); verifies every render
-- `skills/references/assign-variants.mjs` — which look each ad in a batch gets
+- `skills/references/assign-variants.mjs` — which look each ad in a batch gets (only layouts each photo can carry; every location rendered together so each location's ad keeps the identical look)
+- `skills/references/plan-offer-batch.mjs` — a batch end to end: `brands/{gym}/batches/{id}/brief.json` (offer, locations, audience — the user's exact words, never read from the offer file) → photos generated for their own layout, with scenes from the client's approved `brands/{gym}/scenes.json` → fit of every photo against every layout → looks → render per location → numbered folders + `batch.json` + `gallery.html`. `--dry-run` plans for free; `--render-only` re-renders with new words at zero image cost; `resolveSelections()` maps `selections.json` back to each ad's photos, look and words
 - `.claude/skills/static-ads/references/offer-{treatments,styles,palettes}.json` — the catalogues
-- Tests: `node --test skills/references/render-composites.test.mjs skills/references/assign-variants.test.mjs skills/references/visual-pipeline.test.mjs skills/references/clean-photo.test.mjs`
+- Tests: `node --test skills/references/render-composites.test.mjs skills/references/assign-variants.test.mjs skills/references/visual-pipeline.test.mjs skills/references/clean-photo.test.mjs skills/references/plan-offer-batch.test.mjs`
+
+```bash
+# Offer-first batch: plan for free, then run (spends at most the brief's max_calls)
+node skills/references/plan-offer-batch.mjs --brand-dir brands/{name} --brief batches/{id}/brief.json --dry-run
+node skills/references/plan-offer-batch.mjs --brand-dir brands/{name} --brief batches/{id}/brief.json
+# New offer name / location / audience in the brief: re-render the same photos, zero image calls
+node skills/references/plan-offer-batch.mjs --brand-dir brands/{name} --brief batches/{id}/brief.json --render-only
+```
 
 ## 4-Phase Pipeline
 

@@ -157,10 +157,14 @@ function rngFrom(seed) {
  * seed:       any string or number
  * exclude:    { layouts, styles, palettes } — a client's switched-off looks
  * photoStats: optional, from measurePhotos, one per visual; without it colour is not considered
+ * allowed:    optional { visualId: [layout ids] } — the layouts each photo can carry (check-visual →
+ *             fitLayouts). An ad that uses several photos needs the layout allowed for every one.
+ * prefer:     optional { visualId: layout id } — tried first for that photo's first look (a generated
+ *             photo's own layout, the one it was composed for)
  *
  * Returns { candidates: [{ id, visual, images, treatment, style, palette, palette_fit }], pools, notes }.
  */
-export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", exclude = {}, photoStats = null, catalogue = loadCatalogue(), ratio = "1x1" }) {
+export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", exclude = {}, photoStats = null, allowed = null, prefer = null, catalogue = loadCatalogue(), ratio = "1x1" }) {
   const { treatments: T, styles: S, palettes: P } = catalogue;
   const notes = [];
   if (!visuals?.length) throw new Error("the batch has no photos");
@@ -223,19 +227,27 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
   // Photos with the strongest colour choose first, while every palette is still unused, so they
   // are the likeliest to get colours that suit them. The output keeps the batch's order.
   const order = visuals.map((v, i) => i).sort((a, b) => (photoStats?.[b]?.overall.strength || 0) - (photoStats?.[a]?.overall.strength || 0) || a - b);
+  // A layout is open to a photo when every photo the ad would use can carry it.
+  const need = (la) => imagesNeeded(layoutFor(T.treatments[la], ratio, T));
+  const open = (vi, la) => !allowed || Array.from({ length: need(la) }, (_, k) => visuals[(vi + k) % visuals.length].id).every((id) => (allowed[id] || []).includes(la));
   const used = new Set();
+  const skipped = new Set(); // palettes passed over somewhere because they clashed with the photo
   const slots = [];
   for (const vi of order) {
     const on = { L: new Set(), S: new Set(), P: new Set() };
     for (let j = 0; j < perVisual; j++) {
       let pick = null;
-      for (const layout of byUse(layouts, count.L, on.L)) {
+      const first = j === 0 && prefer?.[visuals[vi].id];
+      const order2 = byUse(layouts, count.L, on.L).filter((la) => open(vi, la));
+      if (first && order2.includes(first)) order2.sort((a, b) => (b === first) - (a === first));
+      for (const layout of order2) {
         const stat = statFor(vi, layout);
         const fit = stat ? Object.fromEntries(rankPalettes(stat, Object.fromEntries(palettes.map((k) => [k, P.palettes[k]]))).map((r) => [r.id, r])) : null;
         for (const style of byUse(styles, count.S, on.S)) {
           // Least-used palettes first; within the same use, ones that suit the photo best.
           const suits = byUse(palettes, count.P, on.P).sort((a, b) => count.P[a] - count.P[b] || (fit ? fit[b].score - fit[a].score : 0));
           const clean = suits.filter((p) => !fit?.[p].clash);
+          for (const p of suits) if (fit?.[p].clash && clean.length) skipped.add(p);
           // Skip clashing palettes for this photo; only if every remaining one clashes, take the best.
           for (const palette of clean.length ? clean : suits) {
             if (used.has(`${layout}|${style}|${palette}`)) continue;
@@ -246,7 +258,7 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
         }
         if (pick) break;
       }
-      if (!pick) throw new Error(`could not find an unused look for photo ${visuals[vi].id}`);
+      if (!pick) throw new Error(`could not find an unused look for photo ${visuals[vi].id}${allowed ? ` among the layouts it can carry (${(allowed[visuals[vi].id] || []).join(", ") || "none"})` : ""}`);
       used.add(`${pick.layout}|${pick.style}|${pick.palette}`);
       on.L.add(pick.layout); on.S.add(pick.style); on.P.add(pick.palette);
       count.L[pick.layout]++; count.S[pick.style]++; count.P[pick.palette]++;
@@ -267,11 +279,13 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
   });
   // Colour fit outranks even spread: a palette that clashes with most photos is used less, and says so.
   const even = Math.floor(slots.length / palettes.length);
-  const unusedPalettes = palettes.filter((p) => count.P[p] === 0);
-  const underused = palettes.filter((p) => count.P[p] > 0 && count.P[p] < even);
+  // Only palettes that were actually passed over for clashing are blamed on colour; in a small batch
+  // most palettes go unused simply because there are fewer ads than palettes.
+  const unusedPalettes = palettes.filter((p) => count.P[p] === 0 && skipped.has(p));
+  const underused = palettes.filter((p) => count.P[p] > 0 && count.P[p] < even && skipped.has(p));
   if (photoStats && unusedPalettes.length) notes.push(`not used, because their colours clash with the photos under the text: ${unusedPalettes.join(", ")}`);
   if (photoStats && underused.length) notes.push(`used less than an even share (${even}), because their colours clash with most photos under the text: ${underused.map((p) => `${p} ×${count.P[p]}`).join(", ")}`);
-  return { candidates, ratio, pools: { layouts, styles, palettes }, counts: count, notes };
+  return { candidates, ratio, pools: { layouts, styles, palettes }, counts: count, notes, allowed };
 }
 
 /**
@@ -281,9 +295,13 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
  * and new to its photo — keeping its layout, then its palette, where possible — and the
  * replacement is recorded. Nothing is ever shipped unverified.
  */
-export async function renderPlan(browser, plan, { text, imageFor, facesFor = () => [], catalogue = loadCatalogue() }) {
+export async function renderPlan(browser, plan, { text, texts = null, imageFor, facesFor = () => [], focusFor = () => null, catalogue = loadCatalogue() }) {
   const { treatments: T } = catalogue;
   const need = (la) => imagesNeeded(layoutFor(T.treatments[la], plan.ratio || "1x1", T));
+  // Several texts (one per location) are rendered together: a look is kept only if it verifies for
+  // every one, so each location's ad has the identical look and a location test is clean.
+  const all = texts || [text];
+  const open = (c, la) => !plan.allowed || c.images.slice(0, need(la)).length === need(la) && Array.from({ length: need(la) }, (_, k) => c.images[k]).every((id) => (plan.allowed[id] || []).includes(la));
   const results = [];
   const taken = new Set(plan.candidates.map((c) => `${c.treatment}|${c.style}|${c.palette}`));
   for (const c of plan.candidates) {
@@ -292,23 +310,31 @@ export async function renderPlan(browser, plan, { text, imageFor, facesFor = () 
     for (const st of plan.pools.styles) for (const pa of [c.palette, ...plan.pools.palettes]) for (const la of [c.treatment, ...plan.pools.layouts]) {
       if (onPhoto.some((o) => o.treatment === la || o.style === st || o.palette === pa)) continue;
       if (need(la) > c.images.length) continue; // a replacement may not need more photos than the ad has
+      if (!open(c, la)) continue; // nor a layout one of its photos cannot carry
       if (!taken.has(`${la}|${st}|${pa}`)) tries.push([la, st, pa]);
     }
     let done = null;
     const failures = [];
     for (const [treatment, style, palette] of tries.slice(0, 12)) {
       const ims = c.images.slice(0, need(treatment));
-      // Faces from each photo's visual check are keep-out areas: a look whose letters would cover one fails and is swapped.
-      const r = await renderComposite(browser, { images: ims.map(imageFor), faces: ims.map(facesFor), ...text, treatment, style, palette, ratio: plan.ratio || "1x1" });
-      if (r.ok) {
-        done = { ...c, treatment, style, palette, images: c.images.slice(0, need(treatment)), r };
+      // Faces from each photo's visual check are keep-out areas: a look whose letters would cover one
+      // fails and is swapped. Each photo is cropped where its check found it fits this layout.
+      const renders = [];
+      for (const t of all) {
+        const r = await renderComposite(browser, { images: ims.map(imageFor), faces: ims.map(facesFor), focus: ims.map((id) => focusFor(id, treatment)), ...t, treatment, style, palette, ratio: plan.ratio || "1x1" });
+        renders.push({ text: t, r });
+        if (!r.ok) break;
+      }
+      const bad = renders.find((x) => !x.r.ok);
+      if (!bad) {
+        done = { ...c, treatment, style, palette, images: c.images.slice(0, need(treatment)), r: renders[0].r, renders };
         if (treatment !== c.treatment || style !== c.style || palette !== c.palette) {
           taken.add(`${treatment}|${style}|${palette}`);
           done.replaced = { from: { treatment: c.treatment, style: c.style, palette: c.palette }, reason: failures[0] };
         }
         break;
       }
-      failures.push(r.failures.join("; "));
+      failures.push(`${bad.text.location}: ${bad.r.failures.join("; ")}`);
     }
     results.push(done || { ...c, failed: failures });
   }

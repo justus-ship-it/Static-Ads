@@ -254,6 +254,14 @@ export function layoutFor(tr, ratio, T = loadCatalogue().treatments) {
   return null;
 }
 
+function validFocus(focus) {
+  if (focus == null) return [];
+  const one = (f) => Array.isArray(f) && f.length === 2 && f.every((v) => typeof v === "number" && v >= 0 && v <= 1);
+  const list = one(focus) ? [focus] : focus;
+  if (!Array.isArray(list) || !list.every((f) => f == null || one(f))) throw new Error("focus must be [fx, fy] in 0–1, or one such pair (or null) per photo");
+  return list;
+}
+
 function validFaces(faces) {
   if (faces == null) return [];
   const ok = Array.isArray(faces) && faces.every((perPhoto) => Array.isArray(perPhoto) && perPhoto.every((b) =>
@@ -353,7 +361,10 @@ export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-s
     faces: validFaces(faces),
     background: layout.background || { type: "single" },
     images: photos.slice(0, layout.background?.type === "panels" ? need : undefined).map(imageDataUrl),
-    focus: focus || [0.5, 0.5],
+    // Where each photo is cropped: one [fx, fy] for a single photo, or one per photo for a collage or
+    // panels ad (each photo's own crop from its visual check). Unset photos crop at the centre.
+    focus: validFocus(focus)[0] || [0.5, 0.5],
+    focus_images: validFocus(focus),
     text,
     debug, // review overlay only; drawn after measurement, never affects layout or checks
   };

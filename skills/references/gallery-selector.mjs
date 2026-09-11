@@ -47,7 +47,7 @@ function scanOutputDir(outputDir) {
   const entries = readdirSync(outputDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => e.name)
-    .filter((name) => /^\d{2}-/.test(name)) // only numbered template folders
+    .filter((name) => /^\d{2,}-/.test(name)) // only numbered template folders (offer-first batches number from 101)
     .sort();
 
   for (const folderName of entries) {

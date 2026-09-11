@@ -251,7 +251,7 @@ export function dedupeItems(items) {
  * The text and never-list check, run on the whole image and on each full-resolution tile. Every
  * flagged item is confirmed by a second look at the image it was found in. People are counted on the
  * whole image. `crop(src, [x, y, w, h], out)` cuts a tile (clean-photo.mjs → pixel tools).
- * Returns { text, never, people_count, dismissed }, boxes on the whole image.
+ * Returns { text, never, people_count, people_box, face_boxes, dismissed }, boxes on the whole image.
  */
 export async function checkTiled(imagePath, { never = [], crop, maxSide = 1100, ask = askVision, confirm = confirmItems, ...opts } = {}) {
   const size = imageSize(readFileSync(imagePath));
@@ -260,10 +260,10 @@ export async function checkTiled(imagePath, { never = [], crop, maxSide = 1100, 
   try {
     if (dir) for (const [i, rect] of tileGrid(size, maxSide).entries()) views.push({ file: await crop(imagePath, rect, join(dir, `t${i}.png`)), rect });
     const kept = [], dismissed = [];
-    let people = 0;
+    let people = 0, peopleBox = null, faceBoxes = [];
     for (const v of views) {
       const a = await ask(v.file, { never, ...opts });
-      if (!v.rect) people = a.people_count || 0;
+      if (!v.rect) { people = a.people_count || 0; peopleBox = valid(a.people_box) ? a.people_box : null; faceBoxes = (a.face_boxes || []).filter(valid); }
       const flagged = [...(a.text_items || []).map((t) => ({ ...t, list: "text" })), ...(a.excluded_items || []).map((t) => ({ ...t, list: "never" }))];
       const r = await confirm(v.file, flagged, opts);
       const place = (t) => (v.rect && valid(t.box_2d) ? { ...t, box_2d: fromTile(t.box_2d, v.rect, size) } : t);
@@ -271,7 +271,7 @@ export async function checkTiled(imagePath, { never = [], crop, maxSide = 1100, 
       dismissed.push(...r.dismissed.map(place));
     }
     const all = dedupeItems(kept);
-    return { text: all.filter((t) => t.list === "text"), never: all.filter((t) => t.list === "never"), people_count: people, dismissed, tiles: views.length - 1 };
+    return { text: all.filter((t) => t.list === "text"), never: all.filter((t) => t.list === "never"), people_count: people, people_box: peopleBox, face_boxes: faceBoxes, dismissed, tiles: views.length - 1 };
   } finally {
     if (dir) rmSync(dir, { recursive: true, force: true });
   }
@@ -311,6 +311,21 @@ export async function confirmTiled(imagePath, items, { crop, maxSide = 1100, con
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Which layouts a checked photo can carry, each with the crop it would use. A photo is generated for
+ * one layout, but where its people and faces are does not depend on the layout, so one vision answer
+ * judges it against every layout at once (placement only — stray text and the never-list were settled
+ * when it was checked). `answer`: { people_box, face_boxes, people_count }.
+ * Returns { layoutId: { ok, focus, rule, failures } }.
+ */
+export function fitLayouts(answer, { ratio = "1x1", imageSize: size = null, expectPeople = true, maxPeople = null, catalogue = loadCatalogue() } = {}) {
+  const placementOnly = { ...answer, text_items: [], excluded_items: [] };
+  return Object.fromEntries(Object.keys(catalogue.treatments.treatments).map((id) => {
+    const j = judgeVisual(placementOnly, { treatment: id, ratio, expectPeople, maxPeople, imageSize: size, catalogue });
+    return [id, { ok: j.ok, focus: j.focus, rule: j.placement.rule, failures: j.failures }];
+  }));
 }
 
 /** A reference photo is a source of stray text: whatever lettering it carries, the model reproduces
