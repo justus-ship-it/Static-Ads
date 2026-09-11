@@ -1106,3 +1106,78 @@ test("H7 9:16 T8 fills the frame: no flat backdrop left in the areas the app cov
   assert.ok(tallFlat < 0.02, `9:16: ${(100 * tallFlat).toFixed(1)}% of the frame is flat backdrop`);
   assert.ok(sqFlat > 0.4, `1:1 keeps the approved plain backdrop (${(100 * sqFlat).toFixed(0)}% flat)`);
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// Step 4 — faces. The visual check boxes every face; the renderer treats them as keep-out areas,
+// so a finished ad fails if any letter, band or divider covers one.
+// ══════════════════════════════════════════════════════════════════════════
+const SQUARE_DARK = svg(`<rect width="100%" height="100%" fill="#1C1C1C"/>`, 1000, 1000);
+
+test("R1 faces are mapped through the same crop the photo is drawn with (1:1 and a 9:16 crop of a square photo)", async () => {
+  const face = [100, 400, 200, 500]; // ymin, xmin, ymax, xmax on 0–1000; zones add 4% room each side
+  const one = await renderComposite(browser, { image: SQUARE_DARK, faces: [[face]], ...BASE });
+  assert.equal(one.ok, true, one.failures.join("\n"));
+  const [z] = one.report.face_zones, k = 1.08; // 1000 → 1080
+  for (const [got, want] of [[z.x, 400 * k - 4.32], [z.y, 100 * k - 4.32], [z.w, 108 + 8.64], [z.h, 108 + 8.64]]) assert.ok(Math.abs(got - want) < 0.01, `1:1 ${got} vs ${want}`);
+  const tall = await renderComposite(browser, { image: SQUARE_DARK, faces: [[face]], ...BASE, ratio: "9x16" });
+  assert.equal(tall.ok, true, tall.failures.join("\n"));
+  const [t] = tall.report.face_zones; // cover: 1000 → 1920 square, centred: x offset −420
+  for (const [got, want] of [[t.x, -420 + 768 - 7.68], [t.y, 192 - 7.68], [t.w, 192 + 15.36], [t.h, 192 + 15.36]]) assert.ok(Math.abs(got - want) < 0.01, `9:16 ${got} vs ${want}`);
+  assert.throws(() => buildSpec({ image: DARK, text: TEXT, faces: [[[1, 2, 3]]] }), /faces must be a list per photo/);
+});
+
+test("R2 a letter on a face fails the ad; the same face in the subject's space passes", async () => {
+  const low = await renderComposite(browser, { image: SQUARE_DARK, faces: [[[620, 420, 720, 580]]], ...BASE });
+  assert.equal(low.ok, false, "T1's text runs across the lower half");
+  assert.match(low.failures.join(), /covers a face \(face 1\)/);
+  const high = await renderComposite(browser, { image: SQUARE_DARK, faces: [[[150, 420, 250, 580]]], ...BASE });
+  assert.equal(high.ok, true, high.failures.join("\n"));
+  // The same low face is fine on a layout whose text sits elsewhere — a right column over a face on the left.
+  const col = await renderComposite(browser, { image: SQUARE_DARK, faces: [[[620, 100, 720, 260]]], ...BASE, treatment: "t3-right-column" });
+  assert.equal(col.ok, true, col.failures.join("\n"));
+  // The verifier checks bands and dividers against faces too.
+  const spec = buildSpec({ image: SQUARE_DARK, text: TEXT, treatment: "t3-right-column" });
+  const rep = structuredClone(col.report);
+  const d = rep.groups[0].dividers[0];
+  rep.face_zones = [{ name: "face 1", x: d.x + 2, y: d.y - 10, w: 40, h: 40 }];
+  assert.match(verifyReport(spec, rep).join(), /divider covers a face/);
+});
+
+test("R3 panel photos carry their faces into their circles; collage tiles are exempt", async () => {
+  const p = await renderComposite(browser, { images: [TILES[0], TILES[2]], faces: [[[300, 400, 500, 600]], []], ...BASE, treatment: "t8-panels-band" });
+  assert.equal(p.ok, true, p.failures.join("\n"));
+  const [z] = p.report.face_zones, [pn] = p.report.background.panels;
+  assert.ok(z.x > pn.cx - pn.r && z.x + z.w < pn.cx + pn.r && z.y > pn.cy - pn.r && z.y + z.h < pn.cy + pn.r, "the face lands inside its panel");
+  const c = await renderComposite(browser, { images: TILES.slice(0, 4), faces: [[[400, 400, 600, 600]], [], [], []], ...BASE, treatment: "t7-collage" });
+  assert.equal(c.ok, true, c.failures.join("\n"));
+  assert.deepEqual(c.report.face_zones, [], "text over a busy collage is that layout's design");
+});
+
+test("R4 each line's reported letter band holds every lit pixel of its letters — checked in the PNG, all 9 styles", async () => {
+  // Faces are judged against these bands, so a band that missed any ink would let a letter onto a face.
+  for (const style of STYLES) {
+    const r = await renderComposite(browser, { image: SOLID_BG, ...BASE, style, palette: "white-on-dark" });
+    assert.equal(r.ok, true, `${style}: ${r.failures.join(" | ")}`);
+    const png = decodePNG(r.png);
+    for (const b of r.report.blocks) {
+      assert.equal(b.ink_lines.length, b.lines, `${style} ${b.block}: one band per line`);
+      const L = b.layout_rect;
+      let outside = 0, lit = 0;
+      for (let y = Math.floor(L.y) - 20; y < L.y + L.h + 20; y++) for (let x = Math.floor(L.x); x < L.x + L.w; x++) {
+        if (y < 0 || y >= png.h) continue;
+        const i = (y * png.w + x) * png.ch;
+        if (png.px[i] + png.px[i + 1] + png.px[i + 2] < 3 * 200) continue; // white letters only (the dark outline and shadow do not show on dark)
+        // The scan reaches past this line's box to catch overflowing ink; pixels in a neighbouring line's box are that line's.
+        if (r.report.blocks.some((o) => o !== b && x >= o.layout_rect.x && x <= o.layout_rect.x + o.layout_rect.w && y >= o.layout_rect.y && y <= o.layout_rect.y + o.layout_rect.h)) continue;
+        lit++;
+        if (!b.ink_lines.some((k) => x >= k.x - 1 && x <= k.x + k.w + 1 && y >= k.y - 1 && y <= k.y + k.h + 1)) outside++;
+      }
+      assert.ok(lit > 300, `${style} ${b.block}: letters found`);
+      assert.equal(outside, 0, `${style} ${b.block}: ${outside} lit pixels outside the reported letter band`);
+    }
+  }
+  // And the band is the letters, not the line box: capitals leave the box's descender space empty.
+  const r = await renderComposite(browser, { image: SOLID_BG, ...BASE, palette: "white-on-dark" });
+  const loc = r.report.blocks.find((b) => b.block === "location");
+  assert.ok(loc.ink_lines[0].y + loc.ink_lines[0].h < loc.layout_rect.y + loc.layout_rect.h - 0.1 * loc.size, "the band stops well above the bottom of the line box");
+});

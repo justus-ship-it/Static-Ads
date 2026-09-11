@@ -76,6 +76,18 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       const sc = Math.max(w / im.naturalWidth, h / im.naturalHeight);
       const dw = im.naturalWidth * sc, dh = im.naturalHeight * sc;
       ctx.drawImage(im, x + (w - dw) * fx, y + (h - dh) * fy, dw, dh);
+      return { x: x + (w - dw) * fx, y: y + (h - dh) * fy, w: dw, h: dh }; // where the whole photo landed
+    };
+    // Faces found in each photo (0–1000 boxes, [ymin, xmin, ymax, xmax]) become keep-out areas on
+    // the canvas: mapped through the same crop the photo was drawn with, clipped to what is visible.
+    const faceZones = [];
+    const placeFaces = (k, at, clip) => {
+      for (const [y0, x0, y1, x1] of (S.faces || [])[k] || []) {
+        const pw = ((x1 - x0) / 1000) * at.w, ph = ((y1 - y0) / 1000) * at.h, m = 0.04; // a little room for hair and chin
+        const fx0 = Math.max(clip.x, at.x + (x0 / 1000) * at.w - m * pw), fx1 = Math.min(clip.x + clip.w, at.x + (x1 / 1000) * at.w + m * pw);
+        const fy0 = Math.max(clip.y, at.y + (y0 / 1000) * at.h - m * ph), fy1 = Math.min(clip.y + clip.h, at.y + (y1 / 1000) * at.h + m * ph);
+        if (fx1 > fx0 && fy1 > fy0) faceZones.push({ name: `face ${faceZones.length + 1}`, x: fx0, y: fy0, w: fx1 - fx0, h: fy1 - fy0 });
+      }
     };
     const BG = S.background || { type: "single" };
     const background = { type: BG.type };
@@ -110,13 +122,14 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       background.panels = BG.panels.map((pn, k) => {
         const cx = (pn.cx / 100) * W, cy = (pn.cy / 100) * H, r = (pn.r / 100) * W;
         ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.clip();
-        cover(imgs[k], cx - r, cy - r, 2 * r, 2 * r, [0.5, 0.5]);
+        placeFaces(k, cover(imgs[k], cx - r, cy - r, 2 * r, 2 * r, [0.5, 0.5]), { x: cx - r, y: cy - r, w: 2 * r, h: 2 * r });
         ctx.restore();
         return { cx, cy, r, image: k };
       });
     } else {
-      cover(imgs[0], 0, 0, W, H, S.focus || [0.5, 0.5]);
+      placeFaces(0, cover(imgs[0], 0, 0, W, H, S.focus || [0.5, 0.5]), { x: 0, y: 0, w: W, h: H });
     }
+    // (Collage tiles are exempt: text over a busy, darkened collage is that layout's design.)
     const px = ctx.getImageData(0, 0, W, H).data;
 
     // 2. Fonts. Every face a line uses must genuinely load — family AND style. A silent fallback,
@@ -609,6 +622,27 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     // 8. Report everything the caller needs to verify the render independently.
     const regionOf = (g) => ({ x: g.rx, y: g.ry, w: g.rw, h: g.rh });
     const allRegions = groups.map(regionOf);
+    // The letters themselves, line by line: the line's horizontal extent (plus overhang room) and the
+    // band the glyphs actually occupy — from the font's own metrics, as the browser laid them out:
+    // baseline = line top + half-leading + font ascent; ink from baseline − glyph ascent to baseline
+    // + glyph descent, plus the widest outline. Faces are judged against these, not the line box,
+    // whose descender and leading space hold no ink (Step 4, run 7: 14 px of empty box "covered" a face).
+    const mctx = document.createElement("canvas").getContext("2d");
+    const shown = (t, c) => (c === "upper" ? t.toUpperCase() : c === "title"
+      ? t.split(/(\s+)/).map((w) => (/^\s+$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())).join("") : t);
+    const inkLines = (b) => {
+      const f = b.spec.face;
+      mctx.font = `${f.style} ${f.weight} ${b.size}px "${f.family}"`;
+      mctx.letterSpacing = `${b.spec.tracking_em * b.size}px`;
+      const m = mctx.measureText(shown(S.text[b.spec.block], b.spec.case));
+      const lh = b.size * b.spec.line_height, half = (lh - (m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)) / 2;
+      const edge = 0.04 * b.size, pad = b.spec.pad_em * b.size;
+      return lineBoxes(b).map((l) => {
+        const base = l.top + half + m.fontBoundingBoxAscent;
+        return { x: l.left - pad, y: base - m.actualBoundingBoxAscent - edge, w: l.right - l.left + 2 * pad, h: m.actualBoundingBoxAscent + m.actualBoundingBoxDescent + 2 * edge };
+      });
+    };
+
     const report = {
       ok: true,
       failures,
@@ -616,6 +650,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       faces,
       canvas: [W, H],
       background,
+      face_zones: faceZones,
       region: allRegions.length === 1 ? allRegions[0] : union(allRegions),
       scrim: { alpha: +Math.max(...groups.map((g) => g.A)).toFixed(3) },
       groups: groups.map((g) => ({
@@ -655,6 +690,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
           // The edge the line is aligned on: letters' left edge, right edge, or centre.
           align,
           edge: align === "left" ? r.left : align === "right" ? r.right - trail : r.left + r.width / 2,
+          ink_lines: inkLines(b),
           band: b.band || null,
           judged_colours: b.judgeHexes,
           contrast: { before: b.before == null ? null : +b.before.toFixed(2), after: +b.after.toFixed(2) },
@@ -688,6 +724,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       box((s0 / 100) * W, (s1 / 100) * H, (s2 / 100) * W, (s3 / 100) * H, "#FFD400", isMargin ? "5% canvas margin" : "safe area (the app covers the rest)", true);
       for (const z of report.clear_zones) box(z.x, z.y, z.w, z.h, "#FF00FF", `clear zone: ${z.name}`, true);
       (background.panels || []).forEach((pn, i) => box(pn.cx - pn.r, pn.cy - pn.r, 2 * pn.r, 2 * pn.r, "#FF00FF", `photo panel ${i + 1}`, true));
+      for (const z of faceZones) box(z.x, z.y, z.w, z.h, "#00E5FF", z.name, false);
       for (const g of report.groups) {
         const R = g.region;
         box(R.x, R.y, R.w, R.h, "#00FF66", groups.length > 1 ? `text region (${g.id})` : "text region", true);

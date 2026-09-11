@@ -254,6 +254,14 @@ export function layoutFor(tr, ratio, T = loadCatalogue().treatments) {
   return null;
 }
 
+function validFaces(faces) {
+  if (faces == null) return [];
+  const ok = Array.isArray(faces) && faces.every((perPhoto) => Array.isArray(perPhoto) && perPhoto.every((b) =>
+    Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && v >= 0 && v <= 1000) && b[2] > b[0] && b[3] > b[1]));
+  if (!ok) throw new Error("faces must be a list per photo of [ymin, xmin, ymax, xmax] boxes on a 0–1000 scale");
+  return faces;
+}
+
 /** How many photos a layout needs: one for a single photo, more for a collage or panels. */
 export function imagesNeeded(layout) {
   const bg = layout?.background;
@@ -264,7 +272,7 @@ export function imagesNeeded(layout) {
  *  opening a browser is rejected here, with a message saying what to change. `styleSpec` and
  *  `treatmentSpec` let a caller pass a style or layout object directly instead of an id (used by
  *  the UI preview and the tests). */
-export function buildSpec({ image, images, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, debug = false }) {
+export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, debug = false }) {
   const { treatments: T, palettes: P, styles: S } = loadCatalogue();
   const tr = treatmentSpec || T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}". Known: ${Object.keys(T.treatments).join(", ")}`);
@@ -341,6 +349,8 @@ export function buildSpec({ image, images, text, treatment = "t1-bottom-stack", 
     script_min_px: S.script_rules.min_px,
     safe_area: safe,
     divider_contrast: DIVIDER_CONTRAST,
+    // Faces per photo, from the visual check: [[ymin, xmin, ymax, xmax] …] on a 0–1000 scale. No letter may cover one.
+    faces: validFaces(faces),
     background: layout.background || { type: "single" },
     images: photos.slice(0, layout.background?.type === "panels" ? need : undefined).map(imageDataUrl),
     focus: focus || [0.5, 0.5],
@@ -502,8 +512,12 @@ export function verifyReport(spec, report) {
   const zones = report.clear_zones || [];
   // Photo panels (T8) are keep-out areas too: nothing may be set over a panel.
   const panels = (report.background?.panels || []).map((p, i) => ({ name: `photo panel ${i + 1}`, x: p.cx - p.r, y: p.cy - p.r, w: 2 * p.r, h: 2 * p.r }));
-  const clear = (k, what) => {
+  const faceZones = report.face_zones || [];
+  const clear = (k, what, ink = [k]) => {
     for (const z of zones) if (meets(k, z)) f.push(`${what} enters the clear zone "${z.name}"`);
+    // Faces are judged against the letters themselves (ink_lines) where the page reports them;
+    // bands and dividers are solid, so their whole box counts.
+    for (const z of faceZones) if (ink.some((l) => meets(l, z))) f.push(`${what} covers a face (${z.name})`);
     for (const z of panels) if (meets(k, z)) f.push(`${what} overlaps ${z.name}`);
   };
   // Which group each line belongs to, according to the layout that was asked for.
@@ -519,7 +533,7 @@ export function verifyReport(spec, report) {
     const r = b.rect;
     if (!inside(r, R)) f.push(`${tag} leaves its region`);
     if (!inside(r, SAFE)) f.push(safeMsg(tag));
-    clear(r, tag);
+    clear(r, tag, b.ink_lines?.length ? b.ink_lines : [r]);
     if (b.band) {
       if (!inside(b.band, R)) f.push(`${tag} band leaves the text region`);
       if (!inside(b.band, SAFE)) f.push(safeMsg(`${tag} band`));
@@ -557,14 +571,14 @@ export function verifyReport(spec, report) {
 
 // ── High-level: inputs → verified PNG ─────────────────────────────────────
 
-export async function renderComposite(browser, { image, images, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug = false }) {
+export async function renderComposite(browser, { image, images, faces, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug = false }) {
   const inputErrors = validateInputs({ location, audience, offer });
   if (inputErrors.length) return { ok: false, failures: inputErrors };
   const { duration, offer_name } = splitOffer(offer, free);
   const text = { location, audience, duration, offer_name };
   let spec;
   try {
-    spec = buildSpec({ image, images, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug });
+    spec = buildSpec({ image, images, faces, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug });
   } catch (e) {
     return { ok: false, failures: [e.message] }; // rejected before any browser work
   }

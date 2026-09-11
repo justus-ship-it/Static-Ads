@@ -90,7 +90,7 @@ function loadImageAsInlineData(filePath) {
  * Call Gemini generateContent with text + reference images.
  * Returns the generated image as a Buffer, or null on failure.
  */
-async function generateImage(prompt, referenceImageParts) {
+async function generateImage(prompt, referenceImageParts, { aspectRatio } = {}) {
   const parts = [
     { text: prompt },
     ...referenceImageParts,
@@ -100,6 +100,9 @@ async function generateImage(prompt, referenceImageParts) {
     contents: [{ parts }],
     generationConfig: {
       responseModalities: ["TEXT", "IMAGE"],
+      // Optional exact aspect ("1:1", "3:4", "4:3", "9:16", …). Verified honoured on 2026-09-11
+      // (3:4 → 896 × 1200). The existing template path still sets the ratio in the prompt text.
+      ...(aspectRatio ? { imageConfig: { aspectRatio } } : {}),
     },
   };
 
@@ -858,7 +861,13 @@ async function main() {
   console.log(sep);
 }
 
-main().catch((e) => {
-  console.error("Fatal error:", e.message);
-  process.exit(1);
-});
+// Run only when called directly, so the Gemini call can be reused (e.g. by generate-visuals.mjs).
+const isMain = process.argv[1] && resolve(process.argv[1]) === __filename;
+if (isMain) {
+  main().catch((e) => {
+    console.error("Fatal error:", e.message);
+    process.exit(1);
+  });
+}
+
+export { generateImage, loadGeminiKey, GEMINI_MODEL };

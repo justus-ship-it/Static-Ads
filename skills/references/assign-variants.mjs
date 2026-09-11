@@ -277,11 +277,11 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
 /**
  * Render every planned candidate. The planner's picks are static; a few combinations can only be
  * proven by rendering (e.g. a long location in a narrow column pulls a script audience under its
- * size floor). A candidate that fails is replaced by the next look that is unused in the batch
+ * size floor, or its letters would cover a face found in the photo). A candidate that fails is replaced by the next look that is unused in the batch
  * and new to its photo — keeping its layout, then its palette, where possible — and the
  * replacement is recorded. Nothing is ever shipped unverified.
  */
-export async function renderPlan(browser, plan, { text, imageFor, catalogue = loadCatalogue() }) {
+export async function renderPlan(browser, plan, { text, imageFor, facesFor = () => [], catalogue = loadCatalogue() }) {
   const { treatments: T } = catalogue;
   const need = (la) => imagesNeeded(layoutFor(T.treatments[la], plan.ratio || "1x1", T));
   const results = [];
@@ -297,7 +297,9 @@ export async function renderPlan(browser, plan, { text, imageFor, catalogue = lo
     let done = null;
     const failures = [];
     for (const [treatment, style, palette] of tries.slice(0, 12)) {
-      const r = await renderComposite(browser, { images: c.images.slice(0, need(treatment)).map(imageFor), ...text, treatment, style, palette, ratio: plan.ratio || "1x1" });
+      const ims = c.images.slice(0, need(treatment));
+      // Faces from each photo's visual check are keep-out areas: a look whose letters would cover one fails and is swapped.
+      const r = await renderComposite(browser, { images: ims.map(imageFor), faces: ims.map(facesFor), ...text, treatment, style, palette, ratio: plan.ratio || "1x1" });
       if (r.ok) {
         done = { ...c, treatment, style, palette, images: c.images.slice(0, need(treatment)), r };
         if (treatment !== c.treatment || style !== c.style || palette !== c.palette) {

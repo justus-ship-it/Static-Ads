@@ -18,6 +18,18 @@ Automated static ad generator: Claude Code + Google Gemini (primary) / FAL.ai Na
 - `hook-bank.md` — 100 hook frameworks from Hook Bank (D-Double-U Media), tagged by type/awareness/goal
 - `brands/{name}/` — Per-brand workspace: `product-images/`, `brand-images/`, `brand-dna.md`, `prompts.json`, `outputs/`
 
+### Offer-first creative (two layers — being built step by step)
+
+Gemini makes **pictures only**; software sets every word. The offer, location and audience are always user-supplied.
+
+- `skills/references/visual-prompts.mjs` — pictures-only prompts composed around a layout (no text of any kind; never names words, even to forbid them)
+- `skills/references/generate-visuals.mjs` — generate → check → finished-ad check, hard `--max-calls` budget, `--attempts`, `--check-only`
+- `skills/references/check-visual.mjs` — vision check: stray text, the client's never-list, people count, placement at the best crop; flagged items confirmed by a second look; references text-checked
+- `skills/references/render-composites.mjs` + `composite-template.html` — the text layer (layouts × styles × palettes, contrast guard, safe areas, faces as keep-outs); verifies every render
+- `skills/references/assign-variants.mjs` — which look each ad in a batch gets
+- `.claude/skills/static-ads/references/offer-{treatments,styles,palettes}.json` — the catalogues
+- Tests: `node --test skills/references/render-composites.test.mjs skills/references/assign-variants.test.mjs skills/references/visual-pipeline.test.mjs`
+
 ## 4-Phase Pipeline
 
 1. **Phase 1 (Brand DNA)**: Firecrawl scrapes brand site + screenshots → Claude visually inspects screenshots (primary color source) → web research → `brand-dna.md` + `brand-images/`

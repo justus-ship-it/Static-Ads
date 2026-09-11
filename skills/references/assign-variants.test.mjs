@@ -197,3 +197,17 @@ test("F7 colour behind part of the text counts: a red band behind one line clash
   // T2's text is at the very top and bottom, away from the band: no clash there.
   assert.ok(rankPalettes(p.layouts["t2-top-bottom-split"], P).every((r) => !r.clash));
 });
+
+test("F9 a look whose letters would cover a face is swapped for one that leaves the face clear", async () => {
+  const photo = "data:image/svg+xml;base64," + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000"><rect width="100%" height="100%" fill="#1C1C1C"/></svg>`).toString("base64");
+  const text = { ...TEXT, offer: OFFER };
+  const plan = assignVariants({ visuals: vis(1), perVisual: 1, text, seed: "face" });
+  plan.candidates[0] = { ...plan.candidates[0], treatment: "t1-bottom-stack", images: ["v01"] };
+  const face = [[500, 420, 580, 580]]; // under T1's first line, but in the gap T2 leaves between its text groups
+  const [c] = await renderPlan(browser, plan, { text, imageFor: () => photo, facesFor: () => face });
+  assert.ok(!c.failed, c.failed?.join(" | "));
+  assert.equal(c.r.ok, true);
+  assert.match(c.replaced.reason, /covers a face/);
+  assert.notEqual(c.treatment, "t1-bottom-stack");
+  assert.ok(c.r.report.face_zones.length === 1, "the face was still a keep-out in the replacement");
+});
