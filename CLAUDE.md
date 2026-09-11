@@ -24,11 +24,12 @@ Gemini makes **pictures only**; software sets every word. The offer, location an
 
 - `skills/references/visual-prompts.mjs` — pictures-only prompts composed around a layout (no text of any kind; never names words, even to forbid them)
 - `skills/references/generate-visuals.mjs` — generate → check → finished-ad check, hard `--max-calls` budget, `--attempts`, `--check-only`
-- `skills/references/check-visual.mjs` — vision check: stray text, the client's never-list, people count, placement at the best crop; flagged items confirmed by a second look; references text-checked
+- `skills/references/check-visual.mjs` — vision check: stray text, the client's never-list, people count, placement at the best crop; flagged items confirmed by a second look; references text-checked; `checkTiled` for photos larger than the model looks at (full-resolution tiles)
+- `skills/references/clean-photo.mjs` — cleans a client's real photos (old-brand marks, signage, weight numbers, web-page controls): survey → crop to the model's exact shape → Gemini edit → tiled mark check, before/after vision comparison, pixel check that only the removal areas changed. Retries finish the previous edit when only marks are left. `--survey-only` previews for free. Originals are never modified; passing copies go to `brand-assets/facility-clean/`
 - `skills/references/render-composites.mjs` + `composite-template.html` — the text layer (layouts × styles × palettes, contrast guard, safe areas, faces as keep-outs); verifies every render
 - `skills/references/assign-variants.mjs` — which look each ad in a batch gets
 - `.claude/skills/static-ads/references/offer-{treatments,styles,palettes}.json` — the catalogues
-- Tests: `node --test skills/references/render-composites.test.mjs skills/references/assign-variants.test.mjs skills/references/visual-pipeline.test.mjs`
+- Tests: `node --test skills/references/render-composites.test.mjs skills/references/assign-variants.test.mjs skills/references/visual-pipeline.test.mjs skills/references/clean-photo.test.mjs`
 
 ## 4-Phase Pipeline
 

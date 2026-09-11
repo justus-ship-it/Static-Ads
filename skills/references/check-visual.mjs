@@ -31,8 +31,9 @@
  * xmax] on a 0–1000 scale.
  */
 
-import { readFileSync } from "fs";
-import { extname } from "path";
+import { readFileSync, mkdtempSync, rmSync } from "fs";
+import { extname, join } from "path";
+import { tmpdir } from "os";
 import { loadCatalogue, layoutFor } from "./render-composites.mjs";
 import { describeSubjectArea, coveredSpans, MAX_SUBJECT_UNDER_TEXT } from "./visual-prompts.mjs";
 import { loadGeminiKey } from "./generate_ads_gemini.mjs";
@@ -77,11 +78,12 @@ const CONFIRM_QUESTION = (items) => `A first check of this image reported the it
 ${items.map((t, i) => `${i}. ${t.what}${t.kind ? ` (${t.kind})` : ""}${t.box_2d ? ` at ${JSON.stringify(t.box_2d)}` : ""}`).join("\n")}`;
 const CONFIRM_SCHEMA = { type: "OBJECT", properties: { findings: { type: "ARRAY", items: { type: "OBJECT", properties: { index: { type: "INTEGER" }, visible: { type: "BOOLEAN" }, seen: { type: "STRING" } }, required: ["index", "visible"] } } }, required: ["findings"] };
 
-async function callVision(imagePath, text, schema, { model = CHECK_MODEL, fetchImpl = fetch, key = loadGeminiKey() } = {}) {
+/** One vision call. `imagePath` may be a list: the images follow the question in that order. */
+export async function callVision(imagePath, text, schema, { model = CHECK_MODEL, fetchImpl = fetch, key = loadGeminiKey() } = {}) {
   if (!key) throw new Error("GEMINI_KEY not found (.env or environment)");
-  const data = readFileSync(imagePath).toString("base64");
+  const images = [imagePath].flat().map((p) => ({ inline_data: { mime_type: MIME[extname(p).toLowerCase()] || "image/png", data: readFileSync(p).toString("base64") } }));
   const body = {
-    contents: [{ parts: [{ text }, { inline_data: { mime_type: MIME[extname(imagePath).toLowerCase()] || "image/png", data } }] }],
+    contents: [{ parts: [{ text }, ...images] }],
     generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0 },
   };
   const res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -210,6 +212,105 @@ export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = t
     placement: { rule, focus: crop ? crop.focus : [0.5, 0.5], people_on_ad: crop?.people ? crop.people.map(Math.round) : null, people_box: people, people_count: answer.people_count ?? null, faces: faces.length, faces_under_text_area: facesUnderArea, share_under_text: +under.toFixed(3), share_outside_circle: +outside.toFixed(3), text_areas: areas },
     failures,
   };
+}
+
+// ── tiled checking, for photos larger than the vision model looks at ──────
+
+/** Overlapping tiles ([x, y, w, h] px) no longer than `maxSide` on either side. The vision model
+ *  looks at a whole image shrunk down: on a 2400 × 1792 photo a logo plate or a wall sconce the size
+ *  of a thumbnail vanishes (Step 5, run 2: three marks passed the whole-image check, all three found
+ *  in tiles). */
+export function tileGrid([w, h], maxSide = 1100, overlap = 0.12) {
+  const cols = Math.max(1, Math.ceil(w / maxSide)), rows = Math.max(1, Math.ceil(h / maxSide));
+  if (cols === 1 && rows === 1) return [];
+  const tw = Math.min(w, Math.round((w / cols) * (1 + overlap))), th = Math.min(h, Math.round((h / rows) * (1 + overlap)));
+  const at = (i, n, full, t) => Math.min(full - t, Math.max(0, Math.round((i * full) / n - (t - full / n) / 2)));
+  const out = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) out.push([at(c, cols, w, tw), at(r, rows, h, th), tw, th]);
+  return out;
+}
+
+/** A box on a tile (0–1000) → the same box on the whole image (0–1000). */
+export function fromTile([y0, x0, y1, x1], [tx, ty, tw, th], [w, h]) {
+  const X = (v) => Math.round(((tx + (v / 1000) * tw) / w) * 1000), Y = (v) => Math.round(((ty + (v / 1000) * th) / h) * 1000);
+  return [Y(y0), X(x0), Y(y1), X(x1)];
+}
+
+/** Items found in several tiles are one item: keep the first of any pair that mostly overlap. */
+export function dedupeItems(items) {
+  const out = [];
+  for (const it of items) {
+    const b = it.box_2d;
+    if (valid(b) && out.some((o) => o.list === it.list && valid(o.box_2d) && overlap(o.box_2d, b) >= 0.5 * Math.min(area(o.box_2d), area(b)))) continue;
+    out.push(it);
+  }
+  return out;
+}
+
+/**
+ * The text and never-list check, run on the whole image and on each full-resolution tile. Every
+ * flagged item is confirmed by a second look at the image it was found in. People are counted on the
+ * whole image. `crop(src, [x, y, w, h], out)` cuts a tile (clean-photo.mjs → pixel tools).
+ * Returns { text, never, people_count, dismissed }, boxes on the whole image.
+ */
+export async function checkTiled(imagePath, { never = [], crop, maxSide = 1100, ask = askVision, confirm = confirmItems, ...opts } = {}) {
+  const size = imageSize(readFileSync(imagePath));
+  const views = [{ file: imagePath, rect: null }];
+  const dir = crop && tileGrid(size, maxSide).length ? mkdtempSync(join(tmpdir(), "check-tiles-")) : null;
+  try {
+    if (dir) for (const [i, rect] of tileGrid(size, maxSide).entries()) views.push({ file: await crop(imagePath, rect, join(dir, `t${i}.png`)), rect });
+    const kept = [], dismissed = [];
+    let people = 0;
+    for (const v of views) {
+      const a = await ask(v.file, { never, ...opts });
+      if (!v.rect) people = a.people_count || 0;
+      const flagged = [...(a.text_items || []).map((t) => ({ ...t, list: "text" })), ...(a.excluded_items || []).map((t) => ({ ...t, list: "never" }))];
+      const r = await confirm(v.file, flagged, opts);
+      const place = (t) => (v.rect && valid(t.box_2d) ? { ...t, box_2d: fromTile(t.box_2d, v.rect, size) } : t);
+      kept.push(...r.kept.map(place));
+      dismissed.push(...r.dismissed.map(place));
+    }
+    const all = dedupeItems(kept);
+    return { text: all.filter((t) => t.list === "text"), never: all.filter((t) => t.list === "never"), people_count: people, dismissed, tiles: views.length - 1 };
+  } finally {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Is each of these items still there? A targeted look at each known item, in the full-resolution
+ * tile that holds it, rather than an open search. An open search can find an item one round and
+ * miss it the next while it is still there (Step 5, run 4: a sconce in a mirror was found, then
+ * passed). Items are { what, kind?, box_2d, list } with boxes on the whole image. Returns the ones
+ * still visible, boxes on the whole image.
+ */
+export async function confirmTiled(imagePath, items, { crop, maxSide = 1100, confirm = confirmItems, ...opts } = {}) {
+  const todo = items.filter((t) => valid(t.box_2d));
+  if (!todo.length) return [];
+  const size = imageSize(readFileSync(imagePath));
+  const tiles = crop ? tileGrid(size, maxSide) : [];
+  if (!tiles.length) return (await confirm(imagePath, todo, opts)).kept;
+  const px = ([y0, x0, y1, x1]) => [(x0 / 1000) * size[0], (y0 / 1000) * size[1], (x1 / 1000) * size[0], (y1 / 1000) * size[1]];
+  const holds = ([x, y, w, h], b) => { const [bx0, by0, bx1, by1] = px(b); return bx0 >= x && by0 >= y && bx1 <= x + w && by1 <= y + h; };
+  const centre = ([x, y, w, h], b) => { const [bx0, by0, bx1, by1] = px(b), cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2; return cx >= x && cx < x + w && cy >= y && cy < y + h; };
+  const groups = new Map();
+  for (const t of todo) {
+    const i = Math.max(0, tiles.findIndex((r) => holds(r, t.box_2d)) >= 0 ? tiles.findIndex((r) => holds(r, t.box_2d)) : tiles.findIndex((r) => centre(r, t.box_2d)));
+    groups.set(i, [...(groups.get(i) || []), t]);
+  }
+  const dir = mkdtempSync(join(tmpdir(), "confirm-tiles-"));
+  try {
+    const still = [];
+    for (const [i, group] of groups) {
+      const [tx, ty, tw, th] = tiles[i], file = await crop(imagePath, tiles[i], join(dir, `t${i}.png`));
+      const toTile = ([y0, x0, y1, x1]) => [((y0 / 1000) * size[1] - ty) / th, ((x0 / 1000) * size[0] - tx) / tw, ((y1 / 1000) * size[1] - ty) / th, ((x1 / 1000) * size[0] - tx) / tw].map((v) => Math.max(0, Math.min(1000, Math.round(v * 1000))));
+      const { kept } = await confirm(file, group.map((t) => ({ ...t, box_2d: toTile(t.box_2d), original: t })), opts);
+      still.push(...kept.map((k) => k.original));
+    }
+    return still;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** A reference photo is a source of stray text: whatever lettering it carries, the model reproduces
