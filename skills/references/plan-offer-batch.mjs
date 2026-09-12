@@ -220,7 +220,11 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
   if (!count) return [];
   const rand = rngFrom(`${seed}|visuals`);
   const shuffle = (xs) => { const a = [...xs]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-  const suits = shuffle(scenes.filter((s) => audience === "any" || !s.audience || s.audience === audience || s.audience === "any"));
+  // A gendered callout ("LADIES WANTED") draws from its own scenes; the mixed ("any") scenes serve
+  // ungendered callouts, and fill in only when the gendered scenes are fewer than the photos wanted
+  // (2026-09-12: a women's batch had planned three mixed scenes with a man in frame).
+  const own = scenes.filter((s) => !s.audience || s.audience === audience), mixed = scenes.filter((s) => s.audience === "any");
+  const suits = shuffle(audience === "any" ? scenes.filter((s) => !s.audience || s.audience === "any") : own.length >= count ? own : [...own, ...mixed]);
   if (!suits.length) throw new Error(`no scene in the library suits a "${audience}" audience`);
   const layouts = shuffle(primaryLayouts(catalogue, ratio, exclude));
   const usedL = new Map(layouts.map((l) => [l, 0])), usedS = new Map(suits.map((s) => [s, 0]));

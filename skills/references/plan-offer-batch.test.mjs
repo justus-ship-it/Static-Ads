@@ -108,6 +108,17 @@ test("B1b scenes suit the audience callout; an unapproved library is refused for
     assert.equal(loadScenes(p, { allowDraft: true }).length, SCENES.length, "a dry run may plan from a draft");
     writeFileSync(p, JSON.stringify({ approved: true, scenes: [...SCENES, { id: "bad", pose: "flying", people: 1, scene: "x" }] }));
     assert.throws(() => loadScenes(p), /pose must be one of/);
+    // A gendered callout draws from its own scenes; mixed ("any") scenes serve ungendered callouts and
+    // fill in only when the gendered scenes are too few (2026-09-12: a women's batch had planned men).
+    const MIX = [...SCENES, { id: "a-pair", audience: "any", pose: "upright", people: 2, scene: "A man and a woman lifting." }, { id: "a-class", audience: "any", pose: "upright", people: 3, scene: "A mixed class." }];
+    const ids = (v) => v.map((x) => x.scene_id);
+    const women = planVisuals({ count: 2, scenes: MIX, audience: "women", seed: "s", catalogue: CAT });
+    assert.ok(ids(women).every((id) => id.startsWith("w-")), `women only: ${ids(women)}`);
+    const many = planVisuals({ count: 4, scenes: MIX, audience: "women", seed: "s", catalogue: CAT });
+    assert.ok(ids(many).some((id) => id.startsWith("a-")) && ids(many).filter((id) => id.startsWith("w-")).length === 2, `the two women's scenes, then mixed ones to fill: ${ids(many)}`);
+    assert.ok(!ids(many).some((id) => id.startsWith("m-")), "never the other gender's");
+    const anyone = planVisuals({ count: 4, scenes: MIX, audience: "any", seed: "s", catalogue: CAT });
+    assert.ok(ids(anyone).some((id) => id.startsWith("a-")), `an ungendered callout uses the mixed scenes: ${ids(anyone)}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
