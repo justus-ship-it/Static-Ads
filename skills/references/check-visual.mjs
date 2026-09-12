@@ -180,7 +180,7 @@ function outsideCircle(b) {
 
 /** Apply the rules to a vision answer. Returns { ok, stray_text, placement, failures }. */
 export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = true, maxPeople = null, imageSize: size = null, catalogue = loadCatalogue() }) {
-  const failures = [], notes = [];
+  const failures = [], notes = [], placement = [];
   // Only lettering a viewer could read fails (2026-09-12: a warning label on a machine is fine, as is a
   // mark with no letters); those are noted for the gallery. An answer without the field fails, as before.
   const items = (answer.text_items || []).filter((t) => t.legible !== false);
@@ -199,24 +199,27 @@ export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = t
   const crop = kind === "single" ? bestCrop({ imageSize: size || catalogue.treatments.canvas[ratio], canvas: catalogue.treatments.canvas[ratio], people, faces, areas, rule }) : null;
   const under = crop ? crop.under : 0;
   const facesUnderArea = crop ? crop.facesUnder : 0;
-  if (crop && crop.facesCut) failures.push(`every crop cuts off ${crop.facesCut} face(s)`);
-  if (crop && crop.cut > 0.1) failures.push(`the best crop still cuts off ${Math.round(crop.cut * 100)}% of the people`);
-  if (rule === "subject-area" && people && under > MAX_SUBJECT_UNDER_TEXT) failures.push(`${Math.round(under * 100)}% of the people sit under text areas (max ${MAX_SUBJECT_UNDER_TEXT * 100}%)`);
+  // Placement is judged for the layout the photo was composed for; the batch's fit stage judges every
+  // layout, so a photo that fails only here may still be kept for the layouts it fits.
+  if (crop && crop.facesCut) placement.push(`every crop cuts off ${crop.facesCut} face(s)`);
+  if (crop && crop.cut > 0.1) placement.push(`the best crop still cuts off ${Math.round(crop.cut * 100)}% of the people`);
+  if (rule === "subject-area" && people && under > MAX_SUBJECT_UNDER_TEXT) placement.push(`${Math.round(under * 100)}% of the people sit under text areas (max ${MAX_SUBJECT_UNDER_TEXT * 100}%)`);
   const outside = people && rule === "circle" ? outsideCircle(people) : 0;
-  if (rule === "circle" && outside > MAX_OUTSIDE_CIRCLE) failures.push(`${Math.round(outside * 100)}% of the people fall outside the circular crop (max ${MAX_OUTSIDE_CIRCLE * 100}%)`);
+  if (rule === "circle" && outside > MAX_OUTSIDE_CIRCLE) placement.push(`${Math.round(outside * 100)}% of the people fall outside the circular crop (max ${MAX_OUTSIDE_CIRCLE * 100}%)`);
   if (expectPeople && !people && (answer.people_count || 0) === 0) failures.push("no people found — the scene asked for people");
   // Bystanders drift in even when the prompt asks for an exact count. Noted, not failed (2026-09-12: the
   // owner is fine with a second person in a solo scene); faces under text are caught above regardless.
   if (maxPeople != null && (answer.people_count || 0) > maxPeople) notes.push(`${answer.people_count} people in the picture; the scene has ${maxPeople}`);
   return {
-    ok: failures.length === 0,
+    ok: failures.length === 0 && placement.length === 0,
     stray_text: items,
     notes,
+    placement_failures: placement,
     excluded: banned,
     faces,
     focus: crop ? crop.focus : [0.5, 0.5],
     placement: { rule, focus: crop ? crop.focus : [0.5, 0.5], people_on_ad: crop?.people ? crop.people.map(Math.round) : null, people_box: people, people_count: answer.people_count ?? null, faces: faces.length, faces_under_text_area: facesUnderArea, share_under_text: +under.toFixed(3), share_outside_circle: +outside.toFixed(3), text_areas: areas },
-    failures,
+    failures: [...failures, ...placement],
   };
 }
 

@@ -82,6 +82,14 @@ test("V4 check rules depend on how the layout uses the photo", () => {
   assert.equal(small.ok, true);
   assert.deepEqual(small.notes, ['small marks: label on equipment "warning label"']);
   assert.deepEqual(small.stray_text, []);
+  // Placement failures are reported apart from the rest: the batch may keep such a photo for other layouts.
+  const under = judgeVisual({ ...clean, people_box: [500, 300, 900, 700], face_boxes: [] }, t1);
+  assert.equal(under.ok, false);
+  assert.deepEqual(under.placement_failures, under.failures, "only placement failed");
+  assert.match(under.failures[0], /of the people sit under text areas/);
+  const both = judgeVisual({ ...clean, people_box: [500, 300, 900, 700], face_boxes: [], text_items: [{ what: "GYM", kind: "signage", legible: true }] }, t1);
+  assert.equal(both.placement_failures.length, 1);
+  assert.equal(both.failures.length, 2, "the text failure is not a placement failure");
   // Faces are not failed here — they are passed on, and the finished ad is judged on its letters.
   const faceLow = judgeVisual({ ...clean, face_boxes: [[520, 450, 600, 530]] }, t1);
   assert.equal(faceLow.ok, true);
@@ -146,21 +154,45 @@ test("V6 generation flow: every paid call is counted, the budget is hard, failur
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("V6b the finished ad is the second half of the check: faces go to the renderer, and an ad with a letter on a face is flagged", async () => {
+test("V6b the finished ad is the second half of the check: faces go to the renderer; a photo whose own layout's ad puts a letter on a face is retried, then kept for the layouts it fits — as is one that fails only its own layout's placement", async () => {
   const dir = mkdtempSync(join(tmpdir(), "vis-"));
   try {
-    const generate = async () => ({ buffer: Buffer.from("fake"), ext: "png" });
+    let gens = 0;
+    const generate = async () => { gens++; return { buffer: Buffer.from("fake"), ext: "png" }; };
     const check = async () => ({ ok: true, failures: [], faces: [[100, 400, 200, 500]], placement: {} });
-    const seen = [];
+    const seen = [], logs = [];
     const compositor = {
-      async compose(file, faces, v) { seen.push({ id: v.id, faces }); return v.id === "v02" ? { ok: false, failures: ['"location" covers a face (face 1)'] } : { ok: true, failures: [] }; },
+      async compose(file, faces, v) { seen.push({ id: v.id.replace(/-a\d$/, ""), faces }); return v.id.startsWith("v02") ? { ok: false, failures: ['"location" covers a face (face 1)'] } : { ok: true, failures: [] }; },
       async close() { seen.push("closed"); },
     };
     const visuals = [1, 2].map((i) => ({ id: `v0${i}`, treatment: "t1-bottom-stack", scene: SCENE }));
-    const rep = await generateVisuals({ visuals, text: { location: "BISHAN", offer: "12 Week Challenge" }, photography: PHOTO, outDir: dir, generate, check, compositor, log: () => {} });
-    assert.deepEqual(rep.results.map((r) => r.status), ["passed", "flagged"]);
-    assert.match(rep.results[1].check.failures.join(), /finished ad: "location" covers a face/);
-    assert.deepEqual(seen, [{ id: "v01", faces: [[100, 400, 200, 500]] }, { id: "v02", faces: [[100, 400, 200, 500]] }, "closed"], "the check's faces reach the renderer; the browser is closed");
+    const rep = await generateVisuals({ visuals, text: { location: "BISHAN", offer: "12 Week Challenge" }, photography: PHOTO, outDir: dir, generate, check, compositor, maxCalls: 4, attempts: 2, log: (m) => logs.push(m) });
+    assert.equal(gens, 3, "v02 was retried once for its own layout");
+    // The retry did not help: the photo is a good picture, so it is kept — with the ad failure on record — for other layouts.
+    assert.deepEqual(rep.results.map((r) => r.status), ["passed", "passed"]);
+    assert.equal(rep.results[0].own_layout_failed, undefined);
+    assert.match(rep.results[1].own_layout_failed.join(), /finished ad: "location" covers a face/);
+    assert.match(rep.results[1].file, /v02-a2\.png$/, "the last good picture");
+    assert.equal(rep.results[1].check.picture_ok, true);
+    assert.ok(logs.some((l) => /v02: v02-a2\.png passes the picture checks; its own layout did not work out .* kept for the layouts it fits/.test(l)), logs.join(" | "));
+    assert.deepEqual(seen, [{ id: "v01", faces: [[100, 400, 200, 500]] }, { id: "v02", faces: [[100, 400, 200, 500]] }, { id: "v02", faces: [[100, 400, 200, 500]] }, "closed"], "the check's faces reach the renderer; the browser is closed");
+    // A photo that fails the picture checks is never kept.
+    const rep2 = await generateVisuals({ visuals: [visuals[0]], text: { location: "BISHAN", offer: "12 Week Challenge" }, photography: PHOTO, outDir: join(dir, "b"), generate, check: async () => ({ ok: false, failures: ["stray text in the picture: sign \"X\""], faces: [], placement: {} }), compositor, log: () => {} });
+    assert.equal(rep2.results[0].status, "flagged");
+    assert.equal(rep2.results[0].own_layout_failed, undefined);
+    // Only its own layout's placement fails (the people under that layout's text): kept, the quality check still run.
+    let qualityRan = 0;
+    const placementOnly = async () => ({ ok: false, failures: ["64% of the people sit under text areas (max 40%)"], placement_failures: ["64% of the people sit under text areas (max 40%)"], faces: [], placement: {} });
+    const { checkPicture } = await import("./generate-visuals.mjs");
+    const check3 = (file, opts) => checkPicture(file, opts, { base: placementOnly, quality: async () => { qualityRan++; return { ok: true, failures: [], minor: [], dismissed: [] }; } });
+    const rep3 = await generateVisuals({ visuals: [visuals[0]], text: { location: "BISHAN", offer: "12 Week Challenge" }, photography: PHOTO, outDir: join(dir, "c"), generate, check: check3, compositor, attempts: 2, maxCalls: 4, log: () => {} });
+    assert.equal(qualityRan, 2, "realism judged on both attempts");
+    assert.equal(rep3.results[0].status, "passed");
+    assert.match(rep3.results[0].own_layout_failed.join(), /64% of the people sit under text areas/);
+    // But a placement failure alongside a realism failure is not kept.
+    const check4 = (file, opts) => checkPicture(file, opts, { base: placementOnly, quality: async () => ({ ok: false, failures: ["looks fake (body): the man sits on nothing"], minor: [], dismissed: [] }) });
+    const rep4 = await generateVisuals({ visuals: [visuals[0]], text: { location: "BISHAN", offer: "12 Week Challenge" }, photography: PHOTO, outDir: join(dir, "d"), generate, check: check4, compositor, log: () => {} });
+    assert.equal(rep4.results[0].status, "flagged");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

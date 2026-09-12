@@ -382,7 +382,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   // (the 48-ad batch showed a re-run would otherwise have had its full allowance again).
   const oldBatch = existsSync(join(out, "batch.json")) ? JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")) : null;
   const spentBefore = existsSync(spendPath) ? JSON.parse(readFileSync(spendPath, "utf-8")).image_calls : (oldBatch?.image_calls ?? 0);
-  const record = (r, file, c) => ({ status: r.status, scene: r.scene, treatment: r.treatment, file, ...(r.status === "passed" ? { checks: CHECKS_VERSION } : {}), check: c ? { faces: c.faces, focus: c.focus, placement: c.placement } : null, notes: c?.notes || [], quality: c?.quality ? { failures: c.quality.failures, minor: c.quality.minor, dismissed: c.quality.dismissed, exercise_seen: c.quality.exercise_seen, interaction_seen: c.quality.interaction_seen } : null, failures: c?.failures || (r.reason ? [r.reason] : []) });
+  const record = (r, file, c) => ({ status: r.status, scene: r.scene, treatment: r.treatment, file, ...(r.status === "passed" ? { checks: CHECKS_VERSION } : {}), ...(r.own_layout_failed ? { own_layout_failed: r.own_layout_failed } : {}), check: c ? { faces: c.faces, focus: c.focus, placement: c.placement } : null, notes: c?.notes || [], quality: c?.quality ? { failures: c.quality.failures, minor: c.quality.minor, dismissed: c.quality.dismissed, exercise_seen: c.quality.exercise_seen, interaction_seen: c.quality.interaction_seen } : null, failures: c?.failures || (r.reason ? [r.reason] : []) });
   // Photos already on disk get a look with today's checks before anything new is made — free of
   // image calls. That covers photos an earlier run rejected (the 48-ad batch: good photos had been
   // rejected for their own mirror reflections) and photos passed before today's checks existed. The
@@ -398,14 +398,17 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     };
     try {
       for (const v of todo) {
-        let last = null;
+        let last = null, pictureGood = null;
         for (const file of earlier(v)) {
           const c = await assess(file, v, { ratio, text: texts[0], check, compositor, outDir: visualsDir, never: photography.never || [] });
           if (c.ok) { prior[v.id] = record({ ...v, status: "passed" }, file, c); log(`✓ ${v.id}: ${basename(file)} on disk passes today's checks — no new image needed`); last = null; break; }
+          if (c.picture_ok) pictureGood = { file, c };
           last = { file, c };
           log(`⚑ ${v.id}: ${basename(file)} fails today's checks: ${c.failures.join(" | ")}`);
         }
-        if (last) prior[v.id] = record({ ...v, status: "flagged" }, last.file, last.c);
+        // Passes the picture checks, not its own layout: kept for the layouts it fits (as generateVisuals does).
+        if (last && pictureGood) { prior[v.id] = record({ ...v, status: "passed", own_layout_failed: pictureGood.c.failures }, pictureGood.file, pictureGood.c); log(`✓ ${v.id}: ${basename(pictureGood.file)} passes the picture checks; its own layout did not work out — kept for the layouts it fits`); }
+        else if (last) prior[v.id] = record({ ...v, status: "flagged" }, last.file, last.c);
       }
     } finally { if (deps.compositor === undefined) await compositor?.close(); }
     todo = todo.filter((v) => !same(prior[v.id], v));
@@ -428,7 +431,8 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   for (const v of visuals) {
     const a = prior[v.id];
     if (!same(a, v)) { log(`- ${v.id}: no passing photo (${a?.failures?.join("; ") || "not generated"}) — left out of the batch`); continue; }
-    photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: v.treatment, scene_id: v.scene_id, notes: a.notes || [], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
+    // A photo whose own layout did not work out has no primary look: the planner places it where it fits.
+    photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: a.own_layout_failed ? null : v.treatment, scene_id: v.scene_id, notes: [...(a.notes || []), ...(a.own_layout_failed ? [`not used in its own layout: ${a.own_layout_failed.join("; ")}`] : [])], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
   }
   photos.sort((a, b) => a.id.localeCompare(b.id));
   if (!photos.length) throw new Error("no photos passed: nothing to render");

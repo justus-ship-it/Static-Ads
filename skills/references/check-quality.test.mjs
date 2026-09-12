@@ -125,6 +125,15 @@ test("Q3 the picture check: quality runs only once text, placement and head coun
   assert.deepEqual(ruled.notes, ["small marks: label \"CAUTION\""]);
   assert.equal(seen.length, 2, "and no quality call is made for it");
 
+  // A photo that fails only its own layout's placement is still judged for realism, and stays not-ok.
+  const placementOnly = async () => ({ ok: false, failures: ["64% of the people sit under text areas (max 40%)"], placement_failures: ["64% of the people sit under text areas (max 40%)"], notes: [], faces: [], focus: [0.5, 0.5], placement: {} });
+  const before = seen.length;
+  const placed = await checkPicture("x.jpg", opts, { base: placementOnly, quality: quality(true) });
+  assert.equal(seen.length, before + 1, "realism judged despite the placement failure");
+  assert.equal(placed.ok, false, "placement still fails the photo for its own layout");
+  assert.deepEqual(placed.failures, ["64% of the people sit under text areas (max 40%)"]);
+  assert.deepEqual(placed.placement_failures, placed.failures);
+
   const broken = await checkPicture("x.jpg", opts, { base: base(true), quality: async () => { throw new Error("vision check failed (503)"); } });
   assert.equal(broken.ok, false, "a quality check that cannot run never passes a photo");
   assert.match(broken.failures[0], /quality check could not run/);

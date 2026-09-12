@@ -395,6 +395,37 @@ test("B7b the budget holds when photos fail, and a photo that never passes is le
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("B7e a photo whose own layout's ad does not verify still joins the batch, with no primary look, for the layouts it fits", async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const calls = [], logs = [];
+    // The finished-ad check fails g01 for its own layout every time; everything else verifies.
+    const compositor = { async compose(file, faces, v) { return v.id.startsWith("g01") ? { ok: false, failures: ['"duration" covers a face (face 1)'] } : { ok: true, failures: [] }; }, async close() {} };
+    const deps = { ...fakes(calls), browser, compositor };
+    const r = await runBatch({ brandDir: dir, brief: { ...BRIEF, max_calls: 4, attempts: 2 }, deps, log: (m) => logs.push(m) });
+    assert.equal(calls.length, 3, "g01 twice (its retry), g02 once");
+    assert.ok(logs.some((l) => /g01: g01-a2\.png passes the picture checks; its own layout did not work out .* kept for the layouts it fits/.test(l)), logs.join(" | "));
+    const g01 = r.batch.photos.find((p) => p.id === "g01");
+    assert.ok(g01, "g01 is in the batch");
+    assert.equal(g01.primary, null, "with no primary look");
+    assert.match(g01.notes.join(), /not used in its own layout: finished ad: "duration" covers a face/);
+    assert.ok(r.batch.ads.some((a) => a.photos.includes("g01")), "and it appears in ads, in layouts it fits");
+    assert.ok(r.batch.photos.find((p) => p.id === "g02").primary, "the other photo keeps its primary");
+    const pics = JSON.parse(readFileSync(join(r.out, "pictures.json"), "utf-8"));
+    assert.equal(pics.g01.status, "passed");
+    assert.match(pics.g01.own_layout_failed.join(), /covers a face/);
+    // A re-run under newer checks re-checks it for free and keeps it the same way (the free re-check's own salvage).
+    delete pics.g01.checks; writeFileSync(join(r.out, "pictures.json"), JSON.stringify(pics));
+    const logs2 = [];
+    const r2 = await runBatch({ brandDir: dir, brief: { ...BRIEF, max_calls: 4, attempts: 2 }, deps, log: (m) => logs2.push(m) });
+    assert.equal(calls.length, 3, "no new call");
+    assert.ok(logs2.some((l) => /g01: g01(-a2)?\.png passes the picture checks; its own layout did not work out — kept for the layouts it fits/.test(l)), logs2.join(" | "));
+    assert.equal(r2.batch.photos.find((p) => p.id === "g01").primary, null);
+    assert.equal(JSON.parse(readFileSync(join(r.out, "pictures.json"), "utf-8")).g01.checks, CHECKS_VERSION);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("B7c a real photo that is not clean stops the batch before any spend", async () => {
   const dir = brandSetup();
   try {

@@ -62,13 +62,16 @@ export function makeCompositor() {
  */
 export async function checkPicture(file, opts, { base = checkVisual, quality = checkQuality } = {}) {
   const pic = await base(file, opts);
-  if (!pic.ok) return pic;
+  // A photo that fails only its own layout's placement is still judged for realism: the batch may keep
+  // it for the layouts it fits, and that must never skip the quality check.
+  const onlyPlacement = !pic.ok && (pic.failures || []).length > 0 && (pic.failures || []).every((f) => (pic.placement_failures || []).includes(f));
+  if (!pic.ok && !onlyPlacement) return pic;
   // A photo the owner has looked at and passed (plan-offer-batch → withRulings) is not judged again.
   if (opts.skipQuality) return { ...pic, notes: pic.notes || [], quality: { ok: true, failures: [], minor: [], dismissed: [], ruling: "passed by the owner" } };
   let q;
   try { q = await quality(file, { scene: opts.scene, people: opts.maxPeople, setting: opts.setting }); } catch (e) { q = { ok: false, failures: [`quality check could not run: ${e.message}`], minor: [], dismissed: [] }; }
   // Notes never fail a photo; they ride with it to the gallery, so selection is informed.
-  return { ...pic, ok: q.ok, failures: [...(pic.failures || []), ...q.failures], notes: [...(pic.notes || []), ...(q.minor || [])], quality: q };
+  return { ...pic, ok: pic.ok && q.ok, failures: [...(pic.failures || []), ...q.failures], notes: [...(pic.notes || []), ...(q.minor || [])], quality: q };
 }
 
 /** Both halves of the check for a visual on disk. */
@@ -81,7 +84,9 @@ async function assess(file, v, { ratio, text, check, compositor, outDir, never =
   }
   const failures = [...(pic.failures || []), ...(ad && !ad.ok ? ad.failures.map((f) => `finished ad: ${f}`) : [])];
   // Faces and the judged crop are kept: the batch planner renders every look with them.
-  return { ok: failures.length === 0, failures, stray_text: pic.stray_text, excluded: pic.excluded || [], dismissed: pic.dismissed || [], placement: pic.placement, faces: pic.faces || [], focus: pic.focus || [0.5, 0.5], notes: pic.notes || [], quality: pic.quality || null, ad };
+  // picture_ok: text, never-list, people and realism all fine — only its own layout's placement or ad failed, if anything.
+  const onlyPlacement = (pic.failures || []).length > 0 && (pic.failures || []).every((f) => (pic.placement_failures || []).includes(f));
+  return { ok: failures.length === 0, picture_ok: !!pic.ok || onlyPlacement, failures, stray_text: pic.stray_text, excluded: pic.excluded || [], dismissed: pic.dismissed || [], placement: pic.placement, faces: pic.faces || [], focus: pic.focus || [0.5, 0.5], notes: pic.notes || [], quality: pic.quality || null, ad };
 }
 
 /** A reference photo's lettering and never-list items, looked for in full-resolution tiles as well as
@@ -139,10 +144,20 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
       writeFileSync(file, img.buffer);
       const verdict = await assess(file, { ...v, id: basename(file, extname(file)) }, { ratio, text, check, compositor, outDir, never: photography.never || [] });
       final = { ...v, status: verdict.ok ? "passed" : "flagged", file, attempt, check: verdict };
-      tries.push({ attempt, file, status: final.status, failures: verdict.failures });
+      tries.push({ attempt, file, status: final.status, failures: verdict.failures, picture_ok: verdict.picture_ok, check: verdict });
       log(`${verdict.ok ? "✓" : "⚑"} ${v.id}${attempt > 1 ? ` (attempt ${attempt})` : ""} ${v.treatment}: ${verdict.ok ? "no stray marks; subject placed; looks real; the finished ad verifies with no letter on a face" : verdict.failures.join(" | ")}`);
     }
-    results.push({ ...final, attempts: tries });
+    // A photo that passes every picture check but not its own layout — its placement rule, or a face
+    // where that layout's words land — is still a good photo: kept, with no primary layout, for the
+    // layouts the batch's fit stage finds it can carry (2026-09-12: two good women's scenes were dropped).
+    if (final?.status === "flagged") {
+      const good = [...tries].reverse().find((t) => t.picture_ok);
+      if (good) {
+        final = { ...v, status: "passed", file: good.file, attempt: good.attempt, check: good.check, own_layout_failed: good.failures };
+        log(`✓ ${v.id}: ${basename(good.file)} passes the picture checks; its own layout did not work out (${good.failures.join("; ")}) — kept for the layouts it fits`);
+      }
+    }
+    results.push({ ...final, attempts: tries.map(({ check, ...t }) => t) });
   }
   await compositor?.close();
   const report = { model: GEMINI_MODEL, ratio, image_calls: calls, max_calls: maxCalls, refs, results };
