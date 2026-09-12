@@ -62,7 +62,7 @@ test("V3 the photography lock is applied, and the logo is never attached", () =>
   assert.equal(buildVisualPrompt({ treatment: "t1-bottom-stack", scene: SCENE, photography: { must: ["a (weird) name.* here"] }, brandNames: ["(weird) name.*"] }).prompt.includes("SETTING (must show): a here."), true, "names with regex characters are removed literally");
   // Words are never named, not even to forbid them — naming them invites the model to draw them.
   for (const w of ["FirenGym", "Sculpt Society", "good mood"]) assert.ok(!withRef.includes(w), `prompt names "${w}"`);
-  assert.match(withRef, /Do NOT copy any sign, lettering, neon, logo/);
+  assert.match(withRef, /Do NOT copy any sign, lettering or neon words/);
   assert.doesNotMatch(buildVisualPrompt({ treatment: "t1-bottom-stack", scene: SCENE, photography: PHOTO }).prompt, /reference photo/);
   assert.doesNotMatch(withRef, /logo-horizontal|always_include/i);
 });
@@ -71,11 +71,17 @@ test("V4 check rules depend on how the layout uses the photo", () => {
   const clean = { text_items: [], people_box: [120, 300, 470, 700], face_boxes: [[130, 450, 220, 530]], people_count: 1 };
   const t1 = { treatment: "t1-bottom-stack" }; // text area: y 480–940 on the 0–1000 scale
   assert.equal(judgeVisual(clean, t1).ok, true, JSON.stringify(judgeVisual(clean, t1).failures));
-  // Any stray mark fails, on every layout.
+  // Any legible mark fails, on every layout (an answer without the field counts as legible).
   for (const treatment of LAYOUTS) {
     const r = judgeVisual({ ...clean, text_items: [{ what: "12", kind: "number on dumbbell", box_2d: [400, 500, 420, 520] }] }, { treatment });
     assert.match(r.failures.join(), /stray text in the picture: number on dumbbell "12"/, treatment);
+    assert.equal(judgeVisual({ ...clean, text_items: [{ what: "GYM", kind: "wall signage", legible: true }] }, { treatment }).ok, false, treatment);
   }
+  // A small mark a viewer could not read is noted, never failed (2026-09-12: a warning label on a machine is fine).
+  const small = judgeVisual({ ...clean, text_items: [{ what: "warning label", kind: "label on equipment", legible: false, box_2d: [600, 600, 610, 620] }] }, t1);
+  assert.equal(small.ok, true);
+  assert.deepEqual(small.notes, ['small marks: label on equipment "warning label"']);
+  assert.deepEqual(small.stray_text, []);
   // Faces are not failed here — they are passed on, and the finished ad is judged on its letters.
   const faceLow = judgeVisual({ ...clean, face_boxes: [[520, 450, 600, 530]] }, t1);
   assert.equal(faceLow.ok, true);
@@ -178,7 +184,11 @@ test("V7 the prompt says where faces go: the biggest stretch of frame no text co
   const p = buildVisualPrompt({ treatment: "t2-top-bottom-split", scene: SCENE, photography: PHOTO }).prompt;
   assert.match(p, /Place every face, and the subject's head and upper body, within the band between 40% and 58% of the height/, "36–60% of the ad in the 3:4 photo");
   assert.match(p, /treadmills, bikes and any machine with a console are out of the frame or turned so their consoles face away/);
-  assert.match(p, /It is a private session: apart from the people in the scene, the gym is empty/);
+  assert.match(p, /It is a private session\. Apart from the people in the scene, the gym is empty/);
+  // With a head count, it is stated outright (the 48-ad batch: "apart from the people in the scene" still drew gym-goers in).
+  const two = buildVisualPrompt({ treatment: "t3-right-column", scene: SCENE, photography: PHOTO, people: 2 }).prompt;
+  assert.match(two, /Exactly 2 people in the whole photo, and nobody else: no one in the background, at other equipment, or reflected in the mirrors\./);
+  assert.match(buildVisualPrompt({ treatment: "t3-right-column", scene: SCENE, photography: PHOTO, people: 1 }).prompt, /Exactly 1 person in the whole photo/);
 });
 
 test("V9 learned from runs 1–3: the photo is asked to be plain, never darker, and one untouched scene", () => {
@@ -206,10 +216,13 @@ test("V10 the size limit comes from the same rule the check applies; 9:16 never 
   assert.equal(judgeVisual({ text_items: [], people_box: [100, 100, 900, 900], face_boxes: [], people_count: 1 }, { treatment: "t4-centred-stack", ratio: "9x16" }).placement.rule, "none");
 });
 
-test("V11 a scene that says how many people it has is held to it (bystanders drifted in on runs 1 and 3)", () => {
+test("V11 people beyond the scene's count are noted, not failed (2026-09-12: the owner is fine with a bystander)", () => {
   const ans = { text_items: [], people_box: [120, 300, 470, 700], face_boxes: [[130, 450, 220, 530]], people_count: 3 };
-  assert.match(judgeVisual(ans, { treatment: "t1-bottom-stack", maxPeople: 1 }).failures.join(), /3 people in the picture; the scene has 1/);
-  assert.equal(judgeVisual(ans, { treatment: "t1-bottom-stack" }).ok, true, "no count given, no count enforced");
+  const r = judgeVisual(ans, { treatment: "t1-bottom-stack", maxPeople: 1 });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.notes, ["3 people in the picture; the scene has 1"]);
+  assert.deepEqual(judgeVisual(ans, { treatment: "t1-bottom-stack" }).notes, [], "no count given, nothing to note");
+  assert.equal(judgeVisual({ ...ans, people_box: null, people_count: 0 }, { treatment: "t1-bottom-stack", maxPeople: 1 }).ok, false, "no people at all still fails a scene that asked for people");
 });
 
 test("V12 a scene whose pose its layout cannot hold is refused before any image is generated (run 4: a standing coach in T2)", async () => {
@@ -333,5 +346,19 @@ test("V17 a flagged item must be confirmed by a second, targeted look before it 
     const clean = await checkVisual(img, { treatment: "t1-bottom-stack", key: "K", fetchImpl: async () => { calls.push("first"); return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ...first, text_items: [], excluded_items: [] }) }] } }] }) }; } });
     assert.deepEqual(calls, ["first"]);
     assert.equal(clean.ok, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("V18 a second run never overwrites a first run's photos: every attempt keeps its own file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "no-overwrite-"));
+  try {
+    let n = 0;
+    const generate = async () => ({ buffer: Buffer.from(`photo ${++n}`), ext: "png" });
+    const check = async () => ({ ok: false, failures: ["3 people in the picture; the scene has 1"], faces: [], focus: [0.5, 0.5], placement: {} });
+    const visuals = [{ id: "g01", treatment: "t3-right-column", scene: SCENE, pose: "upright", people: 1 }];
+    await generateVisuals({ visuals, photography: PHOTO, outDir: dir, maxCalls: 2, attempts: 2, generate, check, compositor: null, log: () => {} });
+    await generateVisuals({ visuals, photography: PHOTO, outDir: dir, maxCalls: 2, attempts: 2, generate, check, compositor: null, log: () => {} });
+    const files = ["g01.png", "g01-a2.png", "g01-a3.png", "g01-a4.png"];
+    assert.deepEqual(files.map((f) => readFileSync(join(dir, f), "utf-8")), ["photo 1", "photo 2", "photo 3", "photo 4"], "four photos, four files, none replaced");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

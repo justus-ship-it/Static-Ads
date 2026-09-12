@@ -8,8 +8,10 @@
  *   1 plan      validate the brief; for each photo to generate, pick the layout it is made for (its
  *               primary — spread across layouts) and a scene from the client's approved library that
  *               suits the audience and that layout's pose. Real photos are checked for marks.
- *   2 pictures  generate-visuals.mjs (Step 4) with a clean real photo as the room reference. Photos
- *               already passed on disk are reused. The only stage that spends: at most max_calls.
+ *   2 pictures  generate-visuals.mjs (Step 4) with a clean real photo as the room reference. Every photo
+ *               must pass the text/placement check and the quality check (looks real; groups candid).
+ *               Photos on disk are reused if they pass today's checks. The only stage that spends
+ *               image calls: at most max_calls for the batch.
  *   3 fit       every photo against every layout (check-visual.mjs → fitLayouts): which layouts it can
  *               carry and the crop each would use. A photo made for T1 is not given T3's column.
  *   4 looks     assign-variants.mjs, from the layouts each photo can carry, with photo colour and the
@@ -28,7 +30,7 @@
  *     --brief batches/2026-09-12-test/brief.json [--dry-run] [--render-only]
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync, readdirSync } from "fs";
 import { join, resolve, basename, dirname } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
@@ -37,12 +39,17 @@ import { createHash } from "crypto";
 import { validateInputs, loadCatalogue, launchBrowser, layoutFor } from "./render-composites.mjs";
 import { poseProblem, POSES } from "./visual-prompts.mjs";
 import { fitLayouts, imageSize, checkTiled } from "./check-visual.mjs";
+import { QUALITY_VERSION } from "./check-quality.mjs";
 import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from "./assign-variants.mjs";
-import { generateVisuals } from "./generate-visuals.mjs";
+import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+/** Which checks a passed photo has been through. A photo passed under older checks (before the quality
+ *  check, 2026-09-12) is re-checked on the next run — vision calls only — before it is used again. */
+export const CHECKS_VERSION = `q${QUALITY_VERSION}`;
 export const MAX_LOCATIONS = 4;
+export const MAX_CALLS_CAP = 40;
 /** The look a generated photo's own finished-ad check is rendered with (Step 4). */
 const CHECK_LOOK = { style: "s1-heavy-sans", palette: "white-on-dark" };
 
@@ -65,10 +72,13 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
   if (!/^[a-z0-9][a-z0-9-]{2,60}$/.test(brief.batch_id || "")) errs.push("batch_id is required: lower-case letters, digits and dashes (it names the output folder)");
   if (typeof brief.offer !== "string" || !brief.offer.trim()) errs.push("offer is required, written exactly as it should appear — it is never taken from the offer file or made up");
   const locations = brief.locations;
+  // The offer and audience are checked once, each location on its own — one problem, one message
+  // (the panel showed an offer's dash once per location).
+  if (typeof brief.offer === "string" && brief.offer.trim()) for (const e of validateInputs({ location: "X", audience: brief.audience ?? null, offer: brief.offer })) if (!e.startsWith("location")) errs.push(e);
   if (!Array.isArray(locations) || locations.length < 1 || locations.length > MAX_LOCATIONS) errs.push(`locations must list 1 to ${MAX_LOCATIONS} location callouts`);
   else {
     if (new Set(locations).size !== locations.length) errs.push("locations repeat");
-    for (const loc of locations) for (const e of validateInputs({ location: loc, audience: brief.audience ?? null, offer: brief.offer || "x" })) errs.push(`${JSON.stringify(loc)}: ${e}`);
+    for (const loc of locations) for (const e of validateInputs({ location: loc, audience: null, offer: "x" })) if (e.startsWith("location")) errs.push(`${JSON.stringify(loc)}: ${e}`);
   }
   if (brief.free !== undefined && typeof brief.free !== "boolean") errs.push("free must be true or false");
   if (brief.scene_audience != null && !["men", "women", "any"].includes(brief.scene_audience)) errs.push('scene_audience must be "men", "women" or "any"');
@@ -83,10 +93,20 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
   const maxCalls = brief.max_calls ?? g, attempts = brief.attempts ?? 1;
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 5) errs.push("attempts must be 1 to 5");
   if (!Number.isInteger(maxCalls) || maxCalls < g) errs.push(`max_calls (${maxCalls}) must cover at least one call per generated photo (${g})`);
-  if (maxCalls > 30) errs.push("max_calls over 30: split the batch");
+  // The budget is for the batch's whole life (re-runs replace failed photos from what is left), so a
+  // 48-ad batch can legitimately grow past 30 — the owner raised one to 32 (2026-09-12).
+  if (maxCalls > MAX_CALLS_CAP) errs.push(`max_calls over ${MAX_CALLS_CAP}: split the batch`);
   if (brief.scenes != null) {
     if (!Array.isArray(brief.scenes) || brief.scenes.length < g) errs.push(`scenes, when given, must list at least one per generated photo (${g})`);
     else for (const [i, s] of brief.scenes.entries()) for (const e of sceneProblems(s)) errs.push(`scenes[${i}]: ${e}`);
+  }
+  if (brief.must_show != null) {
+    if (typeof brief.must_show !== "object" || Array.isArray(brief.must_show)) errs.push("must_show must map a tag to the values the batch must include");
+    else for (const [tag, values] of Object.entries(brief.must_show)) {
+      if (tag !== "exercise" && !SCENE_TAGS[tag]) errs.push(`must_show: unknown tag "${tag}" (use exercise, ${Object.keys(SCENE_TAGS).join(", ")})`);
+      else if (!Array.isArray(values) || !values.every((v) => typeof v === "string" && v)) errs.push(`must_show.${tag} must be a list of values`);
+      else if (SCENE_TAGS[tag]) for (const v of values) if (!SCENE_TAGS[tag].includes(v)) errs.push(`must_show.${tag}: "${v}" is not one of ${SCENE_TAGS[tag].join(", ")}`);
+    }
   }
   if (brief.ratio && !T.canvas[brief.ratio]) errs.push(`ratio "${brief.ratio}" is not one of ${Object.keys(T.canvas).join(", ")}`);
   return errs;
@@ -94,24 +114,77 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
 
 // ── scenes ────────────────────────────────────────────────────────────────
 
+/** What a scene may be tagged with, so a batch can spread its photos across them (planVisuals). */
+export const SCENE_TAGS = {
+  age: ["young", "prime", "older"], // 20s · 30s–40s · 50s–60s
+  setting: ["solo", "coached", "group"],
+  equipment: ["bodyweight", "dumbbells", "barbell", "kettlebell", "machine", "cable"],
+  muscles: ["legs", "back", "chest", "shoulders", "arms", "core", "full-body"],
+};
+export const MAX_SCENE_PEOPLE = 6;
+
 export function sceneProblems(s) {
   const errs = [];
   if (!s || typeof s.scene !== "string" || !s.scene.trim()) return ["a scene needs its description"];
   if (/["“”]/.test(s.scene)) errs.push("contains quotation marks — scenes describe the picture, never words to show");
   if (!POSES[s.pose]) errs.push(`pose must be one of ${Object.keys(POSES).join(", ")}`);
-  if (!Number.isInteger(s.people) || s.people < 1 || s.people > 3) errs.push("people must be 1 to 3");
+  if (!Number.isInteger(s.people) || s.people < 1 || s.people > MAX_SCENE_PEOPLE) errs.push(`people must be 1 to ${MAX_SCENE_PEOPLE}`);
   if (s.audience && !["men", "women", "any"].includes(s.audience)) errs.push('audience must be "men", "women" or "any"');
+  for (const [tag, allowed] of Object.entries(SCENE_TAGS)) if (s[tag] != null && !allowed.includes(s[tag])) errs.push(`${tag} must be one of ${allowed.join(", ")}`);
+  if (s.exercise != null && !/^[a-z][a-z-]{1,40}$/.test(s.exercise)) errs.push("exercise must be a short lower-case name, e.g. back-squat");
+  // The setting has to agree with the head count, or the people check fails every photo.
+  if (s.setting === "solo" && s.people !== 1) errs.push("a solo scene has 1 person");
+  if (s.setting === "coached" && s.people < 2) errs.push("a coached scene has at least 2 people");
+  if (s.setting === "group" && s.people < 3) errs.push("a group scene has at least 3 people");
   return errs;
 }
 
-/** The client's scene library. Refused unless approved, unless `allowDraft` (planning only). */
+// Wording that asks a class to move as one. The 48-ad batch's group scenes said "side by side" and
+// "in time with each other" and came back as line-ups in identical poses (2026-09-12).
+const UNIFORM_WORDS = /\b(side by side|in time|in unison|in sync|synchroni[sz]ed|identical(ly)?|in a (neat )?(row|line)|each (holding|doing|performing)|all (holding|doing|performing))\b/i;
+
+/** Not refusals: wording that makes a scene with several people come out posed. */
+export function sceneWarnings(s) {
+  if (!s || typeof s.scene !== "string" || !(s.people >= 2 || ["group", "coached"].includes(s.setting))) return [];
+  const m = s.scene.match(UNIFORM_WORDS);
+  return m ? [`"${m[0]}" asks the people to move as one — photos come out posed; describe each person at their own point of the movement`] : [];
+}
+
+/**
+ * The client's scene library. Refused unless approved. A scene marked `"draft": true` has been
+ * added since — it is left out until the owner approves it (removes the flag). `allowDraft` lets a
+ * dry run plan with drafts so they can be reviewed before any image is made.
+ */
 export function loadScenes(path, { allowDraft = false } = {}) {
   if (!existsSync(path)) throw new Error(`no scene library at ${path}: write one, or give scenes in the brief`);
   const lib = JSON.parse(readFileSync(path, "utf-8"));
   const bad = (lib.scenes || []).flatMap((s, i) => sceneProblems(s).map((e) => `${s.id || i}: ${e}`));
   if (bad.length) throw new Error(`scene library problems:\n${bad.join("\n")}`);
   if (lib.approved !== true && !allowDraft) throw new Error(`the scene library ${path} is not approved yet — nothing is generated from it until the owner sets "approved": true`);
-  return lib.scenes;
+  const ids = (lib.scenes || []).map((x) => x.id).filter(Boolean);
+  if (new Set(ids).size !== ids.length) throw new Error("scene library: two scenes share an id");
+  return (lib.scenes || []).filter((x) => allowDraft || x.draft !== true);
+}
+
+/**
+ * The owner's rulings on photos: `brands/{gym}/quality-calibration.json`, the entries marked
+ * `"by": "owner"` (the same file check-quality.mjs --calibrate measures the check against). A photo
+ * ruled "fail" is never used, whatever the checks say (2026-09-12: the owner failed two photos the
+ * checker passes); one ruled "pass" skips the quality check but still goes through the text and
+ * placement check, which the render needs. Paths are relative to the file.
+ */
+export function loadRulings(brandDir) {
+  const p = join(brandDir, "quality-calibration.json");
+  if (!existsSync(p)) return {};
+  const { photos = [] } = JSON.parse(readFileSync(p, "utf-8"));
+  return Object.fromEntries(photos.filter((x) => x.by === "owner" && ["pass", "fail"].includes(x.expect) && x.file).map((x) => [resolve(brandDir, x.file), { expect: x.expect, why: x.why || "" }]));
+}
+export function withRulings(check, rulings = {}) {
+  return async (file, opts) => {
+    const r = rulings[resolve(file)];
+    if (r?.expect === "fail") return { ok: false, failures: [`ruled out by the owner${r.why ? `: ${r.why}` : ""}`], faces: [], focus: [0.5, 0.5], placement: null };
+    return check(file, r?.expect === "pass" ? { ...opts, skipQuality: true } : opts);
+  };
 }
 
 /** Layouts a generated photo can be made for: single-photo layouts with a subject area. */
@@ -126,30 +199,72 @@ function rngFrom(seed) {
   return () => { h |= 0; h = (h + 0x6d2b79f5) | 0; let t = Math.imul(h ^ (h >>> 15), 1 | h); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 
+/** How much a scene adds by bringing something new on each tag — the exercise most. */
+export const VARIETY_WEIGHTS = { exercise: 3, age: 3, setting: 2, equipment: 2, muscles: 1 };
+
 /**
  * For each photo to generate: the layout it is made for and a scene that suits the audience and that
- * layout's pose. Layouts and scenes are spread (no repeats until every one is used), seeded.
+ * layout's pose. Each photo takes the scene that adds the most the batch does not have yet — a new
+ * exercise, age, setting, piece of equipment or muscle group — so ten photos are not six squats.
+ * No scene repeats until every suitable one is used; layouts are spread; seeded.
  */
-export function planVisuals({ count, scenes, audience, seed = "batch", catalogue = loadCatalogue(), ratio = "1x1", exclude = {} }) {
+/** Does a scene show a must_show value? An exercise matches by name part: "squat" is any squat. */
+export const shows = (scene, tag, value) => scene[tag] != null && (scene[tag] === value || (tag === "exercise" && String(scene[tag]).split("-").includes(value)) || (tag === "exercise" && String(scene[tag]).includes(value)));
+
+/** must_show values no suitable scene can show — refused before planning. */
+export function unshowable(mustShow = {}, scenes = []) {
+  return Object.entries(mustShow || {}).flatMap(([tag, values]) => (values || []).filter((v) => !scenes.some((sc) => shows(sc, tag, v))).map((v) => `${tag} "${v}"`));
+}
+
+export function planVisuals({ count, scenes, audience, seed = "batch", mustShow = {}, catalogue = loadCatalogue(), ratio = "1x1", exclude = {} }) {
   if (!count) return [];
   const rand = rngFrom(`${seed}|visuals`);
   const shuffle = (xs) => { const a = [...xs]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-  const suits = scenes.filter((s) => audience === "any" || !s.audience || s.audience === audience || s.audience === "any");
+  const suits = shuffle(scenes.filter((s) => audience === "any" || !s.audience || s.audience === audience || s.audience === "any"));
   if (!suits.length) throw new Error(`no scene in the library suits a "${audience}" audience`);
   const layouts = shuffle(primaryLayouts(catalogue, ratio, exclude));
   const usedL = new Map(layouts.map((l) => [l, 0])), usedS = new Map(suits.map((s) => [s, 0]));
+  const seen = Object.fromEntries(Object.keys(VARIETY_WEIGHTS).map((k) => [k, new Set()]));
+  const uses = Object.fromEntries(Object.keys(VARIETY_WEIGHTS).map((k) => [k, new Map()]));
+  // What the brief asked to see, still missing. Covering one outranks any amount of general variety.
+  const wanted = Object.entries(mustShow || {}).flatMap(([tag, values]) => (values || []).map((value) => ({ tag, value })));
+  const missing = unshowable(mustShow, suits);
+  if (missing.length) throw new Error(`must_show asks for ${missing.join(", ")}, which no ${audience === "any" ? "" : audience + "'s "}scene in the library shows`);
   const out = [];
+  // What was asked for stays even: adding to a must_show value that is already ahead of the others
+  // on its tag costs a scene more than any general variety is worth, so young and older men (or solo,
+  // coached and group) come out close to level — without making every tag level at once, which ten
+  // photos cannot do.
+  const shownCount = (tag, v) => out.filter((o) => shows(o.src, tag, v)).length;
+  const ahead = (sc) => Object.entries(mustShow || {}).reduce((n, [tag, vals]) => {
+    const low = Math.min(...(vals || []).map((v) => shownCount(tag, v)));
+    return n + (vals || []).filter((v) => shows(sc, tag, v)).reduce((m, v) => m + (shownCount(tag, v) - low), 0);
+  }, 0);
   for (let i = 0; i < count; i++) {
     let pick = null;
-    // Least-used layout first; for it, the least-used scene whose pose it can hold.
-    for (const la of [...layouts].sort((a, b) => usedL.get(a) - usedL.get(b))) {
-      const ok = shuffle(suits).filter((s) => !poseProblem(la, s.pose, catalogue)).sort((a, b) => usedS.get(a) - usedS.get(b));
-      if (ok.length) { pick = { la, s: ok[0] }; break; }
+    for (const s of suits) {
+      const asked = wanted.filter((w) => !w.done && shows(s, w.tag, w.value)).length;
+      const novelty = Object.entries(VARIETY_WEIGHTS).reduce((n, [k, w]) => n + (s[k] != null && !seen[k].has(s[k]) ? w : 0), 0)
+        // Once every value has appeared, keep them even: a fourth older man counts against a scene.
+        - Object.entries(VARIETY_WEIGHTS).reduce((n, [k, w]) => n + (s[k] != null ? w * (uses[k].get(s[k]) || 0) * 0.6 : 0), 0);
+      const tilt = ahead(s);
+      for (const la of layouts) {
+        if (poseProblem(la, s.pose, catalogue)) continue;
+        // A repeated scene is worst; then less new; then a busier layout. Ties keep the seeded order.
+        const score = -usedS.get(s) * 100000 + asked * 1000 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
+        if (!pick || score > pick.score) pick = { la, s, score };
+      }
     }
     if (!pick) throw new Error("no scene in the library fits any layout the batch can use");
     usedL.set(pick.la, usedL.get(pick.la) + 1); usedS.set(pick.s, usedS.get(pick.s) + 1);
-    out.push({ id: `g${String(i + 1).padStart(2, "0")}`, treatment: pick.la, scene: pick.s.scene, scene_id: pick.s.id || null, pose: pick.s.pose, people: pick.s.people, look: CHECK_LOOK });
+    for (const k of Object.keys(VARIETY_WEIGHTS)) if (pick.s[k] != null) { seen[k].add(pick.s[k]); uses[k].set(pick.s[k], (uses[k].get(pick.s[k]) || 0) + 1); }
+    for (const w of wanted) if (shows(pick.s, w.tag, w.value)) w.done = true;
+    const tags = Object.fromEntries(["exercise", ...Object.keys(SCENE_TAGS)].filter((k) => pick.s[k] != null).map((k) => [k, pick.s[k]]));
+    out.push({ id: `g${String(i + 1).padStart(2, "0")}`, treatment: pick.la, scene: pick.s.scene, scene_id: pick.s.id || null, pose: pick.s.pose, people: pick.s.people, tags, look: CHECK_LOOK });
+    Object.defineProperty(out.at(-1), "src", { value: pick.s, enumerable: false }); // for the even-spread rule; not written out
   }
+  const notShown = wanted.filter((w) => !w.done).map((w) => `${w.tag} "${w.value}"`);
+  if (notShown.length) out.notShown = notShown; // too few photos for everything asked
   return out;
 }
 
@@ -217,7 +332,9 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   const plannedPath = join(out, "visuals.json");
   let visuals;
   if (renderOnly && existsSync(plannedPath)) visuals = JSON.parse(readFileSync(plannedPath, "utf-8")).visuals;
-  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, catalogue, ratio, exclude });
+  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: brief.must_show, catalogue, ratio, exclude });
+  if (visuals.notShown) log(`  note: too few photos to show everything asked — not shown: ${visuals.notShown.join(", ")}`);
+  for (const v of visuals) for (const w of sceneWarnings({ scene: v.scene, people: v.people, setting: v.tags?.setting })) log(`  warning: ${v.id} (${v.scene_id || "brief scene"}): ${w}`);
   for (const v of visuals) { const p = poseProblem(v.treatment, v.pose, catalogue); if (p) throw new Error(`${v.id}: ${p}`); }
   const reference = brief.reference || brief.real?.[0] || null;
   const plan = { batch_id: brief.batch_id, audience_for_scenes: sceneAudience(audience, brief.scene_audience), reference, visuals, max_calls: brief.max_calls ?? g, attempts: brief.attempts ?? 1 };
@@ -245,26 +362,69 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   writeFileSync(photosPath, JSON.stringify(cache, null, 2) + "\n");
 
   // ── 2 pictures ──
-  const picsPath = join(out, "pictures.json");
+  const picsPath = join(out, "pictures.json"), spendPath = join(out, "spend.json"), visualsDir = join(out, "visuals");
   const prior = existsSync(picsPath) ? JSON.parse(readFileSync(picsPath, "utf-8")) : {};
-  const same = (a, v) => a && a.status === "passed" && a.scene === v.scene && a.treatment === v.treatment && existsSync(a.file);
-  const todo = renderOnly ? [] : visuals.filter((v) => !same(prior[v.id], v));
-  if (renderOnly) { const missing = visuals.filter((v) => !same(prior[v.id], v)); if (missing.length) log(`· render-only: ${missing.map((v) => v.id).join(", ")} have no passed photo on disk and are left out`); }
-  let calls = 0;
+  // A photo is reused only if it passed today's checks. A free re-render (words only) keeps photos
+  // passed under older checks and says so — re-checking them would be a run, not a re-render.
+  const rulings = deps.rulings || loadRulings(brandDir);
+  const passedFor = (a, v) => a && a.status === "passed" && a.scene === v.scene && a.treatment === v.treatment && existsSync(a.file) && rulings[resolve(a.file)]?.expect !== "fail";
+  const same = (a, v) => passedFor(a, v) && (renderOnly || a.checks === CHECKS_VERSION);
+  let todo = renderOnly ? [] : visuals.filter((v) => !same(prior[v.id], v));
+  if (renderOnly) {
+    const missing = visuals.filter((v) => !same(prior[v.id], v)); if (missing.length) log(`· render-only: ${missing.map((v) => v.id).join(", ")} have no passed photo on disk and are left out`);
+    const older = visuals.filter((v) => same(prior[v.id], v) && prior[v.id].checks !== CHECKS_VERSION); if (older.length) log(`· render-only: ${older.map((v) => v.id).join(", ")} passed before today's checks — a full run re-checks them (no image calls)`);
+  }
+  // max_calls is the budget for the batch, not for each run: a re-run spends only what is left
+  // (the 48-ad batch showed a re-run would otherwise have had its full allowance again).
+  const oldBatch = existsSync(join(out, "batch.json")) ? JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")) : null;
+  const spentBefore = existsSync(spendPath) ? JSON.parse(readFileSync(spendPath, "utf-8")).image_calls : (oldBatch?.image_calls ?? 0);
+  const record = (r, file, c) => ({ status: r.status, scene: r.scene, treatment: r.treatment, file, ...(r.status === "passed" ? { checks: CHECKS_VERSION } : {}), check: c ? { faces: c.faces, focus: c.focus, placement: c.placement } : null, notes: c?.notes || [], quality: c?.quality ? { failures: c.quality.failures, minor: c.quality.minor, dismissed: c.quality.dismissed, exercise_seen: c.quality.exercise_seen, interaction_seen: c.quality.interaction_seen } : null, failures: c?.failures || (r.reason ? [r.reason] : []) });
+  // Photos already on disk get a look with today's checks before anything new is made — free of
+  // image calls. That covers photos an earlier run rejected (the 48-ad batch: good photos had been
+  // rejected for their own mirror reflections) and photos passed before today's checks existed. The
+  // photo in use is looked at first, so a batch keeps its photos when they still pass.
+  const check = withRulings(deps.check || checkPicture, rulings);
   if (todo.length) {
+    const compositor = deps.compositor !== undefined ? deps.compositor : makeCompositor();
+    const earlier = (v) => {
+      if (!(prior[v.id]?.scene === v.scene && prior[v.id]?.treatment === v.treatment && existsSync(visualsDir))) return [];
+      const files = readdirSync(visualsDir).filter((n) => new RegExp(`^${v.id}(-a\\d+)?\\.(png|jpe?g|webp)$`).test(n)).map((n) => join(visualsDir, n)).reverse();
+      const inUse = prior[v.id].status === "passed" ? prior[v.id].file : null;
+      return inUse && files.includes(inUse) ? [inUse, ...files.filter((f) => f !== inUse)] : files;
+    };
+    try {
+      for (const v of todo) {
+        let last = null;
+        for (const file of earlier(v)) {
+          const c = await assess(file, v, { ratio, text: texts[0], check, compositor, outDir: visualsDir, never: photography.never || [] });
+          if (c.ok) { prior[v.id] = record({ ...v, status: "passed" }, file, c); log(`✓ ${v.id}: ${basename(file)} on disk passes today's checks — no new image needed`); last = null; break; }
+          last = { file, c };
+          log(`⚑ ${v.id}: ${basename(file)} fails today's checks: ${c.failures.join(" | ")}`);
+        }
+        if (last) prior[v.id] = record({ ...v, status: "flagged" }, last.file, last.c);
+      }
+    } finally { if (deps.compositor === undefined) await compositor?.close(); }
+    todo = todo.filter((v) => !same(prior[v.id], v));
+  }
+  let calls = 0;
+  const left = Math.max(0, plan.max_calls - spentBefore);
+  if (todo.length && !left) log(`- the batch's budget of ${plan.max_calls} image calls is spent: ${todo.map((v) => v.id).join(", ")} not generated`);
+  if (todo.length && left) {
     const rep = await generateVisuals({
-      visuals: todo, text: texts[0], photography, brandNames, outDir: join(out, "visuals"), ratio,
-      refs: reference ? [at(reference)] : [], maxCalls: plan.max_calls, attempts: plan.attempts,
-      ...(deps.generate ? { generate: deps.generate } : {}), ...(deps.check ? { check: deps.check } : {}), ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
+      visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio,
+      refs: reference ? [at(reference)] : [], maxCalls: left, attempts: plan.attempts,
+      ...(deps.generate ? { generate: deps.generate } : {}), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
     });
     calls = rep.image_calls;
-    for (const r of rep.results) prior[r.id] = { status: r.status, scene: r.scene, treatment: r.treatment, file: r.file, check: r.check ? { faces: r.check.faces, focus: r.check.focus, placement: r.check.placement } : null, failures: r.check?.failures || (r.reason ? [r.reason] : []) };
-    writeFileSync(picsPath, JSON.stringify(prior, null, 2) + "\n");
+    for (const r of rep.results) prior[r.id] = record(r, r.file, r.check);
   }
+  const spent = spentBefore + calls;
+  writeFileSync(spendPath, JSON.stringify({ image_calls: spent, max_calls: plan.max_calls }, null, 2) + "\n");
+  writeFileSync(picsPath, JSON.stringify(prior, null, 2) + "\n");
   for (const v of visuals) {
     const a = prior[v.id];
     if (!same(a, v)) { log(`- ${v.id}: no passing photo (${a?.failures?.join("; ") || "not generated"}) — left out of the batch`); continue; }
-    photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: v.treatment, scene_id: v.scene_id, answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
+    photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: v.treatment, scene_id: v.scene_id, notes: a.notes || [], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
   }
   photos.sort((a, b) => a.id.localeCompare(b.id));
   if (!photos.length) throw new Error("no photos passed: nothing to render");
@@ -311,15 +471,22 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     };
   });
   const failed = results.filter((r) => r.failed).map((r) => ({ candidate: r.id, photo: r.visual, failures: r.failed }));
+  // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
+  // record of the calls that made its photos (the panel showed "0 image calls" after one).
   const batch = {
-    batch_id: brief.batch_id, made: new Date().toISOString(), ratio, image_calls: calls,
-    photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, allowed: allowed[p.id], fit: p.fit })),
+    batch_id: brief.batch_id, made: new Date().toISOString(), ratio, image_calls: spent, image_calls_this_run: calls,
+    photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
     ads, failed,
   };
   writeFileSync(join(out, "batch.json"), JSON.stringify(batch, null, 2) + "\n");
+  // What the checks noticed about each ad's photos but did not reject, for the gallery's headings —
+  // the owner picks with the notes in view (2026-09-12: "the selection step is an additional check").
+  const noteOf = (id) => (photos.find((p) => p.id === id)?.notes || []).map((n) => `${id}: ${n}`);
+  const galleryNotes = Object.fromEntries(ads.map((a) => [a.folder, a.photos.flatMap(noteOf).join(" · ")]).filter(([, n]) => n));
+  writeFileSync(join(out, "gallery-notes.json"), JSON.stringify(galleryNotes, null, 2) + "\n");
   const gallery = deps.gallery || ((dir) => execFileSync(process.execPath, [join(HERE, "gallery-selector.mjs"), "--output-dir", dir], { stdio: "ignore" }));
   gallery(out);
-  log(`· ${ads.length} ad(s) in ${out} (${results.filter((r) => !r.failed).length} looks × ${brief.locations.length} location(s))${failed.length ? `; ${failed.length} look(s) failed to verify and are left out` : ""}; ${calls} image call(s)`);
+  log(`· ${ads.length} ad(s) in ${out} (${results.filter((r) => !r.failed).length} looks × ${brief.locations.length} location(s))${failed.length ? `; ${failed.length} look(s) failed to verify and are left out` : ""}; ${calls} image call(s) this run, ${batch.image_calls} for the batch in all`);
   return { out, batch, calls, results };
 }
 

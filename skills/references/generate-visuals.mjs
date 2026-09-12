@@ -5,7 +5,8 @@
  * For each planned visual: build a pictures-only prompt (visual-prompts.mjs) composed around its
  * layout, generate it with Gemini (one call), then check it in two halves:
  *   1. the picture (check-visual.mjs): no stray text anywhere; the subject placed as the layout
- *      needs it;
+ *      needs it; then (check-quality.mjs) it looks real — the scene's exercise with its equipment,
+ *      nothing physically impossible, and groups candid rather than posed;
  *   2. the finished ad: the brief's words set on it (render-composites.mjs) with every face the
  *      check found as a keep-out area — it must verify, so no letter covers a face.
  * A visual that fails either half is kept and flagged, never silently used. With --attempts N a
@@ -23,11 +24,12 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
-import { join, resolve, extname } from "path";
+import { join, resolve, extname, basename } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { buildVisualPrompt, poseProblem } from "./visual-prompts.mjs";
 import { checkVisual, checkTiled } from "./check-visual.mjs";
+import { checkQuality } from "./check-quality.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { generateImage, GEMINI_MODEL } from "./generate_ads_gemini.mjs";
 import { launchBrowser, renderComposite, layoutFor, loadCatalogue } from "./render-composites.mjs";
@@ -53,17 +55,33 @@ export function makeCompositor() {
   };
 }
 
+/**
+ * The picture check: text, placement and head count (check-visual), then — only if those pass, so
+ * nothing is spent judging a photo already refused — whether it looks real (check-quality). The
+ * quality verdict rides along as `quality`. `base` and `quality` are injectable for tests.
+ */
+export async function checkPicture(file, opts, { base = checkVisual, quality = checkQuality } = {}) {
+  const pic = await base(file, opts);
+  if (!pic.ok) return pic;
+  // A photo the owner has looked at and passed (plan-offer-batch → withRulings) is not judged again.
+  if (opts.skipQuality) return { ...pic, notes: pic.notes || [], quality: { ok: true, failures: [], minor: [], dismissed: [], ruling: "passed by the owner" } };
+  let q;
+  try { q = await quality(file, { scene: opts.scene, people: opts.maxPeople, setting: opts.setting }); } catch (e) { q = { ok: false, failures: [`quality check could not run: ${e.message}`], minor: [], dismissed: [] }; }
+  // Notes never fail a photo; they ride with it to the gallery, so selection is informed.
+  return { ...pic, ok: q.ok, failures: [...(pic.failures || []), ...q.failures], notes: [...(pic.notes || []), ...(q.minor || [])], quality: q };
+}
+
 /** Both halves of the check for a visual on disk. */
 async function assess(file, v, { ratio, text, check, compositor, outDir, never = [] }) {
   let pic;
-  try { pic = await check(file, { treatment: v.treatment, ratio, expectPeople: v.people !== false, maxPeople: typeof v.people === "number" ? v.people : null, never }); } catch (e) { pic = { ok: false, failures: [`check could not run: ${e.message}`] }; }
+  try { pic = await check(file, { treatment: v.treatment, ratio, expectPeople: v.people !== false, maxPeople: typeof v.people === "number" ? v.people : null, never, scene: v.scene, setting: v.tags?.setting ?? v.setting ?? null }); } catch (e) { pic = { ok: false, failures: [`check could not run: ${e.message}`] }; }
   let ad = null;
   if (pic.ok && text && compositor) {
     try { ad = await compositor.compose(file, pic.faces, v, text, ratio, join(outDir, `${v.id}-ad.png`), pic.focus); } catch (e) { ad = { ok: false, failures: [`ad could not render: ${e.message}`] }; }
   }
   const failures = [...(pic.failures || []), ...(ad && !ad.ok ? ad.failures.map((f) => `finished ad: ${f}`) : [])];
   // Faces and the judged crop are kept: the batch planner renders every look with them.
-  return { ok: failures.length === 0, failures, stray_text: pic.stray_text, excluded: pic.excluded || [], dismissed: pic.dismissed || [], placement: pic.placement, faces: pic.faces || [], focus: pic.focus || [0.5, 0.5], ad };
+  return { ok: failures.length === 0, failures, stray_text: pic.stray_text, excluded: pic.excluded || [], dismissed: pic.dismissed || [], placement: pic.placement, faces: pic.faces || [], focus: pic.focus || [0.5, 0.5], notes: pic.notes || [], quality: pic.quality || null, ad };
 }
 
 /** A reference photo's lettering and never-list items, looked for in full-resolution tiles as well as
@@ -77,7 +95,7 @@ export async function checkRefTiled(path, { never = [] } = {}) {
 }
 
 /** `generate`, `check` and `compositor` are injectable, so the flow and the call budget can be tested offline. */
-export async function generateVisuals({ visuals, text = null, photography = {}, brandNames = [], outDir, ratio = "1x1", refs = [], maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkVisual, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log }) {
+export async function generateVisuals({ visuals, text = null, photography = {}, brandNames = [], outDir, ratio = "1x1", refs = [], maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkPicture, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log }) {
   mkdirSync(outDir, { recursive: true });
   // A reference photo carrying lettering gets it copied into every visual, so it is refused first.
   for (const r of refs) {
@@ -91,7 +109,7 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
   let calls = 0;
   const results = [];
   for (const v of visuals) {
-    const { prompt, aspect } = buildVisualPrompt({ treatment: v.treatment, scene: v.scene, ratio, photography, brandNames, hasReference: refParts.length > 0 });
+    const { prompt, aspect } = buildVisualPrompt({ treatment: v.treatment, scene: v.scene, ratio, photography, brandNames, hasReference: refParts.length > 0, people: typeof v.people === "number" ? v.people : null, setting: v.tags?.setting ?? v.setting ?? null });
     writeFileSync(join(outDir, `${v.id}.prompt.txt`), prompt + "\n");
     const tries = [];
     let final = null;
@@ -111,12 +129,15 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
         log(`✗ ${v.id}: generation failed: ${e.message.slice(0, 200)}`);
         continue;
       }
-      const file = join(outDir, `${v.id}${attempt > 1 ? `-a${attempt}` : ""}.${img.ext || "png"}`);
+      // Never overwrite an earlier photo (a re-run of a batch once replaced the first run's rejected
+      // attempts): the next free name in the folder, whatever run made the others.
+      let n = attempt, file;
+      do { file = join(outDir, `${v.id}${n > 1 ? `-a${n}` : ""}.${img.ext || "png"}`); n++; } while (existsSync(file));
       writeFileSync(file, img.buffer);
-      const verdict = await assess(file, { ...v, id: attempt > 1 ? `${v.id}-a${attempt}` : v.id }, { ratio, text, check, compositor, outDir, never: photography.never || [] });
+      const verdict = await assess(file, { ...v, id: basename(file, extname(file)) }, { ratio, text, check, compositor, outDir, never: photography.never || [] });
       final = { ...v, status: verdict.ok ? "passed" : "flagged", file, attempt, check: verdict };
       tries.push({ attempt, file, status: final.status, failures: verdict.failures });
-      log(`${verdict.ok ? "✓" : "⚑"} ${v.id}${attempt > 1 ? ` (attempt ${attempt})` : ""} ${v.treatment}: ${verdict.ok ? "no stray marks; subject placed; the finished ad verifies with no letter on a face" : verdict.failures.join(" | ")}`);
+      log(`${verdict.ok ? "✓" : "⚑"} ${v.id}${attempt > 1 ? ` (attempt ${attempt})` : ""} ${v.treatment}: ${verdict.ok ? "no stray marks; subject placed; looks real; the finished ad verifies with no letter on a face" : verdict.failures.join(" | ")}`);
     }
     results.push({ ...final, attempts: tries });
   }
@@ -151,9 +172,9 @@ if (isMain) {
     for (const vis of visuals) {
       const file = ["png", "jpg", "jpeg", "webp"].map((e) => join(out, `${vis.id}.${e}`)).find(existsSync);
       if (!file) { results.push({ ...vis, status: "missing" }); console.log(`- ${vis.id}: no image on disk`); continue; }
-      const c = await assess(file, vis, { ratio: v.ratio, text, check: checkVisual, compositor, outDir: out, never: profile.brand_lock?.photography?.never || [] });
+      const c = await assess(file, vis, { ratio: v.ratio, text, check: checkPicture, compositor, outDir: out, never: profile.brand_lock?.photography?.never || [] });
       results.push({ ...vis, status: c.ok ? "passed" : "flagged", file, check: c });
-      console.log(`${c.ok ? "✓" : "⚑"} ${vis.id} ${vis.treatment}: ${c.ok ? "no stray marks; subject placed; the finished ad verifies with no letter on a face" : c.failures.join(" | ")}`);
+      console.log(`${c.ok ? "✓" : "⚑"} ${vis.id} ${vis.treatment}: ${c.ok ? "no stray marks; subject placed; looks real; the finished ad verifies with no letter on a face" : c.failures.join(" | ")}`);
     }
     await compositor?.close();
     writeFileSync(join(out, "report.json"), JSON.stringify({ ...prior, checked_with: (await import("./check-visual.mjs")).CHECK_MODEL, results }, null, 2) + "\n");

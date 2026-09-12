@@ -301,7 +301,13 @@ export async function renderPlan(browser, plan, { text, texts = null, imageFor, 
   // Several texts (one per location) are rendered together: a look is kept only if it verifies for
   // every one, so each location's ad has the identical look and a location test is clean.
   const all = texts || [text];
-  const open = (c, la) => !plan.allowed || c.images.slice(0, need(la)).length === need(la) && Array.from({ length: need(la) }, (_, k) => c.images[k]).every((id) => (plan.allowed[id] || []).includes(la));
+  // The batch's photos in order. A replacement may take a layout that needs more photos than the ad
+  // had (T8 panels, T7 collage), with the next photos in the batch — as the planner does. Without
+  // this, a photo whose other look had taken its last free single-photo layout had nowhere to go
+  // (the 48-ad batch lost two looks that way).
+  const order = [...new Set(plan.candidates.map((c) => c.visual))];
+  const photosFor = (c, la) => Array.from({ length: need(la) }, (_, k) => (k < c.images.length ? c.images[k] : order[(order.indexOf(c.visual) + k) % order.length]));
+  const open = (c, la) => need(la) <= order.length && (!plan.allowed || photosFor(c, la).every((id) => (plan.allowed[id] || []).includes(la)));
   const results = [];
   const taken = new Set(plan.candidates.map((c) => `${c.treatment}|${c.style}|${c.palette}`));
   for (const c of plan.candidates) {
@@ -309,14 +315,13 @@ export async function renderPlan(browser, plan, { text, texts = null, imageFor, 
     const tries = [[c.treatment, c.style, c.palette]];
     for (const st of plan.pools.styles) for (const pa of [c.palette, ...plan.pools.palettes]) for (const la of [c.treatment, ...plan.pools.layouts]) {
       if (onPhoto.some((o) => o.treatment === la || o.style === st || o.palette === pa)) continue;
-      if (need(la) > c.images.length) continue; // a replacement may not need more photos than the ad has
-      if (!open(c, la)) continue; // nor a layout one of its photos cannot carry
+      if (!open(c, la)) continue; // not a layout one of its photos cannot carry, or that needs more photos than the batch has
       if (!taken.has(`${la}|${st}|${pa}`)) tries.push([la, st, pa]);
     }
     let done = null;
     const failures = [];
     for (const [treatment, style, palette] of tries.slice(0, 12)) {
-      const ims = c.images.slice(0, need(treatment));
+      const ims = photosFor(c, treatment);
       // Faces from each photo's visual check are keep-out areas: a look whose letters would cover one
       // fails and is swapped. Each photo is cropped where its check found it fits this layout.
       const renders = [];
@@ -327,7 +332,7 @@ export async function renderPlan(browser, plan, { text, texts = null, imageFor, 
       }
       const bad = renders.find((x) => !x.r.ok);
       if (!bad) {
-        done = { ...c, treatment, style, palette, images: c.images.slice(0, need(treatment)), r: renders[0].r, renders };
+        done = { ...c, treatment, style, palette, images: ims, r: renders[0].r, renders };
         if (treatment !== c.treatment || style !== c.style || palette !== c.palette) {
           taken.add(`${treatment}|${style}|${palette}`);
           done.replaced = { from: { treatment: c.treatment, style: c.style, palette: c.palette }, reason: failures[0] };

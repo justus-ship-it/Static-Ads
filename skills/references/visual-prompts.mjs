@@ -141,7 +141,15 @@ export function toGenFrame(layout, f) {
  * model invites it to draw them. Never-list items that are about text are covered by the no-text
  * clause and dropped; the client's own name is removed from the rest.
  */
-export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, brandNames = [], catalogue = loadCatalogue() }) {
+/** How a real session with more than one person looks, by the scene's setting tag. */
+export const CANDID = {
+  group: "CANDID: a real class caught mid-session. The people are loosely spaced at different angles to the camera, each at a slightly different point of the movement and training at their own pace, and there is some interaction between them — a glance, a word, a grin, a coach's cue.",
+  coached: "CANDID: the coach is working with the client — watching closely, cueing, or with a hand ready to help — and the client is focused on the movement.",
+};
+/** Every photo: real equipment, used as it is meant to be (48-ad batch: a cable row with no machine). */
+export const REAL_CLAUSE = "REAL: everything could be photographed in a real gym. The equipment is complete and true to size, and it is used the way it is meant to be: each body rests on the seat, bench or floor that holds it, hands grip real handles, and the load sits where it does in the real exercise.";
+
+export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, brandNames = [], people = null, setting = null, catalogue = loadCatalogue() }) {
   const T = catalogue.treatments;
   const tr = T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}"`);
@@ -171,11 +179,18 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
     "",
     `SCENE: ${scene}`,
   ];
-  if (photography.people) lines.push(`PEOPLE: ${photography.people}. Real people, candid and mid-movement, not posed models. It is a private session: apart from the people in the scene, the gym is empty — nobody else in the room or reflected in the mirrors.`);
+  // The head count is stated outright: "apart from the people in the scene" still let the model add
+  // gym-goers in the background of wide shots (48-ad batch, 2026-09-11).
+  const count = Number.isInteger(people) ? `Exactly ${people} ${people === 1 ? "person" : "people"} in the whole photo, and nobody else: no one in the background, at other equipment, or reflected in the mirrors.` : "Apart from the people in the scene, the gym is empty — nobody else in the room or reflected in the mirrors.";
+  if (photography.people) lines.push(`PEOPLE: ${photography.people}. Real people, candid and mid-movement, not posed models; nobody looks into the camera. It is a private session. ${count}`);
+  // Group classes came back as line-ups — identical poses at the same instant (48-ad batch, 2026-09-12).
+  // Said as what a real class looks like; the faults are never named, since naming invites them.
+  if (CANDID[setting]) lines.push(CANDID[setting]);
+  lines.push(REAL_CLAUSE);
   if (must.length) lines.push(`SETTING (must show): ${must.join("; ")}.`);
   if (hasReference) {
     lines.push("The attached reference photo is the real gym. Match its room: wall colour, ceiling, lighting, floor and equipment. " +
-      "Do NOT copy any sign, lettering, neon, logo or flame-shaped fitting from it — none may appear in your image.");
+      "Do NOT copy any sign, lettering or neon words from it — none may appear in your image.");
   }
   lines.push(
     "",

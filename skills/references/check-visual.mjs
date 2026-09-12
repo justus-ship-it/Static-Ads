@@ -49,8 +49,8 @@ const QUESTION = `You are checking a photograph that will be used as the backgro
 
 Look very carefully over the whole image, including small and blurry areas, clothing, shoes, equipment (dumbbells, kettlebells, plates, machines), walls, windows, screens, reflections and the edges of the frame.
 
-1. List every instance of: letters, words, numbers or digits, logos or brand marks, watermarks, signage (including neon), labels, and user-interface elements (buttons, arrows, cursors, icons). Include partial or illegible lettering. Only list what you can actually see in this image — never markings you would expect such an object to carry. If there is none, return an empty list. Do not list plain patterns, textures or shapes that are not lettering or marks.
-2. Give one box enclosing all the people in the image, one box per visible face, and the number of people (including anyone in the background or in a mirror).
+1. List every instance of: letters, words, numbers or digits, logos or brand marks, watermarks, signage (including neon), labels, and user-interface elements (buttons, arrows, cursors, icons). Include partial or illegible lettering. Only list what you can actually see in this image — never markings you would expect such an object to carry. If there is none, return an empty list. Do not list plain patterns, textures or shapes that are not lettering or marks. For each item, legible = true if a viewer of the finished advert on a phone could read letters, words or numbers in it, or it is signage, neon words, wall text, a watermark, a caption or a user-interface element; legible = false for a small label or marking on equipment or clothing, or a logo or mark with no letters.
+2. Count the distinct people in the image. A mirror reflection of someone who is also directly visible is the same person: count them once, and box only the person, not the reflection. Anyone else counts — in the background, at other equipment, or seen only in a mirror. Give one box enclosing all the people you counted, one box per face of those people, and the number of people.
 
 Boxes are [ymin, xmin, ymax, xmax] scaled 0-1000.`;
 const NEVER_QUESTION = (never) => `
@@ -61,7 +61,7 @@ ${never.map((n) => `- ${n}`).join("\n")}`;
 const SCHEMA = {
   type: "OBJECT",
   properties: {
-    text_items: { type: "ARRAY", items: { type: "OBJECT", properties: { what: { type: "STRING" }, kind: { type: "STRING" }, box_2d: { type: "ARRAY", items: { type: "INTEGER" } } }, required: ["what", "kind"] } },
+    text_items: { type: "ARRAY", items: { type: "OBJECT", properties: { what: { type: "STRING" }, kind: { type: "STRING" }, legible: { type: "BOOLEAN" }, box_2d: { type: "ARRAY", items: { type: "INTEGER" } } }, required: ["what", "kind", "legible"] } },
     people_box: { type: "ARRAY", items: { type: "INTEGER" } },
     face_boxes: { type: "ARRAY", items: { type: "ARRAY", items: { type: "INTEGER" } } },
     people_count: { type: "INTEGER" },
@@ -180,9 +180,13 @@ function outsideCircle(b) {
 
 /** Apply the rules to a vision answer. Returns { ok, stray_text, placement, failures }. */
 export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = true, maxPeople = null, imageSize: size = null, catalogue = loadCatalogue() }) {
-  const failures = [];
-  const items = answer.text_items || [];
+  const failures = [], notes = [];
+  // Only lettering a viewer could read fails (2026-09-12: a warning label on a machine is fine, as is a
+  // mark with no letters); those are noted for the gallery. An answer without the field fails, as before.
+  const items = (answer.text_items || []).filter((t) => t.legible !== false);
+  const small = (answer.text_items || []).filter((t) => t.legible === false);
   if (items.length) failures.push(`stray text in the picture: ${items.map((t) => `${t.kind} "${t.what}"`).join("; ")}`);
+  if (small.length) notes.push(`small marks: ${small.map((t) => `${t.kind} "${t.what}"`).join("; ")}`);
   const banned = answer.excluded_items || [];
   if (banned.length) failures.push(`shows what the client never allows: ${banned.map((t) => t.what).join("; ")}`);
   const layout = layoutFor(catalogue.treatments.treatments[treatment], ratio, catalogue.treatments);
@@ -201,11 +205,13 @@ export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = t
   const outside = people && rule === "circle" ? outsideCircle(people) : 0;
   if (rule === "circle" && outside > MAX_OUTSIDE_CIRCLE) failures.push(`${Math.round(outside * 100)}% of the people fall outside the circular crop (max ${MAX_OUTSIDE_CIRCLE * 100}%)`);
   if (expectPeople && !people && (answer.people_count || 0) === 0) failures.push("no people found — the scene asked for people");
-  // Bystanders drift in even when the prompt forbids them; a scene that says how many people it has is held to it.
-  if (maxPeople != null && (answer.people_count || 0) > maxPeople) failures.push(`${answer.people_count} people in the picture; the scene has ${maxPeople}`);
+  // Bystanders drift in even when the prompt asks for an exact count. Noted, not failed (2026-09-12: the
+  // owner is fine with a second person in a solo scene); faces under text are caught above regardless.
+  if (maxPeople != null && (answer.people_count || 0) > maxPeople) notes.push(`${answer.people_count} people in the picture; the scene has ${maxPeople}`);
   return {
     ok: failures.length === 0,
     stray_text: items,
+    notes,
     excluded: banned,
     faces,
     focus: crop ? crop.focus : [0.5, 0.5],
@@ -339,8 +345,10 @@ export async function checkReference(imagePath, opts = {}) {
 export async function checkVisual(imagePath, { treatment, ratio = "1x1", expectPeople = true, maxPeople = null, never = [], ...opts }) {
   const answer = await askVision(imagePath, { ...opts, never });
   // Anything flagged gets a second, targeted look before it can fail the picture.
-  const flagged = [...(answer.text_items || []).map((t) => ({ ...t, list: "text" })), ...(answer.excluded_items || []).map((t) => ({ ...t, list: "never" }))];
+  // Small marks never fail, so they skip the second look and go straight through as notes.
+  const small = (answer.text_items || []).filter((t) => t.legible === false);
+  const flagged = [...(answer.text_items || []).filter((t) => t.legible !== false).map((t) => ({ ...t, list: "text" })), ...(answer.excluded_items || []).map((t) => ({ ...t, list: "never" }))];
   const { kept, dismissed } = await confirmItems(imagePath, flagged, opts);
-  const confirmed = { ...answer, text_items: kept.filter((t) => t.list === "text"), excluded_items: kept.filter((t) => t.list === "never") };
+  const confirmed = { ...answer, text_items: [...kept.filter((t) => t.list === "text"), ...small], excluded_items: kept.filter((t) => t.list === "never") };
   return { ...judgeVisual(confirmed, { treatment, ratio, expectPeople, maxPeople, imageSize: imageSize(readFileSync(imagePath)) }), dismissed, answer };
 }

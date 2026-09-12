@@ -15,7 +15,7 @@
  *   node skills/references/gallery-selector.mjs --output-dir brands/{name}/outputs/3-16-26-V10 --open
  */
 
-import { readdirSync, statSync, writeFileSync, existsSync } from "fs";
+import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "fs";
 import { join, relative, basename, extname } from "path";
 import { parseArgs } from "util";
 import { execFile } from "child_process";
@@ -43,6 +43,11 @@ const safeJson = (obj) => JSON.stringify(obj)
 
 function scanOutputDir(outputDir) {
   const templates = [];
+  // Optional notes per folder (offer-first batches write gallery-notes.json: what the checks noticed
+  // about an ad's photo but did not reject), shown under the heading so picking is informed.
+  const notesPath = join(outputDir, "gallery-notes.json");
+  let notes = {};
+  try { if (existsSync(notesPath)) notes = JSON.parse(readFileSync(notesPath, "utf-8")); } catch { notes = {}; }
 
   const entries = readdirSync(outputDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
@@ -94,7 +99,7 @@ function scanOutputDir(outputDir) {
     }
 
     if (ratios.length > 0) {
-      templates.push({ folderName, templateNum, templateTitle, ratios });
+      templates.push({ folderName, templateNum, templateTitle, ratios, note: typeof notes[folderName] === "string" ? notes[folderName] : "" });
     }
   }
 
@@ -159,6 +164,7 @@ function buildGalleryHtml(outputDir, templates, brandName) {
         /* ── Page content ── */
         .content { padding: 2rem; }
         .subtitle { text-align: center; color: #555; margin-bottom: 2.5rem; font-size: 0.9rem; }
+        .ad-note { color: #c9a227; font-size: 0.85rem; margin: -0.4rem 0 0.8rem; }
         .template-section { margin-bottom: 3rem; }
         .template-header {
             font-size: 1.2rem; margin-bottom: 1rem; padding-bottom: 0.5rem;
@@ -310,7 +316,7 @@ ${templates.map((t) => `        <div class="template-section" id="section-${escH
                 <button class="exclude-btn" id="exclude-btn-${escHtml(t.folderName)}" onclick="toggleExclude('${jsStr(t.folderName)}')">Exclude</button>
                 <span class="excluded-badge">EXCLUDED</span>
             </h2>
-${t.ratios.map((r) => {
+${t.note ? `            <p class="ad-note">Checks noted: ${escHtml(t.note)}</p>\n` : ""}${t.ratios.map((r) => {
   const groupId = `${t.folderName}-${r.ratio}`;
   return `            <div class="ratio-section" data-group="${escHtml(groupId)}">
                 <div class="ratio-label">

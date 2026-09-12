@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="panel-token" content="">
 <title>Gym Ads Control Panel</title>
 <style>
   :root{
@@ -76,6 +77,33 @@
   .empty{color:var(--dim);text-align:center;padding:40px 20px}
   fieldset{border:1px solid var(--line);border-radius:6px;padding:12px;margin:0 0 12px}
   legend{font-size:12px;color:var(--dim);padding:0 6px}
+
+  /* New Batch */
+  .nb{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,430px);gap:14px;align-items:start}
+  @media (max-width:1100px){ .nb{grid-template-columns:minmax(0,1fr)} .pvcard{position:static} }
+  .nb .card label{margin-top:10px}
+  .pvcard{position:sticky;top:12px}
+  .pv{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .pv figure{margin:0} .pv img{width:100%;display:block;border-radius:4px;background:#000;aspect-ratio:1}
+  .pv figcaption{font-size:11px;color:var(--dim);margin-top:3px}
+  .pv .bad{color:var(--err)} .pv .good{color:var(--ok)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+  .chip{padding:2px 9px;border-radius:99px;border:1px solid var(--line);font-size:12px;cursor:pointer;color:var(--dim)}
+  .chip.sel{border-color:var(--accent);color:var(--text)}
+  .thumbs{display:flex;gap:8px;flex-wrap:wrap}
+  .thumbs label{margin:0;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;color:var(--text)}
+  .thumbs img{width:120px;height:80px;object-fit:cover;border-radius:4px;border:2px solid transparent}
+  .thumbs input:checked+img{border-color:var(--accent)}
+  .thumbs input{width:auto}
+  .locrow{display:flex;gap:6px;margin-bottom:6px} .locrow button{padding:3px 9px}
+  .summary{font-size:13px;margin:10px 0;color:var(--text)} .summary b{color:var(--accent)}
+  .ads{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+  .ads img{width:100%;display:block;border-radius:3px} .ads div{font-size:11px;color:var(--dim)}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:50}
+  .modal .card{max-width:520px;width:92%}
+  .words{background:#010409;border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:10px 0;font-size:13px}
+  .words div{margin:2px 0} .words span{color:var(--dim);display:inline-block;width:92px}
+  details summary{cursor:pointer;color:var(--dim);font-size:12px;margin-top:12px}
 </style>
 </head>
 <body>
@@ -102,8 +130,11 @@
 
 <script>
 const $ = (s,r=document)=>r.querySelector(s);
+// This launch's token, put in the page by the panel. Writes and runs without it are refused, so a
+// page on another site cannot drive the panel.
+const TOKEN = document.querySelector('meta[name="panel-token"]').content;
 const api = async (path, opts={}) => {
-  const r = await fetch(path, { headers:{'content-type':'application/json'}, ...opts,
+  const r = await fetch(path, { headers:{'content-type':'application/json','x-panel-token':TOKEN}, ...opts,
     body: opts.body ? JSON.stringify(opts.body) : undefined });
   const j = await r.json().catch(()=>({error:'bad response'}));
   if (!r.ok) throw new Error(j.error || r.statusText);
@@ -115,7 +146,7 @@ let STATE = { clients:[], sel:null, offer:null, tab:'setup', status:null, enums:
 
 const TABS = [
   ['setup','Setup'], ['brand','Brand'], ['offer','Offer'],
-  ['targeting','Targeting & Budget'], ['generate','Generate'], ['review','Review'],
+  ['targeting','Targeting & Budget'], ['batch','New Batch'], ['generate','Templates (old)'], ['review','Review'],
 ];
 
 async function boot(){
@@ -169,6 +200,7 @@ function render(){
   if (STATE.tab==='brand') return viewBrand(v);
   if (STATE.tab==='offer') return viewOffer(v);
   if (STATE.tab==='targeting') return viewTargeting(v);
+  if (STATE.tab==='batch') return viewBatch(v);
   if (STATE.tab==='generate') return viewGenerate(v);
   if (STATE.tab==='review') return viewReview(v);
 }
@@ -420,6 +452,238 @@ function viewGenerate(v){
   renderRunBox();
 }
 
+// ── New Batch (offer-first, Step 7) ──────────────────────────────────────────
+// The form is painted once; typing only updates the parts that depend on it (errors, summary,
+// preview), so the field being typed in never loses focus. Every rule is the server's (Step 6).
+const B = { gym:null, setup:null, draft:null, check:null, preview:null, loc:0, seqC:0, seqP:0, tC:null, tP:null,
+  mode:'new', view:null, savedId:null, touched:false };
+const today = () => new Date().toISOString().slice(0,10);
+const slugify = s => String(s||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+
+async function viewBatch(v){
+  if (B.gym !== STATE.sel){ Object.assign(B, { gym:STATE.sel, draft:null, mode:'new', view:null, savedId:null, touched:false, loc:0 }); }
+  v.innerHTML = '<div class="card"><h3>New batch</h3><p class="hint">Loading…</p></div>';
+  B.setup = await api(`/api/client/${STATE.sel}/batch-setup`);
+  if (!B.draft) B.draft = freshDraft();
+  paintBatch(v);
+  scheduleCheck(0); schedulePreview(0);
+}
+
+function freshDraft(){
+  return { batch_id:'', offer:'', locations:[''], audience:'', generated:2, real:B.setup.photos.slice(0,2).map(p=>p.path),
+    looks_per_photo:2, max_calls:'', attempts:2, seed:'' };
+}
+
+/** The brief exactly as typed: words are never trimmed or re-cased — the checks say if they need fixing. */
+function briefFromDraft(){
+  const d = B.draft;
+  const words = { offer:d.offer, locations:d.locations.filter(s=>s!==''), audience:d.audience===''?null:d.audience };
+  if (B.mode==='rerender') return { ...B.view.brief, ...words };
+  const generated = Number(d.generated)||0, attempts = Number(d.attempts)||1;
+  return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
+    max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}) };
+}
+function autoId(){
+  const base = `${today()}-${slugify(B.draft.offer).slice(0,40) || 'batch'}`.replace(/-+$/,'');
+  const taken = new Set(B.setup.batches.map(b=>b.id).filter(id=>id!==B.savedId));
+  let id = base, n = 2; while (taken.has(id)) id = `${base}-${n++}`;
+  return id;
+}
+
+function paintBatch(v){
+  const d = B.draft, re = B.mode==='rerender', maxL = B.setup.maxLocations||4;
+  const photos = B.setup.photos;
+  v.innerHTML = `
+  <div class="nb">
+    <div class="card">
+      <div class="row"><h3 style="margin:0">${re?`Change the words of ${esc(B.view.brief.batch_id)}`:'New batch'}</h3><div class="spacer"></div>
+        ${re?`<button onclick="bNew()" style="padding:3px 9px;font-size:12px">Start a new batch instead</button>`:''}</div>
+      <p class="hint">${re?'Same photos and looks; only the words change. Re-rendering is free.':'Every word on the ads is exactly what you type here. Nothing is filled in for you.'}</p>
+      <label for="bOffer">Offer</label>
+      <input id="bOffer" value="${esc(d.offer)}" placeholder="The offer, exactly as it should appear" oninput="bSet('offer',this.value)">
+      <label>Locations <span style="font-weight:400">(1–${maxL}; each one gets its own version of every ad)</span></label>
+      <div id="bLocs"></div>
+      <label for="bAud">Audience <span style="font-weight:400">(optional)</span></label>
+      <input id="bAud" value="${esc(d.audience)}" placeholder="e.g. MEN, LADIES WANTED" oninput="bSet('audience',this.value)">
+      <fieldset style="margin-top:14px" ${re?'disabled':''}><legend>Photos${re?' (fixed for this batch)':''}</legend>
+        <div class="grid">
+          <div><label for="bGen">New photos to generate</label><input id="bGen" type="number" min="0" max="12" value="${esc(d.generated)}" oninput="bSet('generated',this.value)"></div>
+          <div><label for="bLooks">Looks per photo</label><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"></div>
+        </div>
+        <label>Real photos <span style="font-weight:400">(cleaned ones only)</span></label>
+        <div class="thumbs">${photos.length ? photos.map(p=>`<label><input type="checkbox" value="${esc(p.path)}" ${d.real.includes(p.path)?'checked':''} onchange="bReal(this.value,this.checked)"><img src="${esc(p.url)}" alt=""><span style="font-size:11px">${esc(p.path.split('/').pop())}</span></label>`).join('') : '<span class="hint">No cleaned photos yet — see clean-photo.mjs.</span>'}</div>
+        <details><summary>Advanced</summary><div class="grid" style="margin-top:6px">
+          <div><label for="bId">Batch name</label><input id="bId" class="mono" value="${esc(d.batch_id)}" placeholder="automatic" oninput="bSet('batch_id',this.value)"></div>
+          <div><label for="bCalls">Most image calls</label><input id="bCalls" type="number" min="0" max="30" value="${esc(d.max_calls)}" placeholder="automatic" oninput="bSet('max_calls',this.value)"></div>
+          <div><label for="bAtt">Tries per photo</label><input id="bAtt" type="number" min="1" max="5" value="${esc(d.attempts)}" oninput="bSet('attempts',this.value)"></div>
+          <div><label for="bSeed">Seed</label><input id="bSeed" class="mono" value="${esc(d.seed)}" placeholder="batch name" oninput="bSet('seed',this.value)"></div>
+        </div></details>
+      </fieldset>
+      <div id="bScenes" class="hint" style="margin-top:8px"></div>
+      <div id="bErrors"></div>
+      <div id="bSummary" class="summary"></div>
+      <div class="row">
+        ${re ? `<button class="primary" id="bRerender" onclick="bRerender()">Save words and re-render (free)</button>`
+             : `<button id="bPlan" onclick="bPlan()">Plan (free)</button><button class="primary" id="bRun" onclick="bConfirm()">Run batch…</button>`}
+        <span id="bMsg" style="font-size:12px;color:var(--dim)"></span>
+      </div>
+    </div>
+    <div class="card pvcard">
+      <h3>Live preview</h3>
+      <p class="hint">Sample looks with your words, on your cleaned photos. The batch picks its own looks; these show how the words fit.</p>
+      <div class="chips" id="bLocTabs"></div>
+      <div id="bPrevMsg"></div>
+      <div class="pv" id="bPrev"></div>
+    </div>
+  </div>
+  <div class="card"><h3>Batches</h3><div id="bList"></div></div>
+  <div id="bResult"></div>
+  <div id="runbox"></div>
+  <div id="bModal"></div>`;
+  paintLocs(); paintList(); paintResult(); renderRunBox(); paintDerived();
+}
+
+function paintLocs(){
+  const d = B.draft, maxL = B.setup.maxLocations||4;
+  $('#bLocs').innerHTML = d.locations.map((l,i)=>`<div class="locrow"><input id="bLoc${i}" value="${esc(l)}" placeholder="e.g. BISHAN" oninput="bLoc(${i},this.value)">
+    ${d.locations.length>1?`<button title="Remove" onclick="bLocDel(${i})">✕</button>`:''}</div>`).join('') +
+    (d.locations.length<maxL?`<button onclick="bLocAdd()" style="padding:3px 9px;font-size:12px">+ location</button>`:'');
+}
+function paintList(){
+  const bs = B.setup.batches;
+  $('#bList').innerHTML = bs.length ? bs.map(b=>`<div class="chk"><div class="dot ${b.ads?'ok':'opt'}"></div><div style="flex:1">
+      <div class="t">${esc(b.id)} ${b.ads?`<span class="pill on">${b.ads} ads</span>`:'<span class="pill">planned</span>'}</div>
+      <div class="d">${esc(b.words.offer)} · ${esc(b.words.locations.join(' / '))}${b.words.audience?' · '+esc(b.words.audience):''}${b.image_calls!=null?` · ${b.image_calls} image call${b.image_calls===1?'':'s'}`:''}</div>
+      <div class="row" style="margin-top:4px">${b.gallery?`<a href="${esc(b.gallery)}" target="_blank">Open gallery →</a>`:''}
+        ${b.ads?`<button onclick="bShow('${esc(b.id)}')" style="padding:2px 8px;font-size:12px">Show ads</button><button onclick="bWords('${esc(b.id)}')" style="padding:2px 8px;font-size:12px">Change words</button>`:`<button onclick="bDiscard('${esc(b.id)}')" style="padding:2px 8px;font-size:12px">Discard</button>`}</div>
+    </div></div>`).join('') : '<div class="hint">No batches yet.</div>';
+}
+function paintResult(){
+  const box = $('#bResult'); if (!box) return;
+  const v = B.view;
+  if (!v || !v.batch || !B.showAds){ box.innerHTML=''; return; }
+  box.innerHTML = `<div class="card"><div class="row"><h3 style="margin:0">${esc(v.brief.batch_id)} — ${v.batch.ads.length} ads</h3><div class="spacer"></div>
+    ${v.gallery?`<a href="${esc(v.gallery)}" target="_blank">Open gallery →</a>`:''}</div>
+    <p class="hint">${v.batch.image_calls} image call${v.batch.image_calls===1?'':'s'} · made ${esc(new Date(v.batch.made).toLocaleString())}${v.batch.failed?.length?` · ${v.batch.failed.length} look(s) could not be verified and were left out`:''}</p>
+    <div class="ads">${v.batch.ads.map(a=>`<div><a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" alt="" loading="lazy"></a><div>${esc(a.folder.split('-')[0])} · ${esc(a.location)} · ${esc(a.treatment.split('-')[0])}</div></div>`).join('')}</div></div>`;
+}
+
+/** Everything that depends on the draft: errors, summary, scene status, buttons. */
+function paintDerived(){
+  const c = B.check, s = c?.summary, sc = B.setup.scenes;
+  const scenes = $('#bScenes');
+  if (scenes) scenes.innerHTML = B.mode==='rerender' ? '' : !sc.exists ? 'Scene library: none yet — generated photos need one.'
+    : `Scene library: ${sc.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${Object.entries(sc.counts).map(([k,n])=>`${n} for ${esc(k)}`).join(', ')}${sc.drafts?` · <span style="color:var(--warn)">${sc.drafts} new scene${sc.drafts===1?'':'s'} awaiting approval</span>`:''}${s?` · this audience draws from <b>${esc(s.scenes_for)}</b>`:''}`;
+  const errs = c?.errors || [];
+  const eb = $('#bErrors');
+  if (eb) eb.innerHTML = errs.length && B.touched ? errs.map(e=>`<div class="msg err">${esc(e)}</div>`).join('') : '';
+  const sb = $('#bSummary');
+  if (sb) sb.innerHTML = s ? (B.mode==='rerender'
+      ? `${s.ads} ads re-rendered with these words · <b>0 image calls</b>`
+      : `${s.photos} photo${s.photos===1?'':'s'} × ${s.looks} look${s.looks===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'} = <b>${s.ads} ads</b> · at most <b>${s.max_calls} image call${s.max_calls===1?'':'s'}</b>`) : '';
+  const busy = STATE.run && !STATE.run.done;
+  for (const id of ['bPlan','bRun','bRerender']) { const b=$('#'+id); if (b) b.disabled = !c || errs.length>0 || busy; }
+}
+
+function paintPreview(){
+  const d = B.draft, locs = d.locations.filter(s=>s!=='');
+  const tabs = $('#bLocTabs'); if (!tabs) return;
+  if (B.loc >= locs.length) B.loc = 0;
+  tabs.innerHTML = locs.length>1 ? locs.map((l,i)=>`<span class="chip ${i===B.loc?'sel':''}" onclick="B.loc=${i};schedulePreview(0)">${esc(l)}</span>`).join('') : '';
+  const p = B.preview, msg = $('#bPrevMsg'), grid = $('#bPrev');
+  if (!p){ grid.innerHTML=''; msg.innerHTML='<div class="hint">Rendering…</div>'; return; }
+  msg.innerHTML = p.errors?.length ? (d.offer===''&&!B.touched ? '<div class="hint">Type the offer and a location to see the ads.</div>' : p.errors.map(e=>`<div class="msg warn">${esc(e)}</div>`).join('')) : '';
+  grid.innerHTML = (p.looks||[]).map(l=>`<figure>${l.url?`<img src="${esc(l.url)}" alt="${esc(l.label)}">`:'<div style="aspect-ratio:1;background:#000;border-radius:4px"></div>'}
+    <figcaption><b>${esc(l.label)}</b> · ${l.ok?'<span class="good">fits</span>':`<span class="bad">${esc(l.failures[0]||'does not fit')}</span>`}</figcaption></figure>`).join('');
+}
+
+function scheduleCheck(ms=250){ clearTimeout(B.tC); B.tC = setTimeout(doCheck, ms); }
+function schedulePreview(ms=500){ clearTimeout(B.tP); B.tP = setTimeout(doPreview, ms); }
+async function doCheck(){
+  const seq = ++B.seqC;
+  try { const r = await api(`/api/client/${STATE.sel}/batch/check`, {method:'POST', body:{brief:briefFromDraft()}}); if (seq===B.seqC){ B.check=r; paintDerived(); } }
+  catch(e){ if (seq===B.seqC){ B.check={errors:[e.message]}; paintDerived(); } }
+}
+async function doPreview(){
+  const seq = ++B.seqP, br = briefFromDraft(), locs = br.locations;
+  B.preview = null; paintPreview();
+  try {
+    const r = await api('/api/preview', {method:'POST', body:{ gym:STATE.sel, offer:br.offer, location:locs[B.loc]??locs[0]??'', audience:br.audience, photos:br.real }});
+    if (seq===B.seqP){ B.preview=r; paintPreview(); }
+  } catch(e){ if (seq===B.seqP){ B.preview={errors:[e.message],looks:[]}; paintPreview(); } }
+}
+
+const WORDS = new Set(['offer','audience']);
+function bSet(k, v){ B.draft[k]=v; B.touched=true; scheduleCheck(); if (WORDS.has(k) || k==='generated') schedulePreview(); }
+function bLoc(i, v){ B.draft.locations[i]=v; B.touched=true; scheduleCheck(); schedulePreview(); }
+function bLocAdd(){ B.draft.locations.push(''); paintLocs(); $('#bLoc'+(B.draft.locations.length-1))?.focus(); scheduleCheck(); }
+function bLocDel(i){ B.draft.locations.splice(i,1); paintLocs(); scheduleCheck(); schedulePreview(0); }
+function bReal(path, on){ const r=B.draft.real; if (on && !r.includes(path)) r.push(path); if (!on) r.splice(r.indexOf(path),1); B.touched=true; scheduleCheck(); schedulePreview(); }
+function bMsg(t, cls=''){ const m=$('#bMsg'); if (m) m.innerHTML = cls?`<span style="color:var(--${cls})">${esc(t)}</span>`:esc(t); }
+
+/** Write the brief to disk (validated again by the server), returning it as saved. */
+async function saveBrief(){
+  const brief = briefFromDraft();
+  const replace = B.mode==='rerender' || B.savedId===brief.batch_id;
+  try {
+    const r = await api(`/api/client/${STATE.sel}/batch`, {method:'POST', body:{brief, replace}});
+    B.savedId = brief.batch_id; return { brief, summary:r.summary };
+  } catch(e){ bMsg(e.message, 'err'); B.touched=true; await doCheck(); return null; }
+}
+async function bPlan(){
+  const s = await saveBrief(); if (!s) return;
+  run({kind:'batch-plan', gym:STATE.sel, batch:s.brief.batch_id}, async()=>{ B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); });
+}
+async function bConfirm(){
+  const fresh = B.savedId !== briefFromDraft().batch_id; // this confirmation is what saves it
+  const s = await saveBrief(); if (!s) return;
+  B.createdByConfirm = fresh;
+  const b = s.brief, sm = s.summary;
+  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bCancel()"><div class="card">
+    <h3>Run this batch?</h3>
+    <p class="hint">These words go on every ad exactly as shown. The run stops at the call limit, whatever happens.</p>
+    <div class="words"><div><span>Offer</span>${esc(b.offer)}</div><div><span>Locations</span>${esc(b.locations.join(' / '))}</div><div><span>Audience</span>${b.audience?esc(b.audience):'<i style="color:var(--dim)">none</i>'}</div></div>
+    <div class="summary">${sm.photos} photos × ${sm.looks} looks × ${sm.locations} locations = <b>${sm.ads} ads</b><br>Up to <b>${b.max_calls} Gemini image call${b.max_calls===1?'':'s'}</b> for ${b.generated} new photo${b.generated===1?'':'s'}</div>
+    <div class="row"><button onclick="bCancel()">Cancel</button><div class="spacer"></div>
+      <button class="primary" id="bGo" onclick="bGo()">Yes, run — up to ${b.max_calls} image call${b.max_calls===1?'':'s'}</button></div></div></div>`;
+  B.pending = b;
+}
+function bClose(){ $('#bModal').innerHTML=''; B.pending=null; }
+/** Cancel: nothing runs, and a brief that only the confirmation had saved is discarded again. */
+async function bCancel(){
+  const id = B.pending?.batch_id, fresh = B.createdByConfirm; bClose();
+  if (fresh && id){ try { await api(`/api/client/${STATE.sel}/batch/${id}`, {method:'DELETE'}); B.savedId = null; } catch(e){} }
+}
+async function bDiscard(id){
+  if (!confirm(`Discard the planned batch ${id}? It has no ads yet.`)) return;
+  try {
+    await api(`/api/client/${STATE.sel}/batch/${id}`, {method:'DELETE'}); if (B.savedId===id) B.savedId = null;
+    B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); paintList();
+  } catch(e){ bMsg(e.message, 'err'); }
+}
+function bGo(){
+  const b = B.pending; bClose();
+  run({kind:'batch', gym:STATE.sel, batch:b.batch_id, confirm:{offer:b.offer, locations:b.locations, audience:b.audience??null, max_calls:b.max_calls}}, async(code)=>{
+    B.setup = await api(`/api/client/${STATE.sel}/batch-setup`);
+    if (code===0){ B.view = await api(`/api/client/${STATE.sel}/batch/${b.batch_id}`); B.showAds=true; B.mode='rerender'; B.draft.batch_id=b.batch_id; }
+  });
+}
+async function bRerender(){
+  const s = await saveBrief(); if (!s) return;
+  run({kind:'batch-rerender', gym:STATE.sel, batch:s.brief.batch_id}, async(code)=>{
+    B.setup = await api(`/api/client/${STATE.sel}/batch-setup`);
+    if (code===0){ B.view = await api(`/api/client/${STATE.sel}/batch/${s.brief.batch_id}`); B.showAds=true; }
+  });
+}
+async function bShow(id){ B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.showAds=true; paintResult(); $('#bResult').scrollIntoView({behavior:'smooth'}); }
+async function bWords(id){
+  B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.mode='rerender'; B.showAds=true;
+  const br = B.view.brief;
+  B.draft = { ...freshDraft(), batch_id:br.batch_id, offer:br.offer, locations:[...br.locations], audience:br.audience??'' };
+  B.savedId = br.batch_id; B.touched=false; paintBatch($('#view')); scheduleCheck(0); schedulePreview(0);
+}
+function bNew(){ Object.assign(B, { mode:'new', view:null, draft:freshDraft(), savedId:null, touched:false, showAds:false }); paintBatch($('#view')); scheduleCheck(0); schedulePreview(0); }
+
 // ── Review ───────────────────────────────────────────────────────────────────
 async function viewReview(v){
   v.innerHTML = '<div class="card"><h3>Review</h3><p class="hint">Loading…</p></div>';
@@ -496,7 +760,7 @@ function renderRunBox(){
   const log=$('#log'); if(log) log.scrollTop=log.scrollHeight;
 }
 
-async function run(params){
+async function run(params, after){
   STATE.run = { label:'Starting…', lines:[], done:false, code:null };
   renderRunBox();
   try{
@@ -516,6 +780,7 @@ async function run(params){
       // Refresh underlying data, then repaint — the log survives because it lives in STATE.
       STATE.status = await api('/api/status');
       await loadClients();
+      if (after) { try { await after(STATE.run.code); } catch(e){ console.error(e); } }
       render();
     });
     es.onerror = ()=>{ es.close(); STATE.run.done=true; renderRunBox(); };
