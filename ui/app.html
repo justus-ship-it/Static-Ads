@@ -565,6 +565,8 @@ function paintResult(){
   box.innerHTML = `<div class="card"><div class="row"><h3 style="margin:0">${esc(v.brief.batch_id)} — ${v.batch.ads.length} ads</h3><div class="spacer"></div>
     ${v.gallery?`<a href="${esc(v.gallery)}" target="_blank">Open gallery →</a>`:''}</div>
     <p class="hint">${v.batch.image_calls} image call${v.batch.image_calls===1?'':'s'} · made ${esc(new Date(v.batch.made).toLocaleString())}${v.batch.failed?.length?` · ${v.batch.failed.length} look(s) could not be verified and were left out`:''}</p>
+    <div class="row" style="margin:6px 0">${v.stories?`<span class="hint">${v.stories.ads} Stories version${v.stories.ads===1?'':'s'} (9:16) · ${v.stories.image_calls} image call${v.stories.image_calls===1?'':'s'}${v.stories.left_out?` · ${v.stories.left_out} left out`:''}</span><button onclick="bStoriesRerender()" style="padding:2px 8px;font-size:12px">Re-render Stories (free)</button>`:''}
+      ${v.selected?`<button class="primary" onclick="bStoriesConfirm()" style="padding:2px 8px;font-size:12px">${v.stories?'Make Stories versions again…':'Make Stories versions…'}</button>`:`<span class="hint">For Stories (9:16) versions: pick in the gallery, Save Selections, and put selections.json in the batch folder.</span>`}</div>
     <div class="ads">${v.batch.ads.map(a=>`<div><a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" alt="" loading="lazy"></a><div>${esc(a.folder.split('-')[0])} · ${esc(a.location)} · ${esc(a.treatment.split('-')[0])}</div></div>`).join('')}</div></div>`;
 }
 
@@ -674,6 +676,24 @@ async function bRerender(){
     B.setup = await api(`/api/client/${STATE.sel}/batch-setup`);
     if (code===0){ B.view = await api(`/api/client/${STATE.sel}/batch/${s.brief.batch_id}`); B.showAds=true; }
   });
+}
+/** Stories versions (Step 8): the one thing to confirm is the call cap; the words are the batch's own. */
+function bStoriesConfirm(){
+  const v = B.view; if (!v) return;
+  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
+    <h3>Make Stories versions?</h3>
+    <p class="hint">Every selected ad gets a 9:16 version with the same photo, look and words, inside Meta's safe zone. One new photo per photo in a single-photo look; collage and panels ads reuse theirs; real photos cost nothing. The run stops at the call limit, whatever happens.</p>
+    <div class="row"><label for="bStCap">Up to</label><input id="bStCap" type="number" min="0" max="40" value="24" style="width:70px"><span class="hint">Gemini image calls</span></div>
+    <div class="row"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="bStGo" onclick="bStoriesGo()">Yes, make them</button></div></div></div>`;
+}
+function bStoriesGo(){
+  const cap = parseInt($('#bStCap').value, 10), id = B.view.brief.batch_id; bClose();
+  if (!Number.isInteger(cap) || cap < 0){ bMsg('the call cap must be a whole number', 'err'); return; }
+  run({kind:'batch-stories', gym:STATE.sel, batch:id, confirm:{max_calls:cap}}, async()=>{ B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.showAds=true; });
+}
+async function bStoriesRerender(){
+  const id = B.view.brief.batch_id;
+  run({kind:'batch-stories-rerender', gym:STATE.sel, batch:id}, async()=>{ B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.showAds=true; });
 }
 async function bShow(id){ B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.showAds=true; paintResult(); $('#bResult').scrollIntoView({behavior:'smooth'}); }
 async function bWords(id){

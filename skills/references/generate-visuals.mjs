@@ -74,7 +74,7 @@ export async function checkPicture(file, opts, { base = checkVisual, quality = c
 /** Both halves of the check for a visual on disk. */
 async function assess(file, v, { ratio, text, check, compositor, outDir, never = [] }) {
   let pic;
-  try { pic = await check(file, { treatment: v.treatment, ratio, expectPeople: v.people !== false, maxPeople: typeof v.people === "number" ? v.people : null, never, scene: v.scene, setting: v.tags?.setting ?? v.setting ?? null }); } catch (e) { pic = { ok: false, failures: [`check could not run: ${e.message}`] }; }
+  try { pic = await check(file, { treatment: v.treatment, ratio, expectPeople: v.people !== false, maxPeople: typeof v.people === "number" ? v.people : null, never, scene: v.scene, setting: v.tags?.setting ?? v.setting ?? null, anchor: v.anchor ?? null }); } catch (e) { pic = { ok: false, failures: [`check could not run: ${e.message}`] }; }
   let ad = null;
   if (pic.ok && text && compositor) {
     try { ad = await compositor.compose(file, pic.faces, v, text, ratio, join(outDir, `${v.id}-ad.png`), pic.focus); } catch (e) { ad = { ok: false, failures: [`ad could not render: ${e.message}`] }; }
@@ -95,7 +95,7 @@ export async function checkRefTiled(path, { never = [] } = {}) {
 }
 
 /** `generate`, `check` and `compositor` are injectable, so the flow and the call budget can be tested offline. */
-export async function generateVisuals({ visuals, text = null, photography = {}, brandNames = [], outDir, ratio = "1x1", refs = [], maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkPicture, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log }) {
+export async function generateVisuals({ visuals, text = null, photography = {}, brandNames = [], outDir, ratio = "1x1", refs = [], anchorFor = null, maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkPicture, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log }) {
   mkdirSync(outDir, { recursive: true });
   // A reference photo carrying lettering gets it copied into every visual, so it is refused first.
   for (const r of refs) {
@@ -109,7 +109,10 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
   let calls = 0;
   const results = [];
   for (const v of visuals) {
-    const { prompt, aspect } = buildVisualPrompt({ treatment: v.treatment, scene: v.scene, ratio, photography, brandNames, hasReference: refParts.length > 0, people: typeof v.people === "number" ? v.people : null, setting: v.tags?.setting ?? v.setting ?? null });
+    // A sibling of a chosen photo (Step 8, 9:16): that photo goes first, as the scene itself.
+    const anchor = anchorFor ? anchorFor(v) : null;
+    const parts = anchor ? [inline(anchor), ...refParts] : refParts;
+    const { prompt, aspect } = buildVisualPrompt({ treatment: v.treatment, scene: v.scene, ratio, photography, brandNames, hasReference: refParts.length > 0, anchor: !!anchor, people: typeof v.people === "number" ? v.people : null, setting: v.tags?.setting ?? v.setting ?? null });
     writeFileSync(join(outDir, `${v.id}.prompt.txt`), prompt + "\n");
     const tries = [];
     let final = null;
@@ -122,7 +125,7 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
       calls++;
       let img;
       try {
-        img = await generate(prompt, refParts, { aspectRatio: aspect });
+        img = await generate(prompt, parts, { aspectRatio: aspect });
       } catch (e) {
         final = { ...v, status: "error", reason: e.message };
         tries.push({ attempt, status: "error", reason: e.message });

@@ -30,8 +30,9 @@ Gemini makes **pictures only**; software sets every word. The offer, location an
 - `skills/references/render-composites.mjs` + `composite-template.html` — the text layer (layouts × styles × palettes, contrast guard, safe areas, faces as keep-outs); verifies every render
 - `skills/references/assign-variants.mjs` — which look each ad in a batch gets (only layouts each photo can carry; every location rendered together so each location's ad keeps the identical look)
 - `skills/references/plan-offer-batch.mjs` — a batch end to end: `brands/{gym}/batches/{id}/brief.json` (offer, locations, audience — the user's exact words, never read from the offer file) → photos generated for their own layout, with scenes from the client's approved `brands/{gym}/scenes.json` → fit of every photo against every layout → looks → render per location → numbered folders + `batch.json` + `gallery.html`. `--dry-run` plans for free; `--render-only` re-renders with new words at zero image cost; `resolveSelections()` maps `selections.json` back to each ad's photos, look and words
+- `skills/references/make-stories.mjs` — Stories/Reels (9:16) versions of the ads picked in the gallery (`selections.json` in the batch folder): one native 9:16 photo per photo in a single-photo look, anchored to the chosen 1:1 (the same people, clothes and moment — a sibling check gates it), composed for its look and fitted against its others (a look it misses gets its own photo, unless its pose forbids that layout); collage and panels ads reuse the batch's photos; a wide real photo becomes a fitted band (no call). A generated photo whose native 9:16 never passes, or cannot carry a location's words, falls back to **its 1:1 ad's own crop as a band** (the 9:16 layouts are derived from the 1:1 ones inside the live area, so the crop's proven placement carries over; its check boxes move with it) — no call. Attempts already on disk count toward a run's tries. Rendered with each ad's own look and words into `{folder}/9x16/…_9x16_v1.png`, inside Meta's safe zone; `stories.json`; the gallery shows both ratios. `--dry-run` plans free; `--render-only` re-renders at zero cost; the cap (`--max-calls`, default 24) is for the batch's stories across runs
 - `.claude/skills/static-ads/references/offer-{treatments,styles,palettes}.json` — the catalogues
-- Tests: `node --test skills/references/render-composites.test.mjs skills/references/assign-variants.test.mjs skills/references/visual-pipeline.test.mjs skills/references/clean-photo.test.mjs skills/references/plan-offer-batch.test.mjs skills/references/check-quality.test.mjs ui/server.test.mjs`
+- Tests: `node --test skills/references/render-composites.test.mjs skills/references/assign-variants.test.mjs skills/references/visual-pipeline.test.mjs skills/references/clean-photo.test.mjs skills/references/plan-offer-batch.test.mjs skills/references/check-quality.test.mjs skills/references/make-stories.test.mjs ui/server.test.mjs`
 
 ```bash
 # Offer-first batch: plan for free, then run (spends at most the brief's max_calls)
@@ -39,6 +40,9 @@ node skills/references/plan-offer-batch.mjs --brand-dir brands/{name} --brief ba
 node skills/references/plan-offer-batch.mjs --brand-dir brands/{name} --brief batches/{id}/brief.json
 # New offer name / location / audience in the brief: re-render the same photos, zero image calls
 node skills/references/plan-offer-batch.mjs --brand-dir brands/{name} --brief batches/{id}/brief.json --render-only
+# Stories/Reels (9:16) versions of the ads picked in the gallery (selections.json in the batch folder)
+node skills/references/make-stories.mjs --brand-dir brands/{name} --batch {id} --dry-run
+node skills/references/make-stories.mjs --brand-dir brands/{name} --batch {id} --max-calls 24
 ```
 
 ## 4-Phase Pipeline

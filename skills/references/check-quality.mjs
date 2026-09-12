@@ -192,6 +192,31 @@ export async function checkQuality(imagePath, { scene, people = null, setting = 
   return { ...judgeQuality(answer, { confirmed: kept, dismissed, people, setting }), answer };
 }
 
+// ── the sibling check (Step 8): is a 9:16 photo the same scene as the chosen 1:1? ──────────
+// A different person is the one thing that breaks a 1:1 / 9:16 pair, so people and clothes are a
+// gate; the spot in the room is a note (a re-framed shot can read as a different spot).
+
+const SIBLING_QUESTION = `Two photographs. The first is the original. The second was meant to be the same scene photographed again in a taller frame for a vertical advert. Compare them carefully.
+- same_people: true only if the second shows the same people as the first — the same number of them, with the same faces, ages and builds.
+- same_clothes: true only if each person wears the same clothing (type and colour) in both.
+- same_setting: true if it is the same room and the same spot in it — the same walls, floor, equipment and light.
+- differences: what differs, in one sentence; an empty string if nothing does.`;
+const SIBLING_SCHEMA = { type: "OBJECT", properties: { same_people: { type: "BOOLEAN" }, same_clothes: { type: "BOOLEAN" }, same_setting: { type: "BOOLEAN" }, differences: { type: "STRING" } }, required: ["same_people", "same_clothes", "same_setting", "differences"] };
+
+export function judgeSibling(a) {
+  const failures = [], notes = [];
+  const why = a.differences ? `: ${a.differences}` : "";
+  if (!a.same_people) failures.push(`not the same people as the chosen photo${why}`);
+  else if (!a.same_clothes) failures.push(`the people's clothes differ from the chosen photo${why}`);
+  if (!a.same_setting) notes.push(`not quite the same spot as the chosen photo${why}`);
+  return { ok: failures.length === 0, failures, notes };
+}
+
+export async function checkSibling(anchorPath, imagePath, opts = {}) {
+  const answer = await callVision([anchorPath, imagePath], SIBLING_QUESTION, SIBLING_SCHEMA, { model: QUALITY_MODEL, ...opts });
+  return { ...judgeSibling(answer), answer };
+}
+
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const { values: v } = parseArgs({ options: {

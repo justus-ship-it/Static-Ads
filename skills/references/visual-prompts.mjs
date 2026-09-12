@@ -149,7 +149,11 @@ export const CANDID = {
 /** Every photo: real equipment, used as it is meant to be (48-ad batch: a cable row with no machine). */
 export const REAL_CLAUSE = "REAL: everything could be photographed in a real gym. The equipment is complete and true to size, and it is used the way it is meant to be: each body rests on the seat, bench or floor that holds it, hands grip real handles, and the load sits where it does in the real exercise.";
 
-export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, brandNames = [], people = null, setting = null, catalogue = loadCatalogue() }) {
+/** The 9:16 sibling of a chosen 1:1 photo (Step 8): the first attached photo is the scene itself. Anchoring
+ *  is the one prompting technique measured to work (Step 4): the sibling keeps the room, people and moment. */
+export const ANCHOR_CLAUSE = "SAME SCENE: the first attached photo is this exact scene, already photographed for the square advert. Make the same photograph re-framed as a vertical 9:16: the same people with the same faces, ages, builds, clothes and expressions, at the same spot in the same room and light, doing the same thing at the same moment. The taller frame shows more floor below and more ceiling above; nothing else changes.";
+
+export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, catalogue = loadCatalogue() }) {
   const T = catalogue.treatments;
   const tr = T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}"`);
@@ -187,9 +191,10 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
   // Said as what a real class looks like; the faults are never named, since naming invites them.
   if (CANDID[setting]) lines.push(CANDID[setting]);
   lines.push(REAL_CLAUSE);
+  if (anchor) lines.push(ANCHOR_CLAUSE);
   if (must.length) lines.push(`SETTING (must show): ${must.join("; ")}.`);
   if (hasReference) {
-    lines.push("The attached reference photo is the real gym. Match its room: wall colour, ceiling, lighting, floor and equipment. " +
+    lines.push(`${anchor ? "The second attached photo" : "The attached reference photo"} is the real gym. Match its room: wall colour, ceiling, lighting, floor and equipment. ` +
       "Do NOT copy any sign, lettering or neon words from it — none may appear in your image.");
   }
   lines.push(

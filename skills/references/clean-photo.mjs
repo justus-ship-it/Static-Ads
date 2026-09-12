@@ -299,7 +299,7 @@ export async function compareRooms(original, edited, opts = {}) {
 
 // ── pixels: crop, compare, and a picture of what changed (the renderer's Chrome) ─
 
-async function inPage(browser, body) {
+export async function inPage(browser, body) {
   const page = join(browser.work, `clean-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
   writeFileSync(page, `<!doctype html><body><script>window.__out = (async () => {\n${body}\n})();</script>`);
   const loaded = browser.cdp.once("Page.loadEventFired", browser.sessionId);
@@ -310,7 +310,7 @@ async function inPage(browser, body) {
   if (exceptionDetails) throw new Error(`page error: ${exceptionDetails.exception?.description || exceptionDetails.text}`);
   return result.value;
 }
-const LOAD = `const load = async (s) => { const i = new Image(); i.src = s; await i.decode(); return i; };`;
+export const LOAD = `const load = async (s) => { const i = new Image(); i.src = s; await i.decode(); return i; };`;
 
 /** Crop [x, y, w, h] (pixels) out of an image into a PNG. */
 export async function cropImage(browser, src, [x, y, w, h], out) {

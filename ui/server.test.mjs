@@ -304,3 +304,35 @@ test("U7 the New Batch tab: typing updates the preview, a bad word shows its err
   assert.ok(!existsSync(join(brands, GYM, "batches", auto)), `cancelling leaves no planned batch behind (${auto})`);
   assert.ok(!/NETWORK BLOCKED/.test(panel.log()));
 });
+
+// ── U8 Stories versions (Step 8) ─────────────────────────────────────────────
+
+test("U8 Stories versions: refused without a confirmed call cap or without the gallery's picks; argv is built from the batch and the cap alone; the batch view says what exists", async () => {
+  const out = join(brands, GYM, "outputs", BRIEF.batch_id);
+  assert.ok(existsSync(join(out, "batch.json")), "U5 made the batch");
+  const post = (body) => call("/api/run", { method: "POST", body });
+  assert.equal((await post({ kind: "batch-stories", gym: GYM, batch: BRIEF.batch_id })).status, 400, "no cap confirmed");
+  assert.equal((await post({ kind: "batch-stories", gym: GYM, batch: BRIEF.batch_id, confirm: { max_calls: MAX_CALLS_CAP + 1 } })).status, 400, "over the cap");
+  assert.equal((await post({ kind: "batch-stories", gym: GYM, batch: BRIEF.batch_id, confirm: { max_calls: "3" } })).status, 400, "not a number");
+  rmSync(join(out, "selections.json"), { force: true });
+  assert.equal((await post({ kind: "batch-stories", gym: GYM, batch: BRIEF.batch_id, confirm: { max_calls: 0 } })).status, 409, "no picks yet");
+  let view = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}`)).json();
+  assert.equal(view.selected, false);
+  assert.equal(view.stories, null);
+  // The gallery's picks, every ad, put in the batch folder.
+  const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
+  writeFileSync(join(out, "selections.json"), JSON.stringify({ ...Object.fromEntries(batch.ads.map((a) => [a.folder, { "1x1": a.file }])), excluded: [] }));
+  const r = await runAndWait({ kind: "batch-stories", gym: GYM, batch: BRIEF.batch_id, confirm: { max_calls: 0 }, extra: "--max-calls 99" });
+  assert.equal(r.code, 0, r.lines.join("\n"));
+  assert.match(r.lines[0], /^\$ node skills\/references\/make-stories\.mjs --brand-dir \S+testgym --batch ref-batch --max-calls 0$/, "built server-side; the extra field is ignored");
+  assert.ok(r.lines.some((l) => /Stories version\(s\)/.test(l)), r.lines.join("\n"));
+  assert.ok(!/NETWORK BLOCKED/.test(panel.log()), "real photos and reused photos cost nothing");
+  view = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}`)).json();
+  assert.equal(view.selected, true);
+  assert.equal(view.stories.image_calls, 0);
+  assert.equal(view.stories.ads, batch.ads.length, "every selected ad has a Stories version (real photos and reused photos only)");
+  for (const a of batch.ads) assert.ok(existsSync(join(out, a.file.replace("/1x1/", "/9x16/").replace("_1x1_", "_9x16_"))), `${a.folder} 9:16 on disk`);
+  const again = await runAndWait({ kind: "batch-stories-rerender", gym: GYM, batch: BRIEF.batch_id });
+  assert.equal(again.code, 0, again.lines.join("\n"));
+  assert.match(again.lines[0], /make-stories\.mjs --brand-dir \S+testgym --batch ref-batch --render-only$/);
+});

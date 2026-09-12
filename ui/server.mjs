@@ -33,7 +33,7 @@ import {
   loadClientConfig, writeResolved, scaffold,
   CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
 } from "../skills/references/client-config.mjs";
-import { validateBrief, sceneAudience, sceneProblems, MAX_LOCATIONS } from "../skills/references/plan-offer-batch.mjs";
+import { validateBrief, sceneAudience, sceneProblems, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
@@ -41,6 +41,7 @@ const REPO_ROOT = resolve(UI_DIR, "..");
 const BRANDS = resolve(process.env.PANEL_BRANDS_DIR || join(REPO_ROOT, "brands"));
 const SWIPE = join(REPO_ROOT, "swipe");
 const BATCH_SCRIPT = join(REPO_ROOT, "skills", "references", "plan-offer-batch.mjs");
+const STORIES_SCRIPT = join(REPO_ROOT, "skills", "references", "make-stories.mjs");
 
 const { values: argv } = parseArgs({ options: { port: { type: "string", default: "4310" } } });
 let PORT = parseInt(argv.port, 10);
@@ -94,6 +95,9 @@ const RUNNABLE = {
   "batch-plan": { label: "Plan batch (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--dry-run"] },
   batch: { label: "Run batch", needsBrief: true, spends: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch)] },
   "batch-rerender": { label: "Re-render batch with its words (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--render-only"] },
+  // Stories/Reels (9:16) versions of the selected ads (Step 8): the batch id and the confirmed call cap only.
+  "batch-stories": { label: "Make Stories versions", needsBrief: true, spends: "stories", argv: ({ gym, batch, confirm }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--max-calls", String(confirm.max_calls)] },
+  "batch-stories-rerender": { label: "Re-render Stories versions (free)", needsBrief: true, argv: ({ gym, batch }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--render-only"] },
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -421,6 +425,8 @@ const server = createServer(async (req, res) => {
           brief: readJsonFile(briefPath(gym, id)),
           batch: batch && { ...batch, ads: batch.ads.map((a) => ({ ...a, url: `/files/brands/${gym}/outputs/${id}/${a.file}` })) },
           gallery: existsSync(join(out, "gallery.html")) ? `/files/brands/${gym}/outputs/${id}/gallery.html` : null,
+          selected: existsSync(join(out, "selections.json")),
+          stories: (() => { const s = readJsonFile(join(out, "stories.json")); return s ? { ads: s.ads.length, image_calls: s.image_calls, max_calls: s.max_calls, left_out: (s.failed?.length || 0) + (s.left_out?.length || 0) } : null; })(),
         });
       }
     }
@@ -481,7 +487,13 @@ const server = createServer(async (req, res) => {
         if (!brief) return json(res, 404, { error: `no brief for batch ${body.batch}` });
         // A run that spends must have been confirmed against the brief as it is on disk now: the words
         // and the call cap the person agreed to are exactly what will run.
-        if (spec.spends) {
+        if (spec.spends === "stories") {
+          // The cap is the one number the person confirms; the words are the batch's own. Nothing runs
+          // until the gallery's picks are in the batch folder.
+          const cap = body.confirm?.max_calls;
+          if (!Number.isInteger(cap) || cap < 0 || cap > MAX_CALLS_CAP) return json(res, 400, { error: `confirm the call cap for the Stories versions (0–${MAX_CALLS_CAP})` });
+          if (!existsSync(join(brandDir(body.gym), "outputs", body.batch, "selections.json"))) return json(res, 409, { error: "no selections yet: open the gallery, pick, Save Selections, and put selections.json in the batch folder" });
+        } else if (spec.spends) {
           const c = body.confirm || {};
           const agreed = c.offer === brief.offer && JSON.stringify(c.locations) === JSON.stringify(brief.locations) && (c.audience ?? null) === (brief.audience ?? null) && c.max_calls === (brief.max_calls ?? brief.generated ?? 0);
           if (!agreed) return json(res, 409, { error: "the brief on disk differs from what was confirmed — review it and confirm again" });
