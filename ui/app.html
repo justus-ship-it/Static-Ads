@@ -4,128 +4,143 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="panel-token" content="">
-<title>Gym Ads Control Panel</title>
+<title>Strategym · Gym Ads</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
+  /* Strategym: navy on white. One accent, quiet surfaces, generous spacing. */
   :root{
-    --bg:#0d1117; --panel:#161b22; --panel-2:#1c2128; --line:#30363d;
-    --text:#e6edf3; --dim:#8b949e; --accent:#e8501f; --accent-dim:#7a2a10;
-    --ok:#3fb950; --warn:#d29922; --err:#f85149; --link:#58a6ff;
-    --radius:8px;
+    --navy:#041131; --navy-2:#0d1f4d; --bg:#f4f6fa; --surface:#ffffff; --surface-2:#f8fafd; --line:#e2e7f0; --line-2:#cfd7e6;
+    --text:#0f1a33; --dim:#5f6b84; --faint:#98a3ba; --accent:#041131; --accent-soft:#e7ecf7; --accent-text:#ffffff;
+    --ok:#1b7f4b; --ok-soft:#e3f5ea; --warn:#9a6a10; --warn-soft:#fbf1d9; --err:#b42323; --err-soft:#fbe6e6; --link:#1c4c9c;
+    --radius:10px; --shadow:0 1px 2px rgba(4,17,49,.05),0 6px 20px rgba(4,17,49,.05);
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
   code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   a{color:var(--link)}
-  button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);
-    background:var(--panel-2);color:var(--text);padding:7px 13px}
-  button:hover:not(:disabled){border-color:var(--dim)}
-  button:disabled{opacity:.4;cursor:not-allowed}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-  button.primary:hover:not(:disabled){filter:brightness(1.1)}
-  input,select,textarea{font:inherit;background:#0d1117;color:var(--text);
-    border:1px solid var(--line);border-radius:6px;padding:7px 9px;width:100%}
-  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  h1{font-size:22px;font-weight:700;margin:0 0 4px;letter-spacing:-.2px}
+  h2{font-size:15px;font-weight:700;margin:0 0 10px}
+  .sub{color:var(--dim);margin:0 0 18px}
+  button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);padding:8px 14px;font-weight:500}
+  button:hover:not(:disabled){border-color:var(--navy);background:var(--surface-2)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:600}
+  button.primary:hover:not(:disabled){background:var(--navy-2)}
+  button.ok{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:600}
+  button.danger{background:var(--err-soft);border-color:#f0c4c4;color:var(--err);font-weight:600}
+  button.sm{padding:4px 10px;font-size:12px;border-radius:7px}
+  input,select,textarea{font:inherit;background:var(--surface);color:var(--text);border:1px solid var(--line-2);border-radius:8px;padding:8px 11px;width:100%}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(4,17,49,.08)}
   textarea{resize:vertical;min-height:64px}
-  label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px;font-weight:500}
+  label{display:block;font-size:12px;color:var(--dim);margin-bottom:5px;font-weight:600}
+  label .n{font-weight:400}
 
-  .app{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
-  .side{background:var(--panel);border-right:1px solid var(--line);padding:16px;display:flex;flex-direction:column;gap:18px}
-  .brand{font-weight:700;font-size:15px;letter-spacing:-.2px}
-  .brand span{color:var(--accent)}
-  .main{padding:22px 26px;max-width:1100px}
+  /* ── shell ── */
+  .app{display:grid;grid-template-columns:224px 1fr;grid-template-rows:58px 1fr;min-height:100vh}
+  .top{grid-column:1/3;display:flex;align-items:center;gap:16px;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  .logo{display:flex;align-items:center;gap:9px;text-decoration:none;color:var(--navy)}
+  .logo svg{display:block}
+  .crumb{color:var(--dim);display:flex;gap:8px;align-items:center;font-size:13px;margin-left:8px}
+  .crumb b{color:var(--text);font-weight:600} .crumb .sep{color:var(--faint)}
+  .switch{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .switch select{width:auto;min-width:190px;padding:7px 32px 7px 30px;font-weight:600;background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235f6b84'/%3E%3C/svg%3E") no-repeat right 12px center;appearance:none}
+  .switch .dot{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .switch .wrap{position:relative}
+  .rail{background:var(--surface);border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:2px;position:sticky;top:58px;height:calc(100vh - 58px);overflow:auto}
+  .rail .sec{color:var(--faint);font-size:11px;letter-spacing:.8px;text-transform:uppercase;padding:14px 12px 5px;font-weight:700}
+  .rail .tab{display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:8px;color:var(--dim);font-weight:500;cursor:pointer;font-size:13.5px;border:none;background:none;text-align:left;width:100%}
+  .rail .tab:hover{background:var(--surface-2);color:var(--text)}
+  .rail .tab.sel{background:var(--accent-soft);color:var(--navy);font-weight:600}
+  .rail .tab .ic{width:18px;text-align:center;color:var(--faint)} .rail .tab.sel .ic{color:var(--navy)}
+  .rail .badge{margin-left:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 7px;font-size:11px;color:var(--dim);font-weight:600}
+  .rail .foot{margin-top:auto;padding:12px;font-size:11px;color:var(--faint);line-height:1.5}
+  .main{padding:24px 28px 40px;max-width:1360px;width:100%}
 
-  .clients{display:flex;flex-direction:column;gap:3px}
-  .client{padding:8px 10px;border-radius:6px;cursor:pointer;border:1px solid transparent;font-size:13px}
-  .client:hover{background:var(--panel-2)}
-  .client.sel{background:var(--panel-2);border-color:var(--accent)}
-  .client .nm{font-weight:600}
-  .client .sub{font-size:11px;color:var(--dim)}
-
-  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:20px;flex-wrap:wrap}
-  .tab{padding:8px 14px;cursor:pointer;border-bottom:2px solid transparent;color:var(--dim);font-size:13px;font-weight:500}
-  .tab:hover{color:var(--text)}
-  .tab.sel{color:var(--text);border-bottom-color:var(--accent)}
-
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:14px}
-  .card h3{margin:0 0 4px;font-size:14px}
-  .card .hint{color:var(--dim);font-size:12px;margin:0 0 12px}
+  /* ── pieces ── */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:14px;box-shadow:var(--shadow)}
+  .card h3{margin:0 0 12px;font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;font-weight:700}
+  .card .hint{color:var(--dim);font-size:12.5px;margin:0 0 12px}
   .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .spacer{flex:1}
-
   .chk{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line)}
   .chk:last-child{border-bottom:none}
   .dot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex:none}
-  .dot.ok{background:var(--ok)} .dot.bad{background:var(--err)} .dot.opt{background:var(--dim)}
-  .chk .t{font-weight:600;font-size:13px}
-  .chk .d{color:var(--dim);font-size:12px}
+  .dot.ok{background:var(--ok)} .dot.bad{background:var(--err)} .dot.opt{background:var(--faint)}
+  .chk .t{font-weight:600;font-size:13px} .chk .d{color:var(--dim);font-size:12px}
   .chk .fix{font-family:ui-monospace,monospace;font-size:11px;color:var(--warn);margin-top:3px}
-
-  .msg{padding:8px 11px;border-radius:6px;font-size:12.5px;margin-bottom:6px;border-left:3px solid}
-  .msg.err{background:rgba(248,81,73,.09);border-color:var(--err)}
-  .msg.warn{background:rgba(210,153,34,.09);border-color:var(--warn)}
-  .msg.ok{background:rgba(63,185,80,.09);border-color:var(--ok)}
-
-  .log{background:#010409;border:1px solid var(--line);border-radius:6px;padding:11px;
-    height:300px;overflow:auto;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap}
-  .log .out{color:#c9d1d9} .log .err{color:var(--err)} .log .meta{color:var(--accent)}
-
-  .pill{display:inline-block;padding:1px 7px;border-radius:99px;font-size:11px;
-    background:var(--panel-2);border:1px solid var(--line);color:var(--dim)}
-  .pill.on{border-color:var(--ok);color:var(--ok)}
+  .msg{padding:8px 11px;border-radius:8px;font-size:12.5px;margin-bottom:6px;border:1px solid}
+  .msg.err{background:var(--err-soft);border-color:#f0c4c4;color:var(--err)}
+  .msg.warn{background:var(--warn-soft);border-color:#ecd9a6;color:var(--warn)}
+  .msg.ok{background:var(--ok-soft);border-color:#bfe6cd;color:var(--ok)}
+  .log{background:#0b1430;color:#c9d3ea;border-radius:8px;padding:11px;height:280px;overflow:auto;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap}
+  .log .out{color:#c9d3ea} .log .err{color:#ff9b9b} .log .meta{color:#8fb0ff}
+  .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:600;background:var(--bg);border:1px solid var(--line);color:var(--dim)}
+  .pill.on{background:var(--ok-soft);border-color:#bfe6cd;color:var(--ok)}
+  .pill.warn{background:var(--warn-soft);border-color:#ecd9a6;color:var(--warn)}
+  .pill.navy{background:var(--accent-soft);border-color:#c9d4ea;color:var(--navy)}
   .empty{color:var(--dim);text-align:center;padding:40px 20px}
-  fieldset{border:1px solid var(--line);border-radius:6px;padding:12px;margin:0 0 12px}
-  legend{font-size:12px;color:var(--dim);padding:0 6px}
+  fieldset{border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0 0 12px}
+  legend{font-size:12px;color:var(--dim);padding:0 6px;font-weight:600}
+  details summary{cursor:pointer;color:var(--dim);font-size:12.5px;margin-top:12px;font-weight:600}
+  .modal{position:fixed;inset:0;background:rgba(4,17,49,.45);display:flex;align-items:center;justify-content:center;z-index:50}
+  .modal .card{max-width:560px;width:92%;max-height:90vh;overflow:auto}
+  .words{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0;font-size:13px}
+  .words div{margin:2px 0} .words span{color:var(--dim);display:inline-block;width:92px}
 
-  /* New Batch */
-  .nb{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,430px);gap:14px;align-items:start}
-  @media (max-width:1100px){ .nb{grid-template-columns:minmax(0,1fr)} .pvcard{position:static} }
-  .nb .card label{margin-top:10px}
-  .pvcard{position:sticky;top:12px}
+  /* ── Create ── */
+  .nb{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,420px);gap:16px;align-items:start}
+  @media (max-width:1180px){ .nb{grid-template-columns:minmax(0,1fr)} .pvcard{position:static} }
+  .nb .card label{margin-top:12px}
+  .pvcard{position:sticky;top:76px}
   .pv{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .pv figure{margin:0} .pv img{width:100%;display:block;border-radius:4px;background:#000;aspect-ratio:1}
+  .pv figure{margin:0} .pv img{width:100%;display:block;border-radius:6px;background:#0b1430;aspect-ratio:1}
   .pv figcaption{font-size:11px;color:var(--dim);margin-top:3px}
   .pv .bad{color:var(--err)} .pv .good{color:var(--ok)}
-  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
-  .chip{padding:2px 9px;border-radius:99px;border:1px solid var(--line);font-size:12px;cursor:pointer;color:var(--dim)}
-  .chip.sel{border-color:var(--accent);color:var(--text)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
+  .chip{padding:5px 12px;border-radius:99px;border:1px solid var(--line-2);font-size:13px;cursor:pointer;color:var(--dim);background:var(--surface);font-weight:500}
+  .chip:hover{border-color:var(--navy);color:var(--text)}
+  .chip.sel{border-color:var(--navy);background:var(--accent-soft);color:var(--navy);font-weight:600}
+  .chip.add{border-style:dashed;color:var(--link)}
+  .locchip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--navy);background:var(--accent-soft);border-radius:99px;padding:2px 4px 2px 12px}
+  .locchip input{border:none;background:transparent;padding:3px 0;width:120px;font-weight:600;color:var(--navy);box-shadow:none;text-transform:uppercase}
+  .locchip input:focus{box-shadow:none} .locchip button{border:none;background:transparent;padding:2px 6px;color:var(--dim);font-size:13px} .locchip button:hover{color:var(--err);background:transparent}
+  .stepper{display:inline-flex;align-items:center;border:1px solid var(--line-2);border-radius:8px;overflow:hidden;background:var(--surface)}
+  .stepper button{border:none;border-radius:0;padding:6px 12px;color:var(--dim);background:var(--surface-2)} .stepper button:hover{background:var(--accent-soft);color:var(--navy)}
+  .stepper input{border:none;width:56px;text-align:center;font-weight:700;padding:6px 0;box-shadow:none;border-radius:0;-moz-appearance:textfield} .stepper input::-webkit-inner-spin-button{display:none}
   .thumbs{display:flex;gap:8px;flex-wrap:wrap}
-  .thumbs label{margin:0;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;color:var(--text)}
-  .thumbs img{width:120px;height:80px;object-fit:cover;border-radius:4px;border:2px solid transparent}
-  .thumbs input:checked+img{border-color:var(--accent)}
-  .thumbs input{width:auto}
-  .locrow{display:flex;gap:6px;margin-bottom:6px} .locrow button{padding:3px 9px}
-  .summary{font-size:13px;margin:10px 0;color:var(--text)} .summary b{color:var(--accent)}
+  .thumbs label{margin:0;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;color:var(--text);font-weight:500}
+  .thumbs img{width:118px;height:78px;object-fit:cover;border-radius:6px;border:2px solid var(--line)}
+  .thumbs input:checked+img{border-color:var(--ok)}
+  .thumbs input{width:auto;margin:0 0 -2px}
+  .summary{font-size:13.5px;margin:10px 0;color:var(--text);line-height:1.7} .summary b{color:var(--navy)}
   .ads{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
-  .ads img{width:100%;display:block;border-radius:3px} .ads div{font-size:11px;color:var(--dim)}
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:50}
-  .modal .card{max-width:520px;width:92%}
-  .words{background:#010409;border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:10px 0;font-size:13px}
-  .words div{margin:2px 0} .words span{color:var(--dim);display:inline-block;width:92px}
-  details summary{cursor:pointer;color:var(--dim);font-size:12px;margin-top:12px}
+  .ads img{width:100%;display:block;border-radius:4px} .ads div{font-size:11px;color:var(--dim)}
+  .camps{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+  .camp{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;gap:12px;align-items:center;box-shadow:var(--shadow)}
+  .camp img,.camp .noimg{width:64px;height:64px;border-radius:6px;object-fit:cover;flex:none;background:var(--bg)}
+  .camp .t{font-weight:600;font-size:13px} .camp .d{color:var(--dim);font-size:12px;margin:2px 0 6px}
+  .camp .row{gap:6px}
+  .scene{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)} .scene:last-child{border-bottom:none}
+  .scene .body{flex:1} .scene .id{font-weight:700;font-family:ui-monospace,Menlo,monospace;font-size:12.5px} .scene .tags{color:var(--dim);font-size:12px;margin:2px 0} .scene .txt{font-size:13.5px;margin:4px 0 6px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px} .kv span{color:var(--dim)}
 </style>
 </head>
 <body>
 <div class="app">
-  <aside class="side">
-    <div class="brand">Gym Ads <span>Control Panel</span></div>
-    <div>
-      <div class="row" style="margin-bottom:8px">
-        <strong style="font-size:12px;color:var(--dim)">CLIENTS</strong>
-        <div class="spacer"></div>
-        <button onclick="newClient()" style="padding:3px 9px;font-size:12px">+ New</button>
-      </div>
-      <div class="clients" id="clients"></div>
-    </div>
-    <div class="spacer"></div>
-    <div id="sideStatus" style="font-size:11px;color:var(--dim)"></div>
-  </aside>
-
-  <main class="main">
-    <div class="tabs" id="tabs"></div>
-    <div id="view"></div>
-  </main>
+  <header class="top">
+    <a class="logo" href="#" onclick="go('batch');return false" title="Strategym">
+      <!-- The Strategym mark and wordmark, from the vertical logo file, set side by side. -->
+      <svg width="30" height="30" viewBox="454 0 563 563" xmlns="http://www.w3.org/2000/svg" fill="#041131"><path d="M848.566 428.873L776.907 357.214C761.934 342.241 757.651 320.74 765.761 301.151C773.871 281.562 792.087 269.376 813.298 269.376H1017.09V298.489H813.298C803.94 298.489 796.246 303.646 792.669 312.255C789.093 320.864 790.923 329.973 797.494 336.585L869.153 408.244L848.566 428.831V428.873Z"/><path d="M657.959 298.531H454.17V269.418H657.959C667.317 269.418 675.011 264.261 678.588 255.652C682.165 247.001 680.335 237.935 673.763 231.322L602.104 159.663L622.691 139.076L694.35 210.735C709.323 225.707 713.606 247.209 705.496 266.798C697.386 286.387 679.17 298.572 657.959 298.572V298.531Z"/><path d="M752.328 562.916H723.215V359.127C723.215 349.769 718.058 342.075 709.449 338.498C700.84 334.922 691.732 336.751 685.119 343.323L613.46 414.982L592.873 394.395L664.532 322.736C679.504 307.763 701.006 303.48 720.595 311.59C740.184 319.7 752.369 337.916 752.369 359.127V562.916H752.328Z"/><path d="M774.993 255.361C768.339 255.361 761.56 254.03 754.988 251.326C735.4 243.216 723.214 225 723.214 203.789V0H752.327V203.789C752.327 213.147 757.484 220.841 766.093 224.418C774.702 227.995 783.81 226.165 790.423 219.594L862.082 147.935L882.669 168.521L811.01 240.18C801.028 250.162 788.219 255.361 774.951 255.361H774.993Z"/></svg>
+      <svg height="13" viewBox="0 668 1500 134" xmlns="http://www.w3.org/2000/svg" fill="#041131"><path d="M60.0082 801.181C50.3115 801.181 42.053 800.852 35.2119 800.194C28.3914 799.536 22.6597 798.343 18.0579 796.595C13.4561 794.867 9.8199 792.543 7.1903 789.664C4.56071 786.784 2.69121 783.123 1.62294 778.702C0.554667 774.259 0 768.994 0 762.886V759.472L21.7352 758.937V763.441C21.7352 767.287 22.2078 770.434 23.1733 772.881C24.1389 775.349 25.9878 777.221 28.7406 778.537C31.4935 779.853 35.3557 780.758 40.3273 781.231C45.2989 781.704 51.7291 781.951 59.6384 781.951C66.5822 781.951 72.2112 781.684 76.5253 781.149C80.8395 780.614 84.1676 779.689 86.489 778.373C88.831 777.056 90.4129 775.308 91.2552 773.149C92.0975 770.989 92.5084 768.357 92.5084 765.23C92.5084 762.104 92.0564 759.513 91.1525 757.415C90.2485 755.317 88.4612 753.425 85.77 751.759C83.0788 750.073 79.0933 748.612 73.8341 747.358C68.5544 746.103 61.6722 744.931 53.1877 743.861C42.5255 742.545 33.7944 740.962 26.9533 739.09C20.1328 737.239 14.8325 734.894 11.0525 732.077C7.27245 729.259 4.68394 725.722 3.24588 721.464C1.80782 717.207 1.08881 711.962 1.08881 705.731C1.08881 699.499 1.95163 693.679 3.69784 689.01C5.42352 684.341 8.29966 680.475 12.3262 677.41C16.3323 674.346 21.7763 672.104 28.679 670.664C35.5612 669.225 44.1484 668.505 54.4614 668.505C63.5622 668.505 71.3072 668.916 77.7168 669.759C84.1265 670.603 89.4473 671.919 93.6999 673.708C97.9524 675.497 101.281 677.842 103.664 680.721C106.067 683.601 107.731 687.015 108.697 690.964C109.662 694.913 110.135 699.478 110.135 704.62V707.849L88.5845 708.384V704.25C88.5845 701.144 88.0503 698.471 86.9615 696.249C85.8932 694.028 84.0854 692.301 81.5791 691.025C79.0727 689.771 75.5803 688.845 71.1634 688.228C66.726 687.632 61.1586 687.323 54.4614 687.323C48.1134 687.323 42.9364 687.694 38.9303 688.393C34.9243 689.113 31.8017 690.141 29.5829 691.457C27.3642 692.774 25.8029 694.46 24.9195 696.496C24.0156 698.532 23.5636 700.939 23.5636 703.695C23.5636 706.821 23.954 709.412 24.7346 711.51C25.5153 713.608 27.1588 715.376 29.6651 716.816C32.1714 718.256 35.8898 719.552 40.7998 720.683C45.7097 721.814 52.3454 722.863 60.7272 723.829C71.8619 725.269 80.9422 727.017 87.9476 729.053C94.9531 731.09 100.397 733.66 104.3 736.787C108.183 739.913 110.874 743.656 112.374 748.016C113.874 752.397 114.613 757.518 114.613 763.4C114.613 768.912 114.141 773.745 113.175 777.879C112.21 782.013 110.505 785.55 108.06 788.491C105.595 791.432 102.308 793.859 98.1784 795.772C94.0491 797.685 88.831 799.063 82.5446 799.906C76.2583 800.749 68.7393 801.161 60.0082 801.161V801.181Z"/><path d="M283.401 670.993V691.128C278.861 691.004 274.69 690.943 270.931 690.943H234.014V783.74C234.014 786.496 234.034 789.067 234.096 791.473C234.157 793.859 234.199 796.265 234.199 798.651H211.744C211.847 796.265 211.909 793.859 211.909 791.473V690.943H181.566C179.039 690.943 176.224 690.984 173.122 691.045C169.999 691.107 166.466 691.128 162.521 691.128V670.993H283.401Z"/><path d="M449.211 783.637C446.211 778.681 443.294 773.847 440.418 769.179C437.295 763.77 434.337 758.69 431.522 753.877C430.557 752.232 429.591 750.627 428.605 749.064C432.735 748.139 436.289 746.905 439.247 745.342C445.061 742.277 449.19 737.938 451.635 732.302C454.1 726.667 455.312 719.716 455.312 711.448V710.728C455.312 700.774 453.854 692.896 450.916 687.076C447.978 681.276 443.315 677.142 436.905 674.674C430.495 672.227 422.031 670.993 411.492 670.993H344.314C344.438 674.345 344.499 677.903 344.499 681.688V791.555C344.499 794.023 344.438 796.389 344.314 798.651H366.584C366.584 796.265 366.563 793.859 366.502 791.473C366.44 789.067 366.419 786.496 366.419 783.74V752.807H405.781L419.751 776.542C422.031 780.264 424.209 784.007 426.304 787.771C428.4 791.555 430.475 795.175 432.509 798.651H458.373C455.25 793.633 452.21 788.614 449.211 783.637ZM366.419 690.058H409.52C415.149 690.058 419.628 690.716 422.997 692.033C426.345 693.349 428.77 695.508 430.269 698.491C431.769 701.493 432.509 705.627 432.509 710.913V711.263C432.509 716.672 431.769 720.97 430.269 724.22C428.77 727.449 426.304 729.814 422.894 731.315C419.484 732.817 414.964 733.557 409.335 733.557H366.419V690.058Z"/><path d="M633.591 782.65C631.126 776.069 628.414 768.726 625.415 760.623C622.415 752.54 619.334 744.169 616.17 735.552C612.986 726.914 609.904 718.482 606.925 710.275C603.926 702.069 601.194 694.542 598.749 687.714C596.284 680.885 594.332 675.312 592.915 670.993H558.237C556.675 675.312 554.642 680.885 552.135 687.714C549.608 694.542 546.794 702.069 543.692 710.275C540.569 718.482 537.364 726.914 534.077 735.552C530.79 744.169 527.606 752.54 524.566 760.623C521.505 768.726 518.69 776.069 516.122 782.65C513.534 789.252 511.479 794.579 509.918 798.651H533.461L543.076 771.503H605.939L615.184 798.651H639.795C638.111 794.579 636.036 789.252 633.591 782.65ZM549.691 752.807L555.176 737.341C557.949 729.546 560.599 721.854 563.188 714.224C565.756 706.614 568.18 699.519 570.46 692.917C570.645 692.382 570.83 691.827 570.994 691.313H578.924C579.089 691.806 579.274 692.321 579.438 692.835C581.595 699.375 583.958 706.409 586.525 713.957C589.093 721.525 591.641 729.197 594.168 736.992L599.55 752.807H549.691Z"/><path d="M795.145 670.993V691.128C790.605 691.004 786.434 690.943 782.675 690.943H745.758V783.74C745.758 786.496 745.778 789.067 745.84 791.473C745.902 793.859 745.943 796.265 745.943 798.651H723.488C723.612 796.265 723.673 793.859 723.673 791.473V690.943H693.31C690.803 690.943 687.989 690.984 684.866 691.045C681.744 691.107 678.231 691.128 674.266 691.128V670.993H795.145Z"/><path d="M952.449 779.421V798.651H854.004C854.127 796.389 854.189 794.023 854.189 791.555V681.688C854.189 677.903 854.127 674.345 854.004 670.993H948.854V690.223C945.732 690.223 941.849 690.202 937.165 690.14C932.501 690.079 927.468 690.058 922.086 690.058H876.109V724.22H941.479V742.915C939.445 742.915 936.939 742.894 933.939 742.833C930.94 742.771 927.674 742.73 924.161 742.73H876.109V779.606H930.344C934.658 779.606 938.706 779.565 942.465 779.503C946.245 779.441 949.573 779.421 952.449 779.421Z"/><path d="M1129.82 732.488C1129.82 734.524 1129.78 736.498 1129.74 738.411C1129.68 740.344 1129.64 742.195 1129.64 743.985V749.208C1129.64 757.476 1129.02 764.613 1127.75 770.598C1126.49 776.603 1124.52 781.581 1121.83 785.529C1119.14 789.499 1115.5 792.604 1110.96 794.887C1106.4 797.17 1100.82 798.774 1094.16 799.741C1087.52 800.687 1079.72 801.181 1070.72 801.181C1059.48 801.181 1049.99 800.152 1042.27 798.116C1034.54 796.08 1028.34 792.604 1023.67 787.689C1018.99 782.773 1015.62 776.274 1013.52 768.171C1011.43 760.088 1010.38 749.928 1010.38 737.691V731.953C1010.38 719.716 1011.43 709.535 1013.52 701.37C1015.62 693.226 1018.99 686.727 1023.67 681.873C1028.34 677.019 1034.5 673.564 1042.16 671.528C1049.83 669.492 1059.23 668.463 1070.37 668.463C1081.5 668.463 1091.06 669.224 1098.66 670.726C1106.26 672.227 1112.34 674.654 1116.88 678.006C1121.44 681.359 1124.71 685.883 1126.68 691.58C1128.65 697.277 1129.58 704.373 1129.45 712.888L1108.09 713.237C1108.09 708.445 1107.57 704.435 1106.57 701.206C1105.54 697.956 1103.69 695.447 1101 693.637C1098.31 691.848 1094.55 690.531 1089.76 689.688C1084.98 688.845 1078.75 688.434 1071.09 688.434C1063.43 688.434 1057.28 689.153 1052.31 690.593C1047.34 692.033 1043.44 694.419 1040.56 697.771C1037.68 701.144 1035.67 705.751 1034.54 711.633C1033.39 717.494 1032.84 724.94 1032.84 733.927V735.717C1032.84 744.951 1033.39 752.561 1034.54 758.566C1035.67 764.551 1037.68 769.241 1040.56 772.593C1043.44 775.945 1047.38 778.29 1052.41 779.606C1057.43 780.922 1063.71 781.581 1071.27 781.581C1077.5 781.581 1082.8 781.313 1087.15 780.758C1091.53 780.223 1095.1 779.339 1097.86 778.064C1100.61 776.809 1102.77 775.02 1104.31 772.675C1105.87 770.331 1106.96 767.348 1107.55 763.688C1108.15 760.068 1108.4 755.666 1108.27 750.463H1062.83V732.488H1129.82Z"/><path d="M1303.79 670.993C1299.72 677.101 1295.34 683.847 1290.68 691.21C1286.02 698.593 1281.19 706.203 1276.22 714.06C1271.25 721.916 1266.4 729.649 1261.67 737.259C1257.48 744.005 1253.52 750.381 1249.74 756.427V786.434C1249.74 790.63 1249.78 794.702 1249.9 798.651H1227.63C1227.75 794.825 1227.82 790.774 1227.82 786.516V756.468C1224.08 750.422 1220.17 744.087 1216.04 737.424C1211.32 729.814 1206.47 722.06 1201.5 714.142C1196.53 706.224 1191.68 698.593 1186.95 691.21C1182.21 683.847 1177.87 677.101 1173.93 670.993H1199.79L1223.32 709.658C1224.88 712.291 1226.46 714.944 1228.08 717.659C1229.71 720.353 1231.29 723.047 1232.85 725.742C1234.39 728.436 1235.95 731.11 1237.51 733.742C1238.19 734.873 1238.85 736.025 1239.51 737.156C1240.12 736.066 1240.74 734.997 1241.37 733.927C1242.87 731.397 1244.37 728.827 1245.87 726.194C1247.35 723.562 1248.89 720.95 1250.43 718.379C1252 715.787 1253.56 713.196 1255.12 710.543L1279.01 670.993H1303.79Z"/><path d="M1499.82 787.339C1499.82 791.288 1499.88 795.072 1500 798.651H1477.55C1477.67 793.859 1477.73 788.594 1477.73 782.835V740.221C1477.73 736.621 1477.73 732.631 1477.81 728.251C1477.87 723.891 1477.94 719.386 1478 714.779C1478.06 710.152 1478.12 705.689 1478.18 701.37C1478.24 697.627 1478.26 694.069 1478.33 690.778H1475.22C1475.02 691.395 1474.79 692.012 1474.59 692.65C1472.96 697.401 1471.26 702.357 1469.47 707.581C1467.66 712.805 1465.88 718.152 1464.07 723.685C1462.28 729.197 1460.37 734.77 1458.34 740.406L1437.86 798.651H1415.93L1394.57 740.57C1392.54 735.058 1390.52 729.526 1388.55 723.952C1386.58 718.379 1384.69 712.97 1382.88 707.766C1381.09 702.542 1379.35 697.606 1377.68 692.917C1377.42 692.197 1377.17 691.477 1376.92 690.778H1373.86C1373.86 693.411 1373.9 696.249 1373.9 699.313C1373.9 703.2 1373.94 707.293 1374.01 711.53C1374.07 715.787 1374.11 720.168 1374.17 724.672C1374.23 729.156 1374.27 733.619 1374.27 738.061V765.662C1374.27 771.235 1374.29 776.932 1374.35 782.753C1374.42 788.553 1374.46 793.859 1374.46 798.651H1352.54C1352.66 794.455 1352.72 790.589 1352.72 787.051V681.77C1352.72 678.068 1352.66 674.469 1352.54 670.993H1392.23L1411.99 727.449C1414.02 733.454 1416.04 739.439 1418.01 745.424C1419.98 751.43 1421.87 757.209 1423.66 762.782C1425.06 767.122 1426.37 771.174 1427.58 774.978C1428.84 771.174 1430.17 767.122 1431.57 762.782C1433.36 757.209 1435.27 751.388 1437.32 745.342C1439.35 739.295 1441.39 733.269 1443.42 727.264L1463 670.993H1500C1499.88 674.345 1499.82 677.821 1499.82 681.42V787.339Z"/></svg>
+    </a>
+    <div class="crumb" id="crumb"></div>
+    <div class="switch"><div class="wrap"><span class="dot"></span><select id="clientSel" onchange="selectClient(this.value)"></select></div><button class="sm" onclick="newClient()">+ New client</button></div>
+  </header>
+  <nav class="rail" id="rail"></nav>
+  <main class="main"><div id="view"></div></main>
 </div>
 
 <script>
@@ -142,12 +157,17 @@ const api = async (path, opts={}) => {
 };
 const esc = s => String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-let STATE = { clients:[], sel:null, offer:null, tab:'setup', status:null, enums:null, profile:null, offerDoc:null, run:null };
+let STATE = { clients:[], sel:null, offer:null, tab:'batch', status:null, enums:null, profile:null, offerDoc:null, run:null };
 
-const TABS = [
-  ['setup','Setup'], ['brand','Brand'], ['offer','Offer'],
-  ['targeting','Targeting & Budget'], ['batch','New Batch'], ['generate','Templates (old)'], ['review','Review'],
+// The rail: the daily path first (Create, Review, Exports), the library next, the client's setup last.
+const NAV = [
+  ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Exports','⤓'],
+  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos','▣'], ['references','References','◈'],
+  ['sec','Client'], ['brand','Brand','●'], ['offer','Offers','●'], ['targeting','Targeting','●'], ['setup','Setup','●'], ['generate','Templates (old)','●'],
 ];
+const TITLES = { batch:'Create', review:'Review', exports:'Exports', scenes:'Scene library', photos:'Photos', references:'Reference images', brand:'Brand', offer:'Offers', targeting:'Targeting & budget', setup:'Setup', generate:'Templates (old)' };
+let VIEW_SEQ = 0;
+function go(tab){ STATE.tab = tab; render(); }
 
 async function boot(){
   STATE.status = await api('/api/status');
@@ -160,7 +180,7 @@ async function loadClients(){
   const { clients } = await api('/api/clients');
   STATE.clients = clients;
   if (STATE.sel && !clients.find(c=>c.gym===STATE.sel)) STATE.sel = null;
-  if (!STATE.sel && clients.length) selectClient(clients[0].gym, false);
+  if (!STATE.sel && clients.length) await selectClient(clients[0].gym, false);
 }
 
 async function selectClient(gym, doRender=true){
@@ -180,19 +200,16 @@ async function loadOffer(slug){
 }
 
 function render(){
-  // sidebar
-  $('#clients').innerHTML = STATE.clients.length ? STATE.clients.map(c=>`
-    <div class="client ${c.gym===STATE.sel?'sel':''}" onclick="selectClient('${esc(c.gym)}')">
-      <div class="nm">${esc(c.display_name||c.gym)}</div>
-      <div class="sub">${c.offers.length} offer${c.offers.length===1?'':'s'} · ${c.outputs.length} batch${c.outputs.length===1?'':'es'}</div>
-    </div>`).join('') : '<div style="color:var(--dim);font-size:12px">No clients yet</div>';
-
+  const seq = ++VIEW_SEQ;
+  const sel = $('#clientSel');
+  sel.innerHTML = STATE.clients.length ? STATE.clients.map(c=>`<option value="${esc(c.gym)}" ${c.gym===STATE.sel?'selected':''}>${esc(c.display_name||c.gym)}</option>`).join('') : '<option>No clients yet</option>';
   const bad = STATE.status.checks.filter(c=>!c.ok && !c.optional).length;
-  $('#sideStatus').innerHTML = `Node ${esc(STATE.status.node)}<br>` +
-    (bad ? `<span style="color:var(--err)">${bad} setup item${bad===1?'':'s'} blocking</span>` : `<span style="color:var(--ok)">setup complete</span>`);
-
-  $('#tabs').innerHTML = TABS.map(([k,l])=>
-    `<div class="tab ${STATE.tab===k?'sel':''}" onclick="STATE.tab='${k}';render()">${l}</div>`).join('');
+  const counts = { scenes: B.scenes?.status?.total ?? null, review: (B.setup?.batches||[]).filter(b=>b.ads && !b.selected).length || null };
+  $('#rail').innerHTML = NAV.map(([k,l,ic])=> k==='sec' ? `<div class="sec">${l}</div>`
+    : `<button class="tab ${STATE.tab===k?'sel':''}" onclick="go('${k}')"><span class="ic">${ic}</span>${l}${counts[k]!=null?`<span class="badge">${counts[k]}</span>`:''}</button>`).join('')
+    + `<div class="foot">${bad ? `<span style="color:var(--err)">${bad} setup item${bad===1?'':'s'} blocking</span>` : `<span style="color:var(--ok)">setup complete</span>`}<br>Node ${esc(STATE.status.node)}</div>`;
+  const client = STATE.clients.find(c=>c.gym===STATE.sel);
+  $('#crumb').innerHTML = `<b>${esc(client?.display_name||'')}</b><span class="sep">›</span>${esc(TITLES[STATE.tab]||'')}`;
 
   const v = $('#view');
   if (STATE.tab==='setup') return viewSetup(v);
@@ -200,22 +217,25 @@ function render(){
   if (STATE.tab==='brand') return viewBrand(v);
   if (STATE.tab==='offer') return viewOffer(v);
   if (STATE.tab==='targeting') return viewTargeting(v);
-  if (STATE.tab==='batch') return viewBatch(v);
+  if (STATE.tab==='batch') return viewBatch(v, seq);
   if (STATE.tab==='generate') return viewGenerate(v);
-  if (STATE.tab==='review') return viewReview(v);
+  if (STATE.tab==='review') return viewReviewList(v, seq);
+  if (STATE.tab==='exports') return viewExports(v);
+  if (STATE.tab==='scenes') return viewScenes(v, seq);
+  if (STATE.tab==='photos') return viewPhotos(v, seq);
+  if (STATE.tab==='references') return viewReferences(v, seq);
 }
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 function viewSetup(v){
   v.innerHTML = `
+  <h1>Setup</h1><p class="sub">What is configured on this machine, and what each missing piece blocks.</p>
   <div class="card">
-    <h3>Setup status</h3>
-    <p class="hint">What is configured on this machine, and what each missing piece blocks.</p>
     ${STATE.status.checks.map(c=>`
       <div class="chk">
         <div class="dot ${c.ok?'ok':(c.optional?'opt':'bad')}"></div>
         <div style="flex:1">
-          <div class="t">${esc(c.label)} ${c.ok?'<span class="pill on">ready</span>':(c.optional?'<span class="pill">optional</span>':'<span class="pill">missing</span>')}</div>
+          <div class="t">${esc(c.label)} ${c.ok?'<span class="pill on">ready</span>':(c.optional?'<span class="pill">optional</span>':'<span class="pill warn">missing</span>')}</div>
           <div class="d">Blocks: ${esc(c.blocks)}</div>
           ${c.ok?'':`<div class="fix">${esc(c.fix)}</div>`}
         </div>
@@ -250,6 +270,7 @@ function viewBrand(v){
     </div>`;
 
   v.innerHTML = `
+  <h1>Brand</h1><p class="sub">The client's identity, premises and photography rules. These win over anything detected from the website.</p>
   <div class="card">
     <h3>Identity</h3>
     <p class="hint">Used to build campaign and ad names, so these must be importer-safe (no em dashes).</p>
@@ -274,7 +295,7 @@ function viewBrand(v){
   </div>
 
   <div class="card">
-    <h3>Brand lock <span class="pill on">overrides auto-detection</span></h3>
+    <h3>Brand lock <span class="pill navy">overrides auto-detection</span></h3>
     <p class="hint">These colours win over anything the website scrape guesses. This is the gym's jurisdiction over its own look.</p>
     <div class="grid">${col('primary','Primary')}${col('secondary','Secondary')}${col('accent','Accent')}</div>
     <fieldset style="margin-top:14px"><legend>Photography</legend>
@@ -296,6 +317,7 @@ function viewOffer(v){
   const c = STATE.clients.find(x=>x.gym===STATE.sel);
   const o = STATE.offerDoc;
   const picker = `
+    <h1>Offers</h1><p class="sub">The offer file holds the mechanics, price and destination. The words on the ads come from the brief, never from here.</p>
     <div class="card"><div class="row">
       <label style="margin:0">Offer</label>
       <select style="width:auto;min-width:200px" onchange="loadOffer(this.value)">
@@ -309,7 +331,6 @@ function viewOffer(v){
   v.innerHTML = picker + `
   <div class="card">
     <h3>The offer</h3>
-    <p class="hint">This is what your ads sell. Phase 2 fills image prompts from it and Phase 4 writes copy from it.</p>
     <div class="grid">
       <div><label>Name</label><input value="${esc(o.name||'')}" oninput="setO('name',this.value)"></div>
       <div><label>Type</label><select onchange="setO('offer_type',this.value)">
@@ -381,17 +402,18 @@ function viewOffer(v){
 function viewTargeting(v){
   const p = STATE.profile; if(!p){v.innerHTML='<div class="empty">No profile.</div>';return;}
   const T = p.targeting_defaults ||= {}, C = p.campaign_defaults ||= {};
-  const dem = T.demographics ||= {}, B = C.budget ||= {};
+  const dem = T.demographics ||= {}, B2 = C.budget ||= {};
   const pin = (T.geo ||= {}).radius_pins?.[0] || {};
   v.innerHTML = `
+  <h1>Targeting & budget</h1><p class="sub">Defaults for the Meta campaign. Not used by the creative pipeline.</p>
   <div class="card">
-    <h3>Budget <span class="pill">had no representation before</span></h3>
+    <h3>Budget</h3>
     <div class="grid">
       <div><label>Daily / lifetime</label><select onchange="setP('campaign_defaults.budget.type',this.value)">
-        ${['daily','lifetime'].map(t=>`<option ${t===B.type?'selected':''}>${t}</option>`).join('')}</select></div>
-      <div><label>Amount (SGD)</label><input type="number" value="${esc(B.amount??'')}" oninput="setP('campaign_defaults.budget.amount',parseFloat(this.value)||null)"></div>
+        ${['daily','lifetime'].map(t=>`<option ${t===B2.type?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div><label>Amount (SGD)</label><input type="number" value="${esc(B2.amount??'')}" oninput="setP('campaign_defaults.budget.amount',parseFloat(this.value)||null)"></div>
       <div><label>Budget level</label><select onchange="setP('campaign_defaults.budget.level',this.value)">
-        ${['campaign','adset'].map(t=>`<option ${t===B.level?'selected':''}>${t==='campaign'?'campaign (CBO)':'adset (ABO)'}</option>`).join('')}</select></div>
+        ${['campaign','adset'].map(t=>`<option ${t===B2.level?'selected':''}>${t==='campaign'?'campaign (CBO)':'adset (ABO)'}</option>`).join('')}</select></div>
       <div><label>Objective</label><select onchange="setP('campaign_defaults.objective',this.value)">
         ${['OUTCOME_LEADS','OUTCOME_TRAFFIC','OUTCOME_SALES','OUTCOME_AWARENESS','OUTCOME_ENGAGEMENT'].map(t=>`<option ${t===C.objective?'selected':''}>${t}</option>`).join('')}</select></div>
     </div>
@@ -421,10 +443,11 @@ function viewTargeting(v){
   ${saveBar('profile')}`;
 }
 
-// ── Generate ─────────────────────────────────────────────────────────────────
+// ── Templates (old) ──────────────────────────────────────────────────────────
 function viewGenerate(v){
   const gemini = STATE.status.checks.find(c=>c.key==='GEMINI_KEY');
   v.innerHTML = `
+  <h1>Templates (old)</h1><p class="sub">The original template-library generation. The offer-first Create screen is the current path.</p>
   <div class="card">
     <h3>Validate</h3>
     <p class="hint">Merges the profile and offer, checks every compliance gate, and writes the resolved brief the later phases read.</p>
@@ -452,27 +475,34 @@ function viewGenerate(v){
   renderRunBox();
 }
 
-// ── New Batch (offer-first, Step 7) ──────────────────────────────────────────
+// ── Create (offer-first batches) ─────────────────────────────────────────────
 // The form is painted once; typing only updates the parts that depend on it (errors, summary,
-// preview), so the field being typed in never loses focus. Every rule is the server's (Step 6).
-const B = { gym:null, setup:null, draft:null, check:null, preview:null, loc:0, seqC:0, seqP:0, tC:null, tP:null,
+// preview), so the field being typed in never loses focus. Every rule is the server's.
+const B = { gym:null, setup:null, scenes:null, draft:null, check:null, preview:null, loc:0, seqC:0, seqP:0, tC:null, tP:null,
   mode:'new', view:null, savedId:null, touched:false };
 const today = () => new Date().toISOString().slice(0,10);
 const slugify = s => String(s||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+// The spread the variety batches asked for: every batch may ask for it with one switch.
+const SPREAD = { exercise:['lunge','squat','deadlift','bench-press'], age:['young','prime','older'], setting:['solo','coached','group'], equipment:['bodyweight','dumbbells','barbell'] };
+const AUDIENCES = ['MEN WANTED','LADIES WANTED'];
 
-async function viewBatch(v){
-  if (B.gym !== STATE.sel){ Object.assign(B, { gym:STATE.sel, draft:null, mode:'new', view:null, savedId:null, touched:false, loc:0 }); }
-  v.innerHTML = '<div class="card"><h3>New batch</h3><p class="hint">Loading…</p></div>';
+async function loadSetup(){
   B.setup = await api(`/api/client/${STATE.sel}/batch-setup`);
   B.scenes = await api(`/api/client/${STATE.sel}/scenes`);
+}
+async function viewBatch(v, seq=VIEW_SEQ){
+  if (B.gym !== STATE.sel){ Object.assign(B, { gym:STATE.sel, draft:null, mode:'new', view:null, savedId:null, touched:false, loc:0, setup:null, scenes:null }); }
+  v.innerHTML = '<h1>Create</h1><p class="sub">Loading…</p>';
+  await loadSetup();
+  if (seq !== VIEW_SEQ) return; // a newer render took over while loading
   if (!B.draft) B.draft = freshDraft();
   paintBatch(v);
   scheduleCheck(0); schedulePreview(0);
 }
 
 function freshDraft(){
-  return { batch_id:'', offer:'', locations:[''], audience:'', generated:2, real:B.setup.photos.slice(0,2).map(p=>p.path),
-    looks_per_photo:2, max_calls:'', attempts:2, seed:'', direction_words:'', direction_reference:'' };
+  return { batch_id:'', offer:'', locations:[''], audience:'', generated:10, real:B.setup.photos.slice(0,2).map(p=>p.path),
+    looks_per_photo:2, max_calls:'', attempts:2, seed:'', direction_words:'', direction_reference:'', spread:true };
 }
 /** The batch's direction, if any: the owner's words and/or an uploaded reference image. */
 function directionFromDraft(){
@@ -489,7 +519,8 @@ function briefFromDraft(){
   const generated = Number(d.generated)||0, attempts = Number(d.attempts)||1;
   const direction = directionFromDraft();
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
-    max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}) };
+    max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
+    ...(d.spread && generated>0 ? { must_show: SPREAD } : {}) };
 }
 function autoId(){
   const base = `${today()}-${slugify(B.draft.offer).slice(0,40) || 'batch'}`.replace(/-+$/,'');
@@ -499,177 +530,100 @@ function autoId(){
 }
 
 function paintBatch(v){
-  const d = B.draft, re = B.mode==='rerender', maxL = B.setup.maxLocations||4;
+  const d = B.draft, re = B.mode==='rerender';
   const photos = B.setup.photos;
   v.innerHTML = `
+  <div class="row" style="margin-bottom:4px"><h1 style="margin:0">${re?`Change the words of ${esc(B.view.brief.batch_id)}`:'Create'}</h1><div class="spacer"></div>${re?`<button onclick="bNew()">Start a new campaign instead</button>`:''}</div>
+  <p class="sub">${re?'Same photos and looks; only the words change. Re-rendering is free.':'Everything the batch needs, on one screen. Every word on the ads is exactly what you type. Nothing spends until you confirm.'}</p>
   <div class="nb">
     <div class="card">
-      <div class="row"><h3 style="margin:0">${re?`Change the words of ${esc(B.view.brief.batch_id)}`:'New batch'}</h3><div class="spacer"></div>
-        ${re?`<button onclick="bNew()" style="padding:3px 9px;font-size:12px">Start a new batch instead</button>`:''}</div>
-      <p class="hint">${re?'Same photos and looks; only the words change. Re-rendering is free.':'Every word on the ads is exactly what you type here. Nothing is filled in for you.'}</p>
+      <h3>Brief</h3>
       <label for="bOffer">Offer</label>
       <input id="bOffer" value="${esc(d.offer)}" placeholder="The offer, exactly as it should appear" oninput="bSet('offer',this.value)">
-      <label>Locations <span style="font-weight:400">(1–${maxL}; each one gets its own version of every ad)</span></label>
-      <div id="bLocs"></div>
-      <label for="bAud">Audience <span style="font-weight:400">(optional)</span></label>
-      <input id="bAud" value="${esc(d.audience)}" placeholder="e.g. MEN, LADIES WANTED" oninput="bSet('audience',this.value)">
-      <fieldset style="margin-top:14px" ${re?'disabled':''}><legend>Photos${re?' (fixed for this batch)':''}</legend>
-        <div class="grid">
-          <div><label for="bGen">New photos to generate</label><input id="bGen" type="number" min="0" max="12" value="${esc(d.generated)}" oninput="bSet('generated',this.value)"></div>
-          <div><label for="bLooks">Looks per photo</label><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"></div>
+      <label>Locations <span class="n">· one version of every ad per location</span></label>
+      <div id="bLocs" class="chips"></div>
+      <label for="bAud">Audience <span class="n">· optional</span></label>
+      <div class="chips" id="bAudChips"></div>
+      <input id="bAud" value="${esc(d.audience)}" placeholder="or type a callout, e.g. MUMS OF BISHAN" oninput="bSet('audience',this.value)">
+      <fieldset style="margin-top:16px" ${re?'disabled':''}><legend>Photos${re?' (fixed for this batch)':''}</legend>
+        <div class="row" style="gap:28px">
+          <div><label for="bGen" style="margin-top:0">New photos</label><div class="stepper"><button type="button" onclick="bStep('generated',-1)">−</button><input id="bGen" type="number" min="0" max="12" value="${esc(d.generated)}" oninput="bSet('generated',this.value)"><button type="button" onclick="bStep('generated',1)">+</button></div></div>
+          <div><label for="bLooks" style="margin-top:0">Looks per photo</label><div class="stepper"><button type="button" onclick="bStep('looks_per_photo',-1)">−</button><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"><button type="button" onclick="bStep('looks_per_photo',1)">+</button></div></div>
+          <label style="margin-top:0;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text)"><input type="checkbox" style="width:auto;margin:0" ${d.spread?'checked':''} onchange="bSet('spread',this.checked)"> Spread across exercises, ages, settings and equipment</label>
         </div>
-        <label>Real photos <span style="font-weight:400">(cleaned ones only)</span></label>
+        <label>Real photos <span class="n">· cleaned</span></label>
         <div class="thumbs">${photos.length ? photos.map(p=>`<label><input type="checkbox" value="${esc(p.path)}" ${d.real.includes(p.path)?'checked':''} onchange="bReal(this.value,this.checked)"><img src="${esc(p.url)}" alt=""><span style="font-size:11px">${esc(p.path.split('/').pop())}</span></label>`).join('') : '<span class="hint">No cleaned photos yet — see clean-photo.mjs.</span>'}</div>
-        <details><summary>Advanced</summary><div class="grid" style="margin-top:6px">
-          <div><label for="bId">Batch name</label><input id="bId" class="mono" value="${esc(d.batch_id)}" placeholder="automatic" oninput="bSet('batch_id',this.value)"></div>
-          <div><label for="bCalls">Most image calls</label><input id="bCalls" type="number" min="0" max="30" value="${esc(d.max_calls)}" placeholder="automatic" oninput="bSet('max_calls',this.value)"></div>
-          <div><label for="bAtt">Tries per photo</label><input id="bAtt" type="number" min="1" max="5" value="${esc(d.attempts)}" oninput="bSet('attempts',this.value)"></div>
-          <div><label for="bSeed">Seed</label><input id="bSeed" class="mono" value="${esc(d.seed)}" placeholder="batch name" oninput="bSet('seed',this.value)"></div>
-        </div></details>
       </fieldset>
-      ${re ? '' : `<fieldset style="margin-top:14px"><legend>Direction <span style="font-weight:400">(optional)</span></legend>
+      ${re ? '' : `<fieldset><legend>Direction <span style="font-weight:400">· optional</span></legend>
         <p class="hint" style="margin-top:0">Leave empty and the batch draws from the approved scene library. Or say what the photos should show, in words or with a reference image: the plan drafts this batch's scenes from it, you read them, and confirming the run approves them.</p>
-        <label for="bDirWords">In words</label>
+        <label for="bDirWords" style="margin-top:4px">In words</label>
         <textarea id="bDirWords" rows="2" placeholder="e.g. older women doing walking lunges with a coach, bright and cheerful" oninput="bSet('direction_words',this.value)">${esc(d.direction_words)}</textarea>
-        <label>Reference image <span style="font-weight:400">(read into words once; never copied into a photo)</span></label>
+        <label>Reference image <span class="n">· read into words once; never copied into a photo</span></label>
         <div id="bRefs"></div>
-      </fieldset>`}
-      <div id="bScenes" class="hint" style="margin-top:8px"></div>
-      <div id="bErrors"></div>
-      <div id="bSummary" class="summary"></div>
-      <div class="row">
-        ${re ? `<button class="primary" id="bRerender" onclick="bRerender()">Save words and re-render (free)</button>`
-             : `<button id="bPlan" onclick="bPlan()">Plan (free)</button><button class="primary" id="bRun" onclick="bConfirm()">Run batch…</button>`}
-        <span id="bMsg" style="font-size:12px;color:var(--dim)"></span>
+      </fieldset>
+      <details><summary>Advanced</summary><div class="grid" style="margin-top:8px">
+        <div><label for="bId">Batch name</label><input id="bId" class="mono" value="${esc(d.batch_id)}" placeholder="automatic" oninput="bSet('batch_id',this.value)"></div>
+        <div><label for="bCalls">Most image calls</label><input id="bCalls" type="number" min="0" max="40" value="${esc(d.max_calls)}" placeholder="automatic" oninput="bSet('max_calls',this.value)"></div>
+        <div><label for="bAtt">Tries per photo</label><input id="bAtt" type="number" min="1" max="5" value="${esc(d.attempts)}" oninput="bSet('attempts',this.value)"></div>
+        <div><label for="bSeed">Seed</label><input id="bSeed" class="mono" value="${esc(d.seed)}" placeholder="batch name" oninput="bSet('seed',this.value)"></div>
+      </div></details>`}
+      <div id="bScenes" class="hint" style="margin-top:14px"></div>
+      <div id="bErrors" style="margin-top:8px"></div>
+    </div>
+    <div>
+      <div class="card pvcard">
+        <h3>Live preview</h3>
+        <p class="hint">Sample looks with your words, on your cleaned photos. The batch picks its own looks; these show how the words fit.</p>
+        <div class="chips" id="bLocTabs"></div>
+        <div id="bPrevMsg"></div>
+        <div class="pv" id="bPrev"></div>
+        <h3 style="margin-top:18px">This batch</h3>
+        <div id="bSummary" class="summary"></div>
+        <div class="row" style="margin-top:6px">
+          ${re ? `<button class="primary" id="bRerender" onclick="bRerender()" style="flex:1">Save words and re-render (free)</button>`
+               : `<button id="bPlan" onclick="bPlan()">Plan (free)</button><button class="primary" id="bRun" onclick="bConfirm()" style="flex:1">Generate…</button>`}
+        </div>
+        <div id="bMsg" style="font-size:12px;color:var(--dim);margin-top:6px"></div>
       </div>
     </div>
-    <div class="card pvcard">
-      <h3>Live preview</h3>
-      <p class="hint">Sample looks with your words, on your cleaned photos. The batch picks its own looks; these show how the words fit.</p>
-      <div class="chips" id="bLocTabs"></div>
-      <div id="bPrevMsg"></div>
-      <div class="pv" id="bPrev"></div>
-    </div>
   </div>
-  <div class="card"><h3>Batches</h3><div id="bList"></div></div>
-  <div class="card" id="bSceneCard"></div>
+  <h2 style="margin-top:8px">Campaigns</h2>
+  <div id="bList"></div>
   <div id="bResult"></div>
   <div id="runbox"></div>
   <div id="bModal"></div>`;
-  paintLocs(); paintRefs(); paintList(); paintScenes(); paintResult(); renderRunBox(); paintDerived();
-}
-
-/** The uploaded reference images, one of which a batch may follow; plus an upload control. */
-function paintRefs(){
-  const box = $('#bRefs'); if (!box) return;
-  const refs = B.scenes?.references || [], sel = B.draft.direction_reference || '';
-  box.innerHTML = `<div class="thumbs">
-    ${refs.map(r=>`<label><input type="radio" name="bRef" value="${esc(r.name)}" ${sel===r.name?'checked':''} onchange="bRef(this.value)"><img src="${esc(r.url)}" alt=""><span style="font-size:11px">${esc(r.name)}</span></label>`).join('')}
-    </div>
-    <div class="row" style="margin-top:6px"><input type="file" id="bRefFile" accept="image/png,image/jpeg,image/webp" style="width:auto" onchange="bUpload(this)">
-      ${sel?`<button onclick="bRef('')" style="padding:3px 9px;font-size:12px">No reference</button>`:''}<span id="bRefMsg" class="hint"></span></div>`;
-}
-function bRef(name){ B.draft.direction_reference = name; B.touched = true; paintRefs(); scheduleCheck(); }
-/** Upload a reference image as raw bytes: the server keeps image files only, in the client's references folder. */
-async function bUpload(input){
-  const f = input.files?.[0]; if (!f) return;
-  const ext = f.type==='image/png'?'png':f.type==='image/webp'?'webp':'jpg';
-  const base = slugify(f.name.replace(/\.[^.]+$/,'')).slice(0,40) || 'reference';
-  const name = `${base}.${ext}`;
-  const m = $('#bRefMsg'); if (m) m.textContent = 'Uploading…';
-  try {
-    const r = await fetch(`/api/client/${STATE.sel}/reference/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream','x-panel-token':TOKEN}, body: await f.arrayBuffer() });
-    const j = await r.json().catch(()=>({error:'bad response'}));
-    if (!r.ok) throw new Error(j.error || r.statusText);
-    B.scenes = await api(`/api/client/${STATE.sel}/scenes`);
-    B.draft.direction_reference = j.name; B.touched = true; paintRefs(); paintScenes(); scheduleCheck();
-  } catch(e){ const m2 = $('#bRefMsg'); if (m2) m2.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
-}
-
-// ── Scene library ────────────────────────────────────────────────────────────
-const TAGS = s => [s.setting, s.people!=null?`${s.people} ${s.people===1?'person':'people'}`:null, s.exercise, s.age, s.equipment, s.muscles, s.pose].filter(Boolean).join(' · ');
-/** Status, a Refresh button, and every draft awaiting approval with Approve / Reject. */
-function paintScenes(){
-  const box = $('#bSceneCard'); if (!box) return;
-  const sc = B.scenes, st = sc?.status;
-  if (!st?.exists){ box.innerHTML = '<h3>Scene library</h3><div class="hint">None yet — generated photos need one (brands/{gym}/scenes.json).</div>'; return; }
-  const drafts = sc.drafts || [];
-  const busy = STATE.run && !STATE.run.done;
-  box.innerHTML = `<div class="row"><h3 style="margin:0">Scene library</h3><div class="spacer"></div>
-      <button onclick="bRefreshConfirm()" ${busy?'disabled':''} style="padding:3px 9px;font-size:12px">Refresh scenes…</button></div>
-    <p class="hint">${st.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${st.total} live (${Object.entries(st.counts).map(([k,n])=>`${n} ${esc(k)}`).join(', ')})${st.retired?` · ${st.retired} retired`:''}${drafts.length?` · <span style="color:var(--warn)">${drafts.length} draft${drafts.length===1?'':'s'} awaiting approval</span>`:''}</p>
-    ${drafts.length ? `<div class="row" style="margin-bottom:6px"><button onclick="bApprove(${JSON.stringify(drafts.map(d=>d.id)).replace(/"/g,'&quot;')})" ${busy?'disabled':''} style="padding:3px 9px;font-size:12px">Approve all ${drafts.length}</button><span class="hint">Nothing is generated from a draft until it is approved. Rejecting asks why; the scene is retired, never deleted.</span></div>` : ''}
-    ${drafts.map(d=>`<div class="chk"><div class="dot opt"></div><div style="flex:1">
-      <div class="t"><span class="mono">${esc(d.id)}</span> <span class="pill">${esc(d.audience)}</span>${d.source&&d.source.startsWith('batch:')?` <span class="pill on">for batch ${esc(d.source.slice(6))}</span>`:''}${d.prefer_layout?` <span class="pill">${esc(d.prefer_layout.split('-')[0])}</span>`:''}</div>
-      <div class="d">${esc(TAGS(d))}${d.covers?.length?` · covers ${esc(d.covers.join(', '))}`:''}${d.direction?.words?` · from your words`:''}${d.direction?.reference?` · from ${esc(d.direction.reference.split('/').pop())}`:''}</div>
-      <div style="font-size:13px;margin:4px 0">${esc(d.scene)}</div>
-      <div class="row"><button onclick="bApprove(['${esc(d.id)}'])" ${busy?'disabled':''} style="padding:2px 8px;font-size:12px">Approve</button><button onclick="bReject('${esc(d.id)}')" ${busy?'disabled':''} style="padding:2px 8px;font-size:12px">Reject…</button></div>
-    </div></div>`).join('')}
-    <div id="bSceneMsg" class="hint"></div>`;
-}
-async function reloadScenes(){ B.scenes = await api(`/api/client/${STATE.sel}/scenes`); B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); paintScenes(); paintRefs(); paintDerived(); }
-async function bApprove(ids){
-  try { const r = await api(`/api/client/${STATE.sel}/scenes/approve`, {method:'POST', body:{ids}}); await reloadScenes(); const m=$('#bSceneMsg'); if (m) m.textContent = `approved: ${r.approved.join(', ')}`; scheduleCheck(0); }
-  catch(e){ const m=$('#bSceneMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
-}
-async function bReject(id){
-  const reason = prompt(`Reject ${id} — what was wrong with it? (kept as the reason; the scene is retired, never deleted)`);
-  if (reason === null) return;
-  try { const r = await api(`/api/client/${STATE.sel}/scenes/reject`, {method:'POST', body:{id, reason}}); await reloadScenes(); const m=$('#bSceneMsg'); if (m) m.textContent = `retired ${r.retired}: ${r.reason}`; scheduleCheck(0); }
-  catch(e){ const m=$('#bSceneMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
-}
-/** A refresh: audience, how many, and the direction — the library's gaps, your words, or a reference image. Text calls only. */
-function bRefreshConfirm(){
-  const sc = B.scenes, refs = sc.references || [];
-  const aud = (B.check?.summary?.scenes_for) || 'any';
-  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
-    <h3>Refresh scenes</h3>
-    <p class="hint">The agent drafts new scenes for this gym, written to its photography rules and unlike anything in the library. They arrive as drafts for you to approve or reject. One or two text calls; no image calls.</p>
-    <div class="grid">
-      <div><label for="bRfAud">Audience</label><select id="bRfAud">${(sc.audiences||['men','women','any']).map(a=>`<option value="${a}" ${a===aud?'selected':''}>${a}</option>`).join('')}</select></div>
-      <div><label for="bRfN">How many</label><input id="bRfN" type="number" min="1" max="${sc.maxCount||12}" value="6"></div>
-    </div>
-    <label>Direction</label>
-    <div><label style="font-weight:400"><input type="radio" name="bRfDir" value="gaps" checked style="width:auto"> Fill the library's gaps (the thinnest exercises, ages, settings and equipment for this audience)</label></div>
-    <div><label style="font-weight:400"><input type="radio" name="bRfDir" value="words" style="width:auto"> In words</label><textarea id="bRfWords" rows="2" placeholder="e.g. couples in their fifties training together, warm and unposed"></textarea></div>
-    <div><label style="font-weight:400"><input type="radio" name="bRfDir" value="reference" style="width:auto" ${refs.length?'':'disabled'}> Like a reference image${refs.length?'':' (upload one on the batch form first)'}</label>
-      ${refs.length?`<select id="bRfRef">${refs.map(r=>`<option value="${esc(r.name)}">${esc(r.name)}${r.read?' (read before)':''}</option>`).join('')}</select>`:''}</div>
-    <div id="bRfErr"></div>
-    <div class="row"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="bRfGo" onclick="bRefreshGo()">Draft them</button></div></div></div>`;
-}
-function bRefreshGo(){
-  const audience = $('#bRfAud').value, count = parseInt($('#bRfN').value, 10), dir = document.querySelector('input[name="bRfDir"]:checked')?.value;
-  const words = ($('#bRfWords')?.value||'').trim(), reference = $('#bRfRef')?.value || null;
-  if (dir==='words' && words.length < 3){ $('#bRfErr').innerHTML = '<div class="msg err">Say what the scenes should show.</div>'; return; }
-  if (dir==='reference' && !reference){ $('#bRfErr').innerHTML = '<div class="msg err">Pick a reference image.</div>'; return; }
-  bClose();
-  run({kind:'scenes-refresh', gym:STATE.sel, audience, count, ...(dir==='words'?{words}:{}), ...(dir==='reference'?{reference}:{})}, async()=>{ await reloadScenes(); $('#bSceneCard')?.scrollIntoView({behavior:'smooth'}); });
+  paintLocs(); paintAud(); paintRefs(); paintList(); paintResult(); renderRunBox(); paintDerived();
 }
 
 function paintLocs(){
   const d = B.draft, maxL = B.setup.maxLocations||4;
-  $('#bLocs').innerHTML = d.locations.map((l,i)=>`<div class="locrow"><input id="bLoc${i}" value="${esc(l)}" placeholder="e.g. BISHAN" oninput="bLoc(${i},this.value)">
-    ${d.locations.length>1?`<button title="Remove" onclick="bLocDel(${i})">✕</button>`:''}</div>`).join('') +
-    (d.locations.length<maxL?`<button onclick="bLocAdd()" style="padding:3px 9px;font-size:12px">+ location</button>`:'');
+  $('#bLocs').innerHTML = d.locations.map((l,i)=>`<span class="locchip"><input id="bLoc${i}" value="${esc(l)}" placeholder="e.g. BISHAN" oninput="bLoc(${i},this.value)">
+    ${d.locations.length>1?`<button type="button" title="Remove" onclick="bLocDel(${i})">✕</button>`:'<span style="width:6px"></span>'}</span>`).join('') +
+    (d.locations.length<maxL?`<span class="chip add" onclick="bLocAdd()">+ location</span>`:'');
 }
+function paintAud(){
+  const d = B.draft, box = $('#bAudChips'); if (!box) return;
+  box.innerHTML = AUDIENCES.map(a=>`<span class="chip ${d.audience===a?'sel':''}" onclick="bAudPick('${a}')">${a}</span>`).join('') + `<span class="chip ${d.audience===''?'sel':''}" onclick="bAudPick('')">none</span>`;
+}
+function bAudPick(a){ B.draft.audience = a; const i=$('#bAud'); if (i) i.value = a; B.touched=true; paintAud(); scheduleCheck(); schedulePreview(); }
+function bStep(k, dir){ const min = k==='generated'?0:1, max = k==='generated'?12:6; const v = Math.min(max, Math.max(min, (Number(B.draft[k])||0)+dir)); B.draft[k]=v; const el=$(k==='generated'?'#bGen':'#bLooks'); if (el) el.value=v; B.touched=true; scheduleCheck(); if (k==='generated') schedulePreview(); }
 function paintList(){
-  const bs = B.setup.batches;
-  $('#bList').innerHTML = bs.length ? bs.map(b=>`<div class="chk"><div class="dot ${b.ads?'ok':'opt'}"></div><div style="flex:1">
-      <div class="t">${esc(b.id)} ${b.ads?`<span class="pill on">${b.ads} ads</span>`:'<span class="pill">planned</span>'}</div>
-      <div class="d">${esc(b.words.offer)} · ${esc(b.words.locations.join(' / '))}${b.words.audience?' · '+esc(b.words.audience):''}${b.image_calls!=null?` · ${b.image_calls} image call${b.image_calls===1?'':'s'}`:''}</div>
-      <div class="row" style="margin-top:4px">${b.gallery?`<a href="${esc(b.gallery)}" target="_blank">Open gallery →</a>`:''}
-        ${b.ads?`<button onclick="bShow('${esc(b.id)}')" style="padding:2px 8px;font-size:12px">Show ads</button><button onclick="bWords('${esc(b.id)}')" style="padding:2px 8px;font-size:12px">Change words</button>`:`<button onclick="bDiscard('${esc(b.id)}')" style="padding:2px 8px;font-size:12px">Discard</button>`}</div>
-    </div></div>`).join('') : '<div class="hint">No batches yet.</div>';
+  const bs = B.setup.batches, box = $('#bList'); if (!box) return;
+  box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>`<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
+      <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
+      <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}${b.selected?' · picked':''}`:' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}</div>
+      <div class="row">${b.ads?`<button class="sm primary" onclick="bShow('${esc(b.id)}')">Show ads</button><button class="sm" onclick="bWords('${esc(b.id)}')">Change words</button>${b.gallery?`<a href="${esc(b.gallery)}" target="_blank" style="font-size:12px">Gallery →</a>`:''}`:`<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
+    </div></div>`).join('')}</div>` : '<div class="hint">No campaigns yet. Fill in the brief above and press Generate.</div>';
 }
 function paintResult(){
   const box = $('#bResult'); if (!box) return;
   const v = B.view;
   if (!v || !v.batch || !B.showAds){ box.innerHTML=''; return; }
-  box.innerHTML = `<div class="card"><div class="row"><h3 style="margin:0">${esc(v.brief.batch_id)} — ${v.batch.ads.length} ads</h3><div class="spacer"></div>
+  box.innerHTML = `<div class="card" style="margin-top:14px"><div class="row"><h2 style="margin:0">${esc(v.brief.batch_id)} — ${v.batch.ads.length} ads</h2><div class="spacer"></div>
     ${v.gallery?`<a href="${esc(v.gallery)}" target="_blank">Open gallery →</a>`:''}</div>
     <p class="hint">${v.batch.image_calls} image call${v.batch.image_calls===1?'':'s'} · made ${esc(new Date(v.batch.made).toLocaleString())}${v.batch.failed?.length?` · ${v.batch.failed.length} look(s) could not be verified and were left out`:''}</p>
-    <div class="row" style="margin:6px 0">${v.stories?`<span class="hint">${v.stories.ads} Stories version${v.stories.ads===1?'':'s'} (9:16) · ${v.stories.image_calls} image call${v.stories.image_calls===1?'':'s'}${v.stories.left_out?` · ${v.stories.left_out} left out`:''}</span><button onclick="bStoriesRerender()" style="padding:2px 8px;font-size:12px">Re-render Stories (free)</button>`:''}
-      ${v.selected?`<button class="primary" onclick="bStoriesConfirm()" style="padding:2px 8px;font-size:12px">${v.stories?'Make Stories versions again…':'Make Stories versions…'}</button>`:`<span class="hint">For Stories (9:16) versions: pick in the gallery, Save Selections, and put selections.json in the batch folder.</span>`}</div>
+    <div class="row" style="margin:6px 0">${v.stories?`<span class="hint">${v.stories.ads} Stories version${v.stories.ads===1?'':'s'} (9:16) · ${v.stories.image_calls} image call${v.stories.image_calls===1?'':'s'}${v.stories.left_out?` · ${v.stories.left_out} left out`:''}</span><button class="sm" onclick="bStoriesRerender()">Re-render Stories (free)</button>`:''}
+      ${v.selected?`<button class="sm primary" onclick="bStoriesConfirm()">${v.stories?'Make Stories versions again…':'Make Stories versions…'}</button>`:`<span class="hint">For Stories (9:16) versions: pick in the gallery, Save Selections, and put selections.json in the batch folder.</span>`}</div>
     <div class="ads">${v.batch.ads.map(a=>`<div><a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" alt="" loading="lazy"></a><div>${esc(a.folder.split('-')[0])} · ${esc(a.location)} · ${esc(a.treatment.split('-')[0])}</div></div>`).join('')}</div></div>`;
 }
 
@@ -678,16 +632,17 @@ function paintDerived(){
   const c = B.check, s = c?.summary, sc = B.setup.scenes;
   const scenes = $('#bScenes');
   if (scenes) scenes.innerHTML = B.mode==='rerender' ? '' : !sc.exists ? 'Scene library: none yet — generated photos need one.'
-    : `Scene library: ${sc.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${Object.entries(sc.counts).map(([k,n])=>`${n} for ${esc(k)}`).join(', ')}${sc.drafts?` · <span style="color:var(--warn)">${sc.drafts} new scene${sc.drafts===1?'':'s'} awaiting approval</span>`:''}${s?` · this audience draws from <b>${esc(s.scenes_for)}</b>`:''}`;
+    : `Scene library: ${sc.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${Object.entries(sc.counts).map(([k,n])=>`${n} for ${esc(k)}`).join(', ')}${sc.drafts?` · <span style="color:var(--warn)">${sc.drafts} new scene${sc.drafts===1?'':'s'} awaiting approval</span>`:''}${s?` · this audience draws from <b>${esc(s.scenes_for)}</b>`:''} · <a href="#" onclick="go('scenes');return false">manage</a>`;
   const errs = c?.errors || [];
   const eb = $('#bErrors');
   if (eb) eb.innerHTML = errs.length && B.touched ? errs.map(e=>`<div class="msg err">${esc(e)}</div>`).join('') : '';
   const sb = $('#bSummary');
   if (sb) sb.innerHTML = s ? (B.mode==='rerender'
       ? `${s.ads} ads re-rendered with these words · <b>0 image calls</b>`
-      : `${s.photos} photo${s.photos===1?'':'s'} × ${s.looks} look${s.looks===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'} = <b>${s.ads} ads</b> · at most <b>${s.max_calls} image call${s.max_calls===1?'':'s'}</b>`) : '';
+      : `<b>${s.photos} photo${s.photos===1?'':'s'}</b> × ${s.looks} look${s.looks===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'} = <b>${s.ads} ads</b><br>Up to <b>${s.max_calls} image call${s.max_calls===1?'':'s'}</b>${errs.length? '' : ' · <span class="pill on">brief valid</span>'}`) : '';
   const busy = STATE.run && !STATE.run.done;
   for (const id of ['bPlan','bRun','bRerender']) { const b=$('#'+id); if (b) b.disabled = !c || errs.length>0 || busy; }
+  const run = $('#bRun'); if (run && s && !errs.length) run.textContent = `Generate ${s.ads} ads…`;
 }
 
 function paintPreview(){
@@ -698,7 +653,7 @@ function paintPreview(){
   const p = B.preview, msg = $('#bPrevMsg'), grid = $('#bPrev');
   if (!p){ grid.innerHTML=''; msg.innerHTML='<div class="hint">Rendering…</div>'; return; }
   msg.innerHTML = p.errors?.length ? (d.offer===''&&!B.touched ? '<div class="hint">Type the offer and a location to see the ads.</div>' : p.errors.map(e=>`<div class="msg warn">${esc(e)}</div>`).join('')) : '';
-  grid.innerHTML = (p.looks||[]).map(l=>`<figure>${l.url?`<img src="${esc(l.url)}" alt="${esc(l.label)}">`:'<div style="aspect-ratio:1;background:#000;border-radius:4px"></div>'}
+  grid.innerHTML = (p.looks||[]).map(l=>`<figure>${l.url?`<img src="${esc(l.url)}" alt="${esc(l.label)}">`:'<div style="aspect-ratio:1;background:#0b1430;border-radius:6px"></div>'}
     <figcaption><b>${esc(l.label)}</b> · ${l.ok?'<span class="good">fits</span>':`<span class="bad">${esc(l.failures[0]||'does not fit')}</span>`}</figcaption></figure>`).join('');
 }
 
@@ -719,12 +674,40 @@ async function doPreview(){
 }
 
 const WORDS = new Set(['offer','audience']);
-function bSet(k, v){ B.draft[k]=v; B.touched=true; scheduleCheck(); if (WORDS.has(k) || k==='generated') schedulePreview(); }
+function bSet(k, v){ B.draft[k]=v; B.touched=true; if (k==='audience') paintAud(); scheduleCheck(); if (WORDS.has(k) || k==='generated') schedulePreview(); }
 function bLoc(i, v){ B.draft.locations[i]=v; B.touched=true; scheduleCheck(); schedulePreview(); }
 function bLocAdd(){ B.draft.locations.push(''); paintLocs(); $('#bLoc'+(B.draft.locations.length-1))?.focus(); scheduleCheck(); }
 function bLocDel(i){ B.draft.locations.splice(i,1); paintLocs(); scheduleCheck(); schedulePreview(0); }
 function bReal(path, on){ const r=B.draft.real; if (on && !r.includes(path)) r.push(path); if (!on) r.splice(r.indexOf(path),1); B.touched=true; scheduleCheck(); schedulePreview(); }
 function bMsg(t, cls=''){ const m=$('#bMsg'); if (m) m.innerHTML = cls?`<span style="color:var(--${cls})">${esc(t)}</span>`:esc(t); }
+
+/** The uploaded reference images, one of which a batch may follow; plus an upload control. */
+function paintRefs(){
+  const box = $('#bRefs'); if (!box) return;
+  const refs = B.scenes?.references || [], sel = B.draft.direction_reference || '';
+  box.innerHTML = `<div class="thumbs">
+    ${refs.map(r=>`<label><input type="radio" name="bRef" value="${esc(r.name)}" ${sel===r.name?'checked':''} onchange="bRef(this.value)"><img src="${esc(r.url)}" alt=""><span style="font-size:11px">${esc(r.name)}</span></label>`).join('')}
+    </div>
+    <div class="row" style="margin-top:6px"><input type="file" id="bRefFile" accept="image/png,image/jpeg,image/webp" style="width:auto" onchange="bUpload(this)">
+      ${sel?`<button class="sm" onclick="bRef('')">No reference</button>`:''}<span id="bRefMsg" class="hint"></span></div>`;
+}
+function bRef(name){ B.draft.direction_reference = name; B.touched = true; paintRefs(); scheduleCheck(); }
+/** Upload a reference image as raw bytes: the server keeps image files only, in the client's references folder. */
+async function bUpload(input){
+  const f = input.files?.[0]; if (!f) return;
+  const ext = f.type==='image/png'?'png':f.type==='image/webp'?'webp':'jpg';
+  const base = slugify(f.name.replace(/\.[^.]+$/,'')).slice(0,40) || 'reference';
+  const name = `${base}.${ext}`;
+  const m = $('#bRefMsg'); if (m) m.textContent = 'Uploading…';
+  try {
+    const r = await fetch(`/api/client/${STATE.sel}/reference/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream','x-panel-token':TOKEN}, body: await f.arrayBuffer() });
+    const j = await r.json().catch(()=>({error:'bad response'}));
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    B.scenes = await api(`/api/client/${STATE.sel}/scenes`);
+    B.draft.direction_reference = j.name; B.touched = true; paintRefs(); scheduleCheck();
+    if (STATE.tab==='references') render();
+  } catch(e){ const m2 = $('#bRefMsg'); if (m2) m2.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+}
 
 /** Write the brief to disk (validated again by the server), returning it as saved. */
 async function saveBrief(){
@@ -737,8 +720,8 @@ async function saveBrief(){
 }
 async function bPlan(){
   const s = await saveBrief(); if (!s) return;
-  // A directed batch's plan drafts its scenes: they appear in the scene library card as drafts for this batch.
-  run({kind:'batch-plan', gym:STATE.sel, batch:s.brief.batch_id}, async()=>{ await reloadScenes(); if (s.brief.direction) $('#bSceneCard')?.scrollIntoView({behavior:'smooth'}); });
+  // A directed batch's plan drafts its scenes: they appear in the scene library as drafts for this batch.
+  run({kind:'batch-plan', gym:STATE.sel, batch:s.brief.batch_id}, async()=>{ await reloadScenes(); if (s.brief.direction) go('scenes'); });
 }
 async function bConfirm(){
   const fresh = B.savedId !== briefFromDraft().batch_id; // this confirmation is what saves it
@@ -752,7 +735,7 @@ async function bConfirm(){
     scenes = view?.scenes || [];
     if (!scenes.length){
       $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bCancel()"><div class="card">
-        <h3>Plan first</h3>
+        <h2>Plan first</h2>
         <p class="hint">This batch has a direction, so the plan drafts its scenes from it — text calls only — for you to read before anything is generated.</p>
         <div class="row"><button onclick="bCancel()">Cancel</button><div class="spacer"></div><button class="primary" onclick="bClose();bPlan()">Plan (free)</button></div></div></div>`;
       B.pending = b; return;
@@ -760,7 +743,7 @@ async function bConfirm(){
   }
   const pending = scenes.filter(x=>x.draft).map(x=>x.id);
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bCancel()"><div class="card">
-    <h3>Run this batch?</h3>
+    <h2>Run this batch?</h2>
     <p class="hint">These words go on every ad exactly as shown. The run stops at the call limit, whatever happens.</p>
     <div class="words"><div><span>Offer</span>${esc(b.offer)}</div><div><span>Locations</span>${esc(b.locations.join(' / '))}</div><div><span>Audience</span>${b.audience?esc(b.audience):'<i style="color:var(--dim)">none</i>'}</div></div>
     ${scenes.length?`<div class="words"><div style="color:var(--dim)">Scenes for this batch${pending.length?' — confirming approves them into the library':''}</div>${scenes.map(x=>`<div style="margin:6px 0"><b class="mono">${esc(x.id)}</b>${x.draft?' <span class="pill">draft</span>':''}<br>${esc(x.scene)}</div>`).join('')}</div>`:''}
@@ -796,14 +779,14 @@ async function bRerender(){
     if (code===0){ B.view = await api(`/api/client/${STATE.sel}/batch/${s.brief.batch_id}`); B.showAds=true; }
   });
 }
-/** Stories versions (Step 8): the one thing to confirm is the call cap; the words are the batch's own. */
+/** Stories versions: the one thing to confirm is the call cap; the words are the batch's own. */
 function bStoriesConfirm(){
   const v = B.view; if (!v) return;
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
-    <h3>Make Stories versions?</h3>
+    <h2>Make Stories versions?</h2>
     <p class="hint">Every selected ad gets a 9:16 version with the same photo, look and words, inside Meta's safe zone. One new photo per photo in a single-photo look; collage and panels ads reuse theirs; real photos cost nothing. The run stops at the call limit, whatever happens.</p>
-    <div class="row"><label for="bStCap">Up to</label><input id="bStCap" type="number" min="0" max="40" value="24" style="width:70px"><span class="hint">Gemini image calls</span></div>
-    <div class="row"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="bStGo" onclick="bStoriesGo()">Yes, make them</button></div></div></div>`;
+    <div class="row"><label for="bStCap" style="margin:0">Up to</label><input id="bStCap" type="number" min="0" max="40" value="24" style="width:70px"><span class="hint" style="margin:0">Gemini image calls</span></div>
+    <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="bStGo" onclick="bStoriesGo()">Yes, make them</button></div></div></div>`;
 }
 function bStoriesGo(){
   const cap = parseInt($('#bStCap').value, 10), id = B.view.brief.batch_id; bClose();
@@ -823,21 +806,109 @@ async function bWords(id){
 }
 function bNew(){ Object.assign(B, { mode:'new', view:null, draft:freshDraft(), savedId:null, touched:false, showAds:false }); paintBatch($('#view')); scheduleCheck(0); schedulePreview(0); }
 
-// ── Review ───────────────────────────────────────────────────────────────────
-async function viewReview(v){
-  v.innerHTML = '<div class="card"><h3>Review</h3><p class="hint">Loading…</p></div>';
-  const { artifacts } = await api('/api/artifacts');
-  v.innerHTML = `
-  <div class="card">
-    <h3>Generated pages</h3>
-    <p class="hint">Image galleries and the competitor swipe review, served from disk.</p>
-    ${artifacts.length ? artifacts.map(a=>`
-      <div class="chk"><div class="dot ok"></div><div style="flex:1">
-        <div class="t">${esc(a.gym)} <span class="pill">${esc(a.version)}</span></div>
-        <div class="d"><a href="${esc(a.url)}" target="_blank">Open →</a></div>
-      </div></div>`).join('')
-      : '<div class="empty">Nothing generated yet. Run a batch from the Generate tab.</div>'}
-  </div>`;
+// ── Review (list; the lightbox comes in the next step) ───────────────────────
+async function viewReviewList(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>Review</h1><p class="sub">Loading…</p>';
+  if (B.gym !== STATE.sel || !B.setup){ B.gym = STATE.sel; await loadSetup(); }
+  if (seq !== VIEW_SEQ) return;
+  const bs = B.setup.batches.filter(b=>b.ads);
+  v.innerHTML = `<h1>Review</h1><p class="sub">Pick the ads to run from each campaign. Each campaign opens in its gallery for now; the in-page review comes next.</p>
+  ${bs.length ? `<div class="camps">${bs.map(b=>`<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
+      <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
+      <div class="d">${esc(b.id)} · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''} · ${b.selected?'<span class="pill on">picked</span>':'<span class="pill warn">not picked yet</span>'}</div>
+      <div class="row">${b.gallery?`<a href="${esc(b.gallery)}" target="_blank"><button class="sm primary">Open gallery →</button></a>`:''}<button class="sm" onclick="go('batch');bShow('${esc(b.id)}')">Show ads</button></div>
+    </div></div>`).join('')}</div>` : '<div class="empty">No campaigns with ads yet.</div>'}`;
+}
+async function viewExports(v){
+  v.innerHTML = `<h1>Exports</h1><p class="sub">Upload packages for Meta: every picked ad as a matched 1:1 and 9:16 pair. Coming in a later step.</p><div class="empty">Nothing exported yet.</div>`;
+}
+
+// ── Scene library ────────────────────────────────────────────────────────────
+const TAGS = s => [s.setting, s.people!=null?`${s.people} ${s.people===1?'person':'people'}`:null, s.exercise, s.age, s.equipment, s.muscles, s.pose].filter(Boolean).join(' · ');
+async function viewScenes(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>Scene library</h1><p class="sub">Loading…</p>';
+  if (B.gym !== STATE.sel || !B.scenes){ B.gym = STATE.sel; await loadSetup(); }
+  if (seq !== VIEW_SEQ) return;
+  v.innerHTML = `<h1>Scene library</h1><p class="sub">The scenes the batches photograph. The agent drafts new ones on request; nothing is generated from a draft until you approve it. Rejecting asks why, and retires the scene rather than deleting it.</p>
+    <div class="card" id="bSceneCard"></div><div id="runbox"></div><div id="bModal"></div>`;
+  paintScenes(); renderRunBox();
+}
+/** Status, a Refresh button, and every draft awaiting approval with Approve / Reject. */
+function paintScenes(){
+  const box = $('#bSceneCard'); if (!box) return;
+  const sc = B.scenes, st = sc?.status;
+  if (!st?.exists){ box.innerHTML = '<h3>Scene library</h3><div class="hint">None yet — generated photos need one (brands/{gym}/scenes.json).</div>'; return; }
+  const drafts = sc.drafts || [];
+  const busy = STATE.run && !STATE.run.done;
+  box.innerHTML = `<div class="row"><h3 style="margin:0">Scene library</h3><div class="spacer"></div>
+      <button class="primary sm" onclick="bRefreshConfirm()" ${busy?'disabled':''}>Refresh scenes…</button></div>
+    <p class="hint" style="margin-top:8px">${st.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${st.total} live (${Object.entries(st.counts).map(([k,n])=>`${n} ${esc(k)}`).join(', ')})${st.retired?` · ${st.retired} retired`:''}${drafts.length?` · <span style="color:var(--warn)">${drafts.length} draft${drafts.length===1?'':'s'} awaiting approval</span>`:''}</p>
+    ${drafts.length ? `<div class="row" style="margin-bottom:6px"><button class="sm ok" onclick="bApprove(${JSON.stringify(drafts.map(d=>d.id)).replace(/"/g,'&quot;')})" ${busy?'disabled':''}>Approve all ${drafts.length}</button><span class="hint" style="margin:0">Nothing is generated from a draft until it is approved.</span></div>` : '<div class="hint">No drafts waiting. Press Refresh scenes to have the agent draft some.</div>'}
+    ${drafts.map(d=>`<div class="scene"><div class="dot opt"></div><div class="body">
+      <div><span class="id">${esc(d.id)}</span> <span class="pill">${esc(d.audience)}</span>${d.source&&d.source.startsWith('batch:')?` <span class="pill navy">for batch ${esc(d.source.slice(6))}</span>`:''}${d.prefer_layout?` <span class="pill">${esc(d.prefer_layout.split('-')[0])}</span>`:''}</div>
+      <div class="tags">${esc(TAGS(d))}${d.covers?.length?` · covers ${esc(d.covers.join(', '))}`:''}${d.direction?.words?` · from your words`:''}${d.direction?.reference?` · from ${esc(d.direction.reference.split('/').pop())}`:''}</div>
+      <div class="txt">${esc(d.scene)}</div>
+      <div class="row"><button class="sm ok" onclick="bApprove(['${esc(d.id)}'])" ${busy?'disabled':''}>Approve</button><button class="sm danger" onclick="bReject('${esc(d.id)}')" ${busy?'disabled':''}>Reject…</button></div>
+    </div></div>`).join('')}
+    <div id="bSceneMsg" class="hint" style="margin-top:8px"></div>`;
+}
+async function reloadScenes(){ B.scenes = await api(`/api/client/${STATE.sel}/scenes`); B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); paintScenes(); paintRefs(); paintDerived(); paintList(); }
+async function bApprove(ids){
+  try { const r = await api(`/api/client/${STATE.sel}/scenes/approve`, {method:'POST', body:{ids}}); await reloadScenes(); const m=$('#bSceneMsg'); if (m) m.textContent = `approved: ${r.approved.join(', ')}`; scheduleCheck(0); }
+  catch(e){ const m=$('#bSceneMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+}
+async function bReject(id){
+  const reason = prompt(`Reject ${id} — what was wrong with it? (kept as the reason; the scene is retired, never deleted)`);
+  if (reason === null) return;
+  try { const r = await api(`/api/client/${STATE.sel}/scenes/reject`, {method:'POST', body:{id, reason}}); await reloadScenes(); const m=$('#bSceneMsg'); if (m) m.textContent = `retired ${r.retired}: ${r.reason}`; scheduleCheck(0); }
+  catch(e){ const m=$('#bSceneMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+}
+/** A refresh: audience, how many, and the direction — the library's gaps, your words, or a reference image. Text calls only. */
+function bRefreshConfirm(){
+  const sc = B.scenes, refs = sc.references || [];
+  const aud = (B.check?.summary?.scenes_for) || 'any';
+  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
+    <h2>Refresh scenes</h2>
+    <p class="hint">The agent drafts new scenes for this gym, written to its photography rules and unlike anything in the library. They arrive as drafts for you to approve or reject. One or two text calls; no image calls.</p>
+    <div class="grid">
+      <div><label for="bRfAud">Audience</label><select id="bRfAud">${(sc.audiences||['men','women','any']).map(a=>`<option value="${a}" ${a===aud?'selected':''}>${a}</option>`).join('')}</select></div>
+      <div><label for="bRfN">How many</label><input id="bRfN" type="number" min="1" max="${sc.maxCount||12}" value="6"></div>
+    </div>
+    <label style="margin-top:12px">Direction</label>
+    <div><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="gaps" checked style="width:auto"> Fill the library's gaps (the thinnest exercises, ages, settings and equipment for this audience)</label></div>
+    <div><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="words" style="width:auto"> In words</label><textarea id="bRfWords" rows="2" placeholder="e.g. couples in their fifties training together, warm and unposed"></textarea></div>
+    <div style="margin-top:8px"><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="reference" style="width:auto" ${refs.length?'':'disabled'}> Like a reference image${refs.length?'':' (upload one under References first)'}</label>
+      ${refs.length?`<select id="bRfRef">${refs.map(r=>`<option value="${esc(r.name)}">${esc(r.name)}${r.read?' (read before)':''}</option>`).join('')}</select>`:''}</div>
+    <div id="bRfErr"></div>
+    <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="bRfGo" onclick="bRefreshGo()">Draft them</button></div></div></div>`;
+}
+function bRefreshGo(){
+  const audience = $('#bRfAud').value, count = parseInt($('#bRfN').value, 10), dir = document.querySelector('input[name="bRfDir"]:checked')?.value;
+  const words = ($('#bRfWords')?.value||'').trim(), reference = $('#bRfRef')?.value || null;
+  if (dir==='words' && words.length < 3){ $('#bRfErr').innerHTML = '<div class="msg err">Say what the scenes should show.</div>'; return; }
+  if (dir==='reference' && !reference){ $('#bRfErr').innerHTML = '<div class="msg err">Pick a reference image.</div>'; return; }
+  bClose();
+  run({kind:'scenes-refresh', gym:STATE.sel, audience, count, ...(dir==='words'?{words}:{}), ...(dir==='reference'?{reference}:{})}, async()=>{ await reloadScenes(); });
+}
+
+// ── Photos and references ────────────────────────────────────────────────────
+async function viewPhotos(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>Photos</h1><p class="sub">Loading…</p>';
+  if (B.gym !== STATE.sel || !B.setup){ B.gym = STATE.sel; await loadSetup(); }
+  if (seq !== VIEW_SEQ) return;
+  const photos = B.setup.photos;
+  v.innerHTML = `<h1>Photos</h1><p class="sub">The client's real photos that passed the clean-up: no old marks, no lettering. These can go into any batch as real photos and serve as the room reference for generated ones.</p>
+    <div class="card">${photos.length ? `<div class="thumbs">${photos.map(p=>`<label><img src="${esc(p.url)}" alt="" style="width:220px;height:146px"><span style="font-size:12px">${esc(p.path.split('/').pop())}</span></label>`).join('')}</div>` : '<div class="hint">No cleaned photos yet — clean-photo.mjs makes them from the facility photos.</div>'}</div>`;
+}
+async function viewReferences(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>Reference images</h1><p class="sub">Loading…</p>';
+  if (B.gym !== STATE.sel || !B.scenes){ B.gym = STATE.sel; await loadSetup(); }
+  if (seq !== VIEW_SEQ) return;
+  if (!B.draft) B.draft = freshDraft();
+  const refs = B.scenes.references || [];
+  v.innerHTML = `<h1>Reference images</h1><p class="sub">Images you supply for direction. Each is read once into words (activity, people, framing, mood); the words on it are kept out, and the image itself never goes into a generated photo.</p>
+    <div class="card">${refs.length ? `<div class="thumbs">${refs.map(r=>`<label><img src="${esc(r.url)}" alt="" style="width:220px;height:146px"><span style="font-size:12px">${esc(r.name)}${r.read?' · read':''}</span></label>`).join('')}</div>` : '<div class="hint">No reference images yet.</div>'}
+      <div class="row" style="margin-top:12px"><input type="file" id="bRefFile" accept="image/png,image/jpeg,image/webp" style="width:auto" onchange="bUpload(this)"><span id="bRefMsg" class="hint" style="margin:0"></span></div></div>`;
 }
 
 // ── Edit + save ──────────────────────────────────────────────────────────────
@@ -889,11 +960,11 @@ async function validate(){
 function renderRunBox(){
   const box=$('#runbox'); if(!box) return;
   const r=STATE.run; if(!r){ box.innerHTML=''; return; }
-  box.innerHTML=`<div class="card">
-    <div class="row"><h3 style="margin:0">${esc(r.label)}</h3>
-      <span class="pill ${r.done&&r.code===0?'on':''}">${r.done?(r.code===0?'finished':'exit '+r.code):'running…'}</span>
+  box.innerHTML=`<div class="card" style="margin-top:14px">
+    <div class="row"><h2 style="margin:0">${esc(r.label)}</h2>
+      <span class="pill ${r.done&&r.code===0?'on':(r.done?'warn':'navy')}">${r.done?(r.code===0?'finished':'exit '+r.code):'running…'}</span>
       <div class="spacer"></div>
-      <button onclick="STATE.run=null;renderRunBox()" style="padding:3px 9px;font-size:12px">Clear</button></div>
+      <button class="sm" onclick="STATE.run=null;renderRunBox()">Clear</button></div>
     <div class="log" id="log">${r.lines.map(l=>`<div class="${esc(l.stream)}">${esc(l.line)}</div>`).join('')}</div>
   </div>`;
   const log=$('#log'); if(log) log.scrollTop=log.scrollHeight;
@@ -944,7 +1015,7 @@ async function newOffer(){
   }catch(e){ alert(e.message); }
 }
 
-boot().catch(e=>{ document.body.innerHTML=`<div style="padding:40px;color:#f85149">Failed to start: ${esc(e.message)}</div>`; });
+boot().catch(e=>{ document.body.innerHTML=`<div style="padding:40px;color:#b42323">Failed to start: ${esc(e.message)}</div>`; });
 </script>
 </body>
 </html>

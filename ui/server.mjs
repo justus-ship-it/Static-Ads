@@ -259,6 +259,11 @@ function listBatches(gym) {
       id, words: { offer: brief.offer, locations: brief.locations, audience: brief.audience ?? null },
       made: batch?.made || null, ads: batch?.ads?.length || 0, image_calls: batch?.image_calls ?? null,
       gallery: existsSync(join(out, "gallery.html")) ? `/files/brands/${gym}/outputs/${id}/gallery.html` : null,
+      // For the campaign cards: the first ad as a thumbnail, whether picks and Stories exist.
+      thumb: batch?.ads?.[0] ? `/files/brands/${gym}/outputs/${id}/${batch.ads[0].file}` : null,
+      selected: existsSync(join(out, "selections.json")),
+      stories: (() => { const s = readJsonFile(join(out, "stories.json")); return s ? s.ads.length : 0; })(),
+      directed: !!brief.direction,
     };
   });
 }

@@ -272,7 +272,8 @@ test("U7 the New Batch tab: typing updates the preview, a bad word shows its err
   await cdp.send("Page.navigate", { url: panel.url + "/" }, sessionId);
   await loaded;
   await until(`typeof STATE!=='undefined' && STATE.sel==='${GYM}'`, "the panel to load");
-  assert.ok(await ev(`[...document.querySelectorAll('.tab')].some(t=>t.textContent==='Templates (old)')`), "the old tab is kept, relabelled");
+  assert.ok(await ev(`[...document.querySelectorAll('.tab')].some(t=>t.textContent.trim().endsWith('Templates (old)'))`), "the old tab is kept, under Client");
+  assert.ok(await ev(`!!document.querySelector('.logo svg')`), "the Strategym mark is in the top bar");
   await ev(`STATE.tab='batch'; render(); true`);
   await until(`!!document.querySelector('#bOffer')`, "the New Batch form");
   assert.equal(await ev(`document.querySelector('#bOffer').value`), "", "the offer starts empty — never filled in");
@@ -283,7 +284,8 @@ test("U7 the New Batch tab: typing updates the preview, a bad word shows its err
   await until(`document.querySelectorAll('#bPrev img').length===4 && [...document.querySelectorAll('#bPrev img')].every(i=>i.complete&&i.naturalWidth>0)`, "four preview images");
   assert.ok(await ev(`[...document.querySelectorAll('#bPrev figcaption')].every(f=>/fits/.test(f.textContent))`));
   assert.equal(await ev(`document.activeElement.id`), "bAud", "typing never loses focus");
-  await until(`/= <b>8 ads<\\/b>/.test(document.querySelector('#bSummary').innerHTML) && !document.querySelector('#bRun').disabled`, "the summary and an enabled Run");
+  // 10 new photos by default (the real batches' size) + 2 real, 2 looks, 1 location.
+  await until(`/= <b>24 ads<\\/b>/.test(document.querySelector('#bSummary').innerHTML) && !document.querySelector('#bRun').disabled`, "the summary and an enabled Run");
   // An em dash: an inline error from the server's rules, and Run is disabled.
   await type("#bOffer", "12 Week — Reset");
   await until(`/em\\/en dash/.test(document.querySelector('#bErrors').textContent) && document.querySelector('#bRun').disabled`, "the dash error and a disabled Run");
@@ -296,7 +298,7 @@ test("U7 the New Batch tab: typing updates the preview, a bad word shows its err
   const modal = await ev(`document.querySelector('.modal').textContent`);
   assert.match(modal, /12 Week Total Body Reset/);
   assert.match(modal, /BISHAN/);
-  assert.match(modal, /Up to 4 Gemini image calls/, "2 new photos × 2 tries, the default");
+  assert.match(modal, /Up to 20 Gemini image calls/, "10 new photos × 2 tries, the default");
   await ev(`[...document.querySelectorAll('.modal button')].find(b=>b.textContent==='Cancel').click(); true`);
   assert.equal(await ev(`!!document.querySelector('.modal')`), false);
   assert.equal(await ev(`STATE.run ? 1 : 0`), runsBefore, "cancel runs nothing");
@@ -447,7 +449,7 @@ test("U9c the page: the Direction fields feed the brief, the scene library card 
   await loaded;
   await until(`typeof STATE!=='undefined' && STATE.sel==='${GYM}'`, "the panel to load");
   await ev(`STATE.tab='batch'; render(); true`);
-  await until(`!!document.querySelector('#bDirWords') && !!document.querySelector('#bSceneCard h3')`, "the form and the scene card");
+  await until(`!!document.querySelector('#bDirWords')`, "the form");
   assert.equal(await ev(`'direction' in briefFromDraft()`), false, "no direction unless given");
   const type = (sel, text) => ev(`(()=>{const el=document.querySelector('${sel}'); el.focus(); el.value=${JSON.stringify(text)}; el.dispatchEvent(new Event('input',{bubbles:true})); return true})()`);
   await type("#bDirWords", "older women lunging with a coach");
@@ -455,10 +457,13 @@ test("U9c the page: the Direction fields feed the brief, the scene library card 
   assert.ok(await ev(`!!document.querySelector('input[name="bRef"][value="ad.png"]')`), "the uploaded reference is offered");
   await ev(`bRef('ad.png'); true`);
   assert.deepEqual(await ev(`briefFromDraft().direction`), { words: "older women lunging with a coach", reference: "ad.png" });
-  const card = await ev(`document.querySelector('#bSceneCard').textContent`);
-  assert.match(card, /Scene library/); assert.match(card, /1 retired/);
   await type("#bAud", "LADIES WANTED");
   await until(`B.check?.summary?.scenes_for==='women'`, "the check to follow the audience");
+  // The scene library has its own page under Library; the refresh dialog opens from there.
+  await ev(`go('scenes'); true`);
+  await until(`!!document.querySelector('#bSceneCard h3')`, "the scene card");
+  const card = await ev(`document.querySelector('#bSceneCard').textContent`);
+  assert.match(card, /Scene library/); assert.match(card, /1 retired/);
   await ev(`bRefreshConfirm(); true`);
   await until(`!!document.querySelector('.modal')`, "the refresh dialog");
   const modal = await ev(`document.querySelector('.modal').textContent`);
