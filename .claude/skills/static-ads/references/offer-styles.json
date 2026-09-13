@@ -1,0 +1,360 @@
+{
+  "schema_version": 1,
+  "note": "Type-and-effect styles for the offer-first text layer: the third axis of variation alongside layout (offer-treatments.json) and colour (offer-palettes.json). Each style is distilled from specific high-performing references. A style sets, per line, the typeface, weight, italic, case, letter-spacing and effect. It never sets colour (that is the palette) or position (that is the treatment).",
+  "faces": {
+    "montserrat": {
+      "family": "Montserrat",
+      "style": "normal",
+      "file": "assets/fonts/montserrat/Montserrat[wght].ttf",
+      "weights": [
+        100,
+        900
+      ],
+      "overhang": 0.025,
+      "line_height": 1.04
+    },
+    "montserrat-italic": {
+      "family": "Montserrat",
+      "style": "italic",
+      "file": "assets/fonts/montserrat/Montserrat-Italic[wght].ttf",
+      "weights": [
+        100,
+        900
+      ],
+      "overhang": 0.1,
+      "line_height": 1.04
+    },
+    "anton": {
+      "family": "Anton",
+      "style": "normal",
+      "file": "assets/fonts/anton/Anton-Regular.ttf",
+      "weights": [
+        400,
+        400
+      ],
+      "overhang": 0.02,
+      "line_height": 1.06
+    },
+    "oswald": {
+      "family": "Oswald",
+      "style": "normal",
+      "file": "assets/fonts/oswald/Oswald[wght].ttf",
+      "weights": [
+        200,
+        700
+      ],
+      "overhang": 0.02,
+      "line_height": 1.06
+    },
+    "abril-fatface": {
+      "family": "Abril Fatface",
+      "style": "normal",
+      "file": "assets/fonts/abrilfatface/AbrilFatface-Regular.ttf",
+      "weights": [
+        400,
+        400
+      ],
+      "overhang": 0.05,
+      "line_height": 1.08
+    },
+    "cinzel": {
+      "family": "Cinzel",
+      "style": "normal",
+      "file": "assets/fonts/cinzel/Cinzel[wght].ttf",
+      "weights": [
+        400,
+        900
+      ],
+      "overhang": 0.04,
+      "line_height": 1.08
+    },
+    "great-vibes": {
+      "family": "Great Vibes",
+      "style": "normal",
+      "file": "assets/fonts/greatvibes/GreatVibes-Regular.ttf",
+      "weights": [
+        400,
+        400
+      ],
+      "overhang": 0.3,
+      "line_height": 1.4,
+      "script": true
+    }
+  },
+  "overhang_note": "overhang (em, per side) is how far inked letters reach past their layout box. The renderer reserves it plus the widest outline, so ink never leaves the region. Script swashes and italic slant reach much further than upright sans. Values are verified by the zero-pixel leak test, which runs for every style.",
+  "script_rules": {
+    "blocks": [
+      "audience"
+    ],
+    "min_px": 52,
+    "max_chars": 24
+  },
+  "effects": {
+    "fill": "Solid fill with the palette's thin outline and a soft shadow. Legibility is judged on the fill colour.",
+    "outline-bold": "Solid fill with a heavy outline in the palette's outline colour. A letter reads if either its fill or its outline stands out from the photo, so it is judged on the better of the two.",
+    "hollow": "Outline only, drawn in the line's fill colour, no fill. Judged on that colour.",
+    "band": "Solid rounded band behind the line in the palette's pill colour. Judged on text against the band."
+  },
+  "styles": {
+    "s1-heavy-sans": {
+      "number": 1,
+      "name": "Heavy sans",
+      "seen_in": [
+        "Asheville boxing ('HEY, ASHEVILLE!')",
+        "Asheville ladies, MMA cage"
+      ],
+      "blocks": {
+        "location": {
+          "face": "montserrat",
+          "weight": 800,
+          "tracking": "0.01em"
+        },
+        "audience": {
+          "face": "montserrat",
+          "weight": 700,
+          "tracking": "0.04em"
+        },
+        "duration": {
+          "face": "montserrat",
+          "weight": 900
+        },
+        "offer_name": {
+          "face": "montserrat",
+          "weight": 800
+        }
+      }
+    },
+    "s2-heavy-outlined": {
+      "number": 2,
+      "name": "Heavy outlined",
+      "seen_in": [
+        "Asheville 'MEN WANTED', MMA red",
+        "Asheville collage, blue"
+      ],
+      "blocks": {
+        "location": {
+          "face": "montserrat",
+          "weight": 900,
+          "effect": "outline-bold"
+        },
+        "audience": {
+          "face": "montserrat",
+          "weight": 900,
+          "effect": "outline-bold",
+          "tracking": "0.06em"
+        },
+        "duration": {
+          "face": "montserrat",
+          "weight": 900
+        },
+        "offer_name": {
+          "face": "montserrat",
+          "weight": 900,
+          "effect": "outline-bold"
+        }
+      }
+    },
+    "s3-condensed": {
+      "number": 3,
+      "name": "Condensed",
+      "seen_in": [
+        "Mount Dora, green dumbbell"
+      ],
+      "blocks": {
+        "location": {
+          "face": "anton",
+          "weight": 400,
+          "tracking": "0.02em"
+        },
+        "audience": {
+          "face": "oswald",
+          "weight": 600,
+          "tracking": "0.04em"
+        },
+        "duration": {
+          "face": "anton",
+          "weight": 400,
+          "tracking": "0.01em"
+        },
+        "offer_name": {
+          "face": "anton",
+          "weight": 400,
+          "tracking": "0.02em"
+        }
+      }
+    },
+    "s4-wide-tracked": {
+      "number": 4,
+      "name": "Wide tracked",
+      "seen_in": [
+        "Anchorage 'LADIES WANTED', lat pulldown",
+        "Mount Dora 'L A D I E S', TRX"
+      ],
+      "blocks": {
+        "location": {
+          "face": "montserrat",
+          "weight": 600,
+          "tracking": "0.24em"
+        },
+        "audience": {
+          "face": "montserrat",
+          "weight": 600,
+          "tracking": "0.24em"
+        },
+        "duration": {
+          "face": "montserrat",
+          "weight": 800,
+          "tracking": "0.14em"
+        },
+        "offer_name": {
+          "face": "montserrat",
+          "weight": 700,
+          "tracking": "0.12em"
+        }
+      }
+    },
+    "s5-italic-heavy": {
+      "number": 5,
+      "name": "Italic heavy",
+      "seen_in": [
+        "Asheville ladies, muay thai",
+        "Anchorage, flat-lay",
+        "Mount Dora, plank"
+      ],
+      "blocks": {
+        "location": {
+          "face": "montserrat-italic",
+          "weight": 900,
+          "effect": "outline-bold"
+        },
+        "audience": {
+          "face": "montserrat-italic",
+          "weight": 800
+        },
+        "duration": {
+          "face": "montserrat-italic",
+          "weight": 900
+        },
+        "offer_name": {
+          "face": "montserrat-italic",
+          "weight": 900
+        }
+      }
+    },
+    "s6-serif-display": {
+      "number": 6,
+      "name": "Serif display",
+      "seen_in": [
+        "Ladies of Asheville, pink",
+        "Asheville 'ULTIMATE BODY TRANSFORMATION', jump"
+      ],
+      "blocks": {
+        "location": {
+          "face": "montserrat",
+          "weight": 900,
+          "tracking": "0.02em"
+        },
+        "audience": {
+          "face": "montserrat",
+          "weight": 700,
+          "tracking": "0.08em"
+        },
+        "duration": {
+          "face": "abril-fatface",
+          "weight": 400,
+          "effect": "outline-bold"
+        },
+        "offer_name": {
+          "face": "abril-fatface",
+          "weight": 400,
+          "effect": "outline-bold"
+        }
+      }
+    },
+    "s7-elegant-serif": {
+      "number": 7,
+      "name": "Elegant serif",
+      "seen_in": [
+        "Mount Dora, full body",
+        "Mount Dora, black bar"
+      ],
+      "blocks": {
+        "location": {
+          "face": "cinzel",
+          "weight": 700,
+          "tracking": "0.04em"
+        },
+        "audience": {
+          "face": "cinzel",
+          "weight": 600,
+          "tracking": "0.10em"
+        },
+        "duration": {
+          "face": "cinzel",
+          "weight": 900
+        },
+        "offer_name": {
+          "face": "cinzel",
+          "weight": 700,
+          "effect": "band"
+        }
+      }
+    },
+    "s8-script-accent": {
+      "number": 8,
+      "name": "Script accent",
+      "seen_in": [
+        "Anchorage 'Ladies Wanted', circles"
+      ],
+      "blocks": {
+        "location": {
+          "face": "montserrat",
+          "weight": 900,
+          "tracking": "0.02em"
+        },
+        "audience": {
+          "face": "great-vibes",
+          "weight": 400,
+          "case": "title",
+          "share": 1.1
+        },
+        "duration": {
+          "face": "montserrat",
+          "weight": 900
+        },
+        "offer_name": {
+          "face": "montserrat",
+          "weight": 800
+        }
+      }
+    },
+    "s9-hollow-duration": {
+      "number": 9,
+      "name": "Hollow duration",
+      "seen_in": [
+        "Asheville '6 WEEK', jump"
+      ],
+      "blocks": {
+        "location": {
+          "face": "montserrat",
+          "weight": 900
+        },
+        "audience": {
+          "face": "montserrat",
+          "weight": 700,
+          "tracking": "0.05em"
+        },
+        "duration": {
+          "face": "montserrat",
+          "weight": 900,
+          "effect": "hollow"
+        },
+        "offer_name": {
+          "face": "montserrat",
+          "weight": 800
+        }
+      }
+    }
+  },
+  "share_note": "A style may set 'share' on a line to override the layout's share, e.g. script needs a taller line (line-height 1.4) than an upright face."
+}

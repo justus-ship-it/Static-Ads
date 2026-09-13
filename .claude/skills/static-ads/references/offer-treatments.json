@@ -1,0 +1,551 @@
+{
+  "schema_version": 3,
+  "note": "Layout treatments for the offer-first text layer: WHERE the text goes. Typography and effects come from offer-styles.json and colour from offer-palettes.json, so any treatment can be combined with any style and palette. A layout holds one or more text groups. Each group owns a fixed region; its lines are fitted to their share of that region, then stacked from the group's anchor edge using real rendered heights, so no text can leave the region.",
+  "schema": {
+    "groups": "Each group: id, region [x, y, w, h] in % of the canvas, anchor (top | center | bottom), align (left | center | right), gap_pct (space between items, % of canvas height), scrim, stack, and optionally band. Groups never overlap. Hierarchy and verification span every group.",
+    "stack": "Ordered items. A text line is { block, share, max_lines, min_px, optional? } where block is location | audience | duration | offer_name. A divider is { block: 'divider', width_pct (of the group's width), thickness_pct (of canvas height), space_pct? (extra room above and below it, % of canvas height) }; it is drawn only when there is text on both sides of it, and it is never counted as text.",
+    "scrim": "{ direction, fade_pct }. direction is none | top | bottom | left | right | even. The scrim is full strength from the text's edge outward, and fades over fade_pct beyond it, so every letter sits on the full-strength part and the contrast maths stays exact. A group's scrim may not reach another group's region; 'even' covers the whole canvas and is only allowed in single-group layouts.",
+    "band": "{ mode, shape, blocks, pad_pct, radius_pct }. A solid band behind some of the group's lines, whatever the style. mode 'full' is one band spanning the group's full width; 'line' is a bar hugging each line of text. shape 'pill' is rounded, 'bar' square. Text on a band is judged against the band colour.",
+    "clear_zones": "[{ name, rect [x, y, w, h] }] in % of the canvas: space kept free of text for the subject. No group region may touch one, and the verifier checks every line, band and divider against them.",
+    "background": "Optional. { type: 'single' } (default: one photo, cover-fitted) · { type: 'collage', cols, rows, min_images } (the photos in order, repeating to fill the grid; min_images must exceed cols so no photo sits next to itself) · { type: 'panels', backdrop, min_images, panels: [{ shape: 'circle', cx, cy, r }] } (photos cropped to circles on a solid backdrop; cx, r in % of width, cy in % of height). Panels are keep-out areas: no text, band or divider may touch one.",
+    "visual_framing": "How to pose and shoot the people so they fit the layout (Gemini prompt only). Positions come from the geometry itself, so this carries pose and shot advice, never numbers.",
+    "pose_fit": "Which poses a layout's photo can hold: upright (standing, full-length), compact (seated, kneeling, crouching, or framed from the waist up), low (horizontal or on the floor: plank, push-up, floor work). A scene declares its pose; a scene whose pose a layout cannot hold is refused before any image is generated. Learned in Step 4: a standing coach cannot fit T2's middle band however the prompt is worded."
+  },
+  "canvas": {
+    "1x1": [1080, 1080],
+    "9x16": [1080, 1920]
+  },
+  "safe_area": {
+    "1x1": [5, 5, 90, 90],
+    "9x16": [6, 14, 88, 51]
+  },
+  "safe_area_note": "[x, y, w, h] in % of the canvas: every line, band and divider must sit inside it, and every group region is validated against it. 1:1 keeps a 5% margin. 9:16 is Meta's unified Stories/Reels safe zone (March 2026): the top 14% (profile row), the bottom 35% (caption, like/comment/share, CTA) and 6% each side are covered by the app. Source: Meta Business Help Centre, 'About text overlays and the Safe Zone for ads in Stories and Reels'.",
+  "derivation_note": "A ratio with no explicit layout is derived from the 1:1 layout: its safe area is mapped onto the target's (x' = x0' + (x - x0) * w'/w, likewise y), and every length in % of the canvas is scaled with it — gaps, fades, divider thickness and spacing, band padding and radius, panel radius. Collage rows scale with the canvas's height, to keep tiles near-square. An explicit layouts['9x16'] overrides the derived one.",
+  "treatments": {
+    "t1-bottom-stack": {
+      "number": 101,
+      "name": "Bottom stack",
+      "seen_in": [
+        "Asheville, boxing ('HEY, ASHEVILLE!')",
+        "Mount Dora, plank"
+      ],
+      "visual_hint": "Keep the lower half of the frame plain and uncluttered (floor or plain surfaces); place the subject in the upper half. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "Keep the people compact and high in the frame: a seated, kneeling or crouching version of the movement, or a shot from the waist up, with the camera a little above eye level so the lower part of the frame is floor. No full-length standing figures.",
+      "pose_fit": ["compact", "low"],
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "main",
+              "region": [6, 48, 88, 46],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.9,
+              "scrim": {
+                "direction": "bottom",
+                "fade_pct": 12
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 1, "min_px": 34 },
+                { "block": "audience", "share": 0.66, "max_lines": 1, "min_px": 28, "optional": true },
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.4, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t2-top-bottom-split": {
+      "number": 102,
+      "name": "Top / bottom split",
+      "seen_in": [
+        "Asheville BJJ ('ASHEVILLE AREA … MEN WANTED')",
+        "Mount Dora, HPA ('MOUNT DORA AREA … LADIES WANTED')",
+        "Mount Dora, ladies on bench"
+      ],
+      "visual_hint": "Subject centred in the middle band of the frame; keep the top quarter and the bottom third plain and uncluttered (ceiling above, floor below). No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "Keep the people small and low: a horizontal or low pose (plank, push-up, floor work, a seated movement, a deep lunge seen side-on), shot from a few metres back so heads and bodies stay in the middle band. No standing full-length figures.",
+      "pose_fit": ["low"],
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [6, 6, 88, 30],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.9,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 10
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.66, "max_lines": 1, "min_px": 28, "optional": true }
+              ]
+            },
+            {
+              "id": "bottom",
+              "region": [6, 60, 88, 34],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.9,
+              "scrim": {
+                "direction": "bottom",
+                "fade_pct": 10
+              },
+              "stack": [
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.4, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": [
+            {
+              "name": "subject",
+              "rect": [5, 37, 90, 22]
+            }
+          ]
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t3-right-column": {
+      "number": 103,
+      "name": "Right column",
+      "seen_in": [
+        "Anchorage, flat-lay ('Anchorage Area Men Wanted')",
+        "Mount Dora, green dumbbell",
+        "Asheville, boxing blue ('LADIES WANTED … FITNESS KICKSTART')"
+      ],
+      "visual_hint": "Subject in the left half of the frame; keep the right half plain and uncluttered (bare wall or empty floor). No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "People on the left side only, upright and full-length if the scene wants it; the right side is plain wall or empty floor with nothing in it.",
+      "pose_fit": ["upright", "compact", "low"],
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "column",
+              "region": [48, 6, 46, 88],
+              "anchor": "center",
+              "align": "right",
+              "gap_pct": 1.1,
+              "scrim": {
+                "direction": "right",
+                "fade_pct": 8
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.7, "max_lines": 2, "min_px": 28, "optional": true },
+                { "block": "divider", "width_pct": 34, "thickness_pct": 0.45, "space_pct": 1.4 },
+                { "block": "duration", "share": 1.3, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.8, "max_lines": 4, "min_px": 28 }
+              ]
+            }
+          ],
+          "clear_zones": [
+            {
+              "name": "subject",
+              "rect": [5, 5, 41, 90]
+            }
+          ]
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t4-centred-stack": {
+      "number": 104,
+      "name": "Centred full stack",
+      "seen_in": [
+        "Asheville 'MEN WANTED', MMA red",
+        "Anchorage 'LADIES WANTED', lat pulldown"
+      ],
+      "visual_hint": "A dark, moody frame with the subject filling it; even, low-key lighting with no bright patches, so text can sit over the whole image. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "One person filling the frame in low-key light, the face near the left or right edge rather than the centre, since the text runs across the middle; plain dark surroundings.",
+      "pose_fit": ["upright", "compact", "low"],
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "main",
+              "region": [6, 6, 88, 88],
+              "anchor": "center",
+              "align": "center",
+              "gap_pct": 1,
+              "scrim": {
+                "direction": "even"
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.85, "max_lines": 2, "min_px": 28, "optional": true },
+                { "block": "divider", "width_pct": 34, "thickness_pct": 0.45, "space_pct": 1.4 },
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.3, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t5-offer-band": {
+      "number": 105,
+      "name": "Offer on a band",
+      "seen_in": [
+        "Mount Dora, purple pill ('High Performance Aging Transformation Program')",
+        "Mount Dora, black bar"
+      ],
+      "visual_hint": "Subject in the middle of the frame; keep the top fifth and the bottom third plain and uncluttered (ceiling above, floor below). No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "Keep the people small and low: a horizontal or low pose (plank, push-up, floor work, a seated movement), shot from a few metres back so heads and bodies stay in the middle band. No standing full-length figures.",
+      "pose_fit": ["low"],
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [6, 6, 88, 26],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.9,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 8
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.66, "max_lines": 1, "min_px": 28, "optional": true }
+              ]
+            },
+            {
+              "id": "bottom",
+              "region": [6, 56, 88, 38],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "bottom",
+                "fade_pct": 10
+              },
+              "band": {
+                "mode": "line",
+                "shape": "pill",
+                "blocks": [
+                  "offer_name"
+                ],
+                "pad_pct": 1,
+                "radius_pct": 3
+              },
+              "stack": [
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.6, "max_lines": 3, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": [
+            {
+              "name": "subject",
+              "rect": [5, 34, 90, 20]
+            }
+          ]
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t6-left-column": {
+      "number": 106,
+      "name": "Left column",
+      "seen_in": [
+        "Asheville ladies, muay thai",
+        "Asheville ladies, MMA cage ('ASHEVILLE LADIES WANTED … FITNESS KICKSTART')"
+      ],
+      "visual_hint": "Subject in the right half of the frame; keep the left half plain and uncluttered (bare wall or empty floor). No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "People on the right side only, upright and full-length if the scene wants it; the left side is plain wall or empty floor with nothing in it.",
+      "pose_fit": ["upright", "compact", "low"],
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "column",
+              "region": [6, 6, 46, 88],
+              "anchor": "center",
+              "align": "left",
+              "gap_pct": 1.1,
+              "scrim": {
+                "direction": "left",
+                "fade_pct": 8
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.7, "max_lines": 2, "min_px": 28, "optional": true },
+                { "block": "divider", "width_pct": 34, "thickness_pct": 0.45, "space_pct": 1.4 },
+                { "block": "duration", "share": 1.3, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.8, "max_lines": 4, "min_px": 28 }
+              ]
+            }
+          ],
+          "clear_zones": [
+            {
+              "name": "subject",
+              "rect": [54, 5, 41, 90]
+            }
+          ]
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t7-collage": {
+      "number": 107,
+      "name": "Collage",
+      "seen_in": [
+        "Asheville 'MEN WANTED', collage blue"
+      ],
+      "visual_hint": "One tile of a 3×3 collage: a tight, action-filled crop with one clear subject, moody low-key lighting. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "A tight, single-subject action crop; any pose.",
+      "pose_fit": ["upright", "compact", "low"],
+      "layouts": {
+        "1x1": {
+          "background": {
+            "type": "collage",
+            "cols": 3,
+            "rows": 3,
+            "min_images": 4
+          },
+          "groups": [
+            {
+              "id": "main",
+              "region": [6, 6, 88, 88],
+              "anchor": "center",
+              "align": "center",
+              "gap_pct": 1,
+              "scrim": {
+                "direction": "even"
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 2, "min_px": 34 },
+                { "block": "audience", "share": 0.85, "max_lines": 2, "min_px": 28, "optional": true },
+                { "block": "divider", "width_pct": 34, "thickness_pct": 0.45, "space_pct": 1.4 },
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.3, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    },
+    "t8-panels-band": {
+      "number": 108,
+      "name": "Panels + band",
+      "seen_in": [
+        "Anchorage 'Ladies Wanted', circles"
+      ],
+      "visual_hint": "A square photo with one clear subject centred, on a plain background — it will be cropped to a circle. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "One person, centred, head and body well inside the frame with space on every side, so a circular crop cuts nothing important.",
+      "pose_fit": ["upright", "compact", "low"],
+      "layouts": {
+        "1x1": {
+          "background": {
+            "type": "panels",
+            "backdrop": "#211E1F",
+            "min_images": 2,
+            "panels": [
+              { "shape": "circle", "cx": 27, "cy": 50, "r": 20 },
+              { "shape": "circle", "cx": 73, "cy": 53, "r": 20 }
+            ]
+          },
+          "groups": [
+            {
+              "id": "top",
+              "region": [6, 6, 88, 22],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "none"
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 1, "min_px": 34 },
+                { "block": "audience", "share": 1, "max_lines": 1, "min_px": 28, "optional": true }
+              ]
+            },
+            {
+              "id": "bottom",
+              "region": [6, 74, 88, 20],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "none"
+              },
+              "band": {
+                "mode": "full",
+                "shape": "bar",
+                "blocks": [
+                  "duration",
+                  "offer_name"
+                ],
+                "pad_pct": 1
+              },
+              "stack": [
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.4, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "9x16": {
+          "note": "Hand-tuned from the derived 9:16 layout: the text groups are unchanged; the circles are enlarged to the full width between them, and a blurred, dimmed copy of the first photo fills the frame, so the areas the app covers carry imagery instead of flat backdrop (the derived version left ~60% of the frame plain).",
+          "background": {
+            "type": "panels",
+            "backdrop": "#211E1F",
+            "min_images": 2,
+            "panels": [
+              { "shape": "circle", "cx": 27.5, "cy": 39.77, "r": 21.5 },
+              { "shape": "circle", "cx": 72.5, "cy": 40.37, "r": 21.5 }
+            ],
+            "backdrop_photo": {
+              "image": 0,
+              "blur_pct": 3,
+              "darken": 0.55
+            }
+          },
+          "groups": [
+            {
+              "id": "top",
+              "region": [6.98, 14.57, 86.04, 12.47],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.34,
+              "scrim": {
+                "direction": "none"
+              },
+              "stack": [
+                { "block": "location", "share": 1, "max_lines": 1, "min_px": 34 },
+                { "block": "audience", "share": 1, "max_lines": 1, "min_px": 28, "optional": true }
+              ]
+            },
+            {
+              "id": "bottom",
+              "region": [6.98, 53.1, 86.04, 11.33],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.34,
+              "scrim": {
+                "direction": "none"
+              },
+              "band": {
+                "mode": "full",
+                "shape": "bar",
+                "blocks": [
+                  "duration",
+                  "offer_name"
+                ],
+                "pad_pct": 0.57
+              },
+              "stack": [
+                { "block": "duration", "share": 1.5, "max_lines": 1, "min_px": 44 },
+                { "block": "offer_name", "share": 1.4, "max_lines": 2, "min_px": 30 }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 4.5,
+        "stroke_min": 3,
+        "scrim_max_alpha": 0.85,
+        "sample_percentile": 85,
+        "chain": [
+          "stroke",
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "duration is the largest line; location is at least as large as audience"
+    }
+  }
+}
