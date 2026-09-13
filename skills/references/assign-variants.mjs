@@ -326,7 +326,7 @@ export async function renderPlan(browser, plan, { text, texts = null, imageFor, 
       // fails and is swapped. Each photo is cropped where its check found it fits this layout.
       const renders = [];
       for (const t of all) {
-        const r = await renderComposite(browser, { images: ims.map(imageFor), faces: ims.map(facesFor), focus: ims.map((id) => focusFor(id, treatment)), ...t, treatment, style, palette, ratio: plan.ratio || "1x1" });
+        const r = await renderComposite(browser, { images: ims.map(imageFor), faces: ims.map(facesFor), focus: ims.map((id) => focusFor(id, treatment)), ...t, treatment, style, palette, ratio: plan.ratio || "1x1", catalogue });
         renders.push({ text: t, r });
         if (!r.ok) break;
       }

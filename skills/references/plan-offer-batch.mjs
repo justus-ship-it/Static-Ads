@@ -41,6 +41,7 @@ import { poseProblem, POSES } from "./visual-prompts.mjs";
 import { fitLayouts, imageSize, checkTiled } from "./check-visual.mjs";
 import { QUALITY_VERSION } from "./check-quality.mjs";
 import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from "./assign-variants.mjs";
+import { catalogueFor } from "./client-config.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { SCENE_TAGS, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
@@ -335,8 +336,9 @@ export function progressWriter(out, base) {
  * photo's tiled check), checkRef, compositor, gallery (builds gallery.html), log.
  */
 export async function runBatch({ brandDir, brief, outDir = null, dryRun = false, renderOnly = false, approveScenes: confirmScenes = false, scenesPath = null, deps = {}, log = console.log }) {
-  const catalogue = loadCatalogue();
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
+  // The reference palettes, the gym's brand palettes, or both (creative_defaults.palettes).
+  const catalogue = catalogueFor(profile);
   const errs = validateBrief(brief, { brandDir, catalogue });
   if (errs.length) throw new Error(`the brief cannot run:\n- ${errs.join("\n- ")}`);
   const ratio = brief.ratio || "1x1", looks = brief.looks_per_photo ?? 2, seed = brief.seed || brief.batch_id;
@@ -429,7 +431,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     // photo in use is looked at first, so a batch keeps its photos when they still pass.
     const check = withRulings(deps.check || checkPicture, rulings);
     if (todo.length) {
-      const compositor = deps.compositor !== undefined ? deps.compositor : makeCompositor();
+      const compositor = deps.compositor !== undefined ? deps.compositor : makeCompositor(catalogue);
       const earlier = (v) => {
         if (!(prior[v.id]?.scene === v.scene && prior[v.id]?.treatment === v.treatment && existsSync(visualsDir))) return [];
         const files = readdirSync(visualsDir).filter((n) => new RegExp(`^${v.id}(-a\\d+)?\\.(png|jpe?g|webp)$`).test(n)).map((n) => join(visualsDir, n)).reverse();

@@ -10,7 +10,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync, symlinkSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
@@ -786,5 +786,149 @@ test("U13 the page: Create opens with the profile's defaults (never the offer); 
   assert.match(await ev("document.querySelector('#view').textContent"), /This gym's profile still needs/);
   await ev(`selectClient('${GYM}'); true`);
   await until(`STATE.sel==='${GYM}' && document.querySelector('#bLoc0')?.value==='BISHAN'`, "the first gym's defaults again");
+  assert.ok(!/NETWORK BLOCKED/.test(panel.log()));
+});
+
+// ── U14 brand assets ──────────────────────────────────────────────────────────
+
+test("U14 brand assets: dropped files are filed by kind in brand-assets with a manifest — images by their first bytes, an SVG only as a plain logo, a HEIC converted, never the same file twice; served from brand-assets alone; the first logo becomes the profile's; removal goes to _trash; the clean-up runs are built server-side; the preview shows the brand palette", async () => {
+  const g = join(brands, GYM);
+  const png = readFileSync(join(g, "brand-assets", "facility-clean", "r1.png")), png2 = readFileSync(join(g, "brand-assets", "facility-clean", "r2.png"));
+  const put = (kind, name, body, { token = panel.token, headers = {} } = {}) => raw(`/api/client/${GYM}/asset/${kind}/${name}`, { method: "PUT", headers: { "content-type": "application/octet-stream", ...(token ? { "x-panel-token": token } : {}), ...headers }, body });
+  const manifest = () => JSON.parse(readFileSync(join(g, "brand-assets", "manifest.json"), "utf-8"));
+  let r = await (await call(`/api/client/${GYM}/assets`)).json();
+  assert.deepEqual(r.kinds.map((k) => k.id), ["logo", "facility", "coaches", "members", "brand", "other"]);
+  assert.deepEqual(r.assets, []); assert.equal(r.clean.length, 2, "the cleaned photos list apart");
+  assert.equal((await put("facility", "room-one.png", png, { token: null })).status, 403, "no token");
+  assert.equal((await put("rooms", "room-one.png", png)).status, 400, "an unknown kind");
+  assert.equal((await put("facility", "Room%20One.png", png)).status, 400, "the name must be a slug");
+  assert.equal((await put("facility", "room-one.jpg", png)).status, 400, "a png named .jpg");
+  assert.equal((await put("facility", "notes.png", Buffer.from("this is not an image at all"))).status, 400);
+  let up = await put("facility", "room-one.png", png, { headers: { "x-original-name": encodeURIComponent("IMG_0042 Sin Ming.PNG") } });
+  assert.equal(up.status, 200, up.body);
+  let j = JSON.parse(up.body);
+  assert.equal(j.asset.path, "facility/room-one.png"); assert.equal(j.asset.original_name, "IMG_0042 Sin Ming.PNG"); assert.deepEqual(j.asset.size, [1535, 1146]); assert.equal(j.asset.source, "upload");
+  assert.ok(existsSync(join(g, "brand-assets", "facility", "room-one.png")));
+  assert.equal(manifest().assets[0].sha256.length, 64, "the content hash is recorded");
+  assert.equal((await fetch(panel.url + `/files/brands/${GYM}/brand-assets/facility/room-one.png`)).status, 200, "served for the thumbnail");
+  const dup = await put("facility", "room-again.png", png);
+  assert.equal(dup.status, 409); assert.match(JSON.parse(dup.body).error, /already here as facility\/room-one\.png/);
+  assert.ok(!existsSync(join(g, "brand-assets", "facility", "room-again.png")));
+  j = JSON.parse((await put("facility", "room-one.png", png2)).body);
+  assert.equal(j.asset.path, "facility/room-one-2.png", "a name already taken is numbered, never overwritten");
+  mkdirSync(join(g, "brand-assets", "coaches"), { recursive: true }); writeFileSync(join(g, "brand-assets", "coaches", "coach-a.png"), png);
+  r = await (await call(`/api/client/${GYM}/assets`)).json();
+  const byPath = Object.fromEntries(r.assets.map((a) => [a.path, a]));
+  assert.equal(byPath["facility/room-one.png"].cleaned, false); assert.equal(byPath["facility/room-one.png"].source, "upload");
+  assert.equal(byPath["coaches/coach-a.png"].source, "folder", "a file placed by hand lists too");
+  assert.equal(byPath["facility/room-one.png"].url, `/files/brands/${GYM}/brand-assets/facility/room-one.png`);
+  assert.equal((await put("other", "big.png", Buffer.concat([png, Buffer.alloc(26 * 1024 * 1024)]))).status, 413, "over 25 MB");
+  // SVG: a logo only; a plain one only; served as an image that may run nothing.
+  const svgLogo = Buffer.from(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="200" height="80"><rect width="200" height="80" fill="#fff"/></svg>`);
+  assert.equal((await put("facility", "mark.svg", svgLogo)).status, 400, "an SVG is not a photo");
+  assert.equal((await put("logo", "mark.svg", Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`))).status, 400, "scripts refused");
+  assert.equal((await put("logo", "mark.svg", Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" onload="x()"></svg>`))).status, 400, "handlers refused");
+  up = await put("logo", "mark.svg", svgLogo); assert.equal(up.status, 200, up.body);
+  j = JSON.parse(up.body); assert.equal(j.asset.logo_set, true, "the first logo becomes the profile's");
+  assert.equal(JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8")).brand_lock.logo.files.primary, "logo/mark.svg");
+  const served = await fetch(panel.url + `/files/brands/${GYM}/brand-assets/logo/mark.svg`);
+  assert.equal(served.status, 200); assert.equal(served.headers.get("content-type"), "image/svg+xml"); assert.match(served.headers.get("content-security-policy"), /default-src 'none'/);
+  assert.equal((await fetch(panel.url + `/files/brands/${GYM}/brand-assets/facility/mark.svg`)).status, 404, "an svg outside logo/ is never served");
+  assert.equal((await (await call(`/api/client/${GYM}`)).json()).logo, `/files/brands/${GYM}/brand-assets/logo/mark.svg`);
+  j = JSON.parse((await put("logo", "mark-white.png", Buffer.concat([png2, Buffer.from([0])]))).body);
+  assert.ok(!j.asset.logo_set, "a second logo does not replace the profile's");
+  // Removal: never the profile's logo; otherwise to _trash, noted, no longer served.
+  assert.equal((await call(`/api/client/${GYM}/asset/logo/mark.svg`, { method: "DELETE" })).status, 409, "the logo in use");
+  assert.equal((await call(`/api/client/${GYM}/asset/logo/mark-white.png`, { method: "DELETE", token: null })).status, 403);
+  assert.equal((await call(`/api/client/${GYM}/asset/logo/mark-white.png`, { method: "DELETE" })).status, 200);
+  assert.ok(!existsSync(join(g, "brand-assets", "logo", "mark-white.png")));
+  const trashed = manifest().assets.find((a) => a.path === "logo/mark-white.png");
+  assert.ok(trashed.removed && existsSync(join(g, "brand-assets", trashed.trashed)), "moved, not deleted");
+  assert.equal((await fetch(panel.url + `/files/brands/${GYM}/brand-assets/${trashed.trashed}`)).status, 404, "the trash is not served");
+  assert.equal((await call(`/api/client/${GYM}/asset/logo/nope.png`, { method: "DELETE" })).status, 404);
+  // HEIC from an iPhone: converted with sips on a Mac (skipped where there is none).
+  if (r.heic) {
+    const heicDir = mkdtempSync(join(tmpdir(), "heic-")); writeFileSync(join(heicDir, "in.png"), png);
+    execFileSync("sips", ["-s", "format", "heic", join(heicDir, "in.png"), "--out", join(heicDir, "shot.heic")], { stdio: "ignore" });
+    up = await put("facility", "iphone-shot.heic", readFileSync(join(heicDir, "shot.heic")));
+    assert.equal(up.status, 200, up.body);
+    j = JSON.parse(up.body); assert.equal(j.asset.path, "facility/iphone-shot.jpg");
+    assert.equal(readFileSync(join(g, "brand-assets", "facility", "iphone-shot.jpg"))[0], 0xff, "a JPEG now");
+    rmSync(heicDir, { recursive: true, force: true });
+  }
+  // The clean-up runs: photos are premises photos by name; the clean run needs a confirmed cap; argv is built here.
+  const post = (body) => call("/api/run", { method: "POST", body });
+  assert.equal((await post({ kind: "photo-survey", gym: GYM, photos: [] })).status, 400);
+  assert.equal((await post({ kind: "photo-survey", gym: GYM, photos: ["../facility-clean/r1.png"] })).status, 400);
+  assert.equal((await post({ kind: "photo-survey", gym: GYM, photos: ["nope.png"] })).status, 400);
+  assert.equal((await post({ kind: "photo-clean", gym: GYM, photos: ["room-one.png"] })).status, 400, "no cap");
+  assert.equal((await post({ kind: "photo-clean", gym: GYM, photos: ["room-one.png", "room-one-2.png"], confirm: { max_calls: 1 } })).status, 400, "under one call per photo");
+  let ran = await runAndWait({ kind: "photo-survey", gym: GYM, photos: ["room-one.png"], extra: "--yes" });
+  assert.match(ran.lines[0], /^\$ node skills\/references\/clean-photo\.mjs --brand-dir \S+testgym --survey-only --photo \S+brand-assets\/facility\/room-one\.png$/, ran.lines[0]);
+  assert.notEqual(ran.code, 0, "no model in the tests: the survey stops at its first call");
+  assert.ok(ran.lines.some((l) => /network blocked|GEMINI_KEY/.test(l)), ran.lines.join("\n"));
+  ran = await runAndWait({ kind: "photo-clean", gym: GYM, photos: ["room-one.png", "room-one-2.png"], confirm: { max_calls: 8 } });
+  assert.match(ran.lines[0], /clean-photo\.mjs --brand-dir \S+testgym --max-calls 8 --attempts 2 --photo \S+room-one\.png --photo \S+room-one-2\.png$/, ran.lines[0]);
+  assert.ok(!existsSync(join(g, "brand-assets", "facility-clean", "room-one.png")), "nothing cleaned without a model");
+  // The gym's brand colours: saved with the palettes mode, the profile answers with its three palettes,
+  // and the live preview's offer-band look takes the brand palette.
+  const prof = JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8"));
+  const withBrand = { ...prof, brand_lock: { ...prof.brand_lock, colors: { primary: { hex: "#0A0A0A" }, secondary: { hex: "#FA1414" }, accent: { hex: "#FFFFFF" } } }, creative_defaults: { ...(prof.creative_defaults || {}), palettes: "both" } };
+  assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: { ...withBrand, brand_lock: prof.brand_lock } })).status, 400, "both without colours is refused");
+  const saved = await (await call(`/api/client/${GYM}`, { method: "PUT", body: withBrand })).json();
+  assert.deepEqual(Object.keys(saved.brand_palettes), ["brand", "brand-light", "brand-bold"]);
+  const pv = await (await call("/api/preview", { method: "POST", body: { gym: GYM, offer: WORDS.offer, location: "BISHAN", audience: "MEN", photos: ["facility-clean/r1.png", "facility-clean/r2.png"] } })).json();
+  assert.deepEqual(pv.errors, []);
+  const t5 = pv.looks.find((l) => l.id === "t5"); assert.equal(t5.palette, "brand"); assert.equal(t5.ok, true, t5.failures.join("; "));
+  assert.ok(pv.looks.filter((l) => l.id !== "t5").every((l) => l.palette !== "brand"), "the other looks keep their reference pairings");
+  assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: { ...withBrand, creative_defaults: { ...(prof.creative_defaults || {}), palettes: "reference" } } })).status, 200);
+});
+
+// ── U15 the assets page, the Brand page, the palette switch ──────────────────
+
+test("U15 the page: a file dropped on Photos & assets is filed by kind and listed; selecting premises photos enables the clean-up; the Brand page shows the brand palettes and the logo in use; Ad defaults switches the palettes on and saves it", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+    return result.value;
+  };
+  const until = async (expression, what, ms = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await ev(expression)) return; await new Promise((r) => setTimeout(r, 120)); }
+    throw new Error(`timed out waiting for ${what}: ${await ev("location.hash + ' ' + (document.querySelector('#view')?.textContent||'').slice(0,300)")}`);
+  };
+  const loaded = cdp.once("Page.loadEventFired", sessionId);
+  await cdp.send("Page.navigate", { url: `${panel.url}/?u15#/${GYM}/photos` }, sessionId);
+  await loaded;
+  await until("!!document.querySelector('#aDrop') && document.querySelectorAll('.asset').length>0", "the assets page");
+  assert.match(await ev("document.querySelector('#view').textContent"), /Cleaned premises photos/);
+  // Upload through the page's own code: a File (the served photo, one byte changed so it is new), as a coach photo.
+  await ev(`(async()=>{ const b = await (await fetch('/files/brands/${GYM}/brand-assets/facility-clean/r2.png')).blob(); const bytes = new Uint8Array(await b.arrayBuffer()); bytes[bytes.length-1] ^= 1;
+    const f = new File([bytes], 'Coach Viki HEAD.png', {type:'image/png'}); await aUploadKind([f], 'coaches', async()=>{ await loadAssets(); paintAssets(document.querySelector('#view')); }); return true })()`);
+  await until("[...document.querySelectorAll('.asset .m b')].some(b=>b.textContent==='coach-viki-head.png')", "the coach photo listed");
+  assert.ok(existsSync(join(brands, GYM, "brand-assets", "coaches", "coach-viki-head.png")), "filed under coaches");
+  await ev("aToggle('room-one.png'); true");
+  await until("[...document.querySelectorAll('button')].some(b=>/Survey 1/.test(b.textContent) && !b.disabled)", "the survey button enabled by a selection");
+  assert.ok(await ev("[...document.querySelectorAll('.asset.is-logo .tag')].some(p=>/in use/.test(p.textContent))"), "the profile's logo is marked in use on the assets page");
+  assert.ok(await ev("[...document.querySelectorAll('.asset.is-logo button')].every(b=>!/Use as logo/.test(b.textContent))"), "and not offered as a choice");
+  // The Brand page: the three swatches from the saved colours, and the logo in use.
+  await ev("go('brand'); true");
+  await until("document.querySelectorAll('.swatch').length===3", "three swatches");
+  const brandText = await ev("document.querySelector('#view').textContent");
+  assert.match(brandText, /the reference pairings only/); assert.match(brandText, /mark\.svg/);
+  assert.ok(await ev("[...document.querySelectorAll('.asset.is-logo .pill')].some(p=>/in use/.test(p.textContent))"), "the profile's logo is marked");
+  // Ad defaults: switch to both, save, and the file says so.
+  await ev("go('defaults'); true");
+  await until("document.querySelectorAll('input[name=pm]').length===3", "the palette switch");
+  assert.equal(await ev("document.querySelector('input[name=pm][value=both]').disabled"), false, "enabled once the gym has colours");
+  await ev("(()=>{const el=document.querySelector('input[name=pm][value=both]'); el.checked=true; el.dispatchEvent(new Event('change',{bubbles:true})); return true})()");
+  await ev("document.querySelector('#saveBtn_profile').click(); true");
+  const t0 = Date.now();
+  while (Date.now() - t0 < 15000 && JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8")).creative_defaults?.palettes !== "both") await new Promise((r) => setTimeout(r, 150));
+  assert.equal(JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8")).creative_defaults.palettes, "both");
+  await until("DIRTY.profile===false", "saved");
+  await ev("go('brand'); true");
+  await until("/both the reference pairings and the brand palettes/.test(document.querySelector('#view').textContent)", "the Brand page says both");
   assert.ok(!/NETWORK BLOCKED/.test(panel.log()));
 });

@@ -39,15 +39,15 @@ const inline = (p) => ({ inline_data: { mime_type: MIME[extname(p).toLowerCase()
 
 /** Set the brief's words on a visual, with its faces as keep-out areas. Single-photo layouts only:
  *  a collage or panels needs the batch's other photos, so those are composed in the batch step. */
-export function makeCompositor() {
+export function makeCompositor(catalogue = loadCatalogue()) {
   let browser = null;
-  const T = loadCatalogue().treatments;
+  const T = catalogue.treatments;
   return {
     async compose(file, faces, v, text, ratio, out, focus) {
       const bg = layoutFor(T.treatments[v.treatment], ratio, T).background?.type || "single";
       if (bg !== "single") return { ok: true, skipped: "needs the batch's other photos" };
       browser ||= await launchBrowser();
-      const r = await renderComposite(browser, { image: file, faces: [faces || []], focus, ...text, treatment: v.treatment, style: v.look?.style, palette: v.look?.palette, ratio });
+      const r = await renderComposite(browser, { image: file, faces: [faces || []], focus, ...text, treatment: v.treatment, style: v.look?.style, palette: v.look?.palette, ratio, catalogue });
       if (r.png) writeFileSync(out, r.png);
       return { ok: r.ok, failures: r.failures, ad: r.png ? out : null, face_zones: r.report?.face_zones?.length ?? 0 };
     },

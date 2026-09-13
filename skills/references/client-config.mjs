@@ -278,7 +278,61 @@ function validate(profile, offer, resolved, gymDir) {
 export const PROFILE_SCHEMA = 3;
 const MAX_LOCATION_CALLOUTS = 4; // plan-offer-batch MAX_LOCATIONS: one version of every ad per location
 /** What the Create screen opens with when a profile says nothing. The offer is never among them. */
-export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 10, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true };
+export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 10, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true, palettes: "reference" };
+/** Which colour pairings a gym's ads draw from: the reference catalogue (the loud pairings the
+ *  high-performing ads use), the gym's own brand colours, or both in the same spread. */
+export const PALETTE_MODES = ["reference", "brand", "both"];
+
+// ── Brand palettes ───────────────────────────────────────────────────────────
+// The gym's colours as text pairings the renderer can use, built the way the reference palettes
+// are written (a fill and an outline per line, a pill, a band, a divider). Three of them, so a
+// "brand only" batch still has enough different palettes for two looks per photo. The renderer's
+// contrast guard judges every line on the photo as it does for the catalogue's pairings.
+const HEX = /^#[0-9A-Fa-f]{6}$/;
+const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+const lum = (hex) => { const [r, g, b] = rgb(hex).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+const sat = (hex) => { const c = rgb(hex), mx = Math.max(...c), mn = Math.min(...c); return mx === mn ? 0 : (mx - mn) / (1 - Math.abs(mx + mn - 1)); };
+/** WCAG contrast ratio between two colours. */
+export const contrast = (a, b) => { const [l1, l2] = [lum(a), lum(b)].sort((x, y) => y - x); return (l1 + 0.05) / (l2 + 0.05); };
+
+/** The three roles the brand colours play on an ad: the pop (its most saturated colour), a light
+ *  and a dark. A gym with one colour gets white and near-black for the other two. */
+export function brandRoles(colors = {}) {
+  const given = ["primary", "secondary", "accent"].map((k) => colors?.[k]?.hex).filter((h) => typeof h === "string" && HEX.test(h)).map((h) => h.toUpperCase());
+  if (!given.length) return null;
+  const pop = [...given].sort((a, b) => sat(b) - sat(a) || lum(a) - lum(b))[0];
+  const rest = given.filter((h) => h !== pop);
+  const light = rest.filter((h) => lum(h) >= 0.6).sort((a, b) => lum(b) - lum(a))[0] || "#FFFFFF";
+  const dark = rest.filter((h) => lum(h) <= 0.15).sort((a, b) => lum(a) - lum(b))[0] || "#111111";
+  return { pop, light, dark };
+}
+
+export function brandPalettes(profile) {
+  const roles = brandRoles(profile?.brand_lock?.colors);
+  if (!roles) return {};
+  const { pop, light, dark } = roles;
+  const shadow = "rgba(0,0,0,0.55)";
+  const outlineFor = (fill) => (contrast(fill, light) >= contrast(fill, dark) ? light : dark);
+  const line = (fill, outline = outlineFor(fill)) => ({ fill, outline, shadow });
+  const onLight = contrast(pop, light) >= 3 ? pop : dark; // a pop that reads on the light colour, else the dark
+  const seen_in = [`${profile?.display_name || "the gym"}'s brand colours`];
+  return {
+    brand: { seen_in, brand: true, blocks: { location: line(pop), audience: line(light, onLight), duration: line(light, onLight), offer_name: line(pop) }, pill: dark, band: dark, scrim: "#000000", divider: pop },
+    "brand-light": { seen_in, brand: true, blocks: { location: line(light, dark), audience: line(light, dark), duration: line(light, dark), offer_name: line(light, dark) }, pill: onLight === pop ? pop : dark, band: dark, scrim: "#000000", divider: pop },
+    "brand-bold": { seen_in, brand: true, blocks: { location: line(pop), audience: line(pop), duration: line(pop), offer_name: line(pop) }, pill: light, band: dark, scrim: "#000000", divider: light },
+  };
+}
+
+/** The catalogue a gym's batches use: the reference palettes, its brand palettes, or both, by
+ *  creative_defaults.palettes. Layouts and styles are the catalogue's own. */
+export function catalogueFor(profile, catalogue = loadCatalogue()) {
+  const mode = profile?.creative_defaults?.palettes || CREATIVE_DEFAULTS.palettes;
+  if (mode === "reference") return catalogue;
+  const brand = brandPalettes(profile);
+  if (!Object.keys(brand).length) throw new Error(`creative_defaults.palettes is "${mode}" but the profile has no brand colours (brand_lock.colors)`);
+  const palettes = mode === "brand" ? brand : { ...catalogue.palettes.palettes, ...brand };
+  return { ...catalogue, palettes: { ...catalogue.palettes, palettes } };
+}
 // Secret-bearing names (not an ad set's name_token) and what a Meta access token looks like.
 const SECRET_KEY = /^(token|access_token|.*_access_token|.*_user_token|app_secret|client_secret|secret|password|api[_-]?key|apikey)$/i;
 const SECRET_VALUE = /^(EAA[A-Za-z0-9]{30,}|AIza[0-9A-Za-z_-]{30,})$/;
@@ -340,6 +394,8 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       int("generated", 0, 12); int("looks_per_photo", 1, 6); int("attempts", 1, 5); int("max_calls", 0, 40);
       if (Number.isInteger(cd.max_calls) && Number.isInteger(cd.generated) && cd.max_calls < cd.generated) errors.push(`creative_defaults.max_calls (${cd.max_calls}) must cover one call per new photo (${cd.generated})`);
       if (cd.spread != null && typeof cd.spread !== "boolean") errors.push("creative_defaults.spread must be true or false");
+      if (cd.palettes != null && !PALETTE_MODES.includes(cd.palettes)) errors.push(`creative_defaults.palettes must be one of ${PALETTE_MODES.join(", ")}`);
+      if (["brand", "both"].includes(cd.palettes) && !brandRoles(profile.brand_lock?.colors)) errors.push(`creative_defaults.palettes is "${cd.palettes}", but the brand has no colours yet (Brand & photography)`);
     }
   }
   for (const [k, re] of Object.entries(META_ID)) {

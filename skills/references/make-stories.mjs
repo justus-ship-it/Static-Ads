@@ -42,6 +42,7 @@ import { checkSibling } from "./check-quality.mjs";
 import { renderPlan } from "./assign-variants.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { resolveSelections, loadRulings, withRulings, CHECKS_VERSION } from "./plan-offer-batch.mjs";
+import { catalogueFor } from "./client-config.mjs";
 import { inPage, LOAD } from "./clean-photo.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -144,8 +145,6 @@ export const storiesFile = (file1x1) => file1x1.replace("/1x1/", `/${RATIO}/`).r
  * Returns { out, plan, stories, calls } (or { out, plan, dryRun: true }).
  */
 export async function runStories({ brandDir, batchId, batchDir = null, maxCalls = DEFAULT_MAX_CALLS, attempts = 2, dryRun = false, renderOnly = false, deps = {}, log = console.log }) {
-  const catalogue = loadCatalogue();
-  const T = catalogue.treatments;
   const out = batchDir || join(brandDir, "outputs", batchId);
   if (!existsSync(join(out, "batch.json"))) throw new Error(`no finished batch at ${out}`);
   if (!existsSync(join(out, "selections.json"))) throw new Error(`no selections.json in ${out}: open the gallery, pick, Save Selections, and put the file in the batch folder`);
@@ -153,6 +152,8 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
   const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
   const brief = JSON.parse(readFileSync(join(out, "brief.json"), "utf-8"));
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
+  const catalogue = catalogueFor(profile); // the 1:1 ads' palettes, brand ones included
+  const T = catalogue.treatments;
   const photography = profile.brand_lock?.photography || {}, brandNames = [profile.display_name].filter(Boolean);
   const visualsById = Object.fromEntries((existsSync(join(out, "visuals.json")) ? JSON.parse(readFileSync(join(out, "visuals.json"), "utf-8")).visuals : []).map((v) => [v.id, v]));
   const pictures = existsSync(join(out, "pictures.json")) ? JSON.parse(readFileSync(join(out, "pictures.json"), "utf-8")) : {};
@@ -201,7 +202,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
     writeFileSync(spendPath, JSON.stringify({ ...spend, stories_image_calls: spentBefore + calls, stories_max_calls: maxCalls }, null, 2) + "\n");
     writeFileSync(storiesPath, JSON.stringify({ ...existing, batch_id: batch.batch_id, ratio: RATIO, photos: prior, image_calls: spentBefore + calls, max_calls: maxCalls, partial: true }, null, 2) + "\n");
   };
-  const compositor = deps.compositor !== undefined ? deps.compositor : makeCompositor();
+  const compositor = deps.compositor !== undefined ? deps.compositor : makeCompositor(catalogue);
   const reference = brief.reference || brief.real?.[0] || null;
   const earlier = (v) => (existsSync(visualsDir) ? readdirSync(visualsDir).filter((n) => new RegExp(`^${v.id}(-a\\d+)?\\.(png|jpe?g|webp)$`).test(n)).map((n) => join(visualsDir, n)).sort().reverse() : []);
   // Photos already on disk are looked at first — free of image calls; the one in use first.

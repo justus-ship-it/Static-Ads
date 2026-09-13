@@ -721,3 +721,43 @@ test("B11 progress.json tells the panel what a run is doing, photo by photo: que
     assert.match(p3.error, /real photo real\/r1\.png is not clean/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("B12 a gym's brand palettes: with palettes \"brand\" every ad uses one of them and verifies; with \"both\" they join the reference pairings in the spread; with \"reference\" none appear; a re-render keeps them", async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const pf = join(dir, "gym-profile.json"), base = JSON.parse(readFileSync(pf, "utf-8"));
+    const colours = { primary: { hex: "#0A0A0A" }, secondary: { hex: "#FA1414" }, accent: { hex: "#FFFFFF" } };
+    const setMode = (palettes, creative = undefined) => writeFileSync(pf, JSON.stringify({ ...base, brand_lock: { ...base.brand_lock, colors: colours }, creative_defaults: { palettes }, ...(creative ? { creative } : {}) }));
+    const brief = { ...BRIEF, batch_id: "palettes", generated: 0, real: ["real/r1.png", "real/r2.png"], looks_per_photo: 3, max_calls: 0 };
+    const deps = { ...fakes([]), browser };
+    const isBrand = (id) => /^brand(-light|-bold)?$/.test(id);
+    // Brand only: 2 photos × 3 looks × 2 locations, every look on a brand palette, every ad verified.
+    setMode("brand");
+    let r = await runBatch({ brandDir: dir, brief, deps, log: () => {} });
+    assert.equal(r.batch.failed.length, 0, JSON.stringify(r.batch.failed));
+    assert.equal(r.batch.ads.length, 12);
+    assert.ok(r.batch.ads.every((a) => isBrand(a.palette)), r.batch.ads.map((a) => a.palette).join(" "));
+    assert.deepEqual([...new Set(r.batch.ads.map((a) => a.palette))].sort(), ["brand", "brand-bold", "brand-light"], "each brand palette is used");
+    for (const c of r.results) for (const x of c.renders) assert.ok(x.r.ok, `${c.id}: ${x.r.failures}`);
+    for (const ad of r.batch.ads) assert.match(ad.folder, /-brand(-light|-bold)?$/);
+    // A free re-render of the same batch keeps the brand palettes (the catalogue is rebuilt from the profile).
+    const again = await runBatch({ brandDir: dir, brief: { ...brief, offer: "6 Week Strength Kickstart" }, renderOnly: true, deps, log: () => {} });
+    assert.deepEqual(again.batch.ads.map((a) => a.palette), r.batch.ads.map((a) => a.palette));
+    assert.ok(again.batch.ads.every((a) => a.words.offer === "6 Week Strength Kickstart"));
+    // Both: with six reference pairings switched off, 8 ads over 7 palettes use the brand ones too.
+    setMode("both", { exclude_palettes: ["cyan-pink", "red-white", "blue-white", "purple-white", "pink-white", "green-white"] });
+    r = await runBatch({ brandDir: dir, brief: { ...brief, batch_id: "palettes-both", looks_per_photo: 4 }, deps, log: () => {} });
+    assert.equal(r.batch.failed.length, 0, JSON.stringify(r.batch.failed));
+    const used = new Set(r.batch.ads.map((a) => a.palette));
+    assert.ok([...used].some(isBrand), `a brand palette is in the spread: ${[...used].join(" ")}`);
+    assert.ok([...used].some((id) => !isBrand(id)), `and a reference pairing: ${[...used].join(" ")}`);
+    // Reference: none of them, whatever colours the profile has.
+    setMode("reference");
+    r = await runBatch({ brandDir: dir, brief: { ...brief, batch_id: "palettes-ref" }, deps, log: () => {} });
+    assert.ok(r.batch.ads.every((a) => !isBrand(a.palette)));
+    // A brand mode with no colours stops the batch before anything is made.
+    writeFileSync(pf, JSON.stringify({ ...base, creative_defaults: { palettes: "brand" } }));
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "palettes-none" }, deps, log: () => {} }), /no brand colours/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

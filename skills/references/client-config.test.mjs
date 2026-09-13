@@ -11,7 +11,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold } from "./client-config.mjs";
+import { validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES } from "./client-config.mjs";
+import { loadCatalogue } from "./render-composites.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems, MAX_WORDINGS } from "./ad-wordings.mjs";
 
 const gymDir = () => {
@@ -163,5 +164,54 @@ test("P4 a new gym is scaffolded in the clients folder it is given, with its nam
     writeFileSync(join(d, "iron-haus", "gym-profile.json"), JSON.stringify({ ...p, website: "https://ironhaus.sg" }));
     scaffold("iron-haus", null, { brandsDir: d, displayName: "Something Else" });
     assert.equal(JSON.parse(readFileSync(join(d, "iron-haus", "gym-profile.json"), "utf-8")).website, "https://ironhaus.sg");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("P5 brand palettes: three pairings built from the gym's colours, written like the catalogue's; a gym with one colour still gets them; the catalogue follows creative_defaults.palettes; a mode without colours is refused", () => {
+  const p = complete();
+  p.brand_lock.colors = { primary: { hex: "#0A0A0A", name: "Black" }, secondary: { hex: "#FA1414", name: "Red" }, accent: { hex: "#FFFFFF" } };
+  assert.deepEqual(brandRoles(p.brand_lock.colors), { pop: "#FA1414", light: "#FFFFFF", dark: "#0A0A0A" }, "the most saturated colour is the pop; the light and dark sit beside it");
+  const bp = brandPalettes(p);
+  assert.deepEqual(Object.keys(bp), ["brand", "brand-light", "brand-bold"]);
+  const HEX = /^#[0-9A-F]{6}$/;
+  for (const [id, s] of Object.entries(bp)) {
+    assert.equal(s.brand, true, `${id} is marked as the gym's own`);
+    for (const b of ["location", "audience", "duration", "offer_name"]) {
+      assert.match(s.blocks[b].fill, HEX, `${id} ${b} fill`); assert.match(s.blocks[b].outline, HEX, `${id} ${b} outline`);
+      assert.ok(contrast(s.blocks[b].fill, s.blocks[b].outline) >= 3, `${id} ${b}: the outline reads against the fill (${contrast(s.blocks[b].fill, s.blocks[b].outline).toFixed(1)}:1)`);
+      assert.ok(s.blocks[b].shadow);
+    }
+    for (const k of ["pill", "band", "scrim", "divider"]) assert.match(s[k], HEX, `${id} ${k}`);
+  }
+  assert.equal(bp.brand.blocks.location.fill, "#FA1414"); assert.equal(bp.brand.blocks.location.outline, "#0A0A0A");
+  assert.equal(bp.brand.blocks.audience.fill, "#FFFFFF"); assert.equal(bp.brand.blocks.audience.outline, "#FA1414");
+  assert.equal(bp["brand-light"].blocks.offer_name.fill, "#FFFFFF"); assert.equal(bp["brand-bold"].blocks.offer_name.fill, "#FA1414");
+  assert.equal(bp.brand.divider, "#FA1414");
+  // One dark colour only: white and near-black fill the other roles; the outline is the one that reads.
+  const navy = brandPalettes({ display_name: "Navy Gym", brand_lock: { colors: { primary: { hex: "#041131" } } } });
+  assert.equal(navy.brand.blocks.location.fill, "#041131"); assert.equal(navy.brand.blocks.location.outline, "#FFFFFF");
+  assert.equal(navy["brand-light"].blocks.location.fill, "#FFFFFF"); assert.equal(navy["brand-light"].blocks.location.outline, "#111111");
+  assert.deepEqual(brandPalettes({}), {}, "no colours, no palettes");
+  assert.deepEqual(brandPalettes({ brand_lock: { colors: { primary: { hex: "red" } } } }), {}, "a colour that is not a hex is not a colour");
+  // The catalogue a batch renders with, by mode. The reference catalogue itself is never changed.
+  const ref = loadCatalogue(), refIds = Object.keys(ref.palettes.palettes);
+  const asRef = catalogueFor({ ...p, creative_defaults: { palettes: "reference" } });
+  assert.deepEqual(Object.keys(asRef.palettes.palettes), refIds);
+  assert.deepEqual(Object.keys(catalogueFor(p).palettes.palettes), refIds, "the default is the reference set");
+  const both = catalogueFor({ ...p, creative_defaults: { palettes: "both" } });
+  assert.deepEqual(Object.keys(both.palettes.palettes), [...refIds, "brand", "brand-light", "brand-bold"]);
+  const brand = catalogueFor({ ...p, creative_defaults: { palettes: "brand" } });
+  assert.deepEqual(Object.keys(brand.palettes.palettes), ["brand", "brand-light", "brand-bold"]);
+  assert.deepEqual(brand.treatments, ref.treatments); assert.deepEqual(brand.styles, ref.styles);
+  assert.deepEqual(Object.keys(loadCatalogue().palettes.palettes), refIds, "the catalogue on disk is untouched");
+  assert.throws(() => catalogueFor({ creative_defaults: { palettes: "brand" } }), /no brand colours/);
+  assert.deepEqual(PALETTE_MODES, ["reference", "brand", "both"]);
+  // Saving: the mode must be one of the three, and a brand mode needs colours to build from.
+  const d = gymDir();
+  try {
+    assert.match(validateProfile({ ...p, creative_defaults: { palettes: "loud" } }, { gymDir: d }).errors.join("\n"), /reference, brand, both/);
+    assert.match(validateProfile({ ...p, brand_lock: { ...p.brand_lock, colors: {} }, creative_defaults: { palettes: "both" } }, { gymDir: d }).errors.join("\n"), /no colours yet/);
+    assert.deepEqual(validateProfile({ ...p, creative_defaults: { palettes: "both" } }, { gymDir: d }).errors, []);
+    assert.equal(CREATIVE_DEFAULTS.palettes, "reference");
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

@@ -23,16 +23,18 @@
  */
 
 import { createServer } from "http";
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, realpathSync, rmSync, renameSync } from "fs";
-import { join, resolve, dirname, extname, sep } from "path";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, realpathSync, rmSync, renameSync, mkdtempSync } from "fs";
+import { join, resolve, dirname, extname, basename, sep } from "path";
+import { tmpdir } from "os";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { spawn, execFileSync } from "child_process";
-import { randomBytes, timingSafeEqual } from "crypto";
+import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
-  loadClientConfig, writeResolved, scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS,
-  CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
+  loadClientConfig, writeResolved, scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
+  catalogueFor, brandPalettes, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
 } from "../skills/references/client-config.mjs";
+import { imageSize } from "../skills/references/check-visual.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
 import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
@@ -46,10 +48,21 @@ const SWIPE = join(REPO_ROOT, "swipe");
 const BATCH_SCRIPT = join(REPO_ROOT, "skills", "references", "plan-offer-batch.mjs");
 const STORIES_SCRIPT = join(REPO_ROOT, "skills", "references", "make-stories.mjs");
 const REFRESH_SCRIPT = join(REPO_ROOT, "skills", "references", "refresh-scenes.mjs");
+const CLEAN_SCRIPT = join(REPO_ROOT, "skills", "references", "clean-photo.mjs");
 /** A reference image's file name: a slug and an image extension — it becomes a path segment. */
 const REFERENCE_NAME = /^[a-z0-9][a-z0-9-]{0,63}\.(png|jpe?g|webp)$/;
 const MAX_REFERENCE_BYTES = 10 * 1024 * 1024;
 const MAX_REFRESH_COUNT = 12;
+// The gym's own assets (brand-assets/): what kind of thing each upload is, and the folder it goes to.
+// The folders are the ones the pipeline already reads (facility → clean-photo, logo → the profile).
+const ASSET_KINDS = [
+  { id: "logo", label: "Logo", folder: "logo" }, { id: "facility", label: "Premises", folder: "facility" }, { id: "coaches", label: "Coaches", folder: "coaches" },
+  { id: "members", label: "Members", folder: "members" }, { id: "brand", label: "Brand (screenshots, guidelines)", folder: "brand" }, { id: "other", label: "Other", folder: "other" },
+];
+const assetKind = (id) => ASSET_KINDS.find((k) => k.id === id) || null;
+const ASSET_NAME = /^[a-z0-9][a-z0-9-]{0,63}\.(png|jpe?g|webp|svg|heic)$/;
+const MAX_ASSET_BYTES = 25 * 1024 * 1024;
+const MAX_CLEAN_PHOTOS = 9;
 
 const { values: argv } = parseArgs({ options: { port: { type: "string", default: "4310" } } });
 let PORT = parseInt(argv.port, 10);
@@ -111,6 +124,11 @@ const RUNNABLE = {
   // A scene refresh (text calls only): the audience, the count and the direction — words and/or an
   // uploaded reference image — each checked for shape before it becomes an argument.
   "scenes-refresh": { label: "Refresh scenes (drafts for approval)", argv: ({ gym, audience, count, words, reference }) => [REFRESH_SCRIPT, "--brand-dir", brandDir(gym), "--audience", audience, "--count", String(count), ...(words ? ["--words", words] : []), ...(reference ? ["--reference", reference] : [])] },
+  // The premises photos' clean-up (Step 5): a free survey of what an edit would remove, and the edit
+  // itself under a confirmed call cap. Photos are names in brand-assets/facility, checked before they
+  // become arguments; the clean copies land in brand-assets/facility-clean as the CLI's do.
+  "photo-survey": { label: "Survey premises photos (free)", argv: ({ gym, photos }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--survey-only", ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", "facility", p)])] },
+  "photo-clean": { label: "Clean premises photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", "facility", p)])] },
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -148,6 +166,113 @@ function imageKind(buf) {
   if (buf.length >= 12 && buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") return "webp";
   return null;
 }
+const isHeic = (buf) => buf.length >= 12 && buf.subarray(4, 8).toString("ascii") === "ftyp" && ["heic", "heix", "hevc", "hevx", "mif1", "msf1"].includes(buf.subarray(8, 12).toString("ascii"));
+const isSvg = (buf) => /^﻿?\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE[^>]*>\s*)?<svg[\s>]/i.test(buf.subarray(0, 2048).toString("utf8"));
+let sipsOk = null;
+/** Whether this Mac can turn an iPhone's HEIC into a JPEG (sips ships with macOS). */
+function hasSips() { if (sipsOk === null) { try { execFileSync("sips", ["--help"], { stdio: "ignore" }); sipsOk = true; } catch { sipsOk = false; } } return sipsOk; }
+function heicToJpeg(buf) {
+  const d = mkdtempSync(join(tmpdir(), "heic-"));
+  try {
+    writeFileSync(join(d, "in.heic"), buf);
+    execFileSync("sips", ["-s", "format", "jpeg", "-s", "formatOptions", "92", join(d, "in.heic"), "--out", join(d, "out.jpg")], { stdio: "ignore" });
+    return readFileSync(join(d, "out.jpg"));
+  } finally { rmSync(d, { recursive: true, force: true }); }
+}
+
+// ── Brand assets (the gym's own files, uploaded from the panel) ──────────────
+// brand-assets/{kind folder}/{name}, with a manifest.json beside them recording where each came
+// from (an upload, later a web address), when, and its content hash — so a file is never uploaded
+// twice under two names, and a file that arrived by hand still lists (source "folder").
+const assetsDir = (gym) => join(brandDir(gym), "brand-assets");
+const manifestPath = (gym) => join(assetsDir(gym), "manifest.json");
+const readManifest = (gym) => { const m = readJsonFile(manifestPath(gym)); return { assets: Array.isArray(m?.assets) ? m.assets : [] }; };
+const writeManifest = (gym, m) => { mkdirSync(assetsDir(gym), { recursive: true }); writeWhole(manifestPath(gym), JSON.stringify({ ...m, updated: new Date().toISOString() }, null, 2) + "\n"); };
+const ASSET_FILE = /\.(png|jpe?g|webp)$/i, LOGO_FILE = /\.(png|jpe?g|webp|svg)$/i;
+const sizeOf = (buf) => { try { const s = imageSize(buf); return Array.isArray(s) && s.every(Number.isFinite) ? s : null; } catch { return null; } };
+const stem = (f) => f.replace(/\.[^.]+$/, "");
+
+/** Every asset the gym has, by kind, with its manifest row where there is one. */
+function listAssets(gym) {
+  const base = assetsDir(gym), rows = readManifest(gym).assets;
+  const cleanStems = new Set(cleanPhotos(gym).map((p) => stem(basename(p.path))));
+  const logo = readJsonFile(join(brandDir(gym), "gym-profile.json"))?.brand_lock?.logo?.files?.primary || null;
+  const out = [];
+  for (const k of ASSET_KINDS) {
+    const dir = join(base, k.folder);
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir).filter((f) => (k.id === "logo" ? LOGO_FILE : ASSET_FILE).test(f) && !f.startsWith(".")).sort()) {
+      const path = `${k.folder}/${f}`, row = rows.find((r) => r.path === path && !r.removed) || {};
+      const st = statSync(join(dir, f));
+      out.push({ path, name: f, kind: k.id, url: `/files/brands/${gym}/brand-assets/${path}`, bytes: st.size, size: row.size || null, source: row.source || "folder", original_name: row.original_name || null, added: row.added || st.mtime.toISOString().slice(0, 10),
+        ...(k.id === "facility" ? { cleaned: cleanStems.has(stem(f)) } : {}), ...(k.id === "logo" ? { in_use: logo === path || logo === f } : {}) });
+    }
+  }
+  return out;
+}
+
+const fail = (status, message) => Object.assign(new Error(message), { status });
+/** Keep an uploaded file as one of the gym's assets: an image by its first bytes (an iPhone's HEIC
+ *  is converted here; an SVG only as a logo, and only a plain one), named as asked, never twice. */
+function saveAsset(gym, kindId, name, buf, originalName = null) {
+  const kind = assetKind(kindId);
+  if (!kind) throw fail(400, `the kind must be one of ${ASSET_KINDS.map((k) => k.id).join(", ")}`);
+  if (!ASSET_NAME.test(name)) throw fail(400, "the file name must be lower-case letters, digits and hyphens, ending in .png, .jpg, .webp, .heic or (for a logo) .svg");
+  let found = imageKind(buf) || (isHeic(buf) ? "heic" : null) || (isSvg(buf) ? "svg" : null);
+  if (!found) throw fail(400, "not an image file (png, jpg, webp or heic; svg for a logo)");
+  if (found === "svg" && kind.id !== "logo") throw fail(400, "an SVG can only be a logo; photos are png, jpg, webp or heic");
+  if (found === "svg" && /<script|\bon[a-z]+\s*=|javascript:|<foreignObject|<iframe|<embed|<object/i.test(buf.toString("utf8"))) throw fail(400, "this SVG carries scripts or embedded content; export a plain one");
+  const ext = extname(name).toLowerCase();
+  if (!(found === "jpg" ? [".jpg", ".jpeg"] : [`.${found}`]).includes(ext)) throw fail(400, `this is a ${found} file; name it .${found}`);
+  if (found === "heic") {
+    if (!hasSips()) throw fail(400, "HEIC photos are converted with sips, which this machine does not have — export the photo as JPEG first");
+    buf = heicToJpeg(buf); name = name.replace(/\.heic$/i, ".jpg"); found = "jpg";
+  }
+  const sha256 = createHash("sha256").update(buf).digest("hex");
+  const manifest = readManifest(gym);
+  const dup = manifest.assets.find((a) => a.sha256 === sha256 && !a.removed && existsSync(join(assetsDir(gym), a.path)));
+  if (dup) throw fail(409, `this file is already here as ${dup.path}`);
+  const dir = join(assetsDir(gym), kind.folder);
+  mkdirSync(dir, { recursive: true });
+  let final = name, n = 2;
+  while (existsSync(join(dir, final))) final = `${stem(name)}-${n++}${extname(name)}`;
+  writeFileSync(join(dir, final), buf);
+  const row = { path: `${kind.folder}/${final}`, kind: kind.id, original_name: originalName || name, sha256, bytes: buf.length, size: found === "svg" ? null : sizeOf(buf), source: "upload", added: new Date().toISOString().slice(0, 10) };
+  manifest.assets = manifest.assets.filter((a) => a.path !== row.path).concat(row);
+  writeManifest(gym, manifest);
+  // The first logo uploaded becomes the profile's logo file, unless one is already named.
+  if (kind.id === "logo") {
+    const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf);
+    if (profile && !profile.brand_lock?.logo?.files?.primary) {
+      const lock = (profile.brand_lock ||= {}); const logo = (lock.logo ||= {}); (logo.files ||= {}).primary = row.path;
+      writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+      row.logo_set = true;
+    }
+  }
+  return row;
+}
+
+/** An asset the owner no longer wants: moved to brand-assets/_trash (never deleted), noted in the manifest. */
+function removeAsset(gym, kindId, name) {
+  const kind = assetKind(kindId);
+  if (!kind || !ASSET_NAME.test(name)) throw fail(404, "no such asset");
+  const path = `${kind.folder}/${name}`, abs = join(assetsDir(gym), path);
+  if (!existsSync(abs)) throw fail(404, "no such asset");
+  const profile = readJsonFile(join(brandDir(gym), "gym-profile.json"));
+  const logo = profile?.brand_lock?.logo?.files?.primary;
+  if (kind.id === "logo" && (logo === path || logo === name)) throw fail(409, "this is the profile's logo file — choose another logo first (Brand & photography)");
+  const trash = join(assetsDir(gym), "_trash");
+  mkdirSync(trash, { recursive: true });
+  const to = join(trash, `${new Date().toISOString().slice(0, 10)}-${kind.folder}-${name}`);
+  renameSync(abs, existsSync(to) ? to.replace(/(\.[^.]+)$/, `-${Date.now().toString(36)}$1`) : to);
+  const manifest = readManifest(gym);
+  const row = manifest.assets.find((a) => a.path === path && !a.removed);
+  if (row) { row.removed = new Date().toISOString().slice(0, 10); row.trashed = `_trash/${basename(to)}`; }
+  else manifest.assets.push({ path, kind: kind.id, source: "folder", removed: new Date().toISOString().slice(0, 10), trashed: `_trash/${basename(to)}` });
+  writeManifest(gym, manifest);
+  return { ok: true, trashed: `_trash/${basename(to)}` };
+}
+
 const referencesDir = (gym) => join(brandDir(gym), REFERENCES_DIR);
 function listReferences(gym) {
   const dir = referencesDir(gym);
@@ -199,13 +324,13 @@ function listClients() {
 function profileView(gym) {
   const dir = brandDir(gym), profile = readJsonFile(join(dir, "gym-profile.json"));
   const completeness = profileCompleteness(profile, { gymDir: dir, cleanPhotos: cleanPhotos(gym).length, scenes: sceneStatus(gym), wordings: readWordings(dir).length });
-  return { profile, assets: countAssets(dir), completeness, creative_defaults: { ...CREATIVE_DEFAULTS, ...(profile?.creative_defaults || {}) }, logo: logoUrl(gym, profile) };
+  return { profile, assets: countAssets(dir), completeness, creative_defaults: { ...CREATIVE_DEFAULTS, ...(profile?.creative_defaults || {}) }, logo: logoUrl(gym, profile), brand_palettes: brandPalettes(profile), palette_modes: PALETTE_MODES };
 }
 function logoUrl(gym, profile) {
   const f = profile?.brand_lock?.logo?.files?.primary;
   if (!f || f.includes("..")) return null;
   const rel = f.startsWith("brand-assets/") ? f.slice("brand-assets/".length) : f;
-  return existsSync(join(brandDir(gym), "brand-assets", rel)) && IMAGE_EXT.has(extname(rel).toLowerCase()) ? `/files/brands/${gym}/brand-assets/${rel}` : null;
+  return existsSync(join(brandDir(gym), "brand-assets", rel)) && (IMAGE_EXT.has(extname(rel).toLowerCase()) || extname(rel).toLowerCase() === ".svg") ? `/files/brands/${gym}/brand-assets/${rel}` : null;
 }
 
 function countAssets(dir) {
@@ -422,10 +547,16 @@ async function renderPreview(gym, { offer, location, audience, photos }) {
   const browser = await browserP;
   const files = photos.map((p) => join(brandDir(gym), "brand-assets", p));
   const looks = [];
+  // A gym whose ads use its brand colours sees them in the preview: the offer-band look takes the brand palette.
+  const profile = readJsonFile(join(brandDir(gym), "gym-profile.json"));
+  let catalogue = null;
+  try { catalogue = catalogueFor(profile); } catch {}
+  const brand = catalogue?.palettes.palettes.brand ? "brand" : null;
   for (const L of PREVIEW_LOOKS) {
     const ims = L.photos.map((i) => files[Math.min(i, files.length - 1)]);
     const style = !audience && L.noAudienceStyle ? L.noAudienceStyle : L.style;
-    const r = await renderComposite(browser, { images: ims, location, audience: audience || null, offer, treatment: L.treatment, style, palette: L.palette, ratio: "1x1" });
+    const palette = brand && L.id === "t5" ? brand : L.palette;
+    const r = await renderComposite(browser, { images: ims, location, audience: audience || null, offer, treatment: L.treatment, style, palette, ratio: "1x1", ...(catalogue ? { catalogue } : {}) });
     let url = null;
     if (r.png) {
       const id = randomBytes(9).toString("hex");
@@ -433,7 +564,7 @@ async function renderPreview(gym, { offer, location, audience, photos }) {
       while (previews.size > 32) previews.delete(previews.keys().next().value);
       url = `/api/preview-img/${id}.png`;
     }
-    looks.push({ id: L.id, label: L.label, treatment: L.treatment, style, palette: L.palette, ok: r.ok, failures: r.failures || [], url, words: r.report?.blocks ? Object.fromEntries(r.report.blocks.map((b) => [b.block, b.text])) : null });
+    looks.push({ id: L.id, label: L.label, treatment: L.treatment, style, palette, ok: r.ok, failures: r.failures || [], url, words: r.report?.blocks ? Object.fromEntries(r.report.blocks.map((b) => [b.block, b.text])) : null });
   }
   return looks;
 }
@@ -485,7 +616,7 @@ function startRun(kind, params) {
 
 // ── Static files ─────────────────────────────────────────────────────────────
 const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript",
-  ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
+  ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml" };
 
 /**
  * The only files /files/ will serve: generated outputs (galleries and their images), brand images,
@@ -498,7 +629,7 @@ function allowedFile(rel) {
   const ext = extname(rel).toLowerCase();
   let base = null;
   if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "outputs" && (ext === ".html" || IMAGE_EXT.has(ext))) base = join(BRANDS, parts[1], "outputs");
-  else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "brand-assets" && IMAGE_EXT.has(ext)) base = join(BRANDS, parts[1], "brand-assets");
+  else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "brand-assets" && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "logo")) && parts[3] !== "_trash") base = join(BRANDS, parts[1], "brand-assets");
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === REFERENCES_DIR && parts.length === 4 && REFERENCE_NAME.test(parts[3])) base = join(BRANDS, parts[1], REFERENCES_DIR);
   else if (parts[0] === "swipe" && parts.length >= 3 && (ext === ".html" || IMAGE_EXT.has(ext))) base = SWIPE;
   if (!base) return null;
@@ -510,7 +641,9 @@ function allowedFile(rel) {
 }
 
 function sendFile(res, abs) {
-  res.writeHead(200, { "content-type": MIME[extname(abs).toLowerCase()] || "application/octet-stream", "cache-control": "no-store" });
+  const ext = extname(abs).toLowerCase();
+  // An SVG logo is a picture here, never a page: no scripts, no fetches, even if one slipped through.
+  res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-store", ...(ext === ".svg" ? { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'", "x-content-type-options": "nosniff" } : {}) });
   res.end(readFileSync(abs));
 }
 
@@ -580,6 +713,26 @@ const server = createServer(async (req, res) => {
       const job = queue.then(() => renderPreview(gym, { offer, location, audience, photos: use }));
       queue = job.catch(() => {});
       return json(res, 200, { errors: [], looks: await job });
+    }
+
+    // /api/client/{gym}/assets · /asset/{kind}/{name} — the gym's own files, from the panel's drop zone.
+    const am = p.match(/^\/api\/client\/([^/]+)\/(assets|asset\/([a-z]+)\/([^/]+))$/);
+    if (am) {
+      const [, gym, what, kind, name] = am;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      if (what === "assets" && req.method === "GET") return json(res, 200, { kinds: ASSET_KINDS, assets: listAssets(gym), clean: cleanPhotos(gym), heic: hasSips(), max_bytes: MAX_ASSET_BYTES, max_clean: MAX_CLEAN_PHOTOS });
+      if (kind && req.method === "PUT") {
+        let buf;
+        try { buf = await readRaw(req, MAX_ASSET_BYTES); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
+        try {
+          const original = req.headers["x-original-name"] ? decodeURIComponent(String(req.headers["x-original-name"])).slice(0, 200) : null;
+          const row = saveAsset(gym, kind, name, buf, original);
+          return json(res, 200, { ok: true, asset: { ...row, url: `/files/brands/${gym}/brand-assets/${row.path}` } });
+        } catch (e) { return json(res, e.status || 400, { error: e.message }); }
+      }
+      if (kind && req.method === "DELETE") {
+        try { return json(res, 200, removeAsset(gym, kind, name)); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
+      }
     }
 
     // /api/client/{gym}/scenes · /scenes/approve · /scenes/reject · /reference/{name}
@@ -745,6 +898,20 @@ const server = createServer(async (req, res) => {
         if (body.words != null && (typeof body.words !== "string" || body.words.trim().length < 3 || body.words.length > MAX_WORDS)) return json(res, 400, { error: `words must describe the pictures wanted, up to ${MAX_WORDS} characters` });
         if (body.reference != null && (!REFERENCE_NAME.test(String(body.reference)) || !existsSync(join(referencesDir(body.gym), body.reference)))) return json(res, 400, { error: "reference must name an uploaded reference image" });
         const run = startRun(kind, { gym: body.gym, audience: body.audience, count: body.count, words: body.words?.trim() || null, reference: body.reference || null });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "photo-survey" || kind === "photo-clean") {
+        if (!okSlug(body.gym) || !existsSync(brandDir(body.gym))) return json(res, 400, { error: "bad gym" });
+        const photos = Array.isArray(body.photos) ? body.photos : [];
+        if (!photos.length || photos.length > MAX_CLEAN_PHOTOS) return json(res, 400, { error: `choose 1 to ${MAX_CLEAN_PHOTOS} premises photos` });
+        for (const ph of photos) if (typeof ph !== "string" || !ASSET_FILE.test(ph) || !ASSET_NAME.test(ph) || !existsSync(join(assetsDir(body.gym), "facility", ph))) return json(res, 400, { error: `${JSON.stringify(ph)} is not one of the premises photos` });
+        const params = { gym: body.gym, photos };
+        if (kind === "photo-clean") {
+          const cap = body.confirm?.max_calls;
+          if (!Number.isInteger(cap) || cap < photos.length || cap > MAX_CALLS_CAP) return json(res, 400, { error: `confirm the call cap for the clean-up (${photos.length}–${MAX_CALLS_CAP}: at least one call per photo)` });
+          params.confirm = { max_calls: cap };
+        }
+        const run = startRun(kind, params);
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (spec.needsBrief) {

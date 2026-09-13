@@ -179,6 +179,27 @@
   .wrow{display:flex;gap:8px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)} .wrow:last-of-type{border-bottom:none}
   .wrow .wt{font-weight:600;font-size:14px} .wrow .d{font-size:12px;color:var(--dim)}
   .wchips .chip{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* brand assets */
+  .drop{border:2px dashed var(--line-2);border-radius:10px;padding:26px 16px;text-align:center;color:var(--dim);background:var(--surface-2);transition:border-color .15s,background .15s}
+  .drop.over{border-color:var(--navy);background:var(--accent-soft);color:var(--navy)}
+  .drop .lnk{color:var(--link);cursor:pointer;font-weight:600;text-decoration:underline}
+  .amsg{font-size:12.5px;padding:3px 0;color:var(--dim)} .amsg.ok{color:var(--ok)} .amsg.err{color:var(--err)}
+  .assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
+  .asset{background:var(--surface);border:1px solid var(--line);border-radius:9px;overflow:hidden;position:relative}
+  .asset.sel{border-color:var(--navy);box-shadow:0 0 0 2px var(--accent-soft)}
+  .asset .im{aspect-ratio:4/3;background:#0b1430;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:pointer}
+  .asset .im img{width:100%;height:100%;object-fit:cover;display:block}
+  .asset.is-logo .im{background:#0a0a0a;padding:12px} .asset.is-logo .im img{object-fit:contain}
+  .asset .m{padding:7px 9px;font-size:11.5px;color:var(--dim)} .asset .m b{display:block;color:var(--text);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+  .asset .m .row{gap:4px;margin-top:5px}
+  .asset .tick{position:absolute;top:8px;left:8px;width:20px;height:20px;border-radius:50%;background:var(--surface);border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
+  .asset.sel .tick{background:var(--navy);border-color:var(--navy)}
+  .asset .tag{position:absolute;top:8px;right:8px}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+  .swatch{border-radius:10px;padding:14px 16px;background:#262626;background-image:linear-gradient(135deg,#3a3a3a,#161616);font-family:Montserrat,Inter,sans-serif;font-weight:900;text-transform:uppercase;line-height:1.15;letter-spacing:.3px}
+  .swatch div{font-size:17px;paint-order:stroke fill;-webkit-text-stroke:1px} .swatch .sm{font-size:12px}
+  .swatch .pill{display:inline-block;margin-top:8px;padding:3px 10px;border:none;font-size:13px;-webkit-text-stroke:0}
+  .swatch .cap{font-family:Inter,sans-serif;font-weight:600;font-size:11px;text-transform:none;letter-spacing:0;color:#9fb0d6;margin-top:10px;-webkit-text-stroke:0}
 
   /* ── Generating ── */
   .steps{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
@@ -237,11 +258,11 @@ let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'
 // The rail: the daily path first (Create, Review, Exports), the library next, the client's setup last.
 const NAV = [
   ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Exports','⤓'],
-  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos','▣'], ['references','References','◈'],
+  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'],
   ['sec','Profile'], ['overview','Overview','◎'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'], ['generate','Templates (old)','·'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Exports', scenes:'Scene library', photos:'Photos', references:'Reference images', overview:'Overview', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Exports', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -333,7 +354,7 @@ function render(){
   if (!STATE.sel) { v.innerHTML = `<div class="empty">No client selected.<br><br><button class="primary" onclick="newClient()">Create your first gym</button></div>`; return; }
   if (STATE.tab==='overview') return viewOverview(v, seq);
   if (STATE.tab==='identity') return viewIdentity(v);
-  if (STATE.tab==='brand') return viewBrand(v);
+  if (STATE.tab==='brand') return viewBrand(v, seq);
   if (STATE.tab==='offer') return viewOffer(v, seq);
   if (STATE.tab==='defaults') return viewDefaults(v, seq);
   if (STATE.tab==='meta') return viewMeta(v);
@@ -418,11 +439,21 @@ function viewIdentity(v){
 function locAdd(){ STATE.profile.locations.push({}); dirty('profile'); render(); }
 function locDel(i){ STATE.profile.locations.splice(i,1); dirty('profile'); render(); }
 
-function viewBrand(v){
+/** A brand palette as a swatch: its four lines in their own fill and outline, and its pill. */
+function swatch(id, s){
+  const line = (b, cls='') => `<div class="${cls}" style="color:${esc(s.blocks[b].fill)};-webkit-text-stroke-color:${esc(s.blocks[b].outline)}">${b==='location'?'BISHAN':b==='audience'?'Ladies wanted':b==='duration'?'12 Week':'Total Body Reset'}</div>`;
+  return `<div class="swatch">${line('location')}${line('audience','sm')}${line('duration')}${line('offer_name')}<span class="pill" style="background:${esc(s.pill)};color:${esc(s.blocks.offer_name.fill===s.pill?s.blocks.offer_name.outline:s.blocks.offer_name.fill)}">on a band</span><div class="cap">${esc(id)}</div></div>`;
+}
+async function viewBrand(v, seq=VIEW_SEQ){
   const p = STATE.profile;
   if (!p) { v.innerHTML = '<div class="empty">No gym-profile.json for this client.</div>'; return; }
   const L = p.brand_lock ||= {};
   const C = L.colors ||= {};
+  let logos = [];
+  try { logos = (await api(`/api/client/${STATE.sel}/assets`)).assets.filter(a=>a.kind==='logo'); } catch {}
+  if (seq !== VIEW_SEQ) return;
+  const pal = STATE.view?.brand_palettes || {}, mode = (p.creative_defaults?.palettes) || STATE.view?.creative_defaults?.palettes || 'reference';
+  const MODE_LABEL = { reference:'the reference pairings only', brand:'the brand palettes only', both:'both the reference pairings and the brand palettes' };
   const col = (k,lbl) => `
     <div>
       <label>${lbl}</label>
@@ -443,12 +474,19 @@ function viewBrand(v){
     <div class="grid">${col('primary','Primary')}${col('secondary','Secondary')}${col('accent','Accent')}</div>
   </div>
   <div class="card">
+    <h3>Brand colours on the ads</h3>
+    ${Object.keys(pal).length ? `<p class="hint">Three pairings built from the colours above, the way the reference pairings are written: the most saturated colour is the pop, with a light and a dark beside it. The contrast guard still adds an outline, a scrim or a band on a busy photo. Right now this gym's ads use <b>${MODE_LABEL[mode]||mode}</b> — change that on <a href="#" onclick="go('defaults');return false">Ad defaults</a>. Swatches update after a save.</p>
+      <div class="swatches">${Object.entries(pal).map(([id,s])=>swatch(id,s)).join('')}</div>` : '<p class="hint">Give the gym a primary colour and save, and its brand palettes appear here.</p>'}
+  </div>
+  <div class="card">
     <h3>Logo</h3>
     <div class="row" style="align-items:flex-start;gap:16px">
       <div style="width:200px;height:84px;border-radius:8px;background:#0a0a0a;display:flex;align-items:center;justify-content:center;flex:none">${logo?`<img src="${esc(logo)}" alt="" style="max-width:180px;max-height:64px">`:'<span style="color:#8594bd;font-size:12px">no logo file yet</span>'}</div>
       <div style="flex:1"><label style="margin-top:0">Logo file <span class="n">· in the gym's brand-assets folder</span></label><input class="mono" value="${esc(L.logo?.files?.primary||'')}" placeholder="logo/logo-horizontal-white.png" oninput="setP('brand_lock.logo.files.primary',this.value)">
         <p class="hint" style="margin-top:6px">Kept with the profile for later. The offer-first ads do not draw a logo.</p></div>
     </div>
+    ${logos.length ? `<div class="assets" style="margin-top:12px">${logos.map(a=>`<div class="asset is-logo"><div class="im"><img src="${esc(a.url)}" alt=""></div><div class="m"><b title="${esc(a.name)}">${esc(a.name)}</b>${a.in_use?'<span class="pill on">in use</span>':`<div class="row"><button class="sm" onclick="aUseLogo('${esc(a.path)}')">Use as logo</button></div>`}</div></div>`).join('')}</div>` : ''}
+    <div class="row" style="margin-top:12px"><label class="chip add" style="margin:0">+ Upload a logo<input type="file" multiple accept=".png,.jpg,.jpeg,.webp,.svg,image/*" hidden onchange="aUploadKind(this.files,'logo',()=>render())"></label><span id="aMsgs" class="hint" style="margin:0"></span></div>
   </div>
   <div class="card">
     <h3>Photography</h3>
@@ -504,6 +542,7 @@ async function viewDefaults(v, seq=VIEW_SEQ){
   const D = { ...STATE.view?.creative_defaults, ...cd };
   const photos = B.setup.photos;
   const locs = D.locations || [], auds = D.audiences || [];
+  const hasBrand = Object.keys(STATE.view?.brand_palettes||{}).length > 0;
   const num = (k,lbl,min,max,ph='') => `<div><label>${lbl}</label><input type="number" min="${min}" max="${max}" value="${esc(cd[k]??'')}" placeholder="${esc(ph||String(D[k]??''))}" oninput="setP('creative_defaults.${k}',this.value===''?null:Number(this.value))"></div>`;
   v.innerHTML = `
   <h1>Ad defaults</h1><p class="sub">What the Create screen opens with for this gym, so a new batch is a few edits and one button. Everything stays changeable per batch. The offer is never filled in for you.</p>
@@ -518,6 +557,11 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     <label style="display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text);margin-top:12px"><input type="checkbox" style="width:auto;margin:0" ${D.spread!==false?'checked':''} onchange="setP('creative_defaults.spread',this.checked)"> Spread across exercises, ages, settings and equipment</label>
     <label>Real photos in every batch</label>
     <div class="thumbs">${photos.length ? photos.map(ph=>`<label><input type="checkbox" ${(D.real_photos||[]).includes(ph.path)?'checked':''} onchange="cdPhoto('${esc(ph.path)}',this.checked)"><img src="${esc(ph.url)}" alt=""><span style="font-size:11px">${esc(ph.path.split('/').pop())}</span></label>`).join('') : '<span class="hint">No cleaned photos yet.</span>'}</div>
+  </div>
+  <div class="card"><h3>Colours on the ads</h3>
+    <p class="hint">The loud pairings of the high-performing reference ads, the gym's own brand colours (three pairings built from <a href="#" onclick="go('brand');return false">Brand & photography</a>), or both in the same spread.</p>
+    ${[['reference','Reference pairings','the ten pairings the reference ads use'],['brand','Brand palettes','the gym\'s colours only'],['both','Both','reference pairings and brand palettes, spread evenly']].map(([m,l,d])=>`<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin:6px 0"><input type="radio" name="pm" style="width:auto;margin:0" value="${m}" ${(D.palettes||'reference')===m?'checked':''} ${m!=='reference'&&!hasBrand?'disabled':''} onchange="setP('creative_defaults.palettes',this.value)"> ${l} <span class="n" style="color:var(--dim);font-weight:400">· ${d}</span></label>`).join('')}
+    ${hasBrand?'':'<p class="hint" style="margin:6px 0 0">Give the gym a primary colour on Brand & photography to use its brand palettes.</p>'}
   </div>
   ${saveBar('profile')}`;
 }
@@ -1402,13 +1446,87 @@ function bRefreshGo(){
 }
 
 // ── Photos and references ────────────────────────────────────────────────────
+// The gym's own files — logo, premises, coaches, members, brand screenshots — dropped onto the page
+// and kept in its brand-assets folder with a manifest (what, from where, when, content hash). The
+// premises photos are surveyed (free) and cleaned (image calls) from here; the cleaned copies are what
+// batches use. Reference ads live on their own page: they are for analysis, never the gym's assets.
+const A = { kind:'facility', sel:new Set(), data:null };
+async function loadAssets(){ A.data = await api(`/api/client/${STATE.sel}/assets`); return A.data; }
 async function viewPhotos(v, seq=VIEW_SEQ){
-  v.innerHTML = '<h1>Photos</h1><p class="sub">Loading…</p>';
-  if (B.gym !== STATE.sel || !B.setup){ B.gym = STATE.sel; await loadSetup(); }
+  v.innerHTML = '<h1>Photos & brand assets</h1><p class="sub">Loading…</p>';
+  try { await loadAssets(); } catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<h1>Photos & brand assets</h1><div class="empty">${esc(e.message)}</div>`; return; }
   if (seq !== VIEW_SEQ) return;
-  const photos = B.setup.photos;
-  v.innerHTML = `<h1>Photos</h1><p class="sub">The client's real photos that passed the clean-up: no old marks, no lettering. These can go into any batch as real photos and serve as the room reference for generated ones.</p>
-    <div class="card">${photos.length ? `<div class="thumbs">${photos.map(p=>`<label><img src="${esc(p.url)}" alt="" style="width:220px;height:146px"><span style="font-size:12px">${esc(p.path.split('/').pop())}</span></label>`).join('')}</div>` : '<div class="hint">No cleaned photos yet — clean-photo.mjs makes them from the facility photos.</div>'}</div>`;
+  A.sel = new Set([...A.sel].filter(n => A.data.assets.some(a=>a.kind==='facility'&&a.name===n)));
+  paintAssets(v);
+}
+function paintAssets(v){
+  const d = A.data, by = k => d.assets.filter(a=>a.kind===k);
+  const running = STATE.run && !STATE.run.done && /^photo-/.test(STATE.run.id||'');
+  const card = (a) => `<div class="asset ${a.kind==='logo'?'is-logo':''} ${A.sel.has(a.name)&&a.kind==='facility'?'sel':''}">
+      <div class="im" ${a.kind==='facility'?`onclick="aToggle('${esc(a.name)}')"`:''}><img src="${esc(a.url)}" alt="" loading="lazy"></div>
+      ${a.kind==='facility'?`<span class="tick">${A.sel.has(a.name)?'✓':''}</span>`:''}
+      ${a.kind==='facility'&&a.cleaned?'<span class="pill on tag">cleaned</span>':''}${a.kind==='logo'&&a.in_use?'<span class="pill on tag">in use</span>':''}
+      <div class="m"><b title="${esc(a.original_name||a.name)}">${esc(a.name)}</b>${a.size?`${a.size[0]}×${a.size[1]} · `:''}${a.bytes>=1048576?(a.bytes/1048576).toFixed(1)+' MB':Math.round(a.bytes/1024)+' KB'} · ${esc(a.source)} ${esc(a.added)}
+        <div class="row">${a.kind==='logo'&&!a.in_use?`<button class="sm" onclick="aUseLogo('${esc(a.path)}')">Use as logo</button>`:''}<button class="sm" onclick="aRemove('${esc(a.kind)}','${esc(a.name)}')">Remove</button></div></div>
+    </div>`;
+  const section = (k, hint, extra='') => { const xs = by(k.id); return `<div class="card"><div class="row"><h3 style="margin:0">${esc(k.label)} <span class="pill">${xs.length}</span></h3><div class="spacer"></div>${extra}</div>
+      ${hint?`<p class="hint" style="margin-top:8px">${hint}</p>`:''}${xs.length?`<div class="assets" style="margin-top:10px">${xs.map(card).join('')}</div>`:`<div class="hint" style="margin:8px 0 0">Nothing yet — drop files above with <b>${esc(k.label)}</b> chosen.</div>`}</div>`; };
+  const fac = d.kinds.find(k=>k.id==='facility'), n = A.sel.size;
+  v.innerHTML = `<h1>Photos & brand assets</h1><p class="sub">The gym's own files, kept with its profile: drop them here and they are filed and remembered. Premises photos are cleaned from here before a batch can use them.</p>
+  <div class="card"><h3>Add files</h3>
+    <div class="chips" id="aKinds">${d.kinds.map(k=>`<span class="chip ${A.kind===k.id?'sel':''}" onclick="A.kind='${k.id}';paintAssets($('#view'))">${esc(k.label)}</span>`).join('')}</div>
+    <div class="drop" id="aDrop" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="aDrop(event)">
+      Drop photos here as <b>${esc(d.kinds.find(k=>k.id===A.kind)?.label||A.kind)}</b>, or <label class="lnk">choose files<input type="file" id="aFile" multiple accept=".png,.jpg,.jpeg,.webp,.heic${A.kind==='logo'?',.svg':''},image/*" hidden onchange="aFiles(this.files)"></label>
+      <div style="font-size:12px;margin-top:6px;color:var(--faint)">PNG, JPG, WEBP${d.heic?' or an iPhone HEIC (converted here)':''}${A.kind==='logo'?', or an SVG for the logo':''} · up to ${Math.round(d.max_bytes/1048576)} MB each · a file already here is not added twice</div>
+    </div>
+    <div id="aMsgs"></div>
+  </div>
+  <div class="card"><div class="row"><h3 style="margin:0">Cleaned premises photos <span class="pill">${d.clean.length}</span></h3></div>
+    <p class="hint" style="margin-top:8px">What batches use as real photos and as the room reference: old marks and lettering removed, checked. Made from the premises photos below.</p>
+    ${d.clean.length?`<div class="thumbs">${d.clean.map(p=>`<label><img src="${esc(p.url)}" alt="" style="width:168px;height:112px"><span style="font-size:11.5px">${esc(p.path.split('/').pop())}</span></label>`).join('')}</div>`:'<div class="hint" style="margin:0">None yet — select premises photos below and clean them.</div>'}
+  </div>
+  ${section(fac, 'Click photos to select them, then survey what a clean-up would remove (free) or clean them (about 4 image calls each). Cleaned copies keep the same name.',
+    `<button class="sm" ${n&&!running?'':'disabled'} onclick="aSurvey()">Survey ${n||''} (free)</button><button class="sm primary" ${n&&!running?'':'disabled'} onclick="aClean()">Clean ${n||''}…</button>`)}
+  ${d.kinds.filter(k=>k.id!=='facility').map(k=>section(k, k.id==='logo'?'The profile\'s logo file is marked in use; it is kept for later and never drawn on the offer-first ads.':k.id==='brand'?'Screenshots of the website, brand guidelines, past ads the gym made itself.':'')).join('')}
+  <div id="runbox"></div>`;
+  renderRunBox();
+}
+function aToggle(name){ if (A.sel.has(name)) A.sel.delete(name); else A.sel.add(name); paintAssets($('#view')); }
+function aMsg(file, text, cls=''){ const box = $('#aMsgs'); if (!box) return; let el = box.querySelector(`[data-f="${CSS.escape(file)}"]`); if (!el){ el = document.createElement('div'); el.className='amsg'; el.dataset.f=file; box.appendChild(el); } el.className = `amsg ${cls}`; el.textContent = `${file}: ${text}`; }
+function aDrop(ev){ ev.preventDefault(); $('#aDrop')?.classList.remove('over'); aFiles(ev.dataTransfer.files); }
+async function aFiles(files){ await aUploadKind(files, A.kind, async()=>{ await loadAssets(); const box=$('#aMsgs'); const keep=box?box.innerHTML:''; paintAssets($('#view')); const b2=$('#aMsgs'); if (b2) b2.innerHTML = keep; }); }
+/** Upload files one by one as raw bytes; the server keeps images only, named from the file, filed by kind. */
+async function aUploadKind(files, kind, after){
+  for (const f of [...files]) {
+    const m = f.name.match(/\.(png|jpe?g|webp|heic|svg)$/i);
+    const ext = m ? m[1].toLowerCase().replace('jpeg','jpg') : (f.type==='image/png'?'png':f.type==='image/webp'?'webp':f.type==='image/svg+xml'?'svg':'jpg');
+    const name = `${slugify(f.name.replace(/\.[^.]+$/,'')).slice(0,48) || kind}.${ext}`;
+    aMsg(f.name, 'uploading…');
+    try {
+      const r = await fetch(`/api/client/${STATE.sel}/asset/${kind}/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream','x-panel-token':TOKEN,'x-original-name':encodeURIComponent(f.name)}, body: await f.arrayBuffer() });
+      const j = await r.json().catch(()=>({error:'bad response'}));
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      aMsg(f.name, `saved as ${j.asset.path}${j.asset.logo_set?" · now the profile's logo":''}`, 'ok');
+      if (j.asset.logo_set) await refreshProfile();
+    } catch(e){ aMsg(f.name, e.message, 'err'); }
+  }
+  if (after) await after();
+}
+async function saveProfileNow(){ const r = await api('/api/client/'+STATE.sel, {method:'PUT', body:STATE.profile}); STATE.view = r; STATE.profile = r.profile; DIRTY.profile = false; }
+async function aUseLogo(path){ setP('brand_lock.logo.files.primary', path); try { await saveProfileNow(); } catch(e){ alert(e.message); return; } if (STATE.tab==='photos'){ await loadAssets(); paintAssets($('#view')); } else render(); }
+async function aRemove(kind, name){
+  if (!confirm(`Move ${name} to the trash folder? (brand-assets/_trash — nothing is deleted)`)) return;
+  try { await api(`/api/client/${STATE.sel}/asset/${kind}/${name}`, {method:'DELETE'}); } catch(e){ alert(e.message); }
+  await loadAssets(); paintAssets($('#view'));
+}
+function aSurvey(){ run({kind:'photo-survey', gym:STATE.sel, photos:[...A.sel]}, async()=>{ await loadAssets(); paintAssets($('#view')); }); }
+function aClean(){
+  const photos = [...A.sel];
+  const cap = prompt(`Clean ${photos.length} premises photo${photos.length===1?'':'s'} with Gemini edits: old marks, signage and web controls removed, checked afterwards. Most image calls to spend (about 4 per photo):`, String(photos.length*4));
+  if (cap == null) return;
+  const n = parseInt(cap, 10);
+  if (!(n >= photos.length)) return alert(`At least one call per photo (${photos.length}).`);
+  run({kind:'photo-clean', gym:STATE.sel, photos, confirm:{max_calls:n}}, async()=>{ await loadAssets(); paintAssets($('#view')); });
 }
 async function viewReferences(v, seq=VIEW_SEQ){
   v.innerHTML = '<h1>Reference images</h1><p class="sub">Loading…</p>';

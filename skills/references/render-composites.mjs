@@ -280,8 +280,8 @@ export function imagesNeeded(layout) {
  *  opening a browser is rejected here, with a message saying what to change. `styleSpec` and
  *  `treatmentSpec` let a caller pass a style or layout object directly instead of an id (used by
  *  the UI preview and the tests). */
-export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, debug = false }) {
-  const { treatments: T, palettes: P, styles: S } = loadCatalogue();
+export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, debug = false, catalogue = loadCatalogue() }) {
+  const { treatments: T, palettes: P, styles: S } = catalogue;
   const tr = treatmentSpec || T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}". Known: ${Object.keys(T.treatments).join(", ")}`);
   if (!T.canvas[ratio]) throw new Error(`unknown ratio "${ratio}". Known: ${Object.keys(T.canvas).join(", ")}`);
@@ -582,14 +582,15 @@ export function verifyReport(spec, report) {
 
 // ── High-level: inputs → verified PNG ─────────────────────────────────────
 
-export async function renderComposite(browser, { image, images, faces, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug = false }) {
+export async function renderComposite(browser, { image, images, faces, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug = false, catalogue }) {
   const inputErrors = validateInputs({ location, audience, offer });
   if (inputErrors.length) return { ok: false, failures: inputErrors };
   const { duration, offer_name } = splitOffer(offer, free);
   const text = { location, audience, duration, offer_name };
   let spec;
   try {
-    spec = buildSpec({ image, images, faces, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug });
+    // A gym's own brand palettes ride in its catalogue (client-config catalogueFor); the default is the reference set.
+    spec = buildSpec({ image, images, faces, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug, ...(catalogue ? { catalogue } : {}) });
   } catch (e) {
     return { ok: false, failures: [e.message] }; // rejected before any browser work
   }
