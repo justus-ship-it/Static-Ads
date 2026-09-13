@@ -23,16 +23,17 @@
  */
 
 import { createServer } from "http";
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, realpathSync, rmSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, realpathSync, rmSync, renameSync } from "fs";
 import { join, resolve, dirname, extname, sep } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual } from "crypto";
 import {
-  loadClientConfig, writeResolved, scaffold,
+  loadClientConfig, writeResolved, scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS,
   CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
 } from "../skills/references/client-config.mjs";
+import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
 import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
@@ -186,11 +187,25 @@ function listClients() {
         display_name: profile?.display_name || "",
         gym_abbr: profile?.gym_abbr || "",
         has_profile: !!profile,
+        to_do: profile ? profileCompleteness(profile, { gymDir: dir, cleanPhotos: cleanPhotos(gym).length, scenes: sceneStatus(gym), wordings: readWordings(dir).length }).to_do : null,
         offers,
         outputs,
         asset_counts: countAssets(dir),
       };
     });
+}
+
+/** A profile as the panel shows it: the file, how finished it is, and its Create defaults filled in. */
+function profileView(gym) {
+  const dir = brandDir(gym), profile = readJsonFile(join(dir, "gym-profile.json"));
+  const completeness = profileCompleteness(profile, { gymDir: dir, cleanPhotos: cleanPhotos(gym).length, scenes: sceneStatus(gym), wordings: readWordings(dir).length });
+  return { profile, assets: countAssets(dir), completeness, creative_defaults: { ...CREATIVE_DEFAULTS, ...(profile?.creative_defaults || {}) }, logo: logoUrl(gym, profile) };
+}
+function logoUrl(gym, profile) {
+  const f = profile?.brand_lock?.logo?.files?.primary;
+  if (!f || f.includes("..")) return null;
+  const rel = f.startsWith("brand-assets/") ? f.slice("brand-assets/".length) : f;
+  return existsSync(join(brandDir(gym), "brand-assets", rel)) && IMAGE_EXT.has(extname(rel).toLowerCase()) ? `/files/brands/${gym}/brand-assets/${rel}` : null;
 }
 
 function countAssets(dir) {
@@ -362,6 +377,8 @@ function reviewState(gym, id) {
 }
 
 const DECISIONS = new Set(["keep", "exclude", null]);
+/** Replace a file whole: another process (the Stories step) reading it never sees half of one. */
+const writeWhole = (p, text) => { writeFileSync(p + ".tmp", text); renameSync(p + ".tmp", p); };
 /** Merge a change into review.json and write selections.json from it. Returns an error message, or null. */
 function savePicks(gym, id, change) {
   const out = outDirOf(gym, id), batch = readJsonFile(join(out, "batch.json"));
@@ -375,13 +392,13 @@ function savePicks(gym, id, change) {
   for (const [p, v] of Object.entries(photos)) { if (v === null) delete d.photos[p]; else d.photos[p] = v; }
   // Decisions about ads a re-render has since renamed are dropped: they no longer name anything.
   for (const f of Object.keys(d.ads)) if (batch && !folders.has(f)) delete d.ads[f];
-  writeFileSync(join(out, "review.json"), JSON.stringify({ ads: d.ads, photos: d.photos, updated: new Date().toISOString() }, null, 2) + "\n");
+  writeWhole(join(out, "review.json"), JSON.stringify({ ads: d.ads, photos: d.photos, updated: new Date().toISOString() }, null, 2) + "\n");
   if (batch) {
     const stories = new Map((readJsonFile(join(out, "stories.json"))?.ads || []).filter((a) => existsSync(join(out, a.file))).map((a) => [a.folder, a.file]));
     const excluded = batch.ads.filter((a) => standing(a, d).status === "exclude").map((a) => a.folder).sort();
     const sel = { excluded };
     for (const a of batch.ads) if (!excluded.includes(a.folder)) sel[a.folder] = { "1x1": a.file, ...(stories.has(a.folder) ? { "9x16": stories.get(a.folder) } : {}) };
-    writeFileSync(join(out, "selections.json"), JSON.stringify(sel, null, 2) + "\n");
+    writeWhole(join(out, "selections.json"), JSON.stringify(sel, null, 2) + "\n");
   }
   return null;
 }
@@ -520,11 +537,28 @@ const server = createServer(async (req, res) => {
     if (p === "/api/clients" && req.method === "GET") return json(res, 200, { clients: listClients() });
 
     if (p === "/api/clients" && req.method === "POST") {
-      const { gym, offer } = await readBody(req);
-      if (!okSlug(gym)) return json(res, 400, { error: "gym must be lowercase letters, numbers and hyphens" });
+      const { gym, offer, display_name = "" } = await readBody(req);
+      if (!okSlug(gym)) return json(res, 400, { error: "the folder name must be lowercase letters, numbers and hyphens" });
       if (offer && !okSlug(offer)) return json(res, 400, { error: "offer slug must be lowercase letters, numbers and hyphens" });
-      scaffold(gym, offer || null);
-      return json(res, 200, { ok: true, gym, offer: offer || null });
+      if (typeof display_name !== "string" || display_name.length > 80 || /[—–\r\n]/.test(display_name)) return json(res, 400, { error: "the gym's name must be one line, without em/en dashes" });
+      const fresh = !existsSync(join(brandDir(gym), "gym-profile.json"));
+      scaffold(gym, offer || null, { brandsDir: BRANDS, displayName: display_name.trim() });
+      return json(res, 200, { ok: true, gym, offer: offer || null, created: fresh });
+    }
+
+    // /api/client/{gym}/wordings[/{id}] — the offer wordings, kept once, offered as chips.
+    const wm = p.match(/^\/api\/client\/([^/]+)\/wordings(?:\/([^/]+))?$/);
+    if (wm) {
+      const [, gym, id] = wm;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      if (id && !okSlug(id)) return json(res, 404, { error: "no such wording" });
+      const dir = brandDir(gym);
+      try {
+        if (!id && req.method === "GET") return json(res, 200, { wordings: readWordings(dir) });
+        if (!id && req.method === "POST") { const { text } = await readBody(req); return json(res, 200, addWording(dir, text)); }
+        if (id && req.method === "PUT") { const { text } = await readBody(req); return json(res, 200, editWording(dir, id, text)); }
+        if (id && req.method === "DELETE") return json(res, 200, deleteWording(dir, id));
+      } catch (e) { return json(res, 400, { error: e.message }); }
     }
 
     const pi = p.match(/^\/api\/preview-img\/([a-f0-9]{18})\.png$/);
@@ -610,7 +644,7 @@ const server = createServer(async (req, res) => {
     if (bm) {
       const [, gym, what, id] = bm;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "batch-setup" && req.method === "GET") return json(res, 200, { photos: cleanPhotos(gym), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS });
+      if (what === "batch-setup" && req.method === "GET") return json(res, 200, { photos: cleanPhotos(gym), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults });
       if (what === "batch/check" && req.method === "POST") { const { brief } = await readBody(req); return json(res, 200, checkBrief(gym, brief)); }
       if (what === "batch" && req.method === "POST") {
         const { brief, replace = false } = await readBody(req);
@@ -664,7 +698,7 @@ const server = createServer(async (req, res) => {
           const o = readJsonFile(join(dir, "offers", `${offerSlug}.json`));
           return o ? json(res, 200, o) : json(res, 404, { error: "offer not found" });
         }
-        return json(res, 200, { profile: readJsonFile(join(dir, "gym-profile.json")), assets: countAssets(dir) });
+        return json(res, 200, profileView(gym));
       }
 
       if (req.method === "PUT") {
@@ -673,7 +707,10 @@ const server = createServer(async (req, res) => {
           mkdirSync(join(dir, "offers"), { recursive: true });
           writeFileSync(join(dir, "offers", `${offerSlug}.json`), JSON.stringify(body, null, 2) + "\n");
         } else {
-          writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(body, null, 2) + "\n");
+          const { errors, warnings } = validateProfile(body, { gymDir: dir });
+          if (errors.length) return json(res, 400, { error: errors[0], errors, warnings });
+          writeFileSync(join(dir, "gym-profile.json"), JSON.stringify({ ...body, schema_version: Math.max(PROFILE_SCHEMA, Number(body.schema_version) || 0) }, null, 2) + "\n");
+          return json(res, 200, { ok: true, warnings, ...profileView(gym) });
         }
         return json(res, 200, { ok: true });
       }
@@ -741,6 +778,9 @@ const server = createServer(async (req, res) => {
         }
       }
       const run = startRun(kind, body);
+      if ((kind === "batch" || kind === "batch-rerender") && body.gym && body.batch) {
+        try { const b = readJsonFile(briefPath(body.gym, body.batch)); if (b?.offer) recordUse(brandDir(body.gym), b.offer); } catch {}
+      }
       return json(res, 200, { id: run.id, label: run.label });
     }
 

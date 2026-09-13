@@ -23,7 +23,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
-import { loadCatalogue } from "./render-composites.mjs";
+import { loadCatalogue, validateInputs } from "./render-composites.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -270,6 +270,120 @@ function validate(profile, offer, resolved, gymDir) {
   return { errors, warnings };
 }
 
+// ── Gym profiles (schema 3) ──────────────────────────────────────────────────
+// A gym's profile is filled in once and remembered: identity and premises, brand and photography,
+// the defaults the Create screen opens with, the Meta ids for publishing later. Schema 3 only adds
+// to 1 and 2 (creative_defaults, meta_assets.business_id / lead_form_id), so older profiles still load.
+
+export const PROFILE_SCHEMA = 3;
+const MAX_LOCATION_CALLOUTS = 4; // plan-offer-batch MAX_LOCATIONS: one version of every ad per location
+/** What the Create screen opens with when a profile says nothing. The offer is never among them. */
+export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 10, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true };
+// Secret-bearing names (not an ad set's name_token) and what a Meta access token looks like.
+const SECRET_KEY = /^(token|access_token|.*_access_token|.*_user_token|app_secret|client_secret|secret|password|api[_-]?key|apikey)$/i;
+const SECRET_VALUE = /^(EAA[A-Za-z0-9]{30,}|AIza[0-9A-Za-z_-]{30,})$/;
+const META_ID = { ad_account_id: /^(act_)?\d{5,20}$/, page_id: /^\d{5,20}$/, instagram_actor_id: /^\d{5,20}$/, pixel_id: /^\d{5,20}$/, business_id: /^\d{5,20}$/, lead_form_id: /^\d{5,20}$/ };
+
+/**
+ * Format problems in a profile: what would make a saved profile wrong, not what leaves it unfinished
+ * (profileCompleteness says what is missing). The panel refuses to save a profile with errors.
+ */
+export function validateProfile(profile, { gymDir = null } = {}) {
+  const errors = [], warnings = [];
+  if (!isObj(profile)) return { errors: ["the profile is not a JSON object"], warnings };
+  // Access tokens live in .env or the keychain; a profile is shared and copied, so it holds ids only.
+  const walk = (o, path) => {
+    if (Array.isArray(o)) return o.forEach((v, i) => walk(v, `${path}[${i}]`));
+    if (!isObj(o)) return;
+    for (const [k, v] of Object.entries(o)) {
+      const at = path ? `${path}.${k}` : k;
+      if ((SECRET_KEY.test(k) && v != null && v !== "") || (typeof v === "string" && SECRET_VALUE.test(v))) errors.push(`${at}: tokens, secrets and passwords never go in a profile — they live in .env`);
+      walk(v, at);
+    }
+  };
+  walk(profile, "");
+  if (profile.gym_abbr && !/^[A-Z]{2,4}$/.test(profile.gym_abbr)) errors.push(`abbreviation "${profile.gym_abbr}" must be 2-4 capital letters (it goes into ad names)`);
+  for (const [label, v] of [["display name", profile.display_name], ["legal entity", profile.legal_entity]]) if (hasEmDash(v)) errors.push(`${label} contains an em/en dash, which breaks the Ads Uploader import — use a plain hyphen`);
+  const currency = profile.locale?.currency;
+  if (currency && currency !== "SGD" && !profile.locale.non_sg_intentional) errors.push(`currency is "${currency}", not SGD — set locale.non_sg_intentional if that is deliberate`);
+  if (profile.website && !/^https?:\/\/\S+\.\S+$/.test(profile.website)) errors.push(`website "${profile.website}" is not a web address (https://…)`);
+  if (profile.locations != null && !Array.isArray(profile.locations)) errors.push("locations must be a list");
+  (Array.isArray(profile.locations) ? profile.locations : []).forEach((l, i) => {
+    const name = `location ${i + 1}${l?.label ? ` (${l.label})` : ""}`;
+    if (l?.postal_code && !/^\d{6}$/.test(String(l.postal_code))) errors.push(`${name}: postal code "${l.postal_code}" must be 6 digits`);
+    for (const k of ["lat", "lng"]) if (l?.[k] != null && l[k] !== "" && !Number.isFinite(l[k])) errors.push(`${name}: ${k} must be a number`);
+    if (Number.isFinite(l?.lat) && (l.lat < 1.1 || l.lat > 1.5) && currency === "SGD") warnings.push(`${name}: latitude ${l.lat} is outside Singapore`);
+  });
+  for (const [k, v] of Object.entries(profile.brand_lock?.colors || {})) {
+    if (isObj(v) && v.hex && !/^#[0-9A-Fa-f]{6}$/.test(v.hex)) errors.push(`colour ${k}: "${v.hex}" is not a 6-digit hex like #0A0A0A`);
+  }
+  const creative = profile.creative || {};
+  const cat = loadCatalogue();
+  for (const [k, known] of [["exclude_layouts", cat.treatments.treatments], ["exclude_styles", cat.styles.styles], ["exclude_palettes", cat.palettes.palettes]]) {
+    if (creative[k] == null) continue;
+    if (!Array.isArray(creative[k])) { errors.push(`creative.${k} must be a list`); continue; }
+    for (const id of creative[k]) if (!known[id]) errors.push(`creative.${k} names "${id}", which is not in the catalogue`);
+  }
+  // The Create screen's defaults: the same rules the batch applies to the words and counts.
+  const cd = profile.creative_defaults;
+  if (cd != null) {
+    if (!isObj(cd)) errors.push("creative_defaults must be an object");
+    else {
+      const list = (k) => (cd[k] == null ? [] : Array.isArray(cd[k]) ? cd[k] : (errors.push(`creative_defaults.${k} must be a list`), []));
+      const locs = list("locations");
+      if (locs.length > MAX_LOCATION_CALLOUTS) errors.push(`up to ${MAX_LOCATION_CALLOUTS} location callouts (one version of every ad per location)`);
+      if (new Set(locs).size !== locs.length) errors.push("a location callout repeats");
+      for (const l of locs) for (const e of validateInputs({ location: l, audience: null, offer: "x" })) if (e.startsWith("location")) errors.push(`location callout ${JSON.stringify(l)}: ${e.replace(/^location /, "")}`);
+      for (const a of list("audiences")) for (const e of validateInputs({ location: "X", audience: a, offer: "x" })) if (e.startsWith("audience")) errors.push(`audience callout ${JSON.stringify(a)}: ${e.replace(/^audience /, "")}`);
+      for (const p of list("real_photos")) if (typeof p !== "string" || p.includes("..") || (gymDir && !existsSync(join(gymDir, "brand-assets", p)))) errors.push(`real photo ${JSON.stringify(p)} is not in brand-assets`);
+      const int = (k, lo, hi) => { if (cd[k] != null && !(Number.isInteger(cd[k]) && cd[k] >= lo && cd[k] <= hi)) errors.push(`creative_defaults.${k} must be a whole number from ${lo} to ${hi}`); };
+      int("generated", 0, 12); int("looks_per_photo", 1, 6); int("attempts", 1, 5); int("max_calls", 0, 40);
+      if (Number.isInteger(cd.max_calls) && Number.isInteger(cd.generated) && cd.max_calls < cd.generated) errors.push(`creative_defaults.max_calls (${cd.max_calls}) must cover one call per new photo (${cd.generated})`);
+      if (cd.spread != null && typeof cd.spread !== "boolean") errors.push("creative_defaults.spread must be true or false");
+    }
+  }
+  for (const [k, re] of Object.entries(META_ID)) {
+    const v = profile.meta_assets?.[k];
+    if (v != null && v !== "" && !re.test(String(v))) errors.push(`Meta ${k.replace(/_/g, " ")} "${v}" is not an id (digits${k === "ad_account_id" ? ", optionally after act_" : ""})`);
+  }
+  return { errors, warnings };
+}
+
+/**
+ * How finished a profile is, section by section: done, partial or missing, with what each still
+ * needs. Computed from the profile and what is on disk, never stored, so it cannot go stale.
+ * `have` carries what the panel knows beyond the profile file: cleaned photos, the scene library's
+ * status, the number of offer wordings.
+ */
+export function profileCompleteness(profile, { gymDir = null, cleanPhotos = 0, scenes = null, wordings = 0 } = {}) {
+  const p = profile || {}, loc = (p.locations || [])[0] || {}, lock = p.brand_lock || {}, ph = lock.photography || {}, cd = p.creative_defaults || {};
+  const logo = lock.logo?.files?.primary;
+  const logoFound = !!logo && !!gymDir && ["brand-assets", "reference-images", "product-images", ""].some((r) => existsSync(join(gymDir, r, logo)));
+  const audiences = (cd.audiences || []).map((a) => (/\b(men|man|guys|dads?|gents|males?)\b/i.test(a) ? "men" : /\b(ladies|women|woman|mums?|moms?|girls|females?)\b/i.test(a) ? "women" : "any"));
+  const sceneFor = (aud) => !!scenes?.counts && ((scenes.counts[aud] || 0) + (scenes.counts.any || 0) > 0);
+  const pin = p.targeting_defaults?.geo?.radius_pins?.[0] || {};
+  const dem = p.targeting_defaults?.demographics || {};
+  const m = p.meta_assets || {};
+  const S = (id, label, page, needs, extra = {}) => {
+    const missing = needs.filter(([, ok]) => !ok).map(([what]) => what);
+    return { id, label, page, status: !missing.length ? "done" : missing.length === needs.length ? "missing" : "partial", missing, ...extra };
+  };
+  const sections = [
+    S("identity", "Identity & locations", "identity", [["display name", !!p.display_name], ["abbreviation", /^[A-Z]{2,4}$/.test(p.gym_abbr || "")], ["website", !!p.website], ["a location's name", !!loc.label], ["its postal code", !!loc.postal_code]],
+      { tips: loc.postal_code && (loc.lat == null || loc.lng == null) ? ["add the location's latitude and longitude for radius targeting"] : [] }),
+    S("brand", "Brand & photography", "brand", [["a primary colour", !!lock.colors?.primary?.hex], ["what photos must show", (ph.must || []).length > 0], ["what photos must never show", (ph.never || []).length > 0], ["who is in the photos", !!ph.people]],
+      { tips: logoFound ? [] : ["add the logo file (brand-assets/logo) — kept for later, not drawn on the ads"] }),
+    S("photos", "Real photos", "photos", [["at least one cleaned photo of the premises", cleanPhotos > 0]]),
+    S("scenes", "Scene library", "scenes", [["an approved scene library", !!scenes?.exists && !!scenes?.approved], ...audiences.filter((a, i, all) => all.indexOf(a) === i && a !== "any").map((a) => [`scenes for ${a}`, sceneFor(a)])]),
+    S("offers", "Offer wording", "offer", [["at least one offer wording", wordings > 0]]),
+    S("defaults", "Ad defaults", "defaults", [["at least one location callout", (cd.locations || []).length > 0]]),
+    S("targeting", "Targeting & budget", "targeting", [["a radius pin", !!pin.postal_code], ["an age range", dem.age_min != null && dem.age_max != null], ["a budget", p.campaign_defaults?.budget?.amount > 0]], { for: "publishing" }),
+    S("meta", "Meta link", "meta", [["ad account id", !!m.ad_account_id], ["Facebook page id", !!m.page_id], ["business portfolio id", !!m.business_id], ["pixel id", !!m.pixel_id], ["lead form id", !!m.lead_form_id]], { for: "publishing" }),
+  ];
+  const create = sections.filter((s) => s.for !== "publishing");
+  return { sections, ready_to_create: create.every((s) => s.status === "done"), ready_to_publish: sections.every((s) => s.status === "done"), to_do: create.filter((s) => s.status !== "done").length };
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 export function loadClientConfig(gym, offerSlug, { root = REPO_ROOT } = {}) {
   const gymDir = join(root, "brands", gym);
@@ -328,11 +442,11 @@ export function writeResolved(gymDir, offerSlug, resolved) {
 }
 
 // ── Scaffolding ──────────────────────────────────────────────────────────────
-export const PROFILE_STARTER = (gym) => ({
-  schema_version: 1,
+export const PROFILE_STARTER = (gym, displayName = "") => ({
+  schema_version: PROFILE_SCHEMA,
   gym_id: gym,
-  gym_abbr: gym.slice(0, 3).toUpperCase(),
-  display_name: "",
+  gym_abbr: gym.replace(/[^a-z]/g, "").slice(0, 3).toUpperCase(),
+  display_name: displayName,
   website: "",
   locale: { country: "SG", currency: "SGD", timezone: "Asia/Singapore", languages: ["en_SG"], spelling: "en-SG" },
   locations: [
@@ -347,7 +461,8 @@ export const PROFILE_STARTER = (gym) => ({
     differentiators: [],
     known_objections: [],
   },
-  meta_assets: { ad_account_id: "", page_id: "", instagram_actor_id: "", pixel_id: "", primary_conversion_event: "Lead" },
+  meta_assets: { business_id: "", ad_account_id: "", page_id: "", instagram_actor_id: "", pixel_id: "", lead_form_id: "", primary_conversion_event: "Lead" },
+  creative_defaults: { ...CREATIVE_DEFAULTS },
   brand_lock: {
     locked_by: "client",
     locked_at: new Date().toISOString().slice(0, 10),
@@ -359,8 +474,8 @@ export const PROFILE_STARTER = (gym) => ({
       forbidden: [],
     },
     logo: {
-      files: { primary: "brand-assets/logo/logo-primary.png", mark_only: "" },
-      always_include_as_reference: true,
+      files: { primary: "", mark_only: "" },
+      always_include_as_reference: false,
       placement: "bottom-right, 8% frame width, min 5% clear space",
       never: ["recolour", "stretch", "outline", "regenerate or redraw"],
     },
@@ -372,7 +487,7 @@ export const PROFILE_STARTER = (gym) => ({
     photography: {
       must: ["real facility", "real members and coaches", "natural light"],
       never: ["stock gym photos", "oiled fitness models", "body-part crops"],
-      people: "Singaporean/SEA mix, real training clothes",
+      people: "Singaporean / SEA mix, real training clothes, ages 20-65",
     },
     voice: { adjectives: [], never: ["hype", "emoji in headlines", "American slang", "fitspo language"] },
     hard_overrides: { ignore_auto_detected: [], notes: "" },
@@ -446,8 +561,8 @@ export const OFFER_STARTER = (gym, slug) => ({
   campaign: {},
 });
 
-export function scaffold(gym, offerSlug) {
-  const gymDir = join(REPO_ROOT, "brands", gym);
+export function scaffold(gym, offerSlug, { brandsDir = join(REPO_ROOT, "brands"), displayName = "" } = {}) {
+  const gymDir = join(brandsDir, gym);
   const written = [];
   for (const d of ["", "offers", "brand-assets/logo", "brand-assets/facility", "brand-assets/coaches", "brand-assets/members", "brand-assets/brand"]) {
     mkdirSync(join(gymDir, d), { recursive: true });
@@ -456,7 +571,7 @@ export function scaffold(gym, offerSlug) {
   if (existsSync(pPath)) {
     console.log(`  exists   gym-profile.json (left alone)`);
   } else {
-    writeFileSync(pPath, JSON.stringify(PROFILE_STARTER(gym), null, 2) + "\n");
+    writeFileSync(pPath, JSON.stringify(PROFILE_STARTER(gym, displayName), null, 2) + "\n");
     written.push(pPath);
   }
   if (offerSlug) {

@@ -170,6 +170,16 @@
   #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:9px 16px;border-radius:9px;font-size:13px;box-shadow:var(--shadow);z-index:60;max-width:80vw}
   #toast.err{background:var(--err)}
 
+  /* ── Profile ── */
+  .dot.warnd{background:var(--warn)}
+  .ov{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+  .ovc{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;box-shadow:var(--shadow);cursor:pointer}
+  .ovc:hover{border-color:var(--navy)} .ovc .d{font-size:12.5px;color:var(--dim);margin-top:6px}
+  .ovc.done{border-left:3px solid var(--ok)} .ovc.partial{border-left:3px solid var(--warn)} .ovc.missing{border-left:3px solid var(--err)}
+  .wrow{display:flex;gap:8px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)} .wrow:last-of-type{border-bottom:none}
+  .wrow .wt{font-weight:600;font-size:14px} .wrow .d{font-size:12px;color:var(--dim)}
+  .wchips .chip{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
   /* ── Generating ── */
   .steps{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
   .steps div{padding:5px 12px;border-radius:99px;border:1px solid var(--line-2);font-size:12.5px;font-weight:600;color:var(--dim);background:var(--surface)}
@@ -206,6 +216,7 @@
   <nav class="rail" id="rail"></nav>
   <main class="main" id="main"><div id="view"></div></main>
 </div>
+<div id="gModal"></div>
 
 <script>
 const $ = (s,r=document)=>r.querySelector(s);
@@ -227,9 +238,10 @@ let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'
 const NAV = [
   ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Exports','⤓'],
   ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos','▣'], ['references','References','◈'],
-  ['sec','Client'], ['brand','Brand','●'], ['offer','Offers','●'], ['targeting','Targeting','●'], ['setup','Setup','●'], ['generate','Templates (old)','●'],
+  ['sec','Profile'], ['overview','Overview','◎'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
+  ['sec','System'], ['setup','Setup','⚙'], ['generate','Templates (old)','·'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Exports', scenes:'Scene library', photos:'Photos', references:'Reference images', brand:'Brand', offer:'Offers', targeting:'Targeting & budget', setup:'Setup', generate:'Templates (old)' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Exports', scenes:'Scene library', photos:'Photos', references:'Reference images', overview:'Overview', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -283,12 +295,14 @@ async function loadClients(){
 }
 
 async function selectClient(gym, doRender=true, route=true){
+  if (gym !== STATE.sel && (DIRTY.profile || DIRTY.offer) && !confirm('This profile has unsaved changes. Switch gym and discard them?')){ const s=$('#clientSel'); if (s) s.value = STATE.sel; return; }
+  if (gym !== STATE.sel) DIRTY = {};
   if (route && gym !== STATE.sel && STATE.batch){ STATE.batch = null; if (STATE.tab==='generating') STATE.tab = 'batch'; }
   STATE.sel = gym;
   const c = STATE.clients.find(x=>x.gym===gym);
   STATE.offer = c?.offers?.[0] || null;
   const d = await api('/api/client/'+gym);
-  STATE.profile = d.profile;
+  STATE.profile = d.profile; STATE.view = d;
   STATE.offerDoc = STATE.offer ? await api(`/api/client/${gym}/offer/${STATE.offer}`) : null;
   if (route && doRender) setHash();
   if (doRender) render();
@@ -297,7 +311,7 @@ async function selectClient(gym, doRender=true, route=true){
 async function loadOffer(slug){
   STATE.offer = slug;
   STATE.offerDoc = await api(`/api/client/${STATE.sel}/offer/${slug}`);
-  render();
+  if (STATE.tab==='offer') viewOfferDetails($('#offerDetails')); else render();
 }
 
 function render(){
@@ -307,7 +321,7 @@ function render(){
   const sel = $('#clientSel');
   sel.innerHTML = STATE.clients.length ? STATE.clients.map(c=>`<option value="${esc(c.gym)}" ${c.gym===STATE.sel?'selected':''}>${esc(c.display_name||c.gym)}</option>`).join('') : '<option>No clients yet</option>';
   const bad = STATE.status.checks.filter(c=>!c.ok && !c.optional).length;
-  const counts = { scenes: B.scenes?.status?.total ?? null, review: (B.setup?.batches||[]).filter(b=>b.review?.unreviewed).length || null };
+  const counts = { scenes: B.scenes?.status?.total ?? null, review: (B.setup?.batches||[]).filter(b=>b.review?.unreviewed).length || null, overview: STATE.view?.completeness?.to_do || null };
   const railTab = STATE.tab==='generating' ? 'batch' : STATE.tab;
   $('#rail').innerHTML = NAV.map(([k,l,ic])=> k==='sec' ? `<div class="sec">${l}</div>`
     : `<button class="tab ${railTab===k?'sel':''}" onclick="go('${k}')"><span class="ic">${ic}</span>${l}${counts[k]!=null?`<span class="badge">${counts[k]}</span>`:''}</button>`).join('')
@@ -317,8 +331,12 @@ function render(){
   const v = $('#view');
   if (STATE.tab==='setup') return viewSetup(v);
   if (!STATE.sel) { v.innerHTML = `<div class="empty">No client selected.<br><br><button class="primary" onclick="newClient()">Create your first gym</button></div>`; return; }
+  if (STATE.tab==='overview') return viewOverview(v, seq);
+  if (STATE.tab==='identity') return viewIdentity(v);
   if (STATE.tab==='brand') return viewBrand(v);
-  if (STATE.tab==='offer') return viewOffer(v);
+  if (STATE.tab==='offer') return viewOffer(v, seq);
+  if (STATE.tab==='defaults') return viewDefaults(v, seq);
+  if (STATE.tab==='meta') return viewMeta(v);
   if (STATE.tab==='targeting') return viewTargeting(v);
   if (STATE.tab==='batch') return viewBatch(v, seq);
   if (STATE.tab==='generate') return viewGenerate(v);
@@ -353,75 +371,210 @@ function viewSetup(v){
   renderRunBox();
 }
 
-// ── Brand ────────────────────────────────────────────────────────────────────
+// ── Profile ──────────────────────────────────────────────────────────────────
+// A gym's profile is filled in once and remembered. Overview says what each section still needs;
+// every batch reads the profile, and the Create screen opens with its defaults.
+const ST_LABEL = { done:'done', partial:'partly done', missing:'not started' };
+async function refreshProfile(){ const d = await api('/api/client/'+STATE.sel); STATE.view = d; if (!DIRTY.profile) STATE.profile = d.profile; return d; }
+async function viewOverview(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>Overview</h1><p class="sub">Loading…</p>';
+  const d = await refreshProfile().catch(e=>({error:e.message}));
+  if (seq !== VIEW_SEQ) return;
+  if (d.error || !d.profile){ v.innerHTML = `<h1>Overview</h1><div class="empty">${esc(d.error||'No profile for this client yet.')}</div>`; return; }
+  const c = d.completeness, p = d.profile;
+  const card = s => `<div class="ovc ${s.status}" onclick="go('${s.page}')">
+      <div class="row" style="gap:8px"><span class="dot ${s.status==='done'?'ok':s.status==='partial'?'warnd':'bad'}"></span><b>${esc(s.label)}</b><span class="spacer"></span><span class="pill ${s.status==='done'?'on':s.status==='partial'?'warn':''}">${ST_LABEL[s.status]}</span></div>
+      ${s.missing.length?`<div class="d">Still needs: ${s.missing.map(esc).join(', ')}</div>`:'<div class="d">Complete.</div>'}
+      ${(s.tips||[]).map(t=>`<div class="d" style="color:var(--faint)">Tip: ${esc(t)}</div>`).join('')}
+    </div>`;
+  const create = c.sections.filter(s=>s.for!=='publishing'), publish = c.sections.filter(s=>s.for==='publishing');
+  v.innerHTML = `<div class="row" style="margin-bottom:4px"><h1 style="margin:0">${esc(p.display_name||STATE.sel)}</h1>${d.logo?`<img src="${esc(d.logo)}" alt="" style="height:34px;margin-left:8px;background:#0a0a0a;border-radius:6px;padding:4px 8px">`:''}</div>
+    <p class="sub">The gym's profile: filled in once, remembered, and used by every batch. Switch gyms from the top bar.</p>
+    ${c.ready_to_create ? `<div class="msg ok">Ready to create ads. <a href="#" onclick="go('batch');return false">Create →</a></div>` : `<div class="msg warn">${c.to_do} section${c.to_do===1?'':'s'} to finish before creating ads.</div>`}
+    <h2 style="margin-top:16px">To create ads</h2><div class="ov">${create.map(card).join('')}</div>
+    <h2 style="margin-top:20px">To publish to Meta <span class="pill">later</span></h2><p class="hint" style="margin-top:-4px">Publishing is not built yet. Filling these in now means it will work for this gym when it is.</p><div class="ov">${publish.map(card).join('')}</div>`;
+}
+
+function viewIdentity(v){
+  const p = STATE.profile; if (!p){ v.innerHTML = '<div class="empty">No gym-profile.json for this client.</div>'; return; }
+  const locs = (p.locations ||= []);
+  if (!locs.length) locs.push({});
+  const f = (i,k,lbl,ph='',cls='') => `<div><label>${lbl}</label><input class="${cls}" value="${esc(locs[i][k]??'')}" placeholder="${esc(ph)}" oninput="setP('locations.${i}.${k}',${['lat','lng'].includes(k)?"this.value===''?null:Number(this.value)":'this.value'})"></div>`;
+  v.innerHTML = `
+  <h1>Identity & locations</h1><p class="sub">Who the gym is and where it trains. The names go into campaign and ad names, so no em dashes.</p>
+  <div class="card"><h3>Identity</h3>
+    <div class="grid">
+      <div><label>Gym name</label><input id="pName" value="${esc(p.display_name||'')}" oninput="setP('display_name',this.value)"></div>
+      <div><label>Abbreviation <span class="n">· 2-4 capitals</span></label><input class="mono" value="${esc(p.gym_abbr||'')}" oninput="setP('gym_abbr',this.value.toUpperCase())"></div>
+      <div><label>Website</label><input value="${esc(p.website||'')}" placeholder="https://" oninput="setP('website',this.value)"></div>
+      <div><label>Legal entity <span class="n">· optional</span></label><input value="${esc(p.legal_entity||'')}" oninput="setP('legal_entity',this.value)"></div>
+    </div></div>
+  ${locs.map((l,i)=>`<div class="card"><div class="row"><h3 style="margin:0">Location ${i+1}${l.label?` · ${esc(l.label)}`:''}</h3><div class="spacer"></div>${locs.length>1?`<button class="sm" onclick="locDel(${i})">Remove</button>`:''}</div>
+    <div class="grid" style="margin-top:10px">${f(i,'label','Name','e.g. Sin Ming')}${f(i,'address','Address')}${f(i,'postal_code','Postal code','6 digits','mono')}${f(i,'nearest_mrt','Nearest MRT')}${f(i,'lat','Latitude','1.35','mono')}${f(i,'lng','Longitude','103.83','mono')}</div>
+    <label>Catchment <span class="n">· the neighbourhoods its members come from</span></label><input value="${esc(l.catchment||'')}" oninput="setP('locations.${i}.catchment',this.value)"></div>`).join('')}
+  <button onclick="locAdd()">+ Add a location</button>
+  ${saveBar('profile')}`;
+}
+function locAdd(){ STATE.profile.locations.push({}); dirty('profile'); render(); }
+function locDel(i){ STATE.profile.locations.splice(i,1); dirty('profile'); render(); }
+
 function viewBrand(v){
   const p = STATE.profile;
   if (!p) { v.innerHTML = '<div class="empty">No gym-profile.json for this client.</div>'; return; }
   const L = p.brand_lock ||= {};
   const C = L.colors ||= {};
-  const loc = (p.locations ||= [{}])[0];
   const col = (k,lbl) => `
     <div>
-      <label>${lbl} hex</label>
+      <label>${lbl}</label>
       <div class="row" style="gap:6px;flex-wrap:nowrap">
-        <input type="color" style="width:42px;padding:2px;flex:none" value="${esc(C[k]?.hex||'#000000')}"
-          oninput="setP('brand_lock.colors.${k}.hex',this.value); this.nextElementSibling.value=this.value">
+        <input type="color" style="width:42px;padding:2px;flex:none" value="${esc(/^#[0-9a-fA-F]{6}$/.test(C[k]?.hex||'')?C[k].hex:'#000000')}"
+          oninput="setP('brand_lock.colors.${k}.hex',this.value.toUpperCase()); this.nextElementSibling.value=this.value.toUpperCase()">
         <input class="mono" value="${esc(C[k]?.hex||'')}" placeholder="#000000"
           oninput="setP('brand_lock.colors.${k}.hex',this.value); this.previousElementSibling.value=/^#[0-9a-fA-F]{6}$/.test(this.value)?this.value:'#000000'">
       </div>
-      <input style="margin-top:6px" placeholder="name, e.g. Iron Navy" value="${esc(C[k]?.name||'')}"
-        oninput="setP('brand_lock.colors.${k}.name',this.value)">
+      <input style="margin-top:6px" placeholder="name, e.g. Sculpt Red" value="${esc(C[k]?.name||'')}" oninput="setP('brand_lock.colors.${k}.name',this.value)">
     </div>`;
-
+  const lines = (path, val) => `oninput="setP('${path}',this.value.split('\\n').map(s=>s.trim()).filter(Boolean))">${esc((val||[]).join('\n'))}`;
+  const logo = STATE.view?.logo;
   v.innerHTML = `
-  <h1>Brand</h1><p class="sub">The client's identity, premises and photography rules. These win over anything detected from the website.</p>
+  <h1>Brand & photography</h1><p class="sub">The gym's look and the rules for every photo. These win over anything detected from the website.</p>
   <div class="card">
-    <h3>Identity</h3>
-    <p class="hint">Used to build campaign and ad names, so these must be importer-safe (no em dashes).</p>
-    <div class="grid">
-      <div><label>Display name</label><input value="${esc(p.display_name||'')}" oninput="setP('display_name',this.value)"></div>
-      <div><label>Abbreviation (2-4 caps)</label><input class="mono" value="${esc(p.gym_abbr||'')}" oninput="setP('gym_abbr',this.value.toUpperCase())"></div>
-      <div><label>Website</label><input value="${esc(p.website||'')}" oninput="setP('website',this.value)"></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h3>Location</h3>
-    <p class="hint">The postal code drives radius targeting — the single most important field for a gym.</p>
-    <div class="grid">
-      <div><label>Label</label><input value="${esc(loc.label||'')}" oninput="setP('locations.0.label',this.value)"></div>
-      <div><label>Address</label><input value="${esc(loc.address||'')}" oninput="setP('locations.0.address',this.value)"></div>
-      <div><label>Postal code</label><input class="mono" value="${esc(loc.postal_code||'')}" oninput="setP('locations.0.postal_code',this.value)"></div>
-      <div><label>Nearest MRT</label><input value="${esc(loc.nearest_mrt||'')}" oninput="setP('locations.0.nearest_mrt',this.value)"></div>
-      <div><label>Latitude</label><input class="mono" value="${esc(loc.lat??'')}" oninput="setP('locations.0.lat',parseFloat(this.value)||null)"></div>
-      <div><label>Longitude</label><input class="mono" value="${esc(loc.lng??'')}" oninput="setP('locations.0.lng',parseFloat(this.value)||null)"></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h3>Brand lock <span class="pill navy">overrides auto-detection</span></h3>
-    <p class="hint">These colours win over anything the website scrape guesses. This is the gym's jurisdiction over its own look.</p>
+    <h3>Colours</h3>
     <div class="grid">${col('primary','Primary')}${col('secondary','Secondary')}${col('accent','Accent')}</div>
-    <fieldset style="margin-top:14px"><legend>Photography</legend>
-      <div class="grid">
-        <div><label>Must show (one per line)</label><textarea oninput="setP('brand_lock.photography.must',this.value.split('\\n').filter(Boolean))">${esc((L.photography?.must||[]).join('\n'))}</textarea></div>
-        <div><label>Never show (one per line)</label><textarea oninput="setP('brand_lock.photography.never',this.value.split('\\n').filter(Boolean))">${esc((L.photography?.never||[]).join('\n'))}</textarea></div>
-      </div>
-    </fieldset>
-    <div class="row"><span style="font-size:12px;color:var(--dim)">Assets on disk:</span>
-      ${Object.entries(STATE.clients.find(c=>c.gym===STATE.sel)?.asset_counts||{}).map(([k,n])=>
-        `<span class="pill ${n>0?'on':''}">${k}: ${n}</span>`).join('')}
+  </div>
+  <div class="card">
+    <h3>Logo</h3>
+    <div class="row" style="align-items:flex-start;gap:16px">
+      <div style="width:200px;height:84px;border-radius:8px;background:#0a0a0a;display:flex;align-items:center;justify-content:center;flex:none">${logo?`<img src="${esc(logo)}" alt="" style="max-width:180px;max-height:64px">`:'<span style="color:#8594bd;font-size:12px">no logo file yet</span>'}</div>
+      <div style="flex:1"><label style="margin-top:0">Logo file <span class="n">· in the gym's brand-assets folder</span></label><input class="mono" value="${esc(L.logo?.files?.primary||'')}" placeholder="logo/logo-horizontal-white.png" oninput="setP('brand_lock.logo.files.primary',this.value)">
+        <p class="hint" style="margin-top:6px">Kept with the profile for later. The offer-first ads do not draw a logo.</p></div>
     </div>
+  </div>
+  <div class="card">
+    <h3>Photography</h3>
+    <p class="hint">Every generated photo is written to these rules, and the checks reject any photo that shows a never-item.</p>
+    <div class="grid">
+      <div><label>Must show <span class="n">· one per line</span></label><textarea rows="5" ${lines('brand_lock.photography.must', L.photography?.must)}</textarea></div>
+      <div><label>Never show <span class="n">· one per line</span></label><textarea rows="5" ${lines('brand_lock.photography.never', L.photography?.never)}</textarea></div>
+    </div>
+    <label>Who is in the photos</label><input value="${esc(L.photography?.people||'')}" placeholder="Singaporean / SEA mix, real training clothes, ages 20-65" oninput="setP('brand_lock.photography.people',this.value)">
+  </div>
+  <div class="card">
+    <h3>Words never used</h3>
+    <p class="hint">For ad copy, later: words and offers this gym never uses (for example free trial).</p>
+    <textarea rows="4" ${lines('brand_lock.voice.never', L.voice?.never)}</textarea>
   </div>
   ${saveBar('profile')}`;
 }
 
+// Offer wording: the words that go on the ads, kept once. The owner adds, edits and deletes them;
+// a batch run with a new wording adds it. The Create screen offers them as chips.
+async function viewOffer(v, seq=VIEW_SEQ){
+  v.innerHTML = `<h1>Offer wording</h1><p class="sub">The exact words for the offer on the ads. They are always yours: pick one on Create, or type a new one there. A wording you run a batch with is added here.</p>
+    <div class="card" id="wCard"><div class="hint">Loading…</div></div>
+    <div id="offerDetails"></div>`;
+  const r = await api(`/api/client/${STATE.sel}/wordings`).catch(e=>({error:e.message}));
+  if (seq !== VIEW_SEQ) return;
+  W.list = r.wordings || []; W.edit = null; paintWordings(r.error);
+  viewOfferDetails($('#offerDetails'));
+}
+const W = { list:[], edit:null };
+function paintWordings(err){
+  const box = $('#wCard'); if (!box) return;
+  box.innerHTML = `<h3>Offer wordings</h3>
+    ${err?`<div class="msg err">${esc(err)}</div>`:''}
+    ${W.list.length ? W.list.map(w=>`<div class="wrow">${W.edit===w.id
+        ? `<input id="wEdit" value="${esc(w.text)}" onkeydown="if(event.key==='Enter')wSave('${esc(w.id)}');if(event.key==='Escape'){W.edit=null;paintWordings()}"><button class="sm primary" onclick="wSave('${esc(w.id)}')">Save</button><button class="sm" onclick="W.edit=null;paintWordings()">Cancel</button>`
+        : `<div style="flex:1;min-width:0"><div class="wt">${esc(w.text)}</div><div class="d">${w.uses?`used in ${w.uses} batch${w.uses===1?'':'es'}`:'not used yet'}${w.last_used?` · last ${esc(w.last_used)}`:''}${w.added?` · added ${esc(w.added)}`:''}</div></div>
+           <button class="sm" onclick="W.edit='${esc(w.id)}';paintWordings();$('#wEdit').focus()">Edit</button><button class="sm danger" onclick="wDelete('${esc(w.id)}')">Delete</button>`}</div>`).join('')
+      : '<div class="hint">No wordings yet.</div>'}
+    <div class="row" style="margin-top:12px;flex-wrap:nowrap"><input id="wNew" placeholder="e.g. 12 Week Total Body Reset" onkeydown="if(event.key==='Enter')wAdd()"><button class="primary" onclick="wAdd()">Add</button></div>
+    <div id="wMsg" style="margin-top:6px"></div>`;
+}
+async function wCall(fn){ try { const r = await fn(); W.list = r.wordings; W.edit = null; paintWordings(); return true; } catch(e){ const m=$('#wMsg'); if (m) m.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return false; } }
+async function wAdd(){ const t = $('#wNew').value; if (await wCall(()=>api(`/api/client/${STATE.sel}/wordings`, {method:'POST', body:{text:t}}))) toast('Wording added'); }
+async function wSave(id){ const t = $('#wEdit').value; await wCall(()=>api(`/api/client/${STATE.sel}/wordings/${id}`, {method:'PUT', body:{text:t}})); }
+async function wDelete(id){ const w = W.list.find(x=>x.id===id); if (!confirm(`Delete the wording "${w?.text}"? Batches already made keep their words.`)) return; await wCall(()=>api(`/api/client/${STATE.sel}/wordings/${id}`, {method:'DELETE'})); }
+
+// Ad defaults: what the Create screen opens with for this gym. The offer is never among them.
+async function viewDefaults(v, seq=VIEW_SEQ){
+  const p = STATE.profile; if (!p){ v.innerHTML = '<div class="empty">No gym-profile.json for this client.</div>'; return; }
+  if (B.gym !== STATE.sel || !B.setup){ v.innerHTML = '<h1>Ad defaults</h1><p class="sub">Loading…</p>'; B.gym = STATE.sel; await loadSetup(); if (seq !== VIEW_SEQ) return; }
+  const cd = (p.creative_defaults ||= {});
+  const D = { ...STATE.view?.creative_defaults, ...cd };
+  const photos = B.setup.photos;
+  const locs = D.locations || [], auds = D.audiences || [];
+  const num = (k,lbl,min,max,ph='') => `<div><label>${lbl}</label><input type="number" min="${min}" max="${max}" value="${esc(cd[k]??'')}" placeholder="${esc(ph||String(D[k]??''))}" oninput="setP('creative_defaults.${k}',this.value===''?null:Number(this.value))"></div>`;
+  v.innerHTML = `
+  <h1>Ad defaults</h1><p class="sub">What the Create screen opens with for this gym, so a new batch is a few edits and one button. Everything stays changeable per batch. The offer is never filled in for you.</p>
+  <div class="card"><h3>Words</h3>
+    <label style="margin-top:0">Location callouts <span class="n">· up to 4; one version of every ad per location</span></label>
+    <div class="chips">${locs.map((l,i)=>`<span class="locchip"><input value="${esc(l)}" oninput="cdList('locations',${i},this.value)"><button type="button" title="Remove" onclick="cdDel('locations',${i})">✕</button></span>`).join('')}${locs.length<4?`<span class="chip add" onclick="cdAdd('locations')">+ location</span>`:''}</div>
+    <label>Audience callouts <span class="n">· offered as chips on Create</span></label>
+    <div class="chips">${auds.map((a,i)=>`<span class="locchip"><input value="${esc(a)}" style="width:170px" oninput="cdList('audiences',${i},this.value)"><button type="button" title="Remove" onclick="cdDel('audiences',${i})">✕</button></span>`).join('')}<span class="chip add" onclick="cdAdd('audiences')">+ audience</span></div>
+  </div>
+  <div class="card"><h3>Photos</h3>
+    <div class="grid">${num('generated','New photos per batch',0,12)}${num('looks_per_photo','Looks per photo',1,6)}${num('attempts','Tries per photo',1,5)}${num('max_calls','Most image calls',0,40,'new photos × tries')}</div>
+    <label style="display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text);margin-top:12px"><input type="checkbox" style="width:auto;margin:0" ${D.spread!==false?'checked':''} onchange="setP('creative_defaults.spread',this.checked)"> Spread across exercises, ages, settings and equipment</label>
+    <label>Real photos in every batch</label>
+    <div class="thumbs">${photos.length ? photos.map(ph=>`<label><input type="checkbox" ${(D.real_photos||[]).includes(ph.path)?'checked':''} onchange="cdPhoto('${esc(ph.path)}',this.checked)"><img src="${esc(ph.url)}" alt=""><span style="font-size:11px">${esc(ph.path.split('/').pop())}</span></label>`).join('') : '<span class="hint">No cleaned photos yet.</span>'}</div>
+  </div>
+  ${saveBar('profile')}`;
+}
+function cdList(k,i,val){ const cd = STATE.profile.creative_defaults ||= {}; (cd[k] ||= [])[i] = k==='locations' ? val.toUpperCase() : val; dirty('profile'); }
+function cdAdd(k){ const cd = STATE.profile.creative_defaults ||= {}; (cd[k] ||= []).push(''); dirty('profile'); render(); }
+function cdDel(k,i){ STATE.profile.creative_defaults[k].splice(i,1); dirty('profile'); render(); }
+function cdPhoto(path,on){ const cd = STATE.profile.creative_defaults ||= {}; const r = (cd.real_photos ||= []); if (on && !r.includes(path)) r.push(path); if (!on && r.includes(path)) r.splice(r.indexOf(path),1); dirty('profile'); }
+
+function viewMeta(v){
+  const p = STATE.profile; if (!p){ v.innerHTML = '<div class="empty">No gym-profile.json for this client.</div>'; return; }
+  const m = (p.meta_assets ||= {});
+  const f = (k,lbl,hint,ph='') => `<div><label>${lbl}</label><input class="mono" value="${esc(m[k]||'')}" placeholder="${esc(ph)}" oninput="setP('meta_assets.${k}',this.value.trim())"><div class="hint" style="margin:4px 0 0">${hint}</div></div>`;
+  v.innerHTML = `
+  <h1>Meta link</h1><p class="sub">Where this gym's ads will be published: the ids from the Facebook Business portfolio. Publishing is not built yet; with these filled in, it will work for this gym when it is.</p>
+  <div class="msg ok" style="margin-bottom:14px">Ids only. Access tokens and passwords never go in a profile; the panel refuses to save one. They will live in .env, as the Gemini key does.</div>
+  <div class="card"><div class="grid">
+    ${f('business_id','Business portfolio id','Business settings → Business info','e.g. 1234567890')}
+    ${f('ad_account_id','Ad account id','Starts with act_ in Ads Manager','act_1234567890')}
+    ${f('page_id','Facebook page id','The page the ads run from','')}
+    ${f('instagram_actor_id','Instagram account id','The Instagram account the ads run from','')}
+    ${f('pixel_id','Pixel / dataset id','Events Manager','')}
+    ${f('lead_form_id','Lead form id','The instant form the ads send people to','')}
+  </div>
+  <label>Conversion event</label><input value="${esc(m.primary_conversion_event||'Lead')}" style="max-width:240px" oninput="setP('meta_assets.primary_conversion_event',this.value)"></div>
+  ${saveBar('profile')}`;
+}
+
+/** A new gym: its name and folder; then the Overview shows what to fill in. */
+function newClient(){
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card">
+    <h2>New gym profile</h2>
+    <p class="hint">Fill a gym in once; every batch reads it after that. You can switch between gyms from the top bar.</p>
+    <label for="ncName">Gym name</label><input id="ncName" placeholder="e.g. IronHaus Strength" oninput="$('#ncSlug').value=slugify(this.value)">
+    <label for="ncSlug">Folder name <span class="n">· lowercase, hyphens</span></label><input id="ncSlug" class="mono" placeholder="ironhaus-strength">
+    <div id="ncErr" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:12px"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" onclick="newClientGo()">Create profile</button></div></div></div>`;
+  $('#ncName').focus();
+}
+async function newClientGo(){
+  const name = $('#ncName').value.trim(), gym = $('#ncSlug').value.trim();
+  if (!name){ $('#ncErr').innerHTML = '<div class="msg err">Give the gym a name.</div>'; return; }
+  if (STATE.clients.some(c=>c.gym===gym)){ $('#ncErr').innerHTML = '<div class="msg err">A gym with that folder name exists: pick it from the top bar.</div>'; return; }
+  try {
+    await api('/api/clients', {method:'POST', body:{gym, display_name:name}});
+    $('#gModal').innerHTML = '';
+    await loadClients(); await selectClient(gym, false); go('overview');
+  } catch(e){ $('#ncErr').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+}
+
 // ── Offer ────────────────────────────────────────────────────────────────────
-function viewOffer(v){
+/** The offer files: mechanics, price and destination, for ad copy and campaigns later. Never the words on the ads. */
+function viewOfferDetails(v){
+  if (!v) return;
   const c = STATE.clients.find(x=>x.gym===STATE.sel);
   const o = STATE.offerDoc;
   const picker = `
-    <h1>Offers</h1><p class="sub">The offer file holds the mechanics, price and destination. The words on the ads come from the brief, never from here.</p>
+    <h2 style="margin-top:22px">Offer details <span class="pill">for ad copy and campaigns, later</span></h2><p class="hint">Mechanics, price and destination. The price stays out of the ads; the words on the ads are the wordings above.</p>
     <div class="card"><div class="row">
       <label style="margin:0">Offer</label>
       <select style="width:auto;min-width:200px" onchange="loadOffer(this.value)">
@@ -429,7 +582,7 @@ function viewOffer(v){
       </select>
       <button onclick="newOffer()">+ New offer</button>
     </div></div>`;
-  if (!o) { v.innerHTML = picker + '<div class="empty">No offer yet. Create one to define what this campaign sells.</div>'; return; }
+  if (!o) { v.innerHTML = picker + '<div class="hint">No offer file yet.</div>'; return; }
   const P = o.price ||= {}, M = o.mechanics ||= {}, S = o.scarcity ||= {}, D = o.destination ||= {}, G = o.guarantee ||= {}, MSG = o.messaging ||= {};
 
   v.innerHTML = picker + `
@@ -452,7 +605,7 @@ function viewOffer(v){
     <p class="hint">"Display" is the exact string copy must use — it is never re-derived from the number.</p>
     <div class="grid">
       <div><label>Amount (SGD)</label><input type="number" value="${esc(P.amount??'')}" oninput="setO('price.amount',parseFloat(this.value)||null)"></div>
-      <div><label>Display string</label><input class="mono" placeholder="$397" value="${esc(P.display||'')}" oninput="setO('price.display',this.value)"></div>
+      <div><label>Display string</label><input class="mono" placeholder="${P.display_in_ads===false?'kept off the ads':'e.g. $397'}" value="${esc(P.display||'')}" oninput="setO('price.display',this.value)"></div>
       <div><label>Qualifier</label><select onchange="setO('price.qualifier',this.value)">
         ${STATE.enums.priceQualifiers.map(q=>`<option ${q===P.qualifier?'selected':''}>${q}</option>`).join('')}</select></div>
       <div><label>GST treatment</label><select onchange="setO('price.gst_treatment',this.value)">
@@ -588,7 +741,8 @@ const today = () => new Date().toISOString().slice(0,10);
 const slugify = s => String(s||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 // The spread the variety batches asked for: every batch may ask for it with one switch.
 const SPREAD = { exercise:['lunge','squat','deadlift','bench-press'], age:['young','prime','older'], setting:['solo','coached','group'], equipment:['bodyweight','dumbbells','barbell'] };
-const AUDIENCES = ['MEN WANTED','LADIES WANTED'];
+/** The audience chips: the profile's callouts, or the two the reference ads use most. */
+const audiences = () => (B.setup?.creative_defaults?.audiences||[]).filter(Boolean).length ? B.setup.creative_defaults.audiences.filter(Boolean) : ['MEN WANTED','LADIES WANTED'];
 
 async function loadSetup(){
   B.setup = await api(`/api/client/${STATE.sel}/batch-setup`);
@@ -605,10 +759,20 @@ async function viewBatch(v, seq=VIEW_SEQ){
   scheduleCheck(0); schedulePreview(0);
 }
 
+/** A new batch, from the profile's defaults. The offer is never among them. */
 function freshDraft(){
-  return { batch_id:'', offer:'', locations:[''], audience:'', generated:10, real:B.setup.photos.slice(0,2).map(p=>p.path),
-    looks_per_photo:2, max_calls:'', attempts:2, seed:'', direction_words:'', direction_reference:'', spread:true };
+  const cd = B.setup.creative_defaults || {}, clean = B.setup.photos.map(p=>p.path);
+  const locs = (cd.locations||[]).filter(Boolean), real = (cd.real_photos||[]).filter(p=>clean.includes(p));
+  return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 10, real: cd.real_photos?.length ? real : clean.slice(0,2),
+    looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true };
 }
+/** The offer wordings as chips: picking one is choosing its exact words. */
+function paintWordChips(){
+  const box = $('#bWords'); if (!box) return;
+  const ws = B.setup.wordings || [];
+  box.innerHTML = ws.length ? ws.slice(0,8).map((w,i)=>`<span class="chip ${B.draft.offer===w.text?'sel':''}" title="${esc(w.text)}" onclick="bWordPick(${i})">${esc(w.text)}</span>`).join('') + `<a href="#" onclick="go('offer');return false" style="font-size:12px;margin-left:4px">manage</a>` : '';
+}
+function bWordPick(i){ const w = B.setup.wordings[i]; if (!w) return; const el = $('#bOffer'); if (el) el.value = w.text; bSet('offer', w.text); paintWordChips(); }
 /** The batch's direction, if any: the owner's words and/or an uploaded reference image. */
 function directionFromDraft(){
   const d = B.draft, words = (d.direction_words||'').trim(), ref = d.direction_reference||'';
@@ -640,11 +804,13 @@ function paintBatch(v){
   v.innerHTML = `
   <div class="row" style="margin-bottom:4px"><h1 style="margin:0">${re?`Change the words of ${esc(B.view.brief.batch_id)}`:'Create'}</h1><div class="spacer"></div>${re?`<button onclick="bNew()">Start a new campaign instead</button>`:''}</div>
   <p class="sub">${re?'Same photos and looks; only the words change. Re-rendering is free.':'Everything the batch needs, on one screen. Every word on the ads is exactly what you type. Nothing spends until you confirm.'}</p>
+  ${!re && STATE.view?.completeness && !STATE.view.completeness.ready_to_create ? `<div class="msg warn">This gym's profile still needs: ${STATE.view.completeness.sections.filter(s=>s.for!=='publishing'&&s.status!=='done').map(s=>esc(s.label)).join(', ')}. <a href="#" onclick="go('overview');return false">Open the overview →</a></div>` : ''}
   <div class="nb">
     <div class="card">
       <h3>Brief</h3>
       <label for="bOffer">Offer</label>
-      <input id="bOffer" value="${esc(d.offer)}" placeholder="The offer, exactly as it should appear" oninput="bSet('offer',this.value)">
+      <div class="chips wchips" id="bWords"></div>
+      <input id="bOffer" value="${esc(d.offer)}" placeholder="The offer, exactly as it should appear — or pick a wording above" oninput="bSet('offer',this.value);paintWordChips()">
       <label>Locations <span class="n">· one version of every ad per location</span></label>
       <div id="bLocs" class="chips"></div>
       <label for="bAud">Audience <span class="n">· optional</span></label>
@@ -696,7 +862,7 @@ function paintBatch(v){
   <div id="bList"></div>
   <div id="runbox"></div>
   <div id="bModal"></div>`;
-  paintLocs(); paintAud(); paintRefs(); paintList(); renderRunBox(); paintDerived();
+  paintLocs(); paintAud(); paintWordChips(); paintRefs(); paintList(); renderRunBox(); paintDerived();
 }
 
 function paintLocs(){
@@ -707,7 +873,7 @@ function paintLocs(){
 }
 function paintAud(){
   const d = B.draft, box = $('#bAudChips'); if (!box) return;
-  box.innerHTML = AUDIENCES.map(a=>`<span class="chip ${d.audience===a?'sel':''}" onclick="bAudPick('${a}')">${a}</span>`).join('') + `<span class="chip ${d.audience===''?'sel':''}" onclick="bAudPick('')">none</span>`;
+  box.innerHTML = audiences().map(a=>`<span class="chip ${d.audience===a?'sel':''}" onclick="bAudPick('${a}')">${a}</span>`).join('') + `<span class="chip ${d.audience===''?'sel':''}" onclick="bAudPick('')">none</span>`;
 }
 function bAudPick(a){ B.draft.audience = a; const i=$('#bAud'); if (i) i.value = a; B.touched=true; paintAud(); scheduleCheck(); schedulePreview(); }
 function bStep(k, dir){ const min = k==='generated'?0:1, max = k==='generated'?12:6; const v = Math.min(max, Math.max(min, (Number(B.draft[k])||0)+dir)); B.draft[k]=v; const el=$(k==='generated'?'#bGen':'#bLooks'); if (el) el.value=v; B.touched=true; scheduleCheck(); if (k==='generated') schedulePreview(); }
@@ -915,13 +1081,13 @@ async function viewReviewList(v, seq=VIEW_SEQ){
 async function viewReview(v, seq=VIEW_SEQ){
   if (R.id !== STATE.batch || R.gym !== STATE.sel) Object.assign(R, { gym:STATE.sel, id:STATE.batch, data:null, loc:'all', show:'all', i:0, cur:R.pendingCur||null });
   R.pendingCur = null;
-  R.mode = STATE.rmode || 'ads';
   if (!R.data) v.innerHTML = '<p class="sub">Loading…</p>';
   let data;
   try { data = await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/review`); }
   catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<div class="msg err">${esc(e.message)}</div><button onclick="go('review')">← All campaigns</button>`; return; }
   if (seq !== VIEW_SEQ) return;
-  R.data = data;
+  // The mode changes with the list it shows, never before: a key pressed meanwhile acts on what is on screen.
+  R.data = data; R.mode = STATE.rmode || 'ads';
   if (R.mode==='ads' && !data.ads.length && data.photos.length) R.mode = 'photos'; // still generating: photos first
   paintCrumb(`${data.words.offer}${data.words.audience?` · ${data.words.audience}`:''}`);
   paintReview(v);
@@ -1281,7 +1447,7 @@ async function save(which){
   const btn=$('#saveBtn_'+which), msg=$('#saveMsg_'+which);
   btn.disabled=true; btn.textContent='Saving…';
   try{
-    if (which==='profile') await api('/api/client/'+STATE.sel, {method:'PUT', body:STATE.profile});
+    if (which==='profile'){ const r = await api('/api/client/'+STATE.sel, {method:'PUT', body:STATE.profile}); STATE.view = r; STATE.profile = r.profile; }
     else await api(`/api/client/${STATE.sel}/offer/${STATE.offer}`, {method:'PUT', body:STATE.offerDoc});
     DIRTY[which]=false; btn.textContent='Saved'; msg.textContent='written to disk';
     await loadClients(); render();
@@ -1352,13 +1518,6 @@ function attachRun(id, label, after, batch=null){
 }
 
 // ── Creation ─────────────────────────────────────────────────────────────────
-async function newClient(){
-  const gym = prompt('Client slug (lowercase, hyphens):\ne.g. ironhaus'); if(!gym) return;
-  const offer = prompt('First offer slug:\ne.g. 6wk-challenge') || null;
-  try{ await api('/api/clients',{method:'POST',body:{gym:gym.trim(),offer:offer?.trim()||null}});
-    await loadClients(); await selectClient(gym.trim()); STATE.tab='brand'; render();
-  }catch(e){ alert(e.message); }
-}
 async function newOffer(){
   const offer = prompt('Offer slug:\ne.g. 12wk-challenge'); if(!offer) return;
   try{ await api('/api/clients',{method:'POST',body:{gym:STATE.sel,offer:offer.trim()}});

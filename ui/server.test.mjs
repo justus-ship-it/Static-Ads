@@ -624,7 +624,7 @@ test("U11 the review screen: 1:1 and 9:16 side by side on one screen; arrows mov
   assert.deepEqual(sel().excluded, withR1, "every ad with r01 is out");
   // Back returns to the ads view, where those ads show as excluded with their photo.
   await ev("history.back(); true");
-  await until("R.mode==='ads' && STATE.rmode==='ads' && !location.hash.endsWith('/photos')", "Back to the ads");
+  await until("R.mode==='ads' && STATE.rmode==='ads' && !location.hash.endsWith('/photos') && R.list.length && R.list.every(a=>a.folder)", "Back to the ads");
   await ev(`rvGoto(R.list.findIndex(a=>a.photos.includes('r01'))); true`);
   await until("document.querySelector('#rvInfo').textContent.includes('excluded with photo r01')", "the reason shown");
   await key("k", "KeyK", 75);
@@ -662,5 +662,129 @@ test("U11 the review screen: 1:1 and 9:16 side by side on one screen; arrows mov
   const t3 = Date.now(); while (!existsSync(join(gout, "review.json")) && Date.now() - t3 < 5000) await new Promise((r) => setTimeout(r, 100));
   assert.equal(JSON.parse(readFileSync(join(gout, "review.json"), "utf-8")).photos.g01, "exclude", "a photo can be excluded before its ads exist");
   assert.ok(!existsSync(join(gout, "selections.json")), "the picks file waits for the ads");
+  assert.ok(!/NETWORK BLOCKED/.test(panel.log()));
+});
+
+// ── U12 gym profiles through the panel ──────────────────────────────────────
+
+test("U12 profiles: GET says how finished a profile is; a save with a token or a malformed field is refused and writes nothing; wordings are kept once and a confirmed batch records its own; a new gym lands in the panel's clients folder", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json");
+  let r = await (await call(`/api/client/${GYM}`)).json();
+  assert.ok(r.completeness && Array.isArray(r.completeness.sections), "completeness comes with the profile");
+  assert.equal(r.creative_defaults.generated, 10, "the defaults are filled in for a profile that has none");
+  assert.deepEqual(r.creative_defaults.locations, []);
+  const offers = r.completeness.sections.find((s) => s.id === "offers");
+  assert.equal(offers.status, "done", "the batches already run give this gym its first wording");
+  // Wordings: the history first; confirmed runs (U5, U9b) counted.
+  let w = await (await call(`/api/client/${GYM}/wordings`)).json();
+  const reset = w.wordings.find((x) => x.text === WORDS.offer);
+  assert.ok(reset && reset.uses >= 1, JSON.stringify(w));
+  assert.equal((await call(`/api/client/${GYM}/wordings`, { method: "POST", body: { text: "8 Week Mums Comeback" }, token: null })).status, 403);
+  assert.equal((await call(`/api/client/${GYM}/wordings`, { method: "POST", body: { text: "8 Week — Mums" } })).status, 400);
+  const added = await (await call(`/api/client/${GYM}/wordings`, { method: "POST", body: { text: "8 Week Mums Comeback" } })).json();
+  assert.equal(added.wording.text, "8 Week Mums Comeback");
+  assert.equal((await call(`/api/client/${GYM}/wordings/${added.wording.id}`, { method: "PUT", body: { text: "8 Week Mums Strength Comeback" } })).status, 200);
+  assert.equal((await call(`/api/client/${GYM}/wordings/nope`, { method: "DELETE" })).status, 400);
+  assert.equal((await call(`/api/client/${GYM}/wordings/..%2F..`, { method: "DELETE" })).status, 404);
+  assert.equal((await call(`/api/client/${GYM}/wordings/${added.wording.id}`, { method: "DELETE" })).status, 200);
+  w = await (await call(`/api/client/${GYM}/wordings`)).json();
+  assert.ok(!w.wordings.some((x) => /Mums/.test(x.text)));
+  assert.ok(existsSync(join(g, "ad-wordings.json")), "kept in the gym's folder");
+  // A confirmed batch run with new words records them (the owner typed them and confirmed).
+  const b = JSON.parse(readFileSync(join(g, "batches", BRIEF.batch_id, "brief.json"), "utf-8"));
+  writeFileSync(join(g, "batches", BRIEF.batch_id, "brief.json"), JSON.stringify({ ...b, offer: "6 Week Strength Kickstart" }, null, 2) + "\n");
+  const ran = await runAndWait({ kind: "batch-rerender", gym: GYM, batch: BRIEF.batch_id });
+  assert.equal(ran.code, 0, ran.lines.join("\n"));
+  w = await (await call(`/api/client/${GYM}/wordings`)).json();
+  assert.equal(w.wordings[0].text, "6 Week Strength Kickstart", "the words just run come first");
+  assert.equal(w.wordings[0].uses, 1);
+  writeFileSync(join(g, "batches", BRIEF.batch_id, "brief.json"), JSON.stringify(b, null, 2) + "\n");
+  // Saving a profile: checked first; nothing is written when it is wrong.
+  const before = readFileSync(pf, "utf-8");
+  const prof = JSON.parse(before);
+  for (const [bad, re] of [[{ ...prof, meta_assets: { access_token: "EAAB" + "x".repeat(40) } }, /never go in a profile/], [{ ...prof, gym_abbr: "test gym" }, /2-4 capital letters/], [{ ...prof, creative_defaults: { locations: ["BISHAN — NORTH"] } }, /em\/en dash/], [{ ...prof, creative_defaults: { real_photos: ["../../../.env"] } }, /not in brand-assets/]]) {
+    const res = await call(`/api/client/${GYM}`, { method: "PUT", body: bad });
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).error, re);
+    assert.equal(readFileSync(pf, "utf-8"), before, "nothing written");
+  }
+  const good = { ...prof, gym_abbr: "TG", creative_defaults: { locations: ["BISHAN", "ANG MO KIO"], audiences: ["GUYS OF BISHAN", "MEN WANTED"], real_photos: ["facility-clean/r2.png"], generated: 0, looks_per_photo: 2 } };
+  r = await (await call(`/api/client/${GYM}`, { method: "PUT", body: good })).json();
+  assert.equal(r.ok, true);
+  assert.equal(JSON.parse(readFileSync(pf, "utf-8")).schema_version, 3, "saved as schema 3");
+  assert.deepEqual(r.creative_defaults.locations, ["BISHAN", "ANG MO KIO"]);
+  assert.equal(r.completeness.sections.find((s) => s.id === "defaults").status, "done");
+  const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
+  assert.deepEqual(setup.creative_defaults.audiences, ["GUYS OF BISHAN", "MEN WANTED"], "the Create screen gets the defaults");
+  assert.ok(setup.wordings.length >= 1, "and the wordings");
+  // A new gym: a name and a folder; written in the panel's clients folder, never elsewhere.
+  assert.equal((await call("/api/clients", { method: "POST", body: { gym: "Bad Name", display_name: "x" } })).status, 400);
+  assert.equal((await call("/api/clients", { method: "POST", body: { gym: "second-gym", display_name: "Second — Gym" } })).status, 400);
+  const nc = await (await call("/api/clients", { method: "POST", body: { gym: "second-gym", display_name: "Second Gym" } })).json();
+  assert.equal(nc.created, true);
+  assert.equal(JSON.parse(readFileSync(join(brands, "second-gym", "gym-profile.json"), "utf-8")).display_name, "Second Gym");
+  assert.ok(!existsSync(join(ROOT, "brands", "second-gym")), "never in the repo's own brands folder");
+  const clients = (await (await call("/api/clients")).json()).clients;
+  assert.ok(clients.find((c) => c.gym === "second-gym").to_do > 0, "a new gym has sections to fill");
+});
+
+// ── U13 the profile pages and the Create screen's defaults ───────────────────
+
+test("U13 the page: Create opens with the profile's defaults (never the offer); wording chips fill the offer; the Overview shows what each section needs; a new gym is made from the top bar; switching gyms switches the defaults", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+    return result.value;
+  };
+  const until = async (expression, what, ms = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await ev(expression)) return; await new Promise((r) => setTimeout(r, 120)); }
+    throw new Error(`timed out waiting for ${what}: ${await ev("location.hash + ' ' + (document.querySelector('#view')?.textContent||'').slice(0,300)")}`);
+  };
+  const loaded = cdp.once("Page.loadEventFired", sessionId);
+  await cdp.send("Page.navigate", { url: `${panel.url}/?u13#/${GYM}/batch` }, sessionId);
+  await loaded;
+  await until("!!document.querySelector('#bOffer') && !!document.querySelector('#bLoc1')", "Create with two locations");
+  assert.equal(await ev("document.querySelector('#bOffer').value"), "", "the offer is never filled in for you");
+  assert.deepEqual(await ev("[document.querySelector('#bLoc0').value, document.querySelector('#bLoc1').value]"), ["BISHAN", "ANG MO KIO"]);
+  assert.deepEqual(await ev("B.draft.real"), ["facility-clean/r2.png"]);
+  assert.equal(await ev("document.querySelector('#bGen').value"), "0");
+  assert.match(await ev("document.querySelector('#bAudChips').textContent"), /GUYS OF BISHAN/);
+  // The wording chips: picking one is choosing its exact words.
+  await until("document.querySelectorAll('#bWords .chip').length>0", "wording chips");
+  const chip = await ev("document.querySelector('#bWords .chip').textContent");
+  await ev("document.querySelector('#bWords .chip').click(); true");
+  assert.equal(await ev("document.querySelector('#bOffer').value"), chip);
+  await until(`B.check && B.check.summary && B.check.summary.locations===2`, "the check with the pre-filled words");
+  // The Overview.
+  await ev("go('overview'); true");
+  await until("document.querySelectorAll('.ovc').length===8", "the eight sections");
+  const ov = await ev("document.querySelector('#view').textContent");
+  assert.match(ov, /To create ads/); assert.match(ov, /To publish to Meta/); assert.match(ov, /Meta link/);
+  await ev("[...document.querySelectorAll('.ovc')].find(c=>/Meta link/.test(c.textContent)).click(); true");
+  await until("STATE.tab==='meta' && !!document.querySelector('#view input')", "the Meta page from its card");
+  assert.match(await ev("document.querySelector('#view').textContent"), /Access tokens and passwords never go in a profile/);
+  // A token typed into a Meta field is refused on save, and says why.
+  await ev(`(()=>{const el=[...document.querySelectorAll('#view input.mono')][2]; el.value='EAAB${"x".repeat(40)}'; el.dispatchEvent(new Event('input',{bubbles:true})); return true})()`);
+  await ev("document.querySelector('#saveBtn_profile').click(); true");
+  await until("/never go in a profile/.test(document.querySelector('#saveMsg_profile').textContent)", "the refusal");
+  assert.ok(!readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8").includes("EAAB"), "nothing written");
+  await ev("DIRTY={}; true");
+  // A new gym from the top bar; then back to the first, whose defaults return.
+  await ev("newClient(); true");
+  await until("!!document.querySelector('#ncName')", "the new gym dialog");
+  await ev(`(()=>{const el=document.querySelector('#ncName'); el.value='Third Gym'; el.dispatchEvent(new Event('input',{bubbles:true})); return true})()`);
+  assert.equal(await ev("document.querySelector('#ncSlug').value"), "third-gym");
+  await ev("newClientGo(); true");
+  await until("STATE.sel==='third-gym' && STATE.tab==='overview' && document.querySelectorAll('.ovc').length===8", "the new gym's overview");
+  assert.match(await ev("document.querySelector('#view').textContent"), /to finish before creating ads/);
+  assert.ok(existsSync(join(brands, "third-gym", "gym-profile.json")));
+  await ev("go('batch'); true");
+  await until("STATE.tab==='batch' && !!document.querySelector('#bLoc0')", "Create for the new gym");
+  assert.equal(await ev("document.querySelector('#bLoc0').value"), "", "no defaults yet");
+  assert.match(await ev("document.querySelector('#view').textContent"), /This gym's profile still needs/);
+  await ev(`selectClient('${GYM}'); true`);
+  await until(`STATE.sel==='${GYM}' && document.querySelector('#bLoc0')?.value==='BISHAN'`, "the first gym's defaults again");
   assert.ok(!/NETWORK BLOCKED/.test(panel.log()));
 });
