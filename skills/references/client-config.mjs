@@ -336,7 +336,7 @@ export function catalogueFor(profile, catalogue = loadCatalogue()) {
 // Secret-bearing names (not an ad set's name_token) and what a Meta access token looks like.
 const SECRET_KEY = /^(token|access_token|.*_access_token|.*_user_token|app_secret|client_secret|secret|password|api[_-]?key|apikey)$/i;
 const SECRET_VALUE = /^(EAA[A-Za-z0-9]{30,}|AIza[0-9A-Za-z_-]{30,})$/;
-const META_ID = { ad_account_id: /^(act_)?\d{5,20}$/, page_id: /^\d{5,20}$/, instagram_actor_id: /^\d{5,20}$/, pixel_id: /^\d{5,20}$/, business_id: /^\d{5,20}$/, lead_form_id: /^\d{5,20}$/ };
+export const META_ID = { ad_account_id: /^(act_)?\d{5,20}$/, page_id: /^\d{5,20}$/, instagram_actor_id: /^\d{5,20}$/, pixel_id: /^\d{5,20}$/, business_id: /^\d{5,20}$/, lead_form_id: /^\d{5,20}$/ };
 
 /**
  * Format problems in a profile: what would make a saved profile wrong, not what leaves it unfinished

@@ -32,9 +32,10 @@ import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
   loadClientConfig, writeResolved, scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
-  catalogueFor, brandPalettes, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
+  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
 } from "../skills/references/client-config.mjs";
 import { imageSize } from "../skills/references/check-visual.mjs";
+import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
 import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
@@ -365,6 +366,8 @@ function setupStatus() {
         fix: "npm install -g firecrawl-cli && firecrawl auth" },
       { key: "FAL_KEY", label: "FAL key (backup generator)", ok: isSet("FAL_KEY"), optional: true, blocks: "Backup image generator only",
         fix: "Optional. Add FAL_KEY=... to .env" },
+      { key: "META_ACCESS_TOKEN", label: "Meta link (a system-user token, app id and secret per gym)", ok: listClients().some((c) => { const m = metaConfig({ gym: c.gym }); return !!m.token && !!m.appSecret; }), optional: true, blocks: "Publishing to Meta (the Meta link page)",
+        fix: "Add META_ACCESS_TOKEN_{GYM}, META_APP_ID_{GYM} and META_APP_SECRET_{GYM} to .env for each gym — the Meta link page says how to get them" },
     ],
     node: process.version,
   };
@@ -666,6 +669,33 @@ const server = createServer(async (req, res) => {
     }
 
     if (p === "/api/status") return json(res, 200, setupStatus());
+    // The Meta link (E1, read-only): whether .env holds the keys, and — for a gym — who the token is,
+    // what it can act on, and the gym's chosen assets resolved into names, currency, status, forms and
+    // pixels. Tokens never leave the server: answers carry ids and names only.
+    // Keys are per gym (one Meta app per business portfolio): META_ACCESS_TOKEN_{GYM} and so on, the shared
+    // names as a fallback. `used` says which names answered, so the page can show them; never their values.
+    if (p === "/api/meta/status") {
+      const gym = url.searchParams.get("gym");
+      if (gym && !okSlug(gym)) return json(res, 400, { error: "bad gym" });
+      const c = metaConfig({ gym: gym || null });
+      return json(res, 200, { configured: !!c.token, app_id: !!c.appId, app_secret: !!c.appSecret, version: META_API_VERSION, permissions: META_PERMISSIONS, keys: META_ENV_KEYS, names: c.names, used: c.used });
+    }
+    const ml = p.match(/^\/api\/client\/([^/]+)\/meta-link$/);
+    if (ml && req.method === "GET") {
+      const gym = ml[1];
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      const c = metaConfig({ gym });
+      if (!c.token) return json(res, 200, { configured: false, version: META_API_VERSION, names: c.names });
+      // Ids picked on the page but not saved yet ride along as query parameters (digits only), so the
+      // Page's forms and the account's pixels are listed as soon as they are chosen.
+      const profile = readJsonFile(join(brandDir(gym), "gym-profile.json")) || {};
+      const picked = {};
+      for (const [k, re] of Object.entries(META_ID)) { const v = url.searchParams.get(k); if (v != null) { if (v !== "" && !re.test(v)) return json(res, 400, { error: `${k} must be digits` }); picked[k] = v; } }
+      try {
+        const r = await checkLink({ ...profile, meta_assets: { ...(profile.meta_assets || {}), ...picked } }, { client: graphClient({ config: c }) });
+        return json(res, 200, { configured: true, app_secret: !!c.appSecret, used: c.used, ...r });
+      } catch (e) { return json(res, 502, { configured: true, error: scrubTokens(e.message), code: e.code ?? null }); }
+    }
     if (p === "/api/enums") return json(res, 200, { cta: CTA_ENUM, offerTypes: OFFER_TYPES, priceQualifiers: PRICE_QUALIFIERS, maxLocations: MAX_LOCATIONS });
     if (p === "/api/clients" && req.method === "GET") return json(res, 200, { clients: listClients() });
 

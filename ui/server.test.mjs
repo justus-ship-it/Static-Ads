@@ -33,7 +33,8 @@ let dir, brands, stub, browser, panel;
 function startPanel(env = {}) {
   return new Promise((res, rej) => {
     const child = spawn(process.execPath, [join(ROOT, "ui", "server.mjs"), "--port", "0"], {
-      cwd: ROOT, env: { ...process.env, PANEL_BRANDS_DIR: brands, NODE_OPTIONS: `--import=${stub}`, ...env },
+      // No Meta keys unless a test gives them: whatever this machine's .env holds, the panel under test has none.
+      cwd: ROOT, env: { ...process.env, PANEL_BRANDS_DIR: brands, NODE_OPTIONS: `--import=${stub}`, META_ACCESS_TOKEN: "", META_APP_ID: "", META_APP_SECRET: "", META_GRAPH_URL: "", ...env },
     });
     let out = "", err = "";
     child.stdout.on("data", async (d) => {
@@ -930,5 +931,130 @@ test("U15 the page: a file dropped on Photos & assets is filed by kind and liste
   await until("DIRTY.profile===false", "saved");
   await ev("go('brand'); true");
   await until("/both the reference pairings and the brand palettes/.test(document.querySelector('#view').textContent)", "the Brand page says both");
+  assert.ok(!/NETWORK BLOCKED/.test(panel.log()));
+});
+
+// ── U16 / U17 the Meta link ───────────────────────────────────────────────────
+
+const META_TOKEN = "EAA" + "p".repeat(60);
+/** A fake Graph API for the panel: the token must be ours; a few assets; a Page token for the forms. */
+function fakeGraph() {
+  const calls = [];
+  const server = http.createServer((req, res) => {
+    const u = new URL(req.url, "http://x"), path = u.pathname.split("/").slice(2).join("/"), tok = u.searchParams.get("access_token");
+    calls.push(path);
+    const ok = (body) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    if (tok !== META_TOKEN && tok !== "PAGE-TOKEN") { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: "Invalid OAuth access token", code: 190 } })); }
+    if (path === "me") return ok({ id: "1", name: "strategym-panel" });
+    if (path === "me/adaccounts") return ok({ data: [{ id: "act_111000000001", account_id: "111000000001", name: "Test Gym Ads", currency: "SGD", account_status: 1, timezone_name: "Asia/Singapore" }, { id: "act_222000000002", account_id: "222000000002", name: "Other Ads", currency: "USD", account_status: 1 }] });
+    if (path === "me/accounts") return ok({ data: [{ id: "770000000007", name: "Test Gym", instagram_business_account: { id: "880000000008", username: "testgym" } }] });
+    if (path === "me/businesses") return ok({ data: [{ id: "555000000005", name: "Test Gym Pte Ltd" }] });
+    if (path === "770000000007" && u.searchParams.get("fields") === "access_token") return ok({ access_token: "PAGE-TOKEN" });
+    if (path === "770000000007") return ok({ id: "770000000007", name: "Test Gym", instagram_business_account: { id: "880000000008", username: "testgym" } });
+    if (path === "770000000007/leadgen_forms") return ok({ data: [{ id: "400100000001", name: "12 Week Reset form", status: "ACTIVE", leads_count: 3 }] });
+    if (path === "act_111000000001") return ok({ id: "act_111000000001", account_id: "111000000001", name: "Test Gym Ads", currency: "SGD", account_status: 1 });
+    if (path === "act_111000000001/adspixels") return ok({ data: [{ id: "600100000001", name: "Test pixel" }] });
+    res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: `no ${path}`, code: 803 } }));
+  });
+  return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ server, url: `http://127.0.0.1:${server.address().port}`, calls })));
+}
+
+test("U16 the Meta link API: without keys the panel says so and calls nothing; with them it lists what the token can act on and resolves the gym's ids — never letting the token out; Setup shows the check", async () => {
+  const g = join(brands, GYM);
+  // The default panel has no keys (the test sets them empty, whatever the machine's .env holds).
+  let r = await (await call("/api/meta/status")).json();
+  assert.deepEqual([r.configured, r.app_secret], [false, false]); assert.ok(Array.isArray(r.permissions) && r.permissions.includes("ads_management"));
+  r = await (await call(`/api/client/${GYM}/meta-link`)).json();
+  assert.equal(r.configured, false);
+  const st = await (await call("/api/status")).json();
+  const mc = st.checks.find((c) => c.key === "META_ACCESS_TOKEN");
+  assert.ok(mc && mc.optional && !mc.ok, "an optional Setup check, missing here");
+  // A panel with the keys, against a fake Graph on this machine.
+  const graph = await fakeGraph();
+  const main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  try {
+    r = await (await call("/api/meta/status")).json();
+    assert.deepEqual([r.configured, r.app_id, r.app_secret], [true, true, true]);
+    assert.ok((await (await call("/api/status")).json()).checks.find((c) => c.key === "META_ACCESS_TOKEN").ok);
+    const before = readFileSync(join(g, "gym-profile.json"), "utf-8");
+    const res = await call(`/api/client/${GYM}/meta-link`);
+    assert.equal(res.status, 200);
+    const text = await res.text(); r = JSON.parse(text);
+    assert.ok(!text.includes(META_TOKEN) && !text.includes("PAGE-TOKEN") && !text.includes("app-secret"), "no token or secret in the answer");
+    assert.equal(r.configured, true); assert.equal(r.me.name, "strategym-panel");
+    assert.deepEqual(r.accounts.map((a) => a.id), ["act_111000000001", "act_222000000002"]); assert.deepEqual(r.pages.map((p) => p.id), ["770000000007"]);
+    assert.equal(r.chosen.account, null, "nothing chosen in the profile yet");
+    assert.equal(readFileSync(join(g, "gym-profile.json"), "utf-8"), before, "a check writes nothing");
+    assert.ok(!graph.calls.some((c) => /leadgen_forms/.test(c)), "no lookups for ids the profile does not have");
+    // Ids picked but not saved ride along as query parameters: the Page's forms are listed at once; only digits are accepted.
+    r = await (await call(`/api/client/${GYM}/meta-link?page_id=770000000007&ad_account_id=act_111000000001`)).json();
+    assert.deepEqual(r.chosen.forms.map((f) => f.id), ["400100000001"]); assert.deepEqual(r.chosen.pixels.map((p) => p.id), ["600100000001"]);
+    assert.equal((await call(`/api/client/${GYM}/meta-link?page_id=../x`)).status, 400);
+    assert.equal(readFileSync(join(g, "gym-profile.json"), "utf-8"), before, "still nothing written");
+    // With ids chosen, the answer resolves them; a wrong currency is a problem in words.
+    const prof = JSON.parse(before);
+    assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: { ...prof, locale: { country: "SG", currency: "SGD" }, meta_assets: { ...(prof.meta_assets || {}), ad_account_id: "act_222000000002", page_id: "770000000007", lead_form_id: "400100000001", labels: { account: "Other Ads · USD", page: "Test Gym" } } } })).status, 200);
+    r = await (await call(`/api/client/${GYM}/meta-link`)).json();
+    assert.equal(r.chosen.account.currency, "USD"); assert.equal(r.chosen.page.name, "Test Gym"); assert.deepEqual(r.chosen.forms.map((f) => f.id), ["400100000001"]);
+    assert.ok(r.problems.some((p) => /bills in USD/.test(p)), r.problems.join("\n"));
+    assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: { ...prof, meta_assets: { ...(prof.meta_assets || {}), access_token: META_TOKEN } } })).status, 400, "a token in a profile is still refused");
+    writeFileSync(join(g, "gym-profile.json"), before);
+    // A dead token: Meta's answer in words, no crash.
+    await panel.stop();
+    panel = await startPanel({ META_ACCESS_TOKEN: "EAA" + "x".repeat(60), META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+    const dead = await call(`/api/client/${GYM}/meta-link`);
+    assert.equal(dead.status, 502);
+    const dj = await dead.json();
+    assert.match(dj.error, /token is invalid or has expired/); assert.ok(!dj.error.includes("EAAxx"));
+  } finally { await panel.stop(); panel = main; graph.server.close(); }
+});
+
+test("U17 the Meta page: without keys it shows the setup steps and the ids can still be typed; with keys, Check the link lists the token's assets and picking fills the profile's ids and names, saved as ids only", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+    return result.value;
+  };
+  const until = async (expression, what, ms = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await ev(expression)) return; await new Promise((r) => setTimeout(r, 120)); }
+    throw new Error(`timed out waiting for ${what}: ${await ev("location.hash + ' ' + (document.querySelector('#view')?.textContent||'').slice(0,300)")}`);
+  };
+  const open = async (url) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url }, sessionId); await loaded; };
+  await open(`${panel.url}/?u17#/${GYM}/meta`);
+  await until("!!document.querySelector('#mt_page_id')", "the Meta page");
+  let text = await ev("document.querySelector('#view').textContent");
+  assert.match(text, /Set up Strategym's access/); assert.match(text, /System users/); assert.match(text, /META_ACCESS_TOKEN/); assert.match(text, /ads_management/);
+  assert.ok(!(await ev("[...document.querySelectorAll('button')].some(b=>/Check the link/.test(b.textContent))")), "no check button without keys");
+  const graph = await fakeGraph();
+  const main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  try {
+    await open(`${panel.url}/?u17b#/${GYM}/meta`);
+    await until("[...document.querySelectorAll('button')].some(b=>/Check the link/.test(b.textContent))", "the check button");
+    assert.ok(!/Set up Strategym's access/.test(await ev("document.querySelector('#view').textContent")), "the steps are gone once the keys are there");
+    await ev("metaCheck(); true");
+    await until("MT.link && document.querySelectorAll('#view select').length>=5", "the lists");
+    text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /token is strategym-panel/); assert.match(text, /Test Gym Ads · SGD · active/); assert.match(text, /Test Gym · @testgym/);
+    // Pick the account and the Page: the ids land in the profile, the Instagram account with the Page, the names beside them.
+    await ev("metaPick('ad_account_id','act_111000000001','account'); metaPick('page_id','770000000007','page'); true");
+    assert.deepEqual(await ev("[STATE.profile.meta_assets.ad_account_id, STATE.profile.meta_assets.page_id, STATE.profile.meta_assets.instagram_actor_id, STATE.profile.meta_assets.labels.account, STATE.profile.meta_assets.labels.page]"), ["act_111000000001", "770000000007", "880000000008", "Test Gym Ads · SGD", "Test Gym"]);
+    assert.equal(await ev("document.querySelector('#mt_ad_account_id').value"), "act_111000000001", "the id field follows the pick");
+    // Check again: the chosen Page's forms and the account's pixels are listed; pick them.
+    await ev("metaCheck(); true");
+    await until("MT.link && MT.link.chosen.forms.length===1 && MT.link.chosen.pixels.length===1", "forms and pixels of the chosen assets");
+    await ev("metaPick('lead_form_id','400100000001','form'); metaPick('pixel_id','600100000001','pixel'); metaPick('business_id','555000000005','business'); true");
+    await ev("document.querySelector('#saveBtn_profile').click(); true");
+    await until("DIRTY.profile===false", "saved");
+    const saved = JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8")).meta_assets;
+    assert.deepEqual([saved.ad_account_id, saved.page_id, saved.instagram_actor_id, saved.lead_form_id, saved.pixel_id, saved.business_id], ["act_111000000001", "770000000007", "880000000008", "400100000001", "600100000001", "555000000005"]);
+    assert.equal(saved.labels.form, "12 Week Reset form"); assert.equal(saved.labels.pixel, "Test pixel");
+    assert.ok(!readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8").includes(META_TOKEN), "ids and names only");
+    const ov = await (await call(`/api/client/${GYM}`)).json();
+    assert.equal(ov.completeness.sections.find((s) => s.id === "meta").status, "done");
+  } finally { await panel.stop(); panel = main; graph.server.close(); }
   assert.ok(!/NETWORK BLOCKED/.test(panel.log()));
 });
