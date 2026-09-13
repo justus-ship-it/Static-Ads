@@ -341,7 +341,8 @@ test("S6 a look the scene's pose cannot be composed for is skipped, not fatal; a
     // P's own look keeps its native 9:16; the refused look is served by P's band where it fits, else left out — never a crash.
     assert.deepEqual(r.stories.ads.find((a) => a.candidate === picked.ad.candidate && a.location === "BISHAN").photos, [`${P}-${RATIO}`]);
     const cx = r.stories.ads.find((a) => a.candidate === "cx");
-    if (cx) assert.deepEqual(cx.photos, [`${P}-${RATIO}-band-${short(bad)}`]); else assert.ok(r.stories.left_out.some((l) => l.candidate === "cx"), JSON.stringify(r.stories.left_out));
+    // (The crafted look keeps the 1:1 ad's placement, so the band is tried for it; if its render cannot verify, it is recorded as failed.)
+    if (cx) assert.deepEqual(cx.photos, [`${P}-${RATIO}-band-${short(bad)}`]); else assert.ok(r.stories.left_out.some((l) => l.candidate === "cx") || r.stories.failed.some((f) => f.candidate === "cx"), JSON.stringify([r.stories.left_out, r.stories.failed]));
     // Q's looks come from its band; every one of Q's ads has a Stories version.
     const qAds = r.stories.ads.filter((a) => a.photos[0].startsWith(`${Q}-`));
     assert.equal(qAds.length, batch.ads.filter((a) => a.photos.length === 1 && a.photos[0] === Q).length);
@@ -395,5 +396,60 @@ test("S7 the band is the 1:1 ad's own crop: the window maths, boxes moved throug
     assert.match(r.stories.photos[band].notes[0], /the native 9:16 did not verify: .*covers a face/);
     assert.equal(r.stories.photos[band].crop?.length, 4, "the window the 1:1 ad showed is recorded");
     assert.equal(r.results.filter((x) => x.failed).length, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("S8 a band keeps the layout its 1:1 ad verified even when its own 9:16 fit misses the 40% rule (the derived layouts scale differently); the finished ad is still verified", async () => {
+  const { inBand, cropWindow } = await import("./make-stories.mjs");
+  const { fitLayouts, imageSize } = await import("./check-visual.mjs");
+  const dir = brandSetup();
+  // Compact and low scenes only, so every generated photo may carry the bottom stack — the layout whose
+  // 9:16 derivation differs most from the 1:1 crop at the frame's left edge (g03 in the women's batch).
+  writeFileSync(join(dir, "scenes.json"), JSON.stringify({ approved: true, scenes: SCENES.filter((s) => s.pose !== "upright") }));
+  try {
+    const { out, batch } = await finishedBatch(dir);
+    const la = "t1-bottom-stack";
+    const single = batch.ads.filter((a) => a.photos.length === 1 && a.photos[0].startsWith("g") && a.location === "BISHAN");
+    let victim = single.find((a) => a.treatment === la);
+    if (!victim) { // give a generated photo a bottom-stack look by hand, as the batch could have
+      victim = { ...single[0], folder: "198-cy-bishan-t1-cyan-pink", file: "198-cy-bishan-t1-cyan-pink/1x1/cy-bishan_1x1_v1.png", candidate: "cy", treatment: la, style: "s3-condensed", palette: "cyan-pink", crop: [[0.5, 0.5]], location: "BISHAN", location_index: 0 };
+      const bj = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")); bj.ads.push(victim); writeFileSync(join(out, "batch.json"), JSON.stringify(bj));
+      const sel = JSON.parse(readFileSync(join(out, "selections.json"), "utf-8")); sel[victim.folder] = { "1x1": victim.file }; writeFileSync(join(out, "selections.json"), JSON.stringify(sel));
+    }
+    const Q = victim.photos[0];
+    const pics = JSON.parse(readFileSync(join(out, "pictures.json"), "utf-8"));
+    const size = imageSize(readFileSync(pics[Q].file)), crop = cropWindow(size, victim.crop[0]), band = [50, 269, 979, 979];
+    // A people box (per mille of the photo) that fits the layout in 1:1 at this crop but not its 9:16
+    // derivation once moved onto the band: a subject hugging the left edge, tall in the frame.
+    const toPhoto = ([y0, x0, y1, x1]) => [y0, x0, y1, x1].map((v, i) => Math.round(((i % 2 ? crop[0] : crop[1]) + (v / 1000) * (i % 2 ? crop[2] : crop[3])) / (i % 2 ? size[0] : size[1]) * 1000));
+    let found = null;
+    for (const w of [120, 160, 200]) for (const h of [500, 600, 660]) for (const x0 of [0, 20]) for (const y0 of [100, 180, 220, 300]) {
+      if (y0 + h > 1000) continue;
+      const inPhoto = toPhoto([y0, x0, y0 + h, x0 + w]);
+      const a1 = { people_box: inPhoto, face_boxes: [[inPhoto[0], inPhoto[1], inPhoto[0] + 40, inPhoto[1] + 40]], people_count: 1 };
+      const f1 = fitLayouts(a1, { ratio: "1x1", imageSize: size, expectPeople: true, maxPeople: 1, catalogue: CAT })[la];
+      const f9 = fitLayouts(inBand(a1, band, { crop, size }), { ratio: RATIO, imageSize: [1080, 1920], expectPeople: true, maxPeople: 1, catalogue: CAT })[la];
+      if (f1.ok && !f9.ok && /under text areas/.test(f9.failures.join(" "))) { found = { a1, f9 }; break; }
+    }
+    assert.ok(found, `a box that fits ${la} in 1:1 but not in 9:16 (${size.join("×")}, crop ${crop})`);
+    pics[Q].check.placement.people_box = found.a1.people_box; pics[Q].check.faces = found.a1.face_boxes;
+    writeFileSync(join(out, "pictures.json"), JSON.stringify(pics));
+    const calls = [], logs = [];
+    // Q's native 9:16 never places, so its looks fall back to the band of the 1:1 crop.
+    const check = async (file, opts) => (basename(file).startsWith(`${Q}-`) ? { ok: false, failures: ["64% of the people sit under text areas (max 40%)"], notes: [], faces: [], focus: [0.5, 0.5], placement: { people_box: [300, 300, 900, 700], people_count: 1 } } : check9(file, opts));
+    const r = await runStories({ brandDir: dir, batchId: "test-batch", deps: { generate: generate(calls), check, sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser, gallery: () => {} }, log: (m) => logs.push(m) });
+    const bandId = `${Q}-${RATIO}-band-${short(la)}`, rec = r.stories.photos[bandId];
+    assert.ok(rec, "the band was made");
+    assert.match(rec.notes.join(" | "), new RegExp(`placement inherited from the 1:1 ad, which verified with this crop \\(the band's own fit for ${short(la)}: \\d+% of the people sit under text areas`));
+    assert.ok(logs.some((l) => new RegExp(`${Q}: the ${short(la)} band keeps the 1:1 ad's placement`).test(l)), logs.join(" | "));
+    const wanted = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).ads.filter((a) => a.candidate === victim.candidate).length;
+    const made = r.stories.ads.filter((a) => a.candidate === victim.candidate);
+    assert.equal(made.length, wanted, `every location made from the band: left out ${JSON.stringify(r.stories.left_out)}, failed ${JSON.stringify(r.stories.failed)}`);
+    for (const a of made) assert.deepEqual(a.photos, [bandId]);
+    // Still verified: the render puts no letter on the face and stays in the safe area.
+    const res = r.results.find((x) => x.id === victim.candidate);
+    assert.ok(res && !res.failed, JSON.stringify(res?.failed));
+    const S = safe();
+    for (const x of res.renders) for (const bl of x.r.report.blocks) assert.ok(inside(bl.rect, S), `${bl.block} inside the safe area`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

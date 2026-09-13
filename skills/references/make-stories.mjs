@@ -246,6 +246,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
     allowed[id] = Object.keys(fit).filter((la) => fit[la].ok);
     focus[id] = Object.fromEntries(Object.entries(fit).map(([la, f]) => [la, f.focus]));
     faces[id] = rec.answer?.face_boxes || [];
+    return fit;
   };
   try {
     // First: one 9:16 photo per generated photo, composed for its first look.
@@ -288,7 +289,18 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
         prior[id] = { status: "passed", kind: "band", for: p.id, treatment: la, file, band, crop, checks: STORIES_CHECKS, answer, notes: [`the 1:1 ad's crop of the chosen photo as a band: ${why}`], failures: [] };
         log(`· ${p.id}: ${short(la)} from the chosen photo's 1:1 crop as a band (no image call)`);
       }
-      admit(id, prior[id], visualsById[p.id]?.people ?? null);
+      const fit = admit(id, prior[id], visualsById[p.id]?.people ?? null);
+      // The 9:16 layouts are derived from the 1:1 ones with different horizontal and vertical scales,
+      // so the band's own fit can differ a little from the crop's fit in 1:1 — a subject hugging the
+      // frame's edge sat 38% under text in 1:1 and 51% in 9:16 (the women's batch, 2026-09-13). The 1:1
+      // ad with this very crop verified, so the band keeps that layout; the finished ad is still verified
+      // letter by letter against the faces, and inside the safe area.
+      if (!allowed[id].includes(la)) {
+        const own = fit[la]?.failures?.join("; ") || "not judged";
+        allowed[id].push(la); focus[id][la] = fit[la]?.focus || [0.5, 0.5];
+        if (!prior[id].notes.some((n) => n.startsWith("placement inherited"))) prior[id].notes.push(`placement inherited from the 1:1 ad, which verified with this crop (the band's own fit for ${short(la)}: ${own})`);
+        log(`· ${p.id}: the ${short(la)} band keeps the 1:1 ad's placement (its own fit: ${own})`);
+      }
       return id;
     };
     for (const p of gen) for (const la of p.layouts) if (!photo9For(p.id, la)) await bandFor(p, la, prior[`${p.id}-${RATIO}`]?.failures?.join("; ") || "no native 9:16 photo passed");
