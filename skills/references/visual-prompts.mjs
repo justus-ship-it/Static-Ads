@@ -153,6 +153,12 @@ export const REAL_CLAUSE = "REAL: everything could be photographed in a real gym
  *  is the one prompting technique measured to work (Step 4): the sibling keeps the room, people and moment. */
 export const ANCHOR_CLAUSE = "SAME SCENE: the first attached photo is this exact scene, already photographed for the square advert. Make the same photograph re-framed as a vertical 9:16: the same people with the same faces, ages, builds, clothes and expressions, at the same spot in the same room and light, doing the same thing at the same moment. The taller frame shows more floor below and more ceiling above; nothing else changes.";
 
+const escapeRe = (n) => n.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
+/** "the real Sculpt Society premises" → "the real premises": the name goes, the meaning stays. */
+export const scrubNames = (t, names = []) => names.filter(Boolean).reduce((a, n) => a.replace(new RegExp(`\\s*${escapeRe(n)}('s)?`, "gi"), ""), t).replace(/\s{2,}/g, " ").trim();
+/** A never-list item about words (a wordmark, a slogan): the image prompt never names words, even to forbid them. */
+export const isAboutText = (t) => /\b(text|wordmark|reading|words?|lettering|slogan)\b/i.test(t);
+
 export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, catalogue = loadCatalogue() }) {
   const T = catalogue.treatments;
   const tr = T.treatments[treatment];
@@ -161,10 +167,7 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
   if (/["“”]/.test(scene)) throw new Error("the scene contains quotation marks — scenes describe the picture, never words to show in it");
   const layout = layoutFor(tr, ratio, T);
   const names = brandNames.filter(Boolean);
-  const escape = (n) => n.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
-  // "the real Sculpt Society premises" → "the real premises": the name goes, the meaning stays.
-  const scrub = (t) => names.reduce((a, n) => a.replace(new RegExp(`\\s*${escape(n)}('s)?`, "gi"), ""), t).replace(/\s{2,}/g, " ").trim();
-  const isAboutText = (t) => /\b(text|wordmark|reading|words?|lettering|slogan)\b/i.test(t);
+  const scrub = (t) => scrubNames(t, names);
   const never = (photography.never || []).filter((t) => !isAboutText(t)).map(scrub);
   const must = (photography.must || []).map(scrub);
   const hint = tr.visual_hint.replace(/\s*No text, letters, signage, logos or watermarks anywhere\.\s*$/, "");

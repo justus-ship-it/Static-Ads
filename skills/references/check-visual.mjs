@@ -78,10 +78,11 @@ const CONFIRM_QUESTION = (items) => `A first check of this image reported the it
 ${items.map((t, i) => `${i}. ${t.what}${t.kind ? ` (${t.kind})` : ""}${t.box_2d ? ` at ${JSON.stringify(t.box_2d)}` : ""}`).join("\n")}`;
 const CONFIRM_SCHEMA = { type: "OBJECT", properties: { findings: { type: "ARRAY", items: { type: "OBJECT", properties: { index: { type: "INTEGER" }, visible: { type: "BOOLEAN" }, seen: { type: "STRING" } }, required: ["index", "visible"] } } }, required: ["findings"] };
 
-/** One vision call. `imagePath` may be a list: the images follow the question in that order. */
+/** One vision call. `imagePath` may be a list: the images follow the question in that order — or null
+ *  for a text-only call to the same model (refresh-scenes.mjs drafts scenes with it). */
 export async function callVision(imagePath, text, schema, { model = CHECK_MODEL, fetchImpl = fetch, key = loadGeminiKey() } = {}) {
   if (!key) throw new Error("GEMINI_KEY not found (.env or environment)");
-  const images = [imagePath].flat().map((p) => ({ inline_data: { mime_type: MIME[extname(p).toLowerCase()] || "image/png", data: readFileSync(p).toString("base64") } }));
+  const images = (imagePath == null ? [] : [imagePath].flat()).map((p) => ({ inline_data: { mime_type: MIME[extname(p).toLowerCase()] || "image/png", data: readFileSync(p).toString("base64") } }));
   const body = {
     contents: [{ parts: [{ text }, ...images] }],
     generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0 },

@@ -21,6 +21,7 @@ import { cropImage } from "./clean-photo.mjs";
 import { validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
 const sceneProblemsOf = (s) => sceneProblems(s).join("; ");
 import { poseProblem } from "./visual-prompts.mjs";
+import { rejectScene } from "./scene-library.mjs";
 
 const CAT = loadCatalogue();
 const svg = (w, h, body) => "data:image/svg+xml;base64," + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${body}</svg>`).toString("base64");
@@ -608,4 +609,61 @@ test("B4b when a photo's other look took its last free layout and the words woul
   assert.deepEqual(r.images.slice(1), ["p2", "p3", "p4"].slice(0, r.images.length - 1), "then the batch's next photos, in order");
   assert.match(r.replaced.reason, /covers a face/);
   assert.equal(results.find((x) => x.id === "c02").treatment, "t3-right-column", "the other look is untouched");
+});
+
+// ── B10 a directed batch ──────────────────────────────────────────────────
+
+test("B10 a directed batch drafts its own scenes in the dry run, is refused until they are confirmed, and confirming approves them into the library", async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const drafted = [];
+    // The drafter, faked: writes `count` drafts for the batch into the library, as the real one does.
+    const draft = async ({ audience, count, direction, source, scenesPath }) => {
+      drafted.push({ audience, count, direction, source });
+      const lib = JSON.parse(readFileSync(scenesPath, "utf-8"));
+      const made = Array.from({ length: count }, (_, i) => ({ id: `w-dir-${drafted.length}-${i + 1}`, audience, pose: "compact", people: 1, exercise: "step-up", age: "older", setting: "solo", equipment: "dumbbells", muscles: "legs", scene: `A woman in her fifties stepping onto a box with dumbbells at her sides (${drafted.length}-${i + 1}).`, draft: true, source, added: "2026-09-13", direction }));
+      lib.scenes.push(...made); writeFileSync(scenesPath, JSON.stringify(lib, null, 2));
+      return { drafts: made, dropped: [], text_calls: 1, vision_calls: 0 };
+    };
+    const brief = { ...BRIEF, batch_id: "directed", audience: "LADIES WANTED", generated: 2, real: [], max_calls: 2, direction: { words: "older women stepping onto boxes" } };
+    const calls = [], logs = [];
+    const deps = { ...fakes(calls), browser, draft };
+    const lib = () => JSON.parse(readFileSync(join(dir, "scenes.json"), "utf-8")).scenes;
+    // 1 the dry run drafts the batch's scenes and plans with them — and only them, not the library at large.
+    const d1 = await runBatch({ brandDir: dir, brief, deps, dryRun: true, log: (m) => logs.push(m) });
+    assert.equal(drafted.length, 1);
+    assert.deepEqual([drafted[0].audience, drafted[0].count, drafted[0].source, drafted[0].direction], ["women", 2, "batch:directed", brief.direction]);
+    assert.deepEqual(d1.plan.visuals.map((v) => v.scene_id).sort(), ["w-dir-1-1", "w-dir-1-2"]);
+    assert.ok(!d1.plan.visuals.some((v) => SCENES.some((s) => s.id === v.scene_id)), "the library's own women's scenes are not used");
+    assert.ok(logs.some((m) => /2 scene\(s\) drafted for this batch/.test(m)), logs.join("\n"));
+    assert.equal(lib().filter((s) => s.source === "batch:directed" && s.draft === true).length, 2, "written as drafts");
+    // 2 a real run before confirmation is refused — no image call.
+    await assert.rejects(runBatch({ brandDir: dir, brief, deps, log: () => {} }), /2 drafted scene\(s\) await confirmation: w-dir-1-1, w-dir-1-2/);
+    assert.equal(calls.length, 0);
+    // 3 another dry run drafts nothing more.
+    await runBatch({ brandDir: dir, brief, deps, dryRun: true, log: () => {} });
+    assert.equal(drafted.length, 1);
+    // 4 rejecting one (with a reason) makes the next dry run draft one replacement.
+    rejectScene(join(dir, "scenes.json"), "w-dir-1-2", "not the box we have", { date: "2026-09-13" });
+    const d2 = await runBatch({ brandDir: dir, brief, deps, dryRun: true, log: () => {} });
+    assert.equal(drafted.length, 2); assert.equal(drafted[1].count, 1);
+    assert.deepEqual(d2.plan.visuals.map((v) => v.scene_id).sort(), ["w-dir-1-1", "w-dir-2-1"]);
+    assert.ok(lib().some((s) => s.id === "w-dir-1-2" && s.status === "retired" && s.reason === "not the box we have"), "the rejected one is kept, retired");
+    // 5 confirming approves the drafts into the library and runs the batch.
+    const r = await runBatch({ brandDir: dir, brief, deps, approveScenes: true, log: (m) => logs.push(m) });
+    assert.equal(r.calls, 2);
+    assert.ok(logs.some((m) => /2 scene\(s\) confirmed for this batch: w-dir-1-1, w-dir-2-1/.test(m)), logs.join("\n"));
+    const mine = lib().filter((s) => s.source === "batch:directed" && s.status !== "retired");
+    assert.equal(mine.length, 2);
+    assert.ok(mine.every((s) => s.draft === undefined && s.approved_on && s.approved_via === "directed"), JSON.stringify(mine));
+    assert.equal(r.batch.ads.length, 2 * 2 * 2);
+    assert.deepEqual(r.batch.photos.map((p) => p.scene_id).sort(), ["w-dir-1-1", "w-dir-2-1"]);
+    // 6 a further run drafts nothing and spends nothing; the scenes now live in the library for any women's batch.
+    const r2 = await runBatch({ brandDir: dir, brief, deps, log: () => {} });
+    assert.equal(drafted.length, 2); assert.equal(r2.calls, 0);
+    assert.ok(loadScenes(join(dir, "scenes.json")).some((s) => s.id === "w-dir-2-1"));
+    // A directed brief with nothing to generate, or beside the brief's own scenes, is refused up front.
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, generated: 0, real: ["real/r1.png"] }, deps, dryRun: true, log: () => {} }), /direction needs generated photos/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

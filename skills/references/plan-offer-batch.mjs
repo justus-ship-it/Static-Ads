@@ -43,6 +43,8 @@ import { QUALITY_VERSION } from "./check-quality.mjs";
 import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from "./assign-variants.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
+import { SCENE_TAGS, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
+import { draftScenes, validateDirection } from "./refresh-scenes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** Which checks a passed photo has been through. A photo passed under older checks (before the quality
@@ -109,61 +111,45 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
     }
   }
   if (brief.ratio && !T.canvas[brief.ratio]) errs.push(`ratio "${brief.ratio}" is not one of ${Object.keys(T.canvas).join(", ")}`);
+  // The owner's direction for the batch's photos: words, or a reference image read into words.
+  if (brief.direction != null) {
+    for (const e of validateDirection(brief.direction, { brandDir })) errs.push(`direction: ${e}`);
+    if (brief.scenes != null) errs.push("direction and scenes cannot both be given: the direction drafts the batch's scenes");
+    if (!(g > 0)) errs.push("direction needs generated photos (generated is 0)");
+  }
   return errs;
 }
 
 // ── scenes ────────────────────────────────────────────────────────────────
-
-/** What a scene may be tagged with, so a batch can spread its photos across them (planVisuals). */
-export const SCENE_TAGS = {
-  age: ["young", "prime", "older"], // 20s · 30s–40s · 50s–60s
-  setting: ["solo", "coached", "group"],
-  equipment: ["bodyweight", "dumbbells", "barbell", "kettlebell", "machine", "cable"],
-  muscles: ["legs", "back", "chest", "shoulders", "arms", "core", "full-body"],
-};
-export const MAX_SCENE_PEOPLE = 6;
-
-export function sceneProblems(s) {
-  const errs = [];
-  if (!s || typeof s.scene !== "string" || !s.scene.trim()) return ["a scene needs its description"];
-  if (/["“”]/.test(s.scene)) errs.push("contains quotation marks — scenes describe the picture, never words to show");
-  if (!POSES[s.pose]) errs.push(`pose must be one of ${Object.keys(POSES).join(", ")}`);
-  if (!Number.isInteger(s.people) || s.people < 1 || s.people > MAX_SCENE_PEOPLE) errs.push(`people must be 1 to ${MAX_SCENE_PEOPLE}`);
-  if (s.audience && !["men", "women", "any"].includes(s.audience)) errs.push('audience must be "men", "women" or "any"');
-  for (const [tag, allowed] of Object.entries(SCENE_TAGS)) if (s[tag] != null && !allowed.includes(s[tag])) errs.push(`${tag} must be one of ${allowed.join(", ")}`);
-  if (s.exercise != null && !/^[a-z][a-z-]{1,40}$/.test(s.exercise)) errs.push("exercise must be a short lower-case name, e.g. back-squat");
-  // The setting has to agree with the head count, or the people check fails every photo.
-  if (s.setting === "solo" && s.people !== 1) errs.push("a solo scene has 1 person");
-  if (s.setting === "coached" && s.people < 2) errs.push("a coached scene has at least 2 people");
-  if (s.setting === "group" && s.people < 3) errs.push("a group scene has at least 3 people");
-  return errs;
-}
-
-// Wording that asks a class to move as one. The 48-ad batch's group scenes said "side by side" and
-// "in time with each other" and came back as line-ups in identical poses (2026-09-12).
-const UNIFORM_WORDS = /\b(side by side|in time|in unison|in sync|synchroni[sz]ed|identical(ly)?|in a (neat )?(row|line)|each (holding|doing|performing)|all (holding|doing|performing))\b/i;
-
-/** Not refusals: wording that makes a scene with several people come out posed. */
-export function sceneWarnings(s) {
-  if (!s || typeof s.scene !== "string" || !(s.people >= 2 || ["group", "coached"].includes(s.setting))) return [];
-  const m = s.scene.match(UNIFORM_WORDS);
-  return m ? [`"${m[0]}" asks the people to move as one — photos come out posed; describe each person at their own point of the movement`] : [];
-}
+// The library itself lives in scene-library.mjs (vocabulary, validation, approve / reject / retire);
+// re-exported here for the callers that always found it on the planner.
+export { SCENE_TAGS, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes };
 
 /**
- * The client's scene library. Refused unless approved. A scene marked `"draft": true` has been
- * added since — it is left out until the owner approves it (removes the flag). `allowDraft` lets a
- * dry run plan with drafts so they can be reviewed before any image is made.
+ * A directed batch (brief.direction: the owner's words, or a reference image read into words) draws
+ * its scenes from what was drafted for it — `source: "batch:{id}"` in the library — not from the
+ * library at large. The dry run drafts what is missing (text calls only); a real run needs those
+ * drafts confirmed (the panel's Run confirmation, or --approve-scenes), since nothing is generated
+ * from a draft. Rejecting one (refresh-scenes.mjs --reject) retires it, and the next dry run drafts a
+ * replacement.
  */
-export function loadScenes(path, { allowDraft = false } = {}) {
-  if (!existsSync(path)) throw new Error(`no scene library at ${path}: write one, or give scenes in the brief`);
-  const lib = JSON.parse(readFileSync(path, "utf-8"));
-  const bad = (lib.scenes || []).flatMap((s, i) => sceneProblems(s).map((e) => `${s.id || i}: ${e}`));
-  if (bad.length) throw new Error(`scene library problems:\n${bad.join("\n")}`);
-  if (lib.approved !== true && !allowDraft) throw new Error(`the scene library ${path} is not approved yet — nothing is generated from it until the owner sets "approved": true`);
-  const ids = (lib.scenes || []).map((x) => x.id).filter(Boolean);
-  if (new Set(ids).size !== ids.length) throw new Error("scene library: two scenes share an id");
-  return (lib.scenes || []).filter((x) => allowDraft || x.draft !== true);
+export async function directedScenes({ brandDir, brief, scenesPath, audience, dryRun, renderOnly, draft = draftScenes, log = console.log }) {
+  const lib = readLibrary(scenesPath);
+  const g = brief.generated ?? 0, source = `batch:${brief.batch_id}`;
+  const mine = () => lib.scenes.filter((s) => s.source === source && !isRetired(s));
+  const have = mine();
+  if (have.length < g && !renderOnly) {
+    const r = await draft({ brandDir, scenesPath, audience, count: g - have.length, direction: brief.direction, source, log });
+    lib.scenes = readLibrary(scenesPath).scenes; // what the drafter wrote
+    log(`· direction: ${r.drafts.length} scene(s) drafted for this batch${r.dropped.length ? ` (${r.dropped.length} dropped: ${r.dropped.map((d) => d.reason).join("; ")})` : ""}`);
+  }
+  const scenes = mine();
+  const bad = scenes.flatMap((s) => sceneProblems(s).map((e) => `${s.id}: ${e}`));
+  if (bad.length) throw new Error(`this batch's scenes have problems:\n${bad.join("\n")}`);
+  if (!scenes.length) throw new Error("no scene could be drafted for this batch's direction — change the words, or give scenes in the brief");
+  const pending = scenes.filter(isDraft);
+  if (pending.length && !dryRun) throw new Error(`this batch's ${pending.length} drafted scene(s) await confirmation: ${pending.map((s) => s.id).join(", ")} — read them in the plan, then confirm (the panel's Run confirmation, or --approve-scenes) or reject one with a reason (refresh-scenes.mjs --reject)`);
+  return scenes;
 }
 
 /**
@@ -252,12 +238,14 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
         // Once every value has appeared, keep them even: a fourth older man counts against a scene.
         - Object.entries(VARIETY_WEIGHTS).reduce((n, [k, w]) => n + (s[k] != null ? w * (uses[k].get(s[k]) || 0) * 0.6 : 0), 0);
       const tilt = ahead(s);
-      for (const la of layouts) {
-        if (poseProblem(la, s.pose, catalogue)) continue;
-        // A repeated scene is worst; then less new; then a busier layout. Ties keep the seeded order.
-        const score = -usedS.get(s) * 100000 + asked * 1000 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
-        if (!pick || score > pick.score) pick = { la, s, score };
-      }
+      // The layout this scene would be made for: the one it prefers (a scene drafted from a reference
+      // image keeps the reference's framing), if its pose fits; else the least-used one that fits.
+      const fits = layouts.filter((la) => !poseProblem(la, s.pose, catalogue));
+      const la = fits.includes(s.prefer_layout) ? s.prefer_layout : fits.reduce((best, x) => (best === null || usedL.get(x) < usedL.get(best) ? x : best), null);
+      if (la === null) continue;
+      // A repeated scene is worst; then less new; then a busier layout. Ties keep the seeded order.
+      const score = -usedS.get(s) * 100000 + asked * 1000 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
+      if (!pick || score > pick.score) pick = { la, s, score };
     }
     if (!pick) throw new Error("no scene in the library fits any layout the batch can use");
     usedL.set(pick.la, usedL.get(pick.la) + 1); usedS.set(pick.s, usedS.get(pick.s) + 1);
@@ -315,7 +303,7 @@ const hashFile = (p) => createHash("sha256").update(readFileSync(p)).digest("hex
  * Run a batch. Injectable for tests: generate, check (a generated photo's check), checkPhoto (a real
  * photo's tiled check), checkRef, compositor, gallery (builds gallery.html), log.
  */
-export async function runBatch({ brandDir, brief, outDir = null, dryRun = false, renderOnly = false, scenesPath = null, deps = {}, log = console.log }) {
+export async function runBatch({ brandDir, brief, outDir = null, dryRun = false, renderOnly = false, approveScenes: confirmScenes = false, scenesPath = null, deps = {}, log = console.log }) {
   const catalogue = loadCatalogue();
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
   const errs = validateBrief(brief, { brandDir, catalogue });
@@ -332,7 +320,18 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
 
   // ── 1 plan ──
   const g = brief.generated ?? 0;
-  const scenes = brief.scenes || (g ? loadScenes(scenesPath || join(brandDir, "scenes.json"), { allowDraft: dryRun }) : []);
+  const libraryPath = scenesPath || join(brandDir, "scenes.json");
+  let scenes;
+  if (brief.scenes) scenes = brief.scenes;
+  else if (!g) scenes = [];
+  else if (brief.direction) {
+    // The owner confirmed this batch's drafted scenes (the panel's Run confirmation, or --approve-scenes).
+    if (confirmScenes && !dryRun) {
+      const ids = readLibrary(libraryPath).scenes.filter((s) => s.source === `batch:${brief.batch_id}` && isDraft(s)).map((s) => s.id);
+      if (ids.length) { approveScenes(libraryPath, ids, { via: brief.batch_id }); log(`· direction: ${ids.length} scene(s) confirmed for this batch: ${ids.join(", ")}`); }
+    }
+    scenes = await directedScenes({ brandDir, brief, scenesPath: libraryPath, audience: sceneAudience(audience, brief.scene_audience), dryRun, renderOnly, ...(deps.draft ? { draft: deps.draft } : {}), log });
+  } else scenes = loadScenes(libraryPath, { allowDraft: dryRun });
   const plannedPath = join(out, "visuals.json");
   let visuals;
   if (renderOnly && existsSync(plannedPath)) visuals = JSON.parse(readFileSync(plannedPath, "utf-8")).visuals;
@@ -503,16 +502,17 @@ if (isMain) {
   const { values: v } = parseArgs({ options: {
     "brand-dir": { type: "string" }, brief: { type: "string" }, out: { type: "string" },
     "dry-run": { type: "boolean", default: false }, "render-only": { type: "boolean", default: false },
+    "approve-scenes": { type: "boolean", default: false },
   } });
   if (!v["brand-dir"] || !v.brief) {
-    console.error("Usage: plan-offer-batch.mjs --brand-dir <brands/x> --brief <batches/id/brief.json> [--dry-run] [--render-only] [--out <dir>]");
+    console.error("Usage: plan-offer-batch.mjs --brand-dir <brands/x> --brief <batches/id/brief.json> [--dry-run] [--render-only] [--approve-scenes] [--out <dir>]");
     process.exit(1);
   }
   const brandDir = resolve(v["brand-dir"]);
   const briefPath = [resolve(v.brief), join(brandDir, v.brief)].find(existsSync);
   if (!briefPath) { console.error(`brief not found: ${v.brief}`); process.exit(1); }
   try {
-    const r = await runBatch({ brandDir, brief: JSON.parse(readFileSync(briefPath, "utf-8")), outDir: v.out, dryRun: v["dry-run"], renderOnly: v["render-only"] });
+    const r = await runBatch({ brandDir, brief: JSON.parse(readFileSync(briefPath, "utf-8")), outDir: v.out, dryRun: v["dry-run"], renderOnly: v["render-only"], approveScenes: v["approve-scenes"] });
     if (!r.dryRun) console.log(`gallery: ${join(r.out, "gallery.html")}`);
   } catch (e) {
     console.error(e.message);

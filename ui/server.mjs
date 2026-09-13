@@ -33,7 +33,8 @@ import {
   loadClientConfig, writeResolved, scaffold,
   CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
 } from "../skills/references/client-config.mjs";
-import { validateBrief, sceneAudience, sceneProblems, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
+import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
+import { libraryStatus } from "../skills/references/scene-library.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
@@ -198,10 +199,7 @@ function sceneStatus(gym) {
   const p = join(brandDir(gym), "scenes.json");
   const lib = readJsonFile(p);
   if (!lib) return { exists: false, approved: false, counts: {} };
-  const scenes = (lib.scenes || []).filter((s) => !sceneProblems(s).length);
-  const live = scenes.filter((s) => s.draft !== true), counts = {};
-  for (const s of live) counts[s.audience || "any"] = (counts[s.audience || "any"] || 0) + 1;
-  return { exists: true, approved: lib.approved === true, counts, total: live.length, drafts: scenes.length - live.length };
+  return { exists: true, ...libraryStatus({ ...lib, scenes: lib.scenes || [] }) };
 }
 
 function listBatches(gym) {
