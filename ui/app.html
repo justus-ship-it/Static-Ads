@@ -56,7 +56,7 @@
   .rail .tab .ic{width:18px;text-align:center;color:var(--faint)} .rail .tab.sel .ic{color:var(--navy)}
   .rail .badge{margin-left:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 7px;font-size:11px;color:var(--dim);font-weight:600}
   .rail .foot{margin-top:auto;padding:12px;font-size:11px;color:var(--faint);line-height:1.5}
-  .main{padding:24px 28px 40px;max-width:1360px;width:100%}
+  .main{padding:24px 28px 40px;max-width:1360px;width:100%;min-width:0}
 
   /* ── pieces ── */
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:14px;box-shadow:var(--shadow)}
@@ -126,6 +126,70 @@
   .scene{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)} .scene:last-child{border-bottom:none}
   .scene .body{flex:1} .scene .id{font-weight:700;font-family:ui-monospace,Menlo,monospace;font-size:12.5px} .scene .tags{color:var(--dim);font-size:12px;margin:2px 0} .scene .txt{font-size:13.5px;margin:4px 0 6px}
   .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px} .kv span{color:var(--dim)}
+
+  /* ── Review ── */
+  .main.full{padding-bottom:12px}
+  .rv-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .seg{display:inline-flex;border:1px solid var(--line-2);border-radius:9px;overflow:hidden;background:var(--surface)}
+  .seg button{border:none;border-radius:0;padding:7px 14px;font-weight:600;color:var(--dim);background:var(--surface)}
+  .seg button:hover:not(:disabled){background:var(--surface-2)}
+  .seg button.sel{background:var(--navy);color:#fff}
+  .seg button .n{font-weight:500;opacity:.75;margin-left:4px}
+  .rv-count{font-size:13px;color:var(--dim)} .rv-count b{color:var(--text)}
+  .rv-top select{width:auto;padding:6px 10px;font-size:13px}
+  .keys{font-size:11.5px;color:var(--faint);white-space:nowrap} .keys kbd{font:600 11px ui-monospace,Menlo,monospace;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--dim);background:var(--surface)}
+  button.keep{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:700;padding:9px 18px}
+  button.keep:hover:not(:disabled){background:#156c3f;border-color:#156c3f}
+  button.excl{background:var(--surface);border-color:#eab4b4;color:var(--err);font-weight:700;padding:9px 18px}
+  button.excl:hover:not(:disabled){background:var(--err-soft);border-color:var(--err)}
+  button.keep.on{box-shadow:0 0 0 3px #bfe6cd} button.excl.on{background:var(--err);border-color:var(--err);color:#fff}
+  .rv-stage{position:relative;overflow:hidden;background:#0b1430;border-radius:12px;height:max(360px,calc(100vh - 322px));display:flex;align-items:stretch;justify-content:center;gap:22px;padding:16px 70px 10px}
+  .rv-stage figure{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;min-height:0}
+  .rv-stage figure img{max-height:calc(100% - 22px);max-width:100%;object-fit:contain;border-radius:6px;display:block;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .rv-stage figure.ex img{opacity:.35;filter:grayscale(.6)}
+  .rv-stage figcaption{color:#9fb0d6;font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;margin-top:6px}
+  .rv-stage .nostory{height:calc(100% - 22px);aspect-ratio:9/16;border:1px dashed #33406a;border-radius:6px;color:#8594bd;display:flex;align-items:center;justify-content:center;text-align:center;padding:14px;font-size:12.5px;line-height:1.5}
+  .rv-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:22px;line-height:1;padding:0}
+  .rv-nav:hover:not(:disabled){background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.3)}
+  .rv-nav.prev{left:14px} .rv-nav.next{right:14px}
+  .rv-badge{position:absolute;top:12px;left:14px;padding:4px 11px;border-radius:99px;font-size:12px;font-weight:700;background:rgba(255,255,255,.12);color:#dbe3f5}
+  .rv-badge.keep{background:var(--ok);color:#fff} .rv-badge.exclude{background:var(--err);color:#fff}
+  .rv-info{display:flex;gap:6px 14px;align-items:baseline;flex-wrap:wrap;padding:9px 2px 4px;font-size:13px;color:var(--dim);min-height:38px}
+  .rv-info b{color:var(--text)} .rv-info .note{background:var(--warn-soft);border:1px solid #ecd9a6;color:var(--warn);border-radius:6px;padding:2px 8px;font-size:12px;flex:1 1 220px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rv-info .scene{flex:1 1 100%;order:9}
+  .rv-info .scene{color:var(--text)}
+  .rv-info{flex-wrap:wrap}
+  .rv-strip{display:flex;gap:6px;overflow-x:auto;padding:6px 2px 8px;scrollbar-width:thin}
+  .th{flex:none;width:66px;height:66px;border-radius:7px;border:2px solid transparent;position:relative;cursor:pointer;padding:0;background:var(--bg)}
+  .th img{width:100%;height:100%;object-fit:cover;border-radius:5px;display:block}
+  .th.cur{border-color:var(--navy);box-shadow:0 0 0 2px var(--accent-soft)}
+  .th.s-exclude img{opacity:.3;filter:grayscale(.7)}
+  .th::after{position:absolute;right:3px;bottom:3px;width:15px;height:15px;border-radius:50%;font-size:10px;line-height:15px;text-align:center;color:#fff;font-weight:800}
+  .th.s-keep::after{content:'✓';background:var(--ok)} .th.s-exclude::after{content:'✕';background:var(--err)}
+  .rv-foot{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--dim)}
+  #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:9px 16px;border-radius:9px;font-size:13px;box-shadow:var(--shadow);z-index:60;max-width:80vw}
+  #toast.err{background:var(--err)}
+
+  /* ── Generating ── */
+  .steps{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .steps div{padding:5px 12px;border-radius:99px;border:1px solid var(--line-2);font-size:12.5px;font-weight:600;color:var(--dim);background:var(--surface)}
+  .steps .done{color:var(--ok);border-color:#bfe6cd;background:var(--ok-soft)} .steps .now{color:var(--navy);border-color:var(--navy);background:var(--accent-soft)}
+  .steps i{color:var(--faint);font-style:normal}
+  .bar{height:6px;background:var(--line);border-radius:99px;overflow:hidden;margin:4px 0 16px} .bar i{display:block;height:100%;background:var(--navy);transition:width .5s}
+  .gen{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+  .gc{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
+  .gc.click{cursor:pointer} .gc.click:hover{border-color:var(--navy)}
+  .gc .ph{aspect-ratio:4/3;background:repeating-linear-gradient(45deg,#eef1f7 0 10px,#f6f8fb 10px 20px);display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:12px;position:relative;overflow:hidden}
+  .gc .ph img{width:100%;height:100%;object-fit:cover;display:block}
+  .gc .ph .over{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(4,17,49,.45);color:#fff;font-weight:600;font-size:12.5px}
+  .gc.flagged .ph img{opacity:.35;filter:grayscale(.7)}
+  .gc.busy .ph{animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.6}}
+  .gc .m{padding:8px 10px} .gc .m b{font-size:12.5px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gc .m .s{font-size:11.5px;color:var(--dim);margin:2px 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:34px}
+  .gc .m .row{gap:4px}
+  .pill.err{background:var(--err-soft);border-color:#f0c4c4;color:var(--err)}
+  .latest{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--dim);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 11px;margin-top:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
 </head>
 <body>
@@ -140,7 +204,7 @@
     <div class="switch"><div class="wrap"><span class="dot"></span><select id="clientSel" onchange="selectClient(this.value)"></select></div><button class="sm" onclick="newClient()">+ New client</button></div>
   </header>
   <nav class="rail" id="rail"></nav>
-  <main class="main"><div id="view"></div></main>
+  <main class="main" id="main"><div id="view"></div></main>
 </div>
 
 <script>
@@ -157,7 +221,7 @@ const api = async (path, opts={}) => {
 };
 const esc = s => String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-let STATE = { clients:[], sel:null, offer:null, tab:'batch', status:null, enums:null, profile:null, offerDoc:null, run:null };
+let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'ads', status:null, enums:null, profile:null, offerDoc:null, run:null };
 
 // The rail: the daily path first (Create, Review, Exports), the library next, the client's setup last.
 const NAV = [
@@ -165,15 +229,50 @@ const NAV = [
   ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos','▣'], ['references','References','◈'],
   ['sec','Client'], ['brand','Brand','●'], ['offer','Offers','●'], ['targeting','Targeting','●'], ['setup','Setup','●'], ['generate','Templates (old)','●'],
 ];
-const TITLES = { batch:'Create', review:'Review', exports:'Exports', scenes:'Scene library', photos:'Photos', references:'Reference images', brand:'Brand', offer:'Offers', targeting:'Targeting & budget', setup:'Setup', generate:'Templates (old)' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Exports', scenes:'Scene library', photos:'Photos', references:'Reference images', brand:'Brand', offer:'Offers', targeting:'Targeting & budget', setup:'Setup', generate:'Templates (old)' };
 let VIEW_SEQ = 0;
-function go(tab){ STATE.tab = tab; render(); }
+
+// ── Routes ───────────────────────────────────────────────────────────────────
+// The address follows the screen, so Back and Forward move between screens and a reload stays put:
+//   #/{gym}/{tab} · #/{gym}/review/{batch}[/photos] · #/{gym}/generating/{batch}
+function routeHash(){
+  const parts = [STATE.sel || '', STATE.tab];
+  if (STATE.batch) parts.push(STATE.batch);
+  if (STATE.batch && STATE.tab==='review' && STATE.rmode==='photos') parts.push('photos');
+  return '#/' + parts.join('/');
+}
+function setHash(replace=false){ const h = routeHash(); if (location.hash !== h) history[replace?'replaceState':'pushState'](null, '', h); }
+function parseHash(){
+  const m = location.hash.match(/^#\/([a-z0-9-]*)\/([a-z]+)(?:\/([a-z0-9-]+))?(?:\/(photos|ads))?$/);
+  return m ? { gym:m[1], tab:m[2], batch:m[3]||null, rmode:m[4]||'ads' } : null;
+}
+async function applyHash(){
+  const r = parseHash(); if (!r) return;
+  if (r.gym && r.gym !== STATE.sel && STATE.clients.find(c=>c.gym===r.gym)) await selectClient(r.gym, false, false);
+  const tab = TITLES[r.tab] ? r.tab : 'batch', batch = ['review','generating'].includes(tab) ? r.batch : null;
+  if (tab===STATE.tab && batch===STATE.batch && r.rmode===STATE.rmode) return;
+  STATE.tab = tab; STATE.batch = batch; STATE.rmode = r.rmode; render();
+}
+window.addEventListener('popstate', applyHash);
+window.addEventListener('hashchange', applyHash);
+function go(tab){ STATE.tab = tab; STATE.batch = null; setHash(); render(); }
+function openReview(id, mode='ads'){ STATE.tab = 'review'; STATE.batch = id; STATE.rmode = mode; setHash(); render(); }
+function openGenerating(id){ STATE.tab = 'generating'; STATE.batch = id; setHash(); render(); }
+/** Change a campaign's words: the Create screen, opened on that batch. */
+function openWords(id){ B.pendingWords = id; go('batch'); }
+function paintCrumb(extra){
+  const client = STATE.clients.find(c=>c.gym===STATE.sel);
+  const tab = TITLES[STATE.tab] || '';
+  const up = STATE.batch ? `<a href="#" onclick="go('${STATE.tab==='generating'?'batch':STATE.tab}');return false" style="color:inherit">${esc(tab)}</a>` : esc(tab);
+  $('#crumb').innerHTML = `<b>${esc(client?.display_name||'')}</b><span class="sep">›</span>${up}${extra?`<span class="sep">›</span><span>${esc(extra)}</span>`:''}`;
+}
 
 async function boot(){
   STATE.status = await api('/api/status');
   STATE.enums  = await api('/api/enums');
   await loadClients();
-  render();
+  if (parseHash()) { await applyHash(); if (!$('#view').innerHTML) render(); }
+  else { setHash(true); render(); }
 }
 
 async function loadClients(){
@@ -183,13 +282,15 @@ async function loadClients(){
   if (!STATE.sel && clients.length) await selectClient(clients[0].gym, false);
 }
 
-async function selectClient(gym, doRender=true){
+async function selectClient(gym, doRender=true, route=true){
+  if (route && gym !== STATE.sel && STATE.batch){ STATE.batch = null; if (STATE.tab==='generating') STATE.tab = 'batch'; }
   STATE.sel = gym;
   const c = STATE.clients.find(x=>x.gym===gym);
   STATE.offer = c?.offers?.[0] || null;
   const d = await api('/api/client/'+gym);
   STATE.profile = d.profile;
   STATE.offerDoc = STATE.offer ? await api(`/api/client/${gym}/offer/${STATE.offer}`) : null;
+  if (route && doRender) setHash();
   if (doRender) render();
 }
 
@@ -201,15 +302,17 @@ async function loadOffer(slug){
 
 function render(){
   const seq = ++VIEW_SEQ;
+  clearTimeout(G.timer);
+  $('#main').classList.toggle('full', STATE.tab==='review' && !!STATE.batch);
   const sel = $('#clientSel');
   sel.innerHTML = STATE.clients.length ? STATE.clients.map(c=>`<option value="${esc(c.gym)}" ${c.gym===STATE.sel?'selected':''}>${esc(c.display_name||c.gym)}</option>`).join('') : '<option>No clients yet</option>';
   const bad = STATE.status.checks.filter(c=>!c.ok && !c.optional).length;
-  const counts = { scenes: B.scenes?.status?.total ?? null, review: (B.setup?.batches||[]).filter(b=>b.ads && !b.selected).length || null };
+  const counts = { scenes: B.scenes?.status?.total ?? null, review: (B.setup?.batches||[]).filter(b=>b.review?.unreviewed).length || null };
+  const railTab = STATE.tab==='generating' ? 'batch' : STATE.tab;
   $('#rail').innerHTML = NAV.map(([k,l,ic])=> k==='sec' ? `<div class="sec">${l}</div>`
-    : `<button class="tab ${STATE.tab===k?'sel':''}" onclick="go('${k}')"><span class="ic">${ic}</span>${l}${counts[k]!=null?`<span class="badge">${counts[k]}</span>`:''}</button>`).join('')
+    : `<button class="tab ${railTab===k?'sel':''}" onclick="go('${k}')"><span class="ic">${ic}</span>${l}${counts[k]!=null?`<span class="badge">${counts[k]}</span>`:''}</button>`).join('')
     + `<div class="foot">${bad ? `<span style="color:var(--err)">${bad} setup item${bad===1?'':'s'} blocking</span>` : `<span style="color:var(--ok)">setup complete</span>`}<br>Node ${esc(STATE.status.node)}</div>`;
-  const client = STATE.clients.find(c=>c.gym===STATE.sel);
-  $('#crumb').innerHTML = `<b>${esc(client?.display_name||'')}</b><span class="sep">›</span>${esc(TITLES[STATE.tab]||'')}`;
+  paintCrumb();
 
   const v = $('#view');
   if (STATE.tab==='setup') return viewSetup(v);
@@ -219,7 +322,8 @@ function render(){
   if (STATE.tab==='targeting') return viewTargeting(v);
   if (STATE.tab==='batch') return viewBatch(v, seq);
   if (STATE.tab==='generate') return viewGenerate(v);
-  if (STATE.tab==='review') return viewReviewList(v, seq);
+  if (STATE.tab==='review') return STATE.batch ? viewReview(v, seq) : viewReviewList(v, seq);
+  if (STATE.tab==='generating') return viewGenerating(v, seq);
   if (STATE.tab==='exports') return viewExports(v);
   if (STATE.tab==='scenes') return viewScenes(v, seq);
   if (STATE.tab==='photos') return viewPhotos(v, seq);
@@ -495,6 +599,7 @@ async function viewBatch(v, seq=VIEW_SEQ){
   v.innerHTML = '<h1>Create</h1><p class="sub">Loading…</p>';
   await loadSetup();
   if (seq !== VIEW_SEQ) return; // a newer render took over while loading
+  if (B.pendingWords){ const id = B.pendingWords; B.pendingWords = null; return bWords(id); }
   if (!B.draft) B.draft = freshDraft();
   paintBatch(v);
   scheduleCheck(0); schedulePreview(0);
@@ -589,10 +694,9 @@ function paintBatch(v){
   </div>
   <h2 style="margin-top:8px">Campaigns</h2>
   <div id="bList"></div>
-  <div id="bResult"></div>
   <div id="runbox"></div>
   <div id="bModal"></div>`;
-  paintLocs(); paintAud(); paintRefs(); paintList(); paintResult(); renderRunBox(); paintDerived();
+  paintLocs(); paintAud(); paintRefs(); paintList(); renderRunBox(); paintDerived();
 }
 
 function paintLocs(){
@@ -609,22 +713,11 @@ function bAudPick(a){ B.draft.audience = a; const i=$('#bAud'); if (i) i.value =
 function bStep(k, dir){ const min = k==='generated'?0:1, max = k==='generated'?12:6; const v = Math.min(max, Math.max(min, (Number(B.draft[k])||0)+dir)); B.draft[k]=v; const el=$(k==='generated'?'#bGen':'#bLooks'); if (el) el.value=v; B.touched=true; scheduleCheck(); if (k==='generated') schedulePreview(); }
 function paintList(){
   const bs = B.setup.batches, box = $('#bList'); if (!box) return;
-  box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>`<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
+  box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>{ const r = b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
-      <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}${b.selected?' · picked':''}`:' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}</div>
-      <div class="row">${b.ads?`<button class="sm primary" onclick="bShow('${esc(b.id)}')">Show ads</button><button class="sm" onclick="bWords('${esc(b.id)}')">Change words</button>${b.gallery?`<a href="${esc(b.gallery)}" target="_blank" style="font-size:12px">Gallery →</a>`:''}`:`<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
-    </div></div>`).join('')}</div>` : '<div class="hint">No campaigns yet. Fill in the brief above and press Generate.</div>';
-}
-function paintResult(){
-  const box = $('#bResult'); if (!box) return;
-  const v = B.view;
-  if (!v || !v.batch || !B.showAds){ box.innerHTML=''; return; }
-  box.innerHTML = `<div class="card" style="margin-top:14px"><div class="row"><h2 style="margin:0">${esc(v.brief.batch_id)} — ${v.batch.ads.length} ads</h2><div class="spacer"></div>
-    ${v.gallery?`<a href="${esc(v.gallery)}" target="_blank">Open gallery →</a>`:''}</div>
-    <p class="hint">${v.batch.image_calls} image call${v.batch.image_calls===1?'':'s'} · made ${esc(new Date(v.batch.made).toLocaleString())}${v.batch.failed?.length?` · ${v.batch.failed.length} look(s) could not be verified and were left out`:''}</p>
-    <div class="row" style="margin:6px 0">${v.stories?`<span class="hint">${v.stories.ads} Stories version${v.stories.ads===1?'':'s'} (9:16) · ${v.stories.image_calls} image call${v.stories.image_calls===1?'':'s'}${v.stories.left_out?` · ${v.stories.left_out} left out`:''}</span><button class="sm" onclick="bStoriesRerender()">Re-render Stories (free)</button>`:''}
-      ${v.selected?`<button class="sm primary" onclick="bStoriesConfirm()">${v.stories?'Make Stories versions again…':'Make Stories versions…'}</button>`:`<span class="hint">For Stories (9:16) versions: pick in the gallery, Save Selections, and put selections.json in the batch folder.</span>`}</div>
-    <div class="ads">${v.batch.ads.map(a=>`<div><a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" alt="" loading="lazy"></a><div>${esc(a.folder.split('-')[0])} · ${esc(a.location)} · ${esc(a.treatment.split('-')[0])}</div></div>`).join('')}</div></div>`;
+      <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}</div>
+      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm" onclick="bWords('${esc(b.id)}')">Change words</button>`:`<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
+    </div></div>`; }).join('')}</div>` : '<div class="hint">No campaigns yet. Fill in the brief above and press Generate.</div>';
 }
 
 /** Everything that depends on the draft: errors, summary, scene status, buttons. */
@@ -767,58 +860,309 @@ async function bDiscard(id){
 }
 function bGo(){
   const b = B.pending, scenes = B.pendingScenes || []; bClose();
-  run({kind:'batch', gym:STATE.sel, batch:b.batch_id, confirm:{offer:b.offer, locations:b.locations, audience:b.audience??null, max_calls:b.max_calls, ...(scenes.length?{scenes}:{})}}, async(code)=>{
+  run({kind:'batch', gym:STATE.sel, batch:b.batch_id, confirm:{offer:b.offer, locations:b.locations, audience:b.audience??null, max_calls:b.max_calls, ...(scenes.length?{scenes}:{})}}, async()=>{
     await reloadScenes();
-    if (code===0){ B.view = await api(`/api/client/${STATE.sel}/batch/${b.batch_id}`); B.showAds=true; B.mode='rerender'; B.draft.batch_id=b.batch_id; }
+    B.savedId = null; if (B.draft) B.draft.batch_id = ''; // the next Create starts a new campaign
   });
+  openGenerating(b.batch_id);
 }
 async function bRerender(){
   const s = await saveBrief(); if (!s) return;
-  run({kind:'batch-rerender', gym:STATE.sel, batch:s.brief.batch_id}, async(code)=>{
+  const id = s.brief.batch_id;
+  const hadStories = !!B.view?.stories;
+  run({kind:'batch-rerender', gym:STATE.sel, batch:id}, async(code)=>{
     B.setup = await api(`/api/client/${STATE.sel}/batch-setup`);
-    if (code===0){ B.view = await api(`/api/client/${STATE.sel}/batch/${s.brief.batch_id}`); B.showAds=true; }
+    if (code!==0) return;
+    R.data = null;
+    // New words on the square ads: the Stories versions get them too (free), then the review opens.
+    if (hadStories) run({kind:'batch-stories-rerender', gym:STATE.sel, batch:id}, async(c2)=>{ if (c2===0){ R.data = null; openReview(id, 'ads'); } });
+    else openReview(id, 'ads');
   });
 }
-/** Stories versions: the one thing to confirm is the call cap; the words are the batch's own. */
-function bStoriesConfirm(){
-  const v = B.view; if (!v) return;
-  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
-    <h2>Make Stories versions?</h2>
-    <p class="hint">Every selected ad gets a 9:16 version with the same photo, look and words, inside Meta's safe zone. One new photo per photo in a single-photo look; collage and panels ads reuse theirs; real photos cost nothing. The run stops at the call limit, whatever happens.</p>
-    <div class="row"><label for="bStCap" style="margin:0">Up to</label><input id="bStCap" type="number" min="0" max="40" value="24" style="width:70px"><span class="hint" style="margin:0">Gemini image calls</span></div>
-    <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="bStGo" onclick="bStoriesGo()">Yes, make them</button></div></div></div>`;
-}
-function bStoriesGo(){
-  const cap = parseInt($('#bStCap').value, 10), id = B.view.brief.batch_id; bClose();
-  if (!Number.isInteger(cap) || cap < 0){ bMsg('the call cap must be a whole number', 'err'); return; }
-  run({kind:'batch-stories', gym:STATE.sel, batch:id, confirm:{max_calls:cap}}, async()=>{ B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.showAds=true; });
-}
-async function bStoriesRerender(){
-  const id = B.view.brief.batch_id;
-  run({kind:'batch-stories-rerender', gym:STATE.sel, batch:id}, async()=>{ B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.showAds=true; });
-}
-async function bShow(id){ B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.showAds=true; paintResult(); $('#bResult').scrollIntoView({behavior:'smooth'}); }
 async function bWords(id){
-  B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.mode='rerender'; B.showAds=true;
+  B.view = await api(`/api/client/${STATE.sel}/batch/${id}`); B.mode='rerender';
   const br = B.view.brief;
   B.draft = { ...freshDraft(), batch_id:br.batch_id, offer:br.offer, locations:[...br.locations], audience:br.audience??'' };
   B.savedId = br.batch_id; B.touched=false; paintBatch($('#view')); scheduleCheck(0); schedulePreview(0);
 }
-function bNew(){ Object.assign(B, { mode:'new', view:null, draft:freshDraft(), savedId:null, touched:false, showAds:false }); paintBatch($('#view')); scheduleCheck(0); schedulePreview(0); }
+function bNew(){ Object.assign(B, { mode:'new', view:null, draft:freshDraft(), savedId:null, touched:false }); paintBatch($('#view')); scheduleCheck(0); schedulePreview(0); }
 
-// ── Review (list; the lightbox comes in the next step) ───────────────────────
+// ── Review ───────────────────────────────────────────────────────────────────
+// A campaign's ads one at a time, like Photos: ← → to move, Keep / Exclude at the top, the square
+// ad and its Stories version side by side, a filmstrip under them. Every decision is saved in the
+// batch folder as it is made (review.json, and the selections.json the Stories step reads).
+// An ad nobody has decided on counts as kept; excluding a photo excludes every ad it appears in.
+const LAYOUT = { 't1-bottom-stack':'Bottom stack', 't2-top-bottom-split':'Top / bottom split', 't3-right-column':'Right column', 't4-centred-stack':'Centred stack', 't5-offer-band':'Offer band', 't6-left-column':'Left column', 't7-collage':'Collage', 't8-panels-band':'Panels + band' };
+const layoutName = id => LAYOUT[id] || (id||'').replace(/^t\d-/,'').replace(/-/g,' ');
+const nice = id => String(id||'').replace(/^s\d-/,'').replace(/-/g,' ');
+const R = { gym:null, id:null, data:null, mode:'ads', loc:'all', show:'all', list:[], i:0, cur:null, save:Promise.resolve() };
+const rkey = it => it.folder || it.id;
+
 async function viewReviewList(v, seq=VIEW_SEQ){
   v.innerHTML = '<h1>Review</h1><p class="sub">Loading…</p>';
-  if (B.gym !== STATE.sel || !B.setup){ B.gym = STATE.sel; await loadSetup(); }
+  B.gym = STATE.sel; await loadSetup();
   if (seq !== VIEW_SEQ) return;
-  const bs = B.setup.batches.filter(b=>b.ads);
-  v.innerHTML = `<h1>Review</h1><p class="sub">Pick the ads to run from each campaign. Each campaign opens in its gallery for now; the in-page review comes next.</p>
-  ${bs.length ? `<div class="camps">${bs.map(b=>`<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
+  const bs = B.setup.batches.filter(b=>b.ads || b.running);
+  v.innerHTML = `<h1>Review</h1><p class="sub">Go through each campaign's ads and keep the ones to run. Picks save as you go; nothing is downloaded or moved by hand.</p>
+  ${bs.length ? `<div class="camps">${bs.map(b=>{ const r=b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
-      <div class="d">${esc(b.id)} · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''} · ${b.selected?'<span class="pill on">picked</span>':'<span class="pill warn">not picked yet</span>'}</div>
-      <div class="row">${b.gallery?`<a href="${esc(b.gallery)}" target="_blank"><button class="sm primary">Open gallery →</button></a>`:''}<button class="sm" onclick="go('batch');bShow('${esc(b.id)}')">Show ads</button></div>
-    </div></div>`).join('')}</div>` : '<div class="empty">No campaigns with ads yet.</div>'}`;
+      <div class="d">${esc(b.id)}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:''}</div>
+      <div class="d">${b.running?'<span class="pill navy">generating…</span>':r?`<span class="pill on">${r.kept} kept</span> ${r.excluded?`<span class="pill err">${r.excluded} excluded</span>`:''} ${r.unreviewed?`<span class="pill warn">${r.unreviewed} to review</span>`:''}`:''}</div>
+      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Watch it →</button>`:''}${b.ads?`<button class="sm ${b.running?'':'primary'}" onclick="openReview('${esc(b.id)}')">Review →</button>`:''}</div>
+    </div></div>`; }).join('')}</div>` : '<div class="empty">No campaigns with ads yet. Make one under Create.</div>'}`;
 }
+
+async function viewReview(v, seq=VIEW_SEQ){
+  if (R.id !== STATE.batch || R.gym !== STATE.sel) Object.assign(R, { gym:STATE.sel, id:STATE.batch, data:null, loc:'all', show:'all', i:0, cur:R.pendingCur||null });
+  R.pendingCur = null;
+  R.mode = STATE.rmode || 'ads';
+  if (!R.data) v.innerHTML = '<p class="sub">Loading…</p>';
+  let data;
+  try { data = await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/review`); }
+  catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<div class="msg err">${esc(e.message)}</div><button onclick="go('review')">← All campaigns</button>`; return; }
+  if (seq !== VIEW_SEQ) return;
+  R.data = data;
+  if (R.mode==='ads' && !data.ads.length && data.photos.length) R.mode = 'photos'; // still generating: photos first
+  paintCrumb(`${data.words.offer}${data.words.audience?` · ${data.words.audience}`:''}`);
+  paintReview(v);
+}
+
+function rvList(){
+  const d = R.data; if (!d) return [];
+  const want = s => R.show==='all' || (R.show==='todo' ? s==null : s===R.show);
+  return R.mode==='photos' ? d.photos.filter(p=>want(p.status)) : d.ads.filter(a=>(R.loc==='all'||a.location===R.loc) && want(a.status));
+}
+function recount(){
+  const d = R.data, n = s => d.ads.filter(a=>a.status===s).length;
+  d.counts = { ...d.counts, ads:d.ads.length, kept:n('keep'), excluded:n('exclude'), unreviewed:n(null), photos_excluded:d.photos.filter(p=>p.status==='exclude').length };
+}
+/** An ad's standing follows its own decision, unless one of its photos is excluded. */
+function restand(){
+  const out = new Set(R.data.photos.filter(p=>p.status==='exclude').map(p=>p.id));
+  for (const a of R.data.ads){ const bp = a.photos.find(p=>out.has(p)) || null; a.by_photo = bp; a.status = bp ? 'exclude' : a.own; }
+  recount();
+}
+
+function paintReview(v){
+  const d = R.data, run = STATE.run && !STATE.run.done;
+  const busy = !!d.run || run;
+  v.innerHTML = `
+  <div class="rv-top">
+    <button class="sm" onclick="go('review')" title="All campaigns">←</button>
+    <div class="seg">
+      <button class="${R.mode==='ads'?'sel':''}" onclick="rvMode('ads')" ${d.ads.length?'':'disabled'}>Ads<span class="n">${d.ads.length}</span></button>
+      <button class="${R.mode==='photos'?'sel':''}" onclick="rvMode('photos')">Photos<span class="n">${d.photos.length}</span></button>
+    </div>
+    <div class="rv-count" id="rvCount"></div>
+    ${R.mode==='ads' && d.locations.length>1 ? `<div class="chips" style="margin:0">${['all',...d.locations].map(l=>`<span class="chip ${R.loc===l?'sel':''}" onclick="rvLoc(${esc(JSON.stringify(l))})">${l==='all'?'All locations':esc(l)}</span>`).join('')}</div>` : ''}
+    <select id="rvShow" onchange="rvShow(this.value)" title="Which to show">
+      ${[['all','Show all'],['todo','To review'],['keep','Kept'],['exclude','Excluded']].map(([k,l])=>`<option value="${k}" ${R.show===k?'selected':''}>${l}</option>`).join('')}
+    </select>
+    <div class="spacer"></div>
+    <button class="excl" id="rvEx" onclick="rvDecide('exclude');this.blur()">✕ Exclude</button>
+    <button class="keep" id="rvKeep" onclick="rvDecide('keep');this.blur()">✓ Keep</button>
+  </div>
+  <div class="rv-stage" id="rvStage"></div>
+  <div class="rv-info" id="rvInfo"></div>
+  <div class="rv-strip" id="rvStrip"></div>
+  <div class="rv-foot" id="rvFoot"></div>
+  <div id="runbox"></div><div id="bModal"></div>`;
+  rvRefresh();
+  paintFoot(busy);
+  renderRunBox();
+}
+function paintFoot(busy){
+  const d = R.data, box = $('#rvFoot'); if (!box) return;
+  const st = d.stories;
+  box.innerHTML = !d.made ? `<span>The ads render once every photo is in. You can review the photos meanwhile.</span>${d.run?`<button class="sm" onclick="openGenerating('${esc(R.id)}')">Watch progress →</button>`:''}<span class="spacer"></span><span class="keys"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>K</kbd> keep · <kbd>X</kbd> exclude · <kbd>U</kbd> undo</span>`
+    : `<span>${st ? `${st.ads} Stories version${st.ads===1?'':'s'} · ${st.image_calls} image call${st.image_calls===1?'':'s'}${st.left_out?` · ${st.left_out} left out`:''}` : 'No Stories versions yet'}</span>
+      <button class="sm primary" onclick="rvStoriesConfirm()" ${busy?'disabled':''}>${st?'Make Stories versions again…':'Make Stories versions…'}</button>
+      ${st?`<button class="sm" onclick="rvStoriesRerender()" ${busy?'disabled':''}>Re-render Stories (free)</button>`:''}
+      <button class="sm" onclick="openWords('${esc(R.id)}')" ${busy?'disabled':''}>Change the words</button>
+      <span class="spacer"></span><span class="keys"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>K</kbd> keep · <kbd>X</kbd> exclude · <kbd>U</kbd> undo</span><span id="rvSaved">${d.saved?'Picks saved':''}</span>`;
+}
+function paintCounts(){
+  const c = R.data.counts, box = $('#rvCount'); if (!box) return;
+  const pos = R.list.length ? `<b>${R.i+1}</b> of ${R.list.length}` : 'none';
+  box.innerHTML = R.mode==='photos'
+    ? `${pos} · ${c.photos_excluded ? `<b>${c.photos_excluded}</b> excluded, with their ads` : 'no photo excluded'}`
+    : `${pos} · <b>${c.kept+c.unreviewed}</b> kept${c.unreviewed?` (${c.unreviewed} not reviewed)`:''} · <b>${c.excluded}</b> excluded`;
+}
+/** The list follows the filters; the position stays on the same item where it can. */
+function rvRefresh(){
+  R.list = rvList();
+  let i = R.cur ? R.list.findIndex(x=>rkey(x)===R.cur) : -1;
+  if (i < 0) i = Math.min(R.i, R.list.length-1);
+  R.i = Math.max(0, i); R.cur = R.list[R.i] ? rkey(R.list[R.i]) : null;
+  paintStage(); paintStrip(); paintCounts();
+}
+function paintStage(){
+  const box = $('#rvStage'); if (!box) return;
+  const it = R.list[R.i];
+  const nav = `<button class="rv-nav prev" onclick="rvMove(-1)" ${R.i<=0?'disabled':''} title="Previous (←)">‹</button><button class="rv-nav next" onclick="rvMove(1)" ${R.i>=R.list.length-1?'disabled':''} title="Next (→)">›</button>`;
+  const info = $('#rvInfo');
+  if (!it){ box.innerHTML = `<div style="color:#9fb0d6;align-self:center">${R.show==='all'?'Nothing here yet.':'Nothing matches this filter.'}</div>`; info.innerHTML=''; paintButtons(null); return; }
+  const st = it.status, photo = R.mode==='photos';
+  const badge = `<div class="rv-badge ${st||''}">${st==='keep'?'✓ Kept':st==='exclude'?(photo?`✕ Excluded, with its ${it.ads} ad${it.ads===1?'':'s'}`:'✕ Excluded'):(photo?'Not reviewed':'Not reviewed · kept unless excluded')}</div>`;
+  if (R.mode==='photos'){
+    box.innerHTML = `${nav}${badge}<figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt=""><figcaption>${it.kind==='real'?'Real photo':'Generated photo'}</figcaption></figure>`;
+    info.innerHTML = `<b>${esc(it.id)}</b>${it.scene_id?`<span>${esc(it.scene_id)}</span>`:''}<span>in ${it.ads} ad${it.ads===1?'':'s'}</span>${it.primary?`<span>made for ${esc(layoutName(it.primary))}</span>`:''}${it.scene?`<span class="scene">${esc(it.scene)}</span>`:''}${(it.notes||[]).length?`<span class="note" title="${esc(it.notes.join(' · '))}">${esc(it.notes.join(' · '))}</span>`:''}`;
+  } else {
+    box.innerHTML = `${nav}${badge}<figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt=""><figcaption>1:1 · Feed</figcaption></figure>
+      <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="">`:`<div class="nostory">No Stories version yet.<br>Keep the ads you want, then Make Stories versions below.</div>`}<figcaption>9:16 · Stories / Reels</figcaption></figure>`;
+    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${esc(layoutName(it.treatment))} · ${esc(nice(it.style))} · ${esc(nice(it.palette))}</span><span>photo${it.photos.length===1?'':'s'} ${esc(it.photos.join(' + '))}</span>${it.by_photo?`<span class="note">excluded with photo ${esc(it.by_photo)}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">${esc(it.notes)}</span>`:''}`;
+  }
+  paintButtons(it);
+  // The neighbours load ahead, so moving is instant.
+  for (const k of [1,-1,2]) { const n = R.list[R.i+k]; if (n){ new Image().src = n.url; if (n.story) new Image().src = n.story; } }
+}
+function paintButtons(it){
+  const k = $('#rvKeep'), x = $('#rvEx'); if (!k) return;
+  k.disabled = x.disabled = !it;
+  k.classList.toggle('on', it?.status==='keep'); x.classList.toggle('on', it?.status==='exclude');
+  k.textContent = it?.status==='keep' ? '✓ Kept' : '✓ Keep'; x.textContent = it?.status==='exclude' ? '✕ Excluded' : '✕ Exclude';
+}
+function paintStrip(){
+  const box = $('#rvStrip'); if (!box) return;
+  box.innerHTML = R.list.map((it,i)=>`<button class="th ${it.status?'s-'+it.status:''} ${i===R.i?'cur':''}" onclick="rvGoto(${i})" title="${esc(it.folder||it.id)}"><img src="${esc(it.url)}" alt="" loading="lazy" decoding="async"></button>`).join('');
+  markStrip();
+}
+function markStrip(){
+  const box = $('#rvStrip'); if (!box) return;
+  [...box.children].forEach((el,i)=>el.classList.toggle('cur', i===R.i));
+  box.children[R.i]?.scrollIntoView({ block:'nearest', inline:'center', behavior:'smooth' });
+}
+function rvMove(d){ const i = R.i + d; if (i<0 || i>=R.list.length) return; R.i = i; R.cur = rkey(R.list[i]); paintStage(); markStrip(); paintCounts(); }
+function rvGoto(i){ R.i = i; R.cur = rkey(R.list[i]); paintStage(); markStrip(); paintCounts(); }
+function rvMode(m){ if (m===R.mode) return; R.cur = null; R.i = 0; STATE.rmode = m; setHash(); R.mode = m; paintReview($('#view')); }
+function rvLoc(l){ R.loc = l; paintReview($('#view')); }
+function rvShow(s){ R.show = s; rvRefresh(); }
+
+/** Keep, exclude, or undo (null) the current item; save it; move on to the next one. */
+function rvDecide(val){
+  const it = R.list[R.i]; if (!it) return;
+  if (R.mode==='ads' && it.by_photo && val!=='exclude'){ toast(`Photo ${it.by_photo} is excluded, and this ad with it. Keep the photo (Photos) to use its ads.`, 'err'); return; }
+  const k = rkey(it), next = R.list[R.i+1] ? rkey(R.list[R.i+1]) : k;
+  let change;
+  if (R.mode==='photos'){ it.status = val; change = { photos:{ [it.id]:val } }; }
+  else { it.own = val; change = { ads:{ [it.folder]:val } }; }
+  restand();
+  R.cur = val===null ? k : next;
+  rvRefresh();
+  savePicks(change);
+}
+function savePicks(change){
+  const saved = $('#rvSaved'); if (saved) saved.textContent = 'Saving…';
+  R.save = R.save.then(()=>api(`/api/client/${R.gym}/batch/${R.id}/picks`, { method:'PUT', body:change }))
+    .then(()=>{ R.data.saved = true; const s=$('#rvSaved'); if (s) s.textContent = 'Picks saved'; })
+    .catch(async e=>{ toast(`Not saved: ${e.message}`, 'err'); try { R.data = await api(`/api/client/${R.gym}/batch/${R.id}/review`); rvRefresh(); } catch {} });
+  return R.save;
+}
+let TOAST_T = null;
+function toast(msg, kind=''){
+  let t = $('#toast'); if (!t){ t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+  t.className = kind; t.textContent = msg; t.hidden = false;
+  clearTimeout(TOAST_T); TOAST_T = setTimeout(()=>{ t.hidden = true; }, 3800);
+}
+document.addEventListener('keydown', e=>{
+  if (STATE.tab!=='review' || !STATE.batch || !R.data || document.querySelector('.modal')) return;
+  const t = e.target; if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.length===1 ? e.key.toLowerCase() : e.key;
+  const act = { ArrowRight:()=>rvMove(1), ArrowLeft:()=>rvMove(-1), k:()=>rvDecide('keep'), ' ':()=>rvDecide('keep'), x:()=>rvDecide('exclude'), u:()=>rvDecide(null) }[k];
+  if (act){ e.preventDefault(); act(); }
+});
+
+/** Stories versions of the kept ads: the one thing to confirm is the call cap; the words are the batch's own. */
+async function rvStoriesConfirm(){
+  await R.save;
+  const c = R.data.counts, kept = c.kept + c.unreviewed;
+  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
+    <h2>Make Stories versions?</h2>
+    <p class="hint">Each kept ad gets a 9:16 version with the same photo, look and words, inside Meta's safe zone. One new photo per photo in a single-photo look; collage and panels ads reuse theirs; real photos cost nothing. The run stops at the call limit, whatever happens.</p>
+    <div class="summary"><b>${kept} kept ad${kept===1?'':'s'}</b>${c.unreviewed?` · ${c.unreviewed} of them not reviewed yet (kept unless you exclude them)`:''}${c.excluded?` · ${c.excluded} excluded, left out`:''}</div>
+    <div class="row"><label for="bStCap" style="margin:0">Up to</label><input id="bStCap" type="number" min="0" max="40" value="24" style="width:70px"><span class="hint" style="margin:0">Gemini image calls</span></div>
+    <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="bStGo" onclick="rvStoriesGo()" ${kept?'':'disabled'}>Yes, make them</button></div></div></div>`;
+}
+async function rvStoriesGo(){
+  const cap = parseInt($('#bStCap').value, 10), id = R.id; bClose();
+  if (!Number.isInteger(cap) || cap < 0){ toast('The call cap must be a whole number.', 'err'); return; }
+  if (!R.data.saved) await savePicks({}); // the picks the Stories step reads, as they stand
+  run({kind:'batch-stories', gym:STATE.sel, batch:id, confirm:{max_calls:cap}}, async()=>{ R.data = null; });
+  paintFoot(true);
+}
+function rvStoriesRerender(){ run({kind:'batch-stories-rerender', gym:STATE.sel, batch:R.id}, async()=>{ R.data = null; }); paintFoot(true); }
+
+// ── Generating ───────────────────────────────────────────────────────────────
+// A batch as it is made: each photo appears as it passes its checks (progress.json, written by the
+// run photo by photo), the calls used against the cap, then the ads. Reopening it mid-run picks the
+// run's log up again.
+const G = { timer:null, data:null };
+const STAGE_NOW = { photos:'Generating photos', fit:'Rendering ads', looks:'Rendering ads', render:'Rendering ads', gallery:'Rendering ads', done:'Done', failed:'Stopped' };
+async function viewGenerating(v, seq=VIEW_SEQ){
+  v.innerHTML = '<p class="sub">Loading…</p>';
+  await genPoll(seq);
+}
+async function genPoll(seq){
+  let d;
+  try { d = await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/progress`); }
+  catch(e){ if (seq===VIEW_SEQ) $('#view').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+  if (seq !== VIEW_SEQ) return;
+  G.data = d;
+  paintCrumb(`${d.words.offer}${d.words.audience?` · ${d.words.audience}`:''}`);
+  if (d.run && STATE.run?.id !== d.run.id) attachRun(d.run.id, d.run.label, async()=>{ B.setup = null; }, STATE.batch);
+  paintGenerating();
+  clearTimeout(G.timer);
+  if (d.run) G.timer = setTimeout(()=>genPoll(seq), 1500);
+}
+function paintGenerating(){
+  const v = $('#view'), d = G.data, p = d.progress;
+  const photos = Object.entries(p?.photos || {});
+  const passed = photos.filter(([,x])=>x.state==='passed').length, settled = photos.filter(([,x])=>['passed','flagged','skipped','error'].includes(x.state)).length;
+  const stage = p?.stage || (d.made ? 'done' : 'photos'), done = stage==='done' && !d.run, failed = stage==='failed';
+  const spent = (p?.spent_before||0) + (p?.calls||0);
+  const RENDER = { fit:74, looks:80, render:88, gallery:96 };
+  const pct = done ? 100 : stage==='photos' ? Math.round(70 * (photos.length ? settled/photos.length : 1)) : (RENDER[stage] || 70);
+  const step = (label, state) => `<div class="${state}">${state==='done'?'✓ ':state==='now'?'● ':''}${label}</div>`;
+  const inPhotos = stage==='photos', inAds = !!RENDER[stage];
+  const title = failed ? 'Stopped' : done ? `Done · ${p?.ads ?? ''} ads` : inAds ? 'Rendering the ads' : `Generating · ${passed} of ${photos.length} photo${photos.length===1?'':'s'}`;
+  const stale = !d.run && p && !done && !failed;
+  const mine = STATE.run?.batch === STATE.batch;
+  const latest = mine ? STATE.run.lines.filter(l=>l.stream!=='meta').at(-1)?.line : null;
+  const keepLog = $('#runbox')?.closest('details')?.open;
+  v.innerHTML = `
+  <div class="steps">${step('Brief','done')}<i>›</i>${step('Photos', inPhotos&&!failed?'now':(inAds||done)?'done':'')}<i>›</i>${step('Ads', inAds?'now':done?'done':'')}<i>›</i>${step('Review', done?'now':'')}</div>
+  <h1>${esc(title)}</h1>
+  <p class="sub">${failed ? '' : inPhotos ? 'Each photo appears as it passes its checks. ' : ''}${spent} image call${spent===1?'':'s'} used of ${p?.max_calls ?? '—'}${p?.real?` · plus ${p.real} real photo${p.real===1?'':'s'}`:''}${inAds?' · no image calls while rendering':''}</p>
+  ${failed ? `<div class="msg err">${esc(p.error||'the run stopped')}</div>` : ''}
+  ${stale ? `<div class="msg warn">This run is not running any more; it stopped while ${esc((STAGE_NOW[stage]||stage).toLowerCase())}. Run the batch again from Create to finish it (photos already made are reused).</div>` : ''}
+  <div class="bar"><i style="width:${pct}%"></i></div>
+  <div class="gen">${photos.map(([id,x])=>genCard(id,x)).join('') || '<div class="hint">No new photos in this batch: real photos only.</div>'}</div>
+  <div class="row" style="margin-top:16px">
+    ${d.made ? `<button class="primary" onclick="openReview('${esc(STATE.batch)}','ads')">Review ${p?.ads ?? ''} ads →</button>` : passed ? `<button class="keep" onclick="openReview('${esc(STATE.batch)}','photos')">Review the ${passed} passed photo${passed===1?'':'s'} →</button>` : ''}
+    ${!d.made && d.run ? '<span class="hint" style="margin:0">The ads render as soon as the photos are in; you can review photos meanwhile.</span>' : ''}
+    <div class="spacer"></div><button onclick="go('batch')">Back to Create</button>
+  </div>
+  ${latest ? `<div class="latest" title="${esc(latest)}">${esc(latest)}</div>` : ''}
+  ${mine ? `<details style="margin-top:10px" ${keepLog?'open':''}><summary>Full log</summary><div id="runbox"></div></details>` : ''}`;
+  renderRunBox();
+}
+function genCard(id, x){
+  const S = {
+    queued:['queued',''], checking:['checking…','navy'], generating:['generating…','navy'], retrying:[`trying again`,'warn'],
+    passed:['passed','on'], flagged:['not used','err'], skipped:['skipped',''], error:['error','err'],
+  }[x.state] || [x.state,''];
+  const busy = ['checking','generating'].includes(x.state);
+  const img = x.url ? `<img src="${esc(x.url)}" alt="">` : '';
+  const over = x.state==='checking' ? '<div class="over">checking…</div>' : x.state==='generating' ? '<div class="over" style="background:none;color:var(--dim)">generating…</div>' : '';
+  const why = (x.failures||[]).join(' · ');
+  return `<div class="gc ${busy?'busy':''} ${x.state==='flagged'?'flagged':''} ${x.state==='passed'?'click':''}" ${x.state==='passed'?`onclick="R.pendingCur='${esc(id)}';openReview('${esc(STATE.batch)}','photos')"`:''} title="${esc(why)}">
+    <div class="ph">${img || (x.state==='queued'?'queued':'')}${over}</div>
+    <div class="m"><b>${esc(id)} · ${esc(x.scene_id||'scene')}</b><div class="s">${esc(x.scene||'')}</div>
+      <div class="row"><span class="pill ${S[1]}">${S[0]}</span>${x.attempt>1&&x.state!=='queued'?`<span class="pill">try ${x.attempt}</span>`:''}${x.reused?'<span class="pill">from disk</span>':''}${(x.notes||[]).length?`<span class="pill warn" title="${esc(x.notes.join(' · '))}">note</span>`:''}${x.own_layout_failed?'<span class="pill" title="Its own layout did not work out; it is used in the layouts it fits">other layouts</span>':''}</div>
+    </div></div>`;
+}
+
 async function viewExports(v){
   v.innerHTML = `<h1>Exports</h1><p class="sub">Upload packages for Meta: every picked ad as a matched 1:1 and 9:16 pair. Coming in a later step.</p><div class="empty">Nothing exported yet.</div>`;
 }
@@ -975,29 +1319,36 @@ async function run(params, after){
   renderRunBox();
   try{
     const { id, label } = await api('/api/run',{method:'POST',body:params});
-    STATE.run.label = label; renderRunBox();
-    const es = new EventSource(`/api/run/${id}/stream`);
-    es.onmessage = e => {
-      STATE.run.lines.push(JSON.parse(e.data));
-      const log=$('#log');
-      if (log){ const d=STATE.run.lines.at(-1); const div=document.createElement('div');
-        div.className=d.stream; div.textContent=d.line; log.appendChild(div); log.scrollTop=log.scrollHeight; }
-      else renderRunBox();
-    };
-    es.addEventListener('done', async e => {
-      es.close();
-      STATE.run.done = true; STATE.run.code = JSON.parse(e.data).code;
-      // Refresh underlying data, then repaint — the log survives because it lives in STATE.
-      STATE.status = await api('/api/status');
-      await loadClients();
-      if (after) { try { await after(STATE.run.code); } catch(e){ console.error(e); } }
-      render();
-    });
-    es.onerror = ()=>{ es.close(); STATE.run.done=true; renderRunBox(); };
+    attachRun(id, label, after, params.batch || null);
   }catch(e){
     STATE.run = { label:'Failed to start', lines:[{stream:'err',line:e.message}], done:true, code:1 };
     renderRunBox();
   }
+}
+/** Follow a run's log (the server replays it from the start) and refresh when it ends. */
+function attachRun(id, label, after, batch=null){
+  STATE.run = { id, label, batch, lines:[], done:false, code:null };
+  renderRunBox();
+  const es = new EventSource(`/api/run/${id}/stream`);
+  es.onmessage = e => {
+    if (STATE.run?.id !== id) return es.close();
+    STATE.run.lines.push(JSON.parse(e.data));
+    const log=$('#log');
+    if (log){ const d=STATE.run.lines.at(-1); const div=document.createElement('div');
+      div.className=d.stream; div.textContent=d.line; log.appendChild(div); log.scrollTop=log.scrollHeight; }
+    else renderRunBox();
+  };
+  es.addEventListener('done', async e => {
+    es.close();
+    if (STATE.run?.id !== id) return;
+    STATE.run.done = true; STATE.run.code = JSON.parse(e.data).code;
+    // Refresh underlying data, then repaint — the log survives because it lives in STATE.
+    STATE.status = await api('/api/status');
+    await loadClients();
+    if (after) { try { await after(STATE.run.code); } catch(e){ console.error(e); } }
+    render();
+  });
+  es.onerror = ()=>{ es.close(); if (STATE.run?.id===id){ STATE.run.done=true; renderRunBox(); } };
 }
 
 // ── Creation ─────────────────────────────────────────────────────────────────

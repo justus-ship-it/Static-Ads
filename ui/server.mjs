@@ -264,6 +264,8 @@ function listBatches(gym) {
       selected: existsSync(join(out, "selections.json")),
       stories: (() => { const s = readJsonFile(join(out, "stories.json")); return s ? s.ads.length : 0; })(),
       directed: !!brief.direction,
+      review: batch ? (() => { const c = reviewState(gym, id).counts; return { kept: c.kept, excluded: c.excluded, unreviewed: c.unreviewed }; })() : null,
+      running: activeRun(gym, id),
     };
   });
 }
@@ -281,6 +283,107 @@ function checkBrief(gym, brief) {
   }
   const photos = g + real.length, looks = brief?.looks_per_photo ?? 2, locs = Array.isArray(brief?.locations) ? brief.locations.length : 0;
   return { errors, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor } };
+}
+
+// ── Review and picks (sub-step 2) ────────────────────────────────────────────
+// The owner's decisions live in the batch folder as review.json: { ads: {folder: keep|exclude},
+// photos: {id: keep|exclude} }. selections.json — the file the Stories step and the copy builder read,
+// in the gallery's exact format — is written from it on every change, so there is no Downloads step.
+// An ad no one has decided on counts as kept, as the gallery's "all selected" did; an excluded photo
+// takes every ad it appears in with it.
+
+const outDirOf = (gym, id) => join(brandDir(gym), "outputs", id);
+const fileUrl = (gym, abs) => {
+  const base = join(brandDir(gym), "outputs");
+  const rel = abs.startsWith(base + sep) ? abs.slice(base.length + 1).split(sep).join("/") : null;
+  return rel ? `/files/brands/${gym}/outputs/${rel}` : null;
+};
+
+/** The photos a batch has so far: from batch.json once it is made, from progress.json while it is being made. */
+function batchPhotos(gym, id) {
+  const out = outDirOf(gym, id), batch = readJsonFile(join(out, "batch.json")), brief = readJsonFile(briefPath(gym, id)) || {};
+  const plan = readJsonFile(join(out, "visuals.json"))?.visuals || [];
+  const sceneOf = (pid) => plan.find((v) => v.id === pid);
+  const realUrl = (src) => `/files/brands/${gym}/brand-assets/${src}`;
+  if (batch) {
+    return batch.photos.map((p) => ({
+      id: p.id, kind: p.kind, scene_id: p.scene_id || null, scene: sceneOf(p.id)?.scene || null, primary: p.primary || null, allowed: p.allowed || [], notes: p.notes || [],
+      url: p.kind === "real" ? realUrl(p.file) : fileUrl(gym, resolve(out, p.file)),
+    }));
+  }
+  const prog = readJsonFile(join(out, "progress.json"));
+  const gen = Object.entries(prog?.photos || {}).filter(([, x]) => x.state === "passed" && x.file)
+    .map(([pid, x]) => ({ id: pid, kind: "generated", scene_id: x.scene_id || null, scene: x.scene || null, primary: x.own_layout_failed ? null : x.treatment || null, allowed: [], notes: x.notes || [], url: fileUrl(gym, resolve(out, x.file)) }));
+  const real = (brief.real || []).map((src, i) => ({ id: `r${String(i + 1).padStart(2, "0")}`, kind: "real", scene_id: null, scene: null, primary: null, allowed: [], notes: [], url: realUrl(src) }));
+  return [...gen, ...real];
+}
+
+/** The owner's decisions: review.json, or — for a batch picked in the gallery before — its selections.json. */
+function readDecisions(gym, id) {
+  const out = outDirOf(gym, id);
+  const r = readJsonFile(join(out, "review.json"));
+  if (r) return { ads: r.ads || {}, photos: r.photos || {} };
+  const sel = readJsonFile(join(out, "selections.json"));
+  if (!sel) return { ads: {}, photos: {} };
+  const ads = {};
+  for (const f of sel.excluded || []) ads[f] = "exclude";
+  for (const f of Object.keys(sel)) if (f !== "excluded") ads[f] = "keep";
+  return { ads, photos: {} };
+}
+
+/** Each ad's standing: its own decision, unless one of its photos is excluded. */
+function standing(ad, d) {
+  const byPhoto = (ad.photos || []).find((p) => d.photos[p] === "exclude");
+  if (byPhoto) return { status: "exclude", by_photo: byPhoto };
+  return { status: d.ads[ad.folder] || null, by_photo: null };
+}
+
+function reviewState(gym, id) {
+  const out = outDirOf(gym, id), batch = readJsonFile(join(out, "batch.json"));
+  const stories = readJsonFile(join(out, "stories.json"));
+  const notes = readJsonFile(join(out, "gallery-notes.json")) || {};
+  const storyOf = new Map((stories?.ads || []).filter((a) => existsSync(join(out, a.file))).map((a) => [a.folder, a]));
+  const d = readDecisions(gym, id);
+  const ads = (batch?.ads || []).map((a) => {
+    const s = storyOf.get(a.folder);
+    return {
+      folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, treatment: a.treatment, style: a.style, palette: a.palette,
+      photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
+    };
+  });
+  const photos = batchPhotos(gym, id).map((p) => ({ ...p, status: d.photos[p.id] || null, ads: ads.filter((a) => a.photos.includes(p.id)).length }));
+  const count = (s) => ads.filter((a) => a.status === s).length;
+  return {
+    batch_id: id, made: !!batch, locations: [...new Set(ads.map((a) => a.location))], ads, photos,
+    counts: { ads: ads.length, kept: count("keep"), excluded: count("exclude"), unreviewed: count(null), photos: photos.length, photos_excluded: photos.filter((p) => p.status === "exclude").length },
+    saved: existsSync(join(out, "selections.json")),
+    stories: stories ? { ads: stories.ads.length, image_calls: stories.image_calls, max_calls: stories.max_calls, left_out: (stories.failed?.length || 0) + (stories.left_out?.length || 0) } : null,
+  };
+}
+
+const DECISIONS = new Set(["keep", "exclude", null]);
+/** Merge a change into review.json and write selections.json from it. Returns an error message, or null. */
+function savePicks(gym, id, change) {
+  const out = outDirOf(gym, id), batch = readJsonFile(join(out, "batch.json"));
+  const folders = new Set((batch?.ads || []).map((a) => a.folder)), photoIds = new Set(batchPhotos(gym, id).map((p) => p.id));
+  const { ads = {}, photos = {} } = change || {};
+  if (typeof ads !== "object" || typeof photos !== "object" || Array.isArray(ads) || Array.isArray(photos)) return "ads and photos must map names to keep, exclude or null";
+  for (const [f, v] of Object.entries(ads)) { if (!folders.has(f)) return `this batch has no ad ${f}`; if (!DECISIONS.has(v)) return `${f}: a decision is keep, exclude or null`; }
+  for (const [p, v] of Object.entries(photos)) { if (!photoIds.has(p)) return `this batch has no photo ${p}`; if (!DECISIONS.has(v)) return `${p}: a decision is keep, exclude or null`; }
+  const d = readDecisions(gym, id);
+  for (const [f, v] of Object.entries(ads)) { if (v === null) delete d.ads[f]; else d.ads[f] = v; }
+  for (const [p, v] of Object.entries(photos)) { if (v === null) delete d.photos[p]; else d.photos[p] = v; }
+  // Decisions about ads a re-render has since renamed are dropped: they no longer name anything.
+  for (const f of Object.keys(d.ads)) if (batch && !folders.has(f)) delete d.ads[f];
+  writeFileSync(join(out, "review.json"), JSON.stringify({ ads: d.ads, photos: d.photos, updated: new Date().toISOString() }, null, 2) + "\n");
+  if (batch) {
+    const stories = new Map((readJsonFile(join(out, "stories.json"))?.ads || []).filter((a) => existsSync(join(out, a.file))).map((a) => [a.folder, a.file]));
+    const excluded = batch.ads.filter((a) => standing(a, d).status === "exclude").map((a) => a.folder).sort();
+    const sel = { excluded };
+    for (const a of batch.ads) if (!excluded.includes(a.folder)) sel[a.folder] = { "1x1": a.file, ...(stories.has(a.folder) ? { "9x16": stories.get(a.folder) } : {}) };
+    writeFileSync(join(out, "selections.json"), JSON.stringify(sel, null, 2) + "\n");
+  }
+  return null;
 }
 
 const WORD_FIELDS = ["offer", "locations", "audience", "free"];
@@ -319,14 +422,19 @@ async function renderPreview(gym, { offer, location, audience, photos }) {
 }
 
 // ── Run streaming ────────────────────────────────────────────────────────────
-const runs = new Map(); // id -> { lines:[], done:bool, code:null, clients:Set }
+const runs = new Map(); // id -> { lines:[], done:bool, code:null, clients:Set, gym, batch }
+/** The run working on a batch right now, if any. */
+function activeRun(gym, batch) {
+  for (const r of runs.values()) if (!r.done && r.gym === gym && r.batch === batch) return { id: r.id, kind: r.kind, label: r.label };
+  return null;
+}
 
 function startRun(kind, params) {
   const spec = RUNNABLE[kind];
   if (!spec) throw new Error(`unknown command "${kind}"`);
   const args = spec.argv(params);
   const id = `${kind}-${Date.now().toString(36)}`;
-  const run = { id, kind, label: spec.label, lines: [], done: false, code: null, clients: new Set() };
+  const run = { id, kind, label: spec.label, lines: [], done: false, code: null, clients: new Set(), gym: params.gym || null, batch: params.batch || null };
   runs.set(id, run);
 
   const push = (text, stream) => {
@@ -345,6 +453,10 @@ function startRun(kind, params) {
   child.stderr.on("data", (d) => push(d, "err"));
   child.on("error", (e) => push(`spawn failed: ${e.message}`, "err"));
   child.on("close", (code) => {
+    if (code === 0 && ["batch", "batch-rerender", "batch-stories", "batch-stories-rerender"].includes(kind) && run.gym && run.batch) {
+      const out = outDirOf(run.gym, run.batch);
+      try { if (existsSync(join(out, "review.json")) || existsSync(join(out, "selections.json"))) savePicks(run.gym, run.batch, {}); } catch (e) { push(`picks not refreshed: ${e.message}`, "err"); }
+    }
     run.done = true;
     run.code = code;
     push(code === 0 ? "✓ finished" : `✗ exited with code ${code}`, "meta");
@@ -468,6 +580,28 @@ const server = createServer(async (req, res) => {
         writeFileSync(join(referencesDir(gym), name), buf);
         rmSync(join(referencesDir(gym), `${name}.description.json`), { force: true });
         return json(res, 200, { ok: true, name, url: `/files/brands/${gym}/${REFERENCES_DIR}/${name}` });
+      }
+    }
+
+    // /api/client/{gym}/batch/{id}/progress · /review · /picks
+    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks)$/);
+    if (rv) {
+      const [, gym, id, what] = rv;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      if (!okSlug(id) || !existsSync(briefPath(gym, id))) return json(res, 404, { error: "no such batch" });
+      const out = outDirOf(gym, id);
+      if (what === "progress" && req.method === "GET") {
+        const prog = readJsonFile(join(out, "progress.json"));
+        if (prog) for (const x of Object.values(prog.photos || {})) x.url = x.file ? fileUrl(gym, resolve(out, x.file)) : null;
+        const brief = readJsonFile(briefPath(gym, id));
+        return json(res, 200, { progress: prog, run: activeRun(gym, id), words: { offer: brief.offer, locations: brief.locations, audience: brief.audience ?? null }, made: existsSync(join(out, "batch.json")) });
+      }
+      if (what === "review" && req.method === "GET") return json(res, 200, { ...reviewState(gym, id), words: (({ offer, locations, audience }) => ({ offer, locations, audience: audience ?? null }))(readJsonFile(briefPath(gym, id))), run: activeRun(gym, id) });
+      if (what === "picks" && req.method === "PUT") {
+        const change = await readBody(req);
+        const err = savePicks(gym, id, change);
+        if (err) return json(res, 400, { error: err });
+        return json(res, 200, { ok: true, counts: reviewState(gym, id).counts });
       }
     }
 
@@ -599,7 +733,7 @@ const server = createServer(async (req, res) => {
           // until the gallery's picks are in the batch folder.
           const cap = body.confirm?.max_calls;
           if (!Number.isInteger(cap) || cap < 0 || cap > MAX_CALLS_CAP) return json(res, 400, { error: `confirm the call cap for the Stories versions (0–${MAX_CALLS_CAP})` });
-          if (!existsSync(join(brandDir(body.gym), "outputs", body.batch, "selections.json"))) return json(res, 409, { error: "no selections yet: open the gallery, pick, Save Selections, and put selections.json in the batch folder" });
+          if (!existsSync(join(brandDir(body.gym), "outputs", body.batch, "selections.json"))) return json(res, 409, { error: "no picks yet: review the batch and keep or exclude its ads first" });
         } else if (spec.spends) {
           const c = body.confirm || {};
           const agreed = c.offer === brief.offer && JSON.stringify(c.locations) === JSON.stringify(brief.locations) && (c.audience ?? null) === (brief.audience ?? null) && c.max_calls === (brief.max_calls ?? brief.generated ?? 0);

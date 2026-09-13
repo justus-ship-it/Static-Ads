@@ -30,8 +30,8 @@
  *     --brief batches/2026-09-12-test/brief.json [--dry-run] [--render-only]
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync, readdirSync } from "fs";
-import { join, resolve, basename, dirname } from "path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync, readdirSync, renameSync } from "fs";
+import { join, resolve, basename, dirname, relative } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { execFileSync } from "child_process";
@@ -297,6 +297,37 @@ export function resolveSelections(batchDir, selections = JSON.parse(readFileSync
 
 const hashFile = (p) => createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 16);
 
+// ── progress ──────────────────────────────────────────────────────────────
+
+/**
+ * `progress.json` in the batch folder: what a run is doing, photo by photo, for the panel's Generating
+ * screen (and for anyone who reopens it mid-run). Replaced whole on every change, so a reader never
+ * sees half a file; a failure to write it never stops the run.
+ *   stage: photos → fit → looks → render → gallery → done | failed
+ *   photos[id].state: queued · checking · generating · retrying · passed · flagged · skipped · error
+ */
+export function progressWriter(out, base) {
+  const path = join(out, "progress.json");
+  const state = { ...base, photos: { ...(base.photos || {}) } };
+  const flush = () => {
+    try {
+      state.updated = new Date().toISOString();
+      writeFileSync(path + ".tmp", JSON.stringify(state, null, 2) + "\n");
+      renameSync(path + ".tmp", path);
+    } catch {}
+  };
+  flush();
+  return {
+    state,
+    set(patch) { Object.assign(state, patch); flush(); },
+    photo(id, patch) {
+      const p = { ...(state.photos[id] || {}), ...patch };
+      if (p.file) p.file = relative(out, resolve(out, p.file)); // kept relative to the batch folder
+      state.photos[id] = p; flush();
+    },
+  };
+}
+
 // ── the run ───────────────────────────────────────────────────────────────
 
 /**
@@ -345,156 +376,183 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   writeFileSync(join(out, "brief.json"), JSON.stringify(brief, null, 2) + "\n"); // the brief as run
   log(`· plan: ${visuals.length} photo(s) to generate (${visuals.map((v) => `${v.id} for ${shortLayout(v.treatment)}: ${v.scene_id || "brief scene"}`).join("; ") || "none"}), ${(brief.real || []).length} real; ${looks} look(s) each × ${brief.locations.length} location(s); at most ${plan.max_calls} image call(s)`);
   if (dryRun) return { dryRun: true, plan, out };
-
-  // Real photos: their marks and their people, from the tiled check — cached by file contents.
-  const photosPath = join(out, "photos.json");
-  const cache = existsSync(photosPath) ? JSON.parse(readFileSync(photosPath, "utf-8")) : {};
-  const pixels = deps.pixels || makePixelTools();
-  const checkPhoto = deps.checkPhoto || ((p) => checkTiled(p, { never: photography.never || [], crop: pixels.crop }));
-  const photos = [];
+  // What this run is doing, photo by photo: the panel's Generating screen reads it (progress.json).
+  const prog = progressWriter(out, { batch_id: brief.batch_id, run: renderOnly ? "render-only" : "run", started: new Date().toISOString(), stage: "photos", max_calls: plan.max_calls, attempts: plan.attempts, spent_before: 0, calls: 0, real: (brief.real || []).length, ads: null, failed: 0, error: null,
+    photos: Object.fromEntries(visuals.map((v) => [v.id, { scene_id: v.scene_id || null, scene: v.scene, treatment: v.treatment, state: "queued" }])) });
   try {
-    for (const [i, rel] of (brief.real || []).entries()) {
-      const file = at(rel), key = hashFile(file);
-      let c = cache[key];
-      if (!c) { c = await checkPhoto(file); cache[key] = { text: c.text, never: c.never, people_count: c.people_count, people_box: c.people_box || null, face_boxes: c.face_boxes || [] }; c = cache[key]; }
-      const marks = [...(c.text || []), ...(c.never || [])];
-      if (marks.length) throw new Error(`real photo ${rel} is not clean: ${marks.map((m) => `${m.kind || "never-list"} "${m.what}"`).join("; ")} — clean it first (clean-photo.mjs)`);
-      photos.push({ id: `r${String(i + 1).padStart(2, "0")}`, kind: "real", file, source: rel, answer: { people_box: c.people_box, face_boxes: c.face_boxes, people_count: c.people_count }, expectPeople: false, maxPeople: null });
-    }
-  } finally { if (!deps.pixels) await pixels.close(); }
-  writeFileSync(photosPath, JSON.stringify(cache, null, 2) + "\n");
 
-  // ── 2 pictures ──
-  const picsPath = join(out, "pictures.json"), spendPath = join(out, "spend.json"), visualsDir = join(out, "visuals");
-  const prior = existsSync(picsPath) ? JSON.parse(readFileSync(picsPath, "utf-8")) : {};
-  // A photo is reused only if it passed today's checks. A free re-render (words only) keeps photos
-  // passed under older checks and says so — re-checking them would be a run, not a re-render.
-  const rulings = deps.rulings || loadRulings(brandDir);
-  const passedFor = (a, v) => a && a.status === "passed" && a.scene === v.scene && a.treatment === v.treatment && existsSync(a.file) && rulings[resolve(a.file)]?.expect !== "fail";
-  const same = (a, v) => passedFor(a, v) && (renderOnly || a.checks === CHECKS_VERSION);
-  let todo = renderOnly ? [] : visuals.filter((v) => !same(prior[v.id], v));
-  if (renderOnly) {
-    const missing = visuals.filter((v) => !same(prior[v.id], v)); if (missing.length) log(`· render-only: ${missing.map((v) => v.id).join(", ")} have no passed photo on disk and are left out`);
-    const older = visuals.filter((v) => same(prior[v.id], v) && prior[v.id].checks !== CHECKS_VERSION); if (older.length) log(`· render-only: ${older.map((v) => v.id).join(", ")} passed before today's checks — a full run re-checks them (no image calls)`);
-  }
-  // max_calls is the budget for the batch, not for each run: a re-run spends only what is left
-  // (the 48-ad batch showed a re-run would otherwise have had its full allowance again).
-  const oldBatch = existsSync(join(out, "batch.json")) ? JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")) : null;
-  const spentBefore = existsSync(spendPath) ? JSON.parse(readFileSync(spendPath, "utf-8")).image_calls : (oldBatch?.image_calls ?? 0);
-  const record = (r, file, c) => ({ status: r.status, scene: r.scene, treatment: r.treatment, file, ...(r.status === "passed" ? { checks: CHECKS_VERSION } : {}), ...(r.own_layout_failed ? { own_layout_failed: r.own_layout_failed } : {}), check: c ? { faces: c.faces, focus: c.focus, placement: c.placement } : null, notes: c?.notes || [], quality: c?.quality ? { failures: c.quality.failures, minor: c.quality.minor, dismissed: c.quality.dismissed, exercise_seen: c.quality.exercise_seen, interaction_seen: c.quality.interaction_seen } : null, failures: c?.failures || (r.reason ? [r.reason] : []) });
-  // Photos already on disk get a look with today's checks before anything new is made — free of
-  // image calls. That covers photos an earlier run rejected (the 48-ad batch: good photos had been
-  // rejected for their own mirror reflections) and photos passed before today's checks existed. The
-  // photo in use is looked at first, so a batch keeps its photos when they still pass.
-  const check = withRulings(deps.check || checkPicture, rulings);
-  if (todo.length) {
-    const compositor = deps.compositor !== undefined ? deps.compositor : makeCompositor();
-    const earlier = (v) => {
-      if (!(prior[v.id]?.scene === v.scene && prior[v.id]?.treatment === v.treatment && existsSync(visualsDir))) return [];
-      const files = readdirSync(visualsDir).filter((n) => new RegExp(`^${v.id}(-a\\d+)?\\.(png|jpe?g|webp)$`).test(n)).map((n) => join(visualsDir, n)).reverse();
-      const inUse = prior[v.id].status === "passed" ? prior[v.id].file : null;
-      return inUse && files.includes(inUse) ? [inUse, ...files.filter((f) => f !== inUse)] : files;
-    };
+    // Real photos: their marks and their people, from the tiled check — cached by file contents.
+    const photosPath = join(out, "photos.json");
+    const cache = existsSync(photosPath) ? JSON.parse(readFileSync(photosPath, "utf-8")) : {};
+    const pixels = deps.pixels || makePixelTools();
+    const checkPhoto = deps.checkPhoto || ((p) => checkTiled(p, { never: photography.never || [], crop: pixels.crop }));
+    const photos = [];
     try {
-      for (const v of todo) {
-        let last = null, pictureGood = null;
-        for (const file of earlier(v)) {
-          const c = await assess(file, v, { ratio, text: texts[0], check, compositor, outDir: visualsDir, never: photography.never || [] });
-          if (c.ok) { prior[v.id] = record({ ...v, status: "passed" }, file, c); log(`✓ ${v.id}: ${basename(file)} on disk passes today's checks — no new image needed`); last = null; break; }
-          if (c.picture_ok) pictureGood = { file, c };
-          last = { file, c };
-          log(`⚑ ${v.id}: ${basename(file)} fails today's checks: ${c.failures.join(" | ")}`);
-        }
-        // Passes the picture checks, not its own layout: kept for the layouts it fits (as generateVisuals does).
-        if (last && pictureGood) { prior[v.id] = record({ ...v, status: "passed", own_layout_failed: pictureGood.c.failures }, pictureGood.file, pictureGood.c); log(`✓ ${v.id}: ${basename(pictureGood.file)} passes the picture checks; its own layout did not work out — kept for the layouts it fits`); }
-        else if (last) prior[v.id] = record({ ...v, status: "flagged" }, last.file, last.c);
+      for (const [i, rel] of (brief.real || []).entries()) {
+        const file = at(rel), key = hashFile(file);
+        let c = cache[key];
+        if (!c) { c = await checkPhoto(file); cache[key] = { text: c.text, never: c.never, people_count: c.people_count, people_box: c.people_box || null, face_boxes: c.face_boxes || [] }; c = cache[key]; }
+        const marks = [...(c.text || []), ...(c.never || [])];
+        if (marks.length) throw new Error(`real photo ${rel} is not clean: ${marks.map((m) => `${m.kind || "never-list"} "${m.what}"`).join("; ")} — clean it first (clean-photo.mjs)`);
+        photos.push({ id: `r${String(i + 1).padStart(2, "0")}`, kind: "real", file, source: rel, answer: { people_box: c.people_box, face_boxes: c.face_boxes, people_count: c.people_count }, expectPeople: false, maxPeople: null });
       }
-    } finally { if (deps.compositor === undefined) await compositor?.close(); }
-    todo = todo.filter((v) => !same(prior[v.id], v));
-  }
-  let calls = 0;
-  const left = Math.max(0, plan.max_calls - spentBefore);
-  if (todo.length && !left) log(`- the batch's budget of ${plan.max_calls} image calls is spent: ${todo.map((v) => v.id).join(", ")} not generated`);
-  if (todo.length && left) {
-    const rep = await generateVisuals({
-      visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio,
-      refs: reference ? [at(reference)] : [], maxCalls: left, attempts: plan.attempts,
-      ...(deps.generate ? { generate: deps.generate } : {}), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
+    } finally { if (!deps.pixels) await pixels.close(); }
+    writeFileSync(photosPath, JSON.stringify(cache, null, 2) + "\n");
+
+    // ── 2 pictures ──
+    const picsPath = join(out, "pictures.json"), spendPath = join(out, "spend.json"), visualsDir = join(out, "visuals");
+    const prior = existsSync(picsPath) ? JSON.parse(readFileSync(picsPath, "utf-8")) : {};
+    // A photo is reused only if it passed today's checks. A free re-render (words only) keeps photos
+    // passed under older checks and says so — re-checking them would be a run, not a re-render.
+    const rulings = deps.rulings || loadRulings(brandDir);
+    const passedFor = (a, v) => a && a.status === "passed" && a.scene === v.scene && a.treatment === v.treatment && existsSync(a.file) && rulings[resolve(a.file)]?.expect !== "fail";
+    const same = (a, v) => passedFor(a, v) && (renderOnly || a.checks === CHECKS_VERSION);
+    let todo = renderOnly ? [] : visuals.filter((v) => !same(prior[v.id], v));
+    if (renderOnly) {
+      const missing = visuals.filter((v) => !same(prior[v.id], v)); if (missing.length) log(`· render-only: ${missing.map((v) => v.id).join(", ")} have no passed photo on disk and are left out`);
+      const older = visuals.filter((v) => same(prior[v.id], v) && prior[v.id].checks !== CHECKS_VERSION); if (older.length) log(`· render-only: ${older.map((v) => v.id).join(", ")} passed before today's checks — a full run re-checks them (no image calls)`);
+    }
+    // max_calls is the budget for the batch, not for each run: a re-run spends only what is left
+    // (the 48-ad batch showed a re-run would otherwise have had its full allowance again).
+    const oldBatch = existsSync(join(out, "batch.json")) ? JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")) : null;
+    const spentBefore = existsSync(spendPath) ? JSON.parse(readFileSync(spendPath, "utf-8")).image_calls : (oldBatch?.image_calls ?? 0);
+    prog.set({ spent_before: spentBefore });
+    for (const v of visuals) {
+      const a = prior[v.id];
+      if (same(a, v)) prog.photo(v.id, { state: "passed", file: a.file, reused: true, notes: a.notes || [], own_layout_failed: a.own_layout_failed || null });
+      else if (renderOnly) prog.photo(v.id, { state: "skipped", failures: ["no passed photo on disk"] });
+    }
+    const record = (r, file, c) => ({ status: r.status, scene: r.scene, treatment: r.treatment, file, ...(r.status === "passed" ? { checks: CHECKS_VERSION } : {}), ...(r.own_layout_failed ? { own_layout_failed: r.own_layout_failed } : {}), check: c ? { faces: c.faces, focus: c.focus, placement: c.placement } : null, notes: c?.notes || [], quality: c?.quality ? { failures: c.quality.failures, minor: c.quality.minor, dismissed: c.quality.dismissed, exercise_seen: c.quality.exercise_seen, interaction_seen: c.quality.interaction_seen } : null, failures: c?.failures || (r.reason ? [r.reason] : []) });
+    // Photos already on disk get a look with today's checks before anything new is made — free of
+    // image calls. That covers photos an earlier run rejected (the 48-ad batch: good photos had been
+    // rejected for their own mirror reflections) and photos passed before today's checks existed. The
+    // photo in use is looked at first, so a batch keeps its photos when they still pass.
+    const check = withRulings(deps.check || checkPicture, rulings);
+    if (todo.length) {
+      const compositor = deps.compositor !== undefined ? deps.compositor : makeCompositor();
+      const earlier = (v) => {
+        if (!(prior[v.id]?.scene === v.scene && prior[v.id]?.treatment === v.treatment && existsSync(visualsDir))) return [];
+        const files = readdirSync(visualsDir).filter((n) => new RegExp(`^${v.id}(-a\\d+)?\\.(png|jpe?g|webp)$`).test(n)).map((n) => join(visualsDir, n)).reverse();
+        const inUse = prior[v.id].status === "passed" ? prior[v.id].file : null;
+        return inUse && files.includes(inUse) ? [inUse, ...files.filter((f) => f !== inUse)] : files;
+      };
+      try {
+        for (const v of todo) {
+          let last = null, pictureGood = null;
+          if (earlier(v).length) prog.photo(v.id, { state: "checking", attempt: null });
+          for (const file of earlier(v)) {
+            const c = await assess(file, v, { ratio, text: texts[0], check, compositor, outDir: visualsDir, never: photography.never || [] });
+            if (c.ok) { prior[v.id] = record({ ...v, status: "passed" }, file, c); log(`✓ ${v.id}: ${basename(file)} on disk passes today's checks — no new image needed`); last = null; break; }
+            if (c.picture_ok) pictureGood = { file, c };
+            last = { file, c };
+            log(`⚑ ${v.id}: ${basename(file)} fails today's checks: ${c.failures.join(" | ")}`);
+          }
+          // Passes the picture checks, not its own layout: kept for the layouts it fits (as generateVisuals does).
+          if (last && pictureGood) { prior[v.id] = record({ ...v, status: "passed", own_layout_failed: pictureGood.c.failures }, pictureGood.file, pictureGood.c); log(`✓ ${v.id}: ${basename(pictureGood.file)} passes the picture checks; its own layout did not work out — kept for the layouts it fits`); }
+          else if (last) prior[v.id] = record({ ...v, status: "flagged" }, last.file, last.c);
+          const a = prior[v.id];
+          prog.photo(v.id, same(a, v) ? { state: "passed", file: a.file, reused: true, notes: a.notes || [], own_layout_failed: a.own_layout_failed || null } : { state: "queued" });
+        }
+      } finally { if (deps.compositor === undefined) await compositor?.close(); }
+      todo = todo.filter((v) => !same(prior[v.id], v));
+    }
+    let calls = 0;
+    const left = Math.max(0, plan.max_calls - spentBefore);
+    if (todo.length && !left) log(`- the batch's budget of ${plan.max_calls} image calls is spent: ${todo.map((v) => v.id).join(", ")} not generated`);
+    if (todo.length && !left) for (const v of todo) prog.photo(v.id, { state: "skipped", failures: [`the batch's budget of ${plan.max_calls} image calls is spent`] });
+    if (todo.length && left) {
+      const rep = await generateVisuals({
+        visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio,
+        refs: reference ? [at(reference)] : [], maxCalls: left, attempts: plan.attempts,
+        ...(deps.generate ? { generate: deps.generate } : {}), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
+        onProgress: (e) => {
+          if (e.event === "generating") prog.photo(e.id, { state: "generating", attempt: e.attempt });
+          else if (e.event === "checking") prog.photo(e.id, { state: "checking", attempt: e.attempt, file: e.file });
+          else if (e.event === "tried" && e.status !== "passed" && e.attempt < plan.attempts) prog.photo(e.id, { state: "retrying", attempt: e.attempt, failures: e.failures });
+          else if (e.event === "done") prog.photo(e.id, { state: e.status, attempt: e.attempt, file: e.file, failures: e.failures, notes: e.notes, own_layout_failed: e.own_layout_failed });
+          if (e.calls != null) prog.set({ calls: e.calls });
+        },
+      });
+      calls = rep.image_calls;
+      for (const r of rep.results) prior[r.id] = record(r, r.file, r.check);
+    }
+    const spent = spentBefore + calls;
+    writeFileSync(spendPath, JSON.stringify({ image_calls: spent, max_calls: plan.max_calls }, null, 2) + "\n");
+    writeFileSync(picsPath, JSON.stringify(prior, null, 2) + "\n");
+    for (const v of visuals) {
+      const a = prior[v.id];
+      if (!same(a, v)) { if (!["flagged", "error", "skipped"].includes(prog.state.photos[v.id]?.state)) prog.photo(v.id, { state: a?.status === "flagged" ? "flagged" : "skipped", failures: a?.failures || [] }); log(`- ${v.id}: no passing photo (${a?.failures?.join("; ") || "not generated"}) — left out of the batch`); continue; }
+      // A photo whose own layout did not work out has no primary look: the planner places it where it fits.
+      photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: a.own_layout_failed ? null : v.treatment, scene_id: v.scene_id, notes: [...(a.notes || []), ...(a.own_layout_failed ? [`not used in its own layout: ${a.own_layout_failed.join("; ")}`] : [])], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
+    }
+    photos.sort((a, b) => a.id.localeCompare(b.id));
+    if (!photos.length) throw new Error("no photos passed: nothing to render");
+
+    // ── 3 fit ──
+    prog.set({ stage: "fit", calls });
+    const allowed = {}, focus = {}, faces = {};
+    for (const p of photos) {
+      const fit = fitLayouts(p.answer, { ratio, imageSize: imageSize(readFileSync(p.file)), expectPeople: p.expectPeople, maxPeople: p.maxPeople, catalogue });
+      allowed[p.id] = Object.keys(fit).filter((id) => fit[id].ok && !(exclude.layouts || []).includes(id));
+      focus[p.id] = Object.fromEntries(Object.entries(fit).map(([id, f]) => [id, f.focus]));
+      faces[p.id] = p.answer.face_boxes || [];
+      p.fit = Object.fromEntries(Object.entries(fit).map(([id, f]) => [id, f.ok ? "ok" : f.failures.join("; ")]));
+    }
+    for (const p of photos) if (p.primary && !allowed[p.id].includes(p.primary)) log(`  ${p.id}: passed its own check but not its layout's fit at the batch ratio`);
+    log(`· fit: ${photos.map((p) => `${p.id} → ${allowed[p.id].map(shortLayout).join(" ")}`).join("; ")}`);
+
+    // ── 4 looks ──
+    prog.set({ stage: "looks" });
+    const browser = deps.browser || await launchBrowser();
+    let results;
+    try {
+      const stats = await measurePhotos(browser, photos.map((p) => p.file), { ratio });
+      const planned = assignVariants({ visuals: photos.map((p) => ({ id: p.id })), perVisual: looks, text: { location: brief.locations[0], audience }, seed, exclude, photoStats: stats, allowed, prefer: Object.fromEntries(photos.filter((p) => p.primary).map((p) => [p.id, p.primary])), catalogue, ratio });
+      for (const n of planned.notes) log(`  note: ${n}`);
+
+      // ── 5 render ──
+      prog.set({ stage: "render" });
+      const fileOf = Object.fromEntries(photos.map((p) => [p.id, p.file]));
+      results = await renderPlan(browser, planned, { texts, imageFor: (id) => fileOf[id], facesFor: (id) => faces[id], focusFor: (id, la) => focus[id]?.[la] || null, catalogue });
+    } finally { if (!deps.browser) await browser.close(); }
+
+    // ── 6 gallery ──
+    prog.set({ stage: "gallery" });
+    const old = existsSync(join(out, "batch.json")) ? JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")) : null;
+    for (const a of old?.ads || []) rmSync(join(out, a.folder), { recursive: true, force: true }); // only folders this batch made before
+    const ads = adFolders(results, brief.locations, ratio).map((a) => {
+      const c = results.find((r) => r.id === a.candidate);
+      const png = c.renders[a.location_index].r.png;
+      mkdirSync(dirname(join(out, a.file)), { recursive: true });
+      writeFileSync(join(out, a.file), png);
+      return {
+        ...a, photos: c.images, photo_files: c.images.map((id) => photos.find((p) => p.id === id).source || basename(photos.find((p) => p.id === id).file)),
+        treatment: c.treatment, style: c.style, palette: c.palette, ratio,
+        crop: c.images.map((id) => focus[id]?.[c.treatment] || [0.5, 0.5]),
+        words: { location: a.location, audience, offer: brief.offer, free: brief.free === true },
+        replaced: c.replaced || null,
+      };
     });
-    calls = rep.image_calls;
-    for (const r of rep.results) prior[r.id] = record(r, r.file, r.check);
-  }
-  const spent = spentBefore + calls;
-  writeFileSync(spendPath, JSON.stringify({ image_calls: spent, max_calls: plan.max_calls }, null, 2) + "\n");
-  writeFileSync(picsPath, JSON.stringify(prior, null, 2) + "\n");
-  for (const v of visuals) {
-    const a = prior[v.id];
-    if (!same(a, v)) { log(`- ${v.id}: no passing photo (${a?.failures?.join("; ") || "not generated"}) — left out of the batch`); continue; }
-    // A photo whose own layout did not work out has no primary look: the planner places it where it fits.
-    photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: a.own_layout_failed ? null : v.treatment, scene_id: v.scene_id, notes: [...(a.notes || []), ...(a.own_layout_failed ? [`not used in its own layout: ${a.own_layout_failed.join("; ")}`] : [])], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
-  }
-  photos.sort((a, b) => a.id.localeCompare(b.id));
-  if (!photos.length) throw new Error("no photos passed: nothing to render");
-
-  // ── 3 fit ──
-  const allowed = {}, focus = {}, faces = {};
-  for (const p of photos) {
-    const fit = fitLayouts(p.answer, { ratio, imageSize: imageSize(readFileSync(p.file)), expectPeople: p.expectPeople, maxPeople: p.maxPeople, catalogue });
-    allowed[p.id] = Object.keys(fit).filter((id) => fit[id].ok && !(exclude.layouts || []).includes(id));
-    focus[p.id] = Object.fromEntries(Object.entries(fit).map(([id, f]) => [id, f.focus]));
-    faces[p.id] = p.answer.face_boxes || [];
-    p.fit = Object.fromEntries(Object.entries(fit).map(([id, f]) => [id, f.ok ? "ok" : f.failures.join("; ")]));
-  }
-  for (const p of photos) if (p.primary && !allowed[p.id].includes(p.primary)) log(`  ${p.id}: passed its own check but not its layout's fit at the batch ratio`);
-  log(`· fit: ${photos.map((p) => `${p.id} → ${allowed[p.id].map(shortLayout).join(" ")}`).join("; ")}`);
-
-  // ── 4 looks ──
-  const browser = deps.browser || await launchBrowser();
-  let results;
-  try {
-    const stats = await measurePhotos(browser, photos.map((p) => p.file), { ratio });
-    const planned = assignVariants({ visuals: photos.map((p) => ({ id: p.id })), perVisual: looks, text: { location: brief.locations[0], audience }, seed, exclude, photoStats: stats, allowed, prefer: Object.fromEntries(photos.filter((p) => p.primary).map((p) => [p.id, p.primary])), catalogue, ratio });
-    for (const n of planned.notes) log(`  note: ${n}`);
-
-    // ── 5 render ──
-    const fileOf = Object.fromEntries(photos.map((p) => [p.id, p.file]));
-    results = await renderPlan(browser, planned, { texts, imageFor: (id) => fileOf[id], facesFor: (id) => faces[id], focusFor: (id, la) => focus[id]?.[la] || null, catalogue });
-  } finally { if (!deps.browser) await browser.close(); }
-
-  // ── 6 gallery ──
-  const old = existsSync(join(out, "batch.json")) ? JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")) : null;
-  for (const a of old?.ads || []) rmSync(join(out, a.folder), { recursive: true, force: true }); // only folders this batch made before
-  const ads = adFolders(results, brief.locations, ratio).map((a) => {
-    const c = results.find((r) => r.id === a.candidate);
-    const png = c.renders[a.location_index].r.png;
-    mkdirSync(dirname(join(out, a.file)), { recursive: true });
-    writeFileSync(join(out, a.file), png);
-    return {
-      ...a, photos: c.images, photo_files: c.images.map((id) => photos.find((p) => p.id === id).source || basename(photos.find((p) => p.id === id).file)),
-      treatment: c.treatment, style: c.style, palette: c.palette, ratio,
-      crop: c.images.map((id) => focus[id]?.[c.treatment] || [0.5, 0.5]),
-      words: { location: a.location, audience, offer: brief.offer, free: brief.free === true },
-      replaced: c.replaced || null,
+    const failed = results.filter((r) => r.failed).map((r) => ({ candidate: r.id, photo: r.visual, failures: r.failed }));
+    // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
+    // record of the calls that made its photos (the panel showed "0 image calls" after one).
+    const batch = {
+      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, image_calls: spent, image_calls_this_run: calls,
+      photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
+      ads, failed,
     };
-  });
-  const failed = results.filter((r) => r.failed).map((r) => ({ candidate: r.id, photo: r.visual, failures: r.failed }));
-  // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
-  // record of the calls that made its photos (the panel showed "0 image calls" after one).
-  const batch = {
-    batch_id: brief.batch_id, made: new Date().toISOString(), ratio, image_calls: spent, image_calls_this_run: calls,
-    photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
-    ads, failed,
-  };
-  writeFileSync(join(out, "batch.json"), JSON.stringify(batch, null, 2) + "\n");
-  // What the checks noticed about each ad's photos but did not reject, for the gallery's headings —
-  // the owner picks with the notes in view (2026-09-12: "the selection step is an additional check").
-  const noteOf = (id) => (photos.find((p) => p.id === id)?.notes || []).map((n) => `${id}: ${n}`);
-  const galleryNotes = Object.fromEntries(ads.map((a) => [a.folder, a.photos.flatMap(noteOf).join(" · ")]).filter(([, n]) => n));
-  writeFileSync(join(out, "gallery-notes.json"), JSON.stringify(galleryNotes, null, 2) + "\n");
-  const gallery = deps.gallery || ((dir) => execFileSync(process.execPath, [join(HERE, "gallery-selector.mjs"), "--output-dir", dir], { stdio: "ignore" }));
-  gallery(out);
-  log(`· ${ads.length} ad(s) in ${out} (${results.filter((r) => !r.failed).length} looks × ${brief.locations.length} location(s))${failed.length ? `; ${failed.length} look(s) failed to verify and are left out` : ""}; ${calls} image call(s) this run, ${batch.image_calls} for the batch in all`);
-  return { out, batch, calls, results };
+    writeFileSync(join(out, "batch.json"), JSON.stringify(batch, null, 2) + "\n");
+    // What the checks noticed about each ad's photos but did not reject, for the gallery's headings —
+    // the owner picks with the notes in view (2026-09-12: "the selection step is an additional check").
+    const noteOf = (id) => (photos.find((p) => p.id === id)?.notes || []).map((n) => `${id}: ${n}`);
+    const galleryNotes = Object.fromEntries(ads.map((a) => [a.folder, a.photos.flatMap(noteOf).join(" · ")]).filter(([, n]) => n));
+    writeFileSync(join(out, "gallery-notes.json"), JSON.stringify(galleryNotes, null, 2) + "\n");
+    const gallery = deps.gallery || ((dir) => execFileSync(process.execPath, [join(HERE, "gallery-selector.mjs"), "--output-dir", dir], { stdio: "ignore" }));
+    gallery(out);
+    prog.set({ stage: "done", ads: ads.length, failed: failed.length, image_calls: spent });
+    log(`· ${ads.length} ad(s) in ${out} (${results.filter((r) => !r.failed).length} looks × ${brief.locations.length} location(s))${failed.length ? `; ${failed.length} look(s) failed to verify and are left out` : ""}; ${calls} image call(s) this run, ${batch.image_calls} for the batch in all`);
+    return { out, batch, calls, results };
+  } catch (e) { prog.set({ stage: "failed", error: e.message }); throw e; }
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

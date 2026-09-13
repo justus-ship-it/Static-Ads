@@ -99,8 +99,11 @@ export async function checkRefTiled(path, { never = [] } = {}) {
   } finally { await px.close(); }
 }
 
-/** `generate`, `check` and `compositor` are injectable, so the flow and the call budget can be tested offline. */
-export async function generateVisuals({ visuals, text = null, photography = {}, brandNames = [], outDir, ratio = "1x1", refs = [], anchorFor = null, maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkPicture, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log }) {
+/** `generate`, `check` and `compositor` are injectable, so the flow and the call budget can be tested offline.
+ *  `onProgress(event)` hears each photo as it goes — { id, event: "generating" | "checking" | "tried" | "done",
+ *  attempt, file, status, failures, notes, calls } — for the panel's Generating screen; it can never stop a run. */
+export async function generateVisuals({ visuals, text = null, photography = {}, brandNames = [], outDir, ratio = "1x1", refs = [], anchorFor = null, maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkPicture, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log, onProgress = null }) {
+  const tell = (e) => { try { onProgress?.(e); } catch {} };
   mkdirSync(outDir, { recursive: true });
   // A reference photo carrying lettering gets it copied into every visual, so it is refused first.
   for (const r of refs) {
@@ -128,6 +131,7 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
         break;
       }
       calls++;
+      tell({ id: v.id, event: "generating", attempt, calls });
       let img;
       try {
         img = await generate(prompt, parts, { aspectRatio: aspect });
@@ -135,6 +139,7 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
         final = { ...v, status: "error", reason: e.message };
         tries.push({ attempt, status: "error", reason: e.message });
         log(`✗ ${v.id}: generation failed: ${e.message.slice(0, 200)}`);
+        tell({ id: v.id, event: "tried", attempt, status: "error", failures: [e.message], calls });
         continue;
       }
       // Never overwrite an earlier photo (a re-run of a batch once replaced the first run's rejected
@@ -142,10 +147,12 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
       let n = attempt, file;
       do { file = join(outDir, `${v.id}${n > 1 ? `-a${n}` : ""}.${img.ext || "png"}`); n++; } while (existsSync(file));
       writeFileSync(file, img.buffer);
+      tell({ id: v.id, event: "checking", attempt, file, calls });
       const verdict = await assess(file, { ...v, id: basename(file, extname(file)) }, { ratio, text, check, compositor, outDir, never: photography.never || [] });
       final = { ...v, status: verdict.ok ? "passed" : "flagged", file, attempt, check: verdict };
       tries.push({ attempt, file, status: final.status, failures: verdict.failures, picture_ok: verdict.picture_ok, check: verdict });
       log(`${verdict.ok ? "✓" : "⚑"} ${v.id}${attempt > 1 ? ` (attempt ${attempt})` : ""} ${v.treatment}: ${verdict.ok ? "no stray marks; subject placed; looks real; the finished ad verifies with no letter on a face" : verdict.failures.join(" | ")}`);
+      tell({ id: v.id, event: "tried", attempt, file, status: final.status, failures: verdict.failures, notes: verdict.notes, calls });
     }
     // A photo that passes every picture check but not its own layout — its placement rule, or a face
     // where that layout's words land — is still a good photo: kept, with no primary layout, for the
@@ -157,6 +164,7 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
         log(`✓ ${v.id}: ${basename(good.file)} passes the picture checks; its own layout did not work out (${good.failures.join("; ")}) — kept for the layouts it fits`);
       }
     }
+    tell({ id: v.id, event: "done", status: final?.status || "skipped", attempt: final?.attempt || tries.length, file: final?.file || null, own_layout_failed: final?.own_layout_failed || null, failures: final?.check?.failures || (final?.reason ? [final.reason] : []), notes: final?.check?.notes || [], calls });
     results.push({ ...final, attempts: tries.map(({ check, ...t }) => t) });
   }
   await compositor?.close();

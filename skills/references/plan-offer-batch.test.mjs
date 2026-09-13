@@ -667,3 +667,57 @@ test("B10 a directed batch drafts its own scenes in the dry run, is refused unti
     await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, generated: 0, real: ["real/r1.png"] }, deps, dryRun: true, log: () => {} }), /direction needs generated photos/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("B11 progress.json tells the panel what a run is doing, photo by photo: queued, generating, checking, retrying, passed; the stages; a failed run says why", async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const calls = [], out = join(dir, "outputs", "test-batch");
+    const read = () => JSON.parse(readFileSync(join(out, "progress.json"), "utf-8"));
+    const seen = [];
+    const f = fakes(calls);
+    const deps = {
+      ...f, browser,
+      // What the panel would read at each moment: while the model is working, and while the checks are.
+      generate: async (...a) => { const p = read(); seen.push(["generate", Object.fromEntries(Object.entries(p.photos).map(([id, x]) => [id, x.state])), p.calls, p.stage]); return f.generate(...a); },
+      check: async (file, opts) => {
+        const p = read(), id = file.match(/(g\d\d)(-a\d)?\.png$/)[1];
+        seen.push(["check", id, p.photos[id].state, p.photos[id].attempt, p.photos[id].file]);
+        // g01's first photo shows lettering; its second is fine.
+        if (/g01\.png$/.test(file)) return { ok: false, failures: ['stray text in the picture: sign "X"'], faces: [], focus: [0.5, 0.5], placement: { people_box: null, people_count: 1 } };
+        return f.check(file, opts);
+      },
+    };
+    const r = await runBatch({ brandDir: dir, brief: BRIEF, deps, log: () => {} });
+    // Before the first call: both photos queued; the model is at work on g01, the stage is photos.
+    assert.deepEqual(seen[0], ["generate", { g01: "generating", g02: "queued" }, 1, "photos"]);
+    assert.deepEqual(seen[1], ["check", "g01", "checking", 1, "visuals/g01.png"], "the photo on disk is being checked; its file is relative to the batch folder");
+    assert.deepEqual(seen[2][1], { g01: "generating", g02: "queued" }, "g01 is tried again");
+    const retried = seen.find((s) => s[0] === "check" && s[1] === "g01" && s[3] === 2);
+    assert.ok(retried, "the second attempt is checked as attempt 2");
+    const p = read();
+    assert.equal(p.stage, "done");
+    assert.equal(p.ads, r.batch.ads.length);
+    assert.equal(p.calls, 3);
+    assert.equal(p.max_calls, BRIEF.max_calls);
+    assert.equal(p.real, 2);
+    assert.deepEqual({ state: p.photos.g01.state, attempt: p.photos.g01.attempt, file: p.photos.g01.file }, { state: "passed", attempt: 2, file: "visuals/g01-a2.png" });
+    assert.deepEqual(p.photos.g01.notes, ["2 people in the picture; the scene has 1"], "the checks' notes ride along");
+    assert.equal(p.photos.g02.state, "passed");
+    assert.ok(p.photos.g01.scene && p.photos.g01.treatment && p.photos.g01.scene_id, "each photo says what it is for");
+    assert.ok(!existsSync(join(out, "progress.json.tmp")), "replaced whole, never left half-written");
+    // A second run reuses both photos: they show as passed from the start, with no call.
+    await runBatch({ brandDir: dir, brief: BRIEF, deps: { ...f, browser }, log: () => {} });
+    const p2 = read();
+    assert.equal(p2.calls, 0);
+    assert.equal(p2.spent_before, 3);
+    assert.ok(p2.photos.g01.reused && p2.photos.g01.state === "passed");
+    // A run that stops says where and why.
+    rmSync(join(out, "photos.json")); // the real photos are looked at again (the cache is by file contents)
+    const dirty = { ...f, browser, checkPhoto: async () => ({ text: [{ kind: "sign", what: "OPEN" }], never: [], people_count: 0 }) };
+    await assert.rejects(runBatch({ brandDir: dir, brief: BRIEF, deps: dirty, log: () => {} }), /not clean/);
+    const p3 = read();
+    assert.equal(p3.stage, "failed");
+    assert.match(p3.error, /real photo real\/r1\.png is not clean/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

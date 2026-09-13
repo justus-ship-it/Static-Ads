@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import http from "node:http";
 import { launchBrowser } from "../skills/references/render-composites.mjs";
 import { cropImage } from "../skills/references/clean-photo.mjs";
-import { validateBrief, runBatch, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
+import { validateBrief, runBatch, resolveSelections, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { approveScenes, rejectScene } from "../skills/references/scene-library.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -472,4 +472,195 @@ test("U9c the page: the Direction fields feed the brief, the scene library card 
   assert.equal(await ev(`document.querySelector('#bRfRef').value`), "ad.png");
   await ev(`[...document.querySelectorAll('.modal button')].find(b=>b.textContent==='Cancel').click(); true`);
   assert.equal(await ev(`!!document.querySelector('.modal')`), false);
+});
+
+// ── U10 picks saved server-side (sub-step 2) ─────────────────────────────────
+
+test("U10 picks are saved in the batch folder as they are made — review.json, and selections.json in the gallery's format, which the Stories step reads; an excluded photo takes its ads with it", async () => {
+  const out = join(brands, GYM, "outputs", BRIEF.batch_id);
+  const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
+  // U9b ran the batch again, which re-renders the square ads and clears their Stories files: a Stories
+  // version whose file is gone is not offered, and a free re-render brings them back.
+  let r0 = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/review`)).json();
+  assert.ok(r0.ads.every((a) => a.story === null), "no broken 9:16 in the review");
+  const again = await runAndWait({ kind: "batch-stories-rerender", gym: GYM, batch: BRIEF.batch_id });
+  assert.equal(again.code, 0, again.lines.join("\n"));
+  const stories = JSON.parse(readFileSync(join(out, "stories.json"), "utf-8"));
+  const storyOf = Object.fromEntries(stories.ads.map((a) => [a.folder, a.file]));
+  const review = async () => (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/review`)).json();
+  const sel = () => JSON.parse(readFileSync(join(out, "selections.json"), "utf-8"));
+  // U8 left the gallery's picks (every ad) and a Stories version of each: read as decisions.
+  rmSync(join(out, "review.json"), { force: true });
+  let r = await review();
+  assert.equal(r.ads.length, batch.ads.length);
+  assert.deepEqual(r.counts.kept, batch.ads.length, "the gallery's picks are read as kept");
+  assert.deepEqual(r.locations, ["BISHAN", "ANG MO KIO"]);
+  assert.deepEqual(r.photos.map((p) => [p.id, p.kind]), [["r01", "real"], ["r02", "real"]]);
+  for (const a of r.ads) {
+    assert.equal((await fetch(panel.url + a.url)).status, 200, `${a.folder} 1:1 served`);
+    assert.equal((await fetch(panel.url + a.story)).status, 200, `${a.folder} 9:16 served, for the side-by-side`);
+  }
+  for (const p of r.photos) assert.equal((await fetch(panel.url + p.url)).status, 200, `${p.id} served`);
+  const put = (body, opts = {}) => call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/picks`, { method: "PUT", body, ...opts });
+  const f0 = batch.ads[0].folder;
+  // Writing needs the panel's token; names must be this batch's; decisions are keep, exclude or null.
+  const before = readFileSync(join(out, "selections.json"), "utf-8");
+  assert.equal((await put({ ads: { [f0]: "exclude" } }, { token: null })).status, 403);
+  for (const bad of [{ ads: { "999-nope": "keep" } }, { ads: { [f0]: "maybe" } }, { photos: { g99: "exclude" } }, { ads: ["x"] }, { ads: { "../../x": "keep" } }]) {
+    assert.equal((await put(bad)).status, 400, JSON.stringify(bad));
+  }
+  assert.equal(readFileSync(join(out, "selections.json"), "utf-8"), before, "a refused change writes nothing");
+  assert.ok(!existsSync(join(out, "review.json")));
+  assert.equal((await call(`/api/client/${GYM}/batch/..%2F..%2Fx/picks`, { method: "PUT", body: {} })).status, 404);
+  // Exclude one ad: selections.json is rewritten at once, in the gallery's shape.
+  assert.equal((await put({ ads: { [f0]: "exclude" } })).status, 200);
+  let s = sel();
+  assert.equal(Object.keys(s)[0], "excluded");
+  assert.deepEqual(s.excluded, [f0]);
+  assert.deepEqual(Object.keys(s).filter((k) => k !== "excluded").sort(), batch.ads.map((a) => a.folder).filter((f) => f !== f0).sort());
+  const a1 = batch.ads[1];
+  assert.deepEqual(s[a1.folder], { "1x1": a1.file, "9x16": storyOf[a1.folder] }, "each kept ad names its square and Stories files");
+  assert.equal(resolveSelections(out).length, batch.ads.length - 1, "the Stories step reads it as it reads the gallery's");
+  // A photo excluded takes every ad it appears in; the ads' own decisions stay underneath.
+  const withR1 = batch.ads.filter((a) => a.photos.includes("r01")).map((a) => a.folder);
+  assert.ok(withR1.length > 0);
+  assert.equal((await put({ photos: { r01: "exclude" } })).status, 200);
+  assert.deepEqual(sel().excluded, [...new Set([f0, ...withR1])].sort());
+  r = await review();
+  for (const a of r.ads.filter((x) => x.photos.includes("r01"))) assert.deepEqual([a.status, a.by_photo], ["exclude", "r01"]);
+  assert.equal(r.photos.find((p) => p.id === "r01").status, "exclude");
+  assert.equal((await put({ photos: { r01: null } })).status, 200);
+  assert.deepEqual(sel().excluded, [f0], "keeping the photo again brings its ads back, and the ad excluded on its own stays out");
+  // Undo: null clears a decision, and an undecided ad counts as kept (as the gallery's "all selected" did).
+  assert.equal((await put({ ads: { [f0]: null } })).status, 200);
+  assert.deepEqual(sel().excluded, []);
+  r = await review();
+  assert.deepEqual([r.counts.kept, r.counts.excluded, r.counts.unreviewed], [batch.ads.length - 1, 0, 1]);
+  const rj = JSON.parse(readFileSync(join(out, "review.json"), "utf-8"));
+  assert.equal(rj.ads[f0], undefined); assert.equal(rj.ads[a1.folder], "keep"); assert.deepEqual(rj.photos, {});
+  // A decision about an ad a re-render has since renamed is dropped on the next save.
+  writeFileSync(join(out, "review.json"), JSON.stringify({ ...rj, ads: { ...rj.ads, "199-c99-gone": "exclude" } }));
+  assert.equal((await put({})).status, 200);
+  assert.equal(JSON.parse(readFileSync(join(out, "review.json"), "utf-8")).ads["199-c99-gone"], undefined);
+  // The campaign list carries the counts (the rail's badge and the cards).
+  const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
+  assert.deepEqual(setup.batches.find((b) => b.id === BRIEF.batch_id).review, { kept: batch.ads.length - 1, excluded: 0, unreviewed: 1 });
+  // The batch's progress: the last run (U6's free re-render) is done; nothing is running.
+  const pr = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/progress`)).json();
+  assert.equal(pr.progress.stage, "done");
+  assert.equal(pr.progress.ads, batch.ads.length);
+  assert.equal(pr.run, null);
+});
+
+// ── U11 the review and Generating screens (sub-step 2) ───────────────────────
+
+test("U11 the review screen: 1:1 and 9:16 side by side on one screen; arrows move; K/X/U keep, exclude, undo — saved as made; photos exclude their ads; Back works; the Generating screen shows each photo as it passes", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+    return result.value;
+  };
+  const until = async (expression, what, ms = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await ev(expression)) return; await new Promise((r) => setTimeout(r, 120)); }
+    throw new Error(`timed out waiting for ${what}: ${await ev("location.hash + ' ' + (document.querySelector('#view')?.textContent||'').slice(0,200)")}`);
+  };
+  const key = async (k, code = k, vk = 0) => {
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: k, code, windowsVirtualKeyCode: vk, text: k.length === 1 ? k : undefined }, sessionId);
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: k, code, windowsVirtualKeyCode: vk }, sessionId);
+  };
+  const out = join(brands, GYM, "outputs", BRIEF.batch_id);
+  const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
+  const sel = () => JSON.parse(readFileSync(join(out, "selections.json"), "utf-8"));
+  rmSync(join(out, "review.json"), { force: true });
+  writeFileSync(join(out, "selections.json"), JSON.stringify({ excluded: [], ...Object.fromEntries(batch.ads.map((a) => [a.folder, { "1x1": a.file }])) }));
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+  const loaded = cdp.once("Page.loadEventFired", sessionId);
+  // A full load (the query differs): the same page with a new fragment would be an in-page jump, with no load event.
+  await cdp.send("Page.navigate", { url: `${panel.url}/?u11#/${GYM}/review/${BRIEF.batch_id}` }, sessionId);
+  await loaded;
+  const stageReady = "document.querySelectorAll('#rvStage img').length===2 && [...document.querySelectorAll('#rvStage img')].every(i=>i.complete&&i.naturalWidth>0)";
+  await until(`typeof R!=='undefined' && R.data && ${stageReady}`, "the review screen from its address");
+  // Side by side, and the whole screen fits the window: no scrolling down to the filmstrip, none sideways.
+  const geo = await ev(`(()=>{const [a,b]=[...document.querySelectorAll('#rvStage img')].map(i=>i.getBoundingClientRect()); const strip=document.querySelector('#rvStrip').getBoundingClientRect(); return {a:[a.left,a.right,a.top,a.width,a.height],b:[b.left,b.right,b.top,b.width,b.height],strip:strip.bottom,foot:document.querySelector('#rvFoot').getBoundingClientRect().bottom,h:innerHeight,sh:document.documentElement.scrollHeight,sw:document.documentElement.scrollWidth,w:innerWidth}})()`);
+  assert.ok(geo.b[0] > geo.a[1], "the 9:16 sits to the right of the 1:1");
+  assert.ok(Math.abs(geo.a[4] - geo.b[4]) < 2 && Math.abs(geo.a[3] - geo.a[4]) < 2 && Math.abs(geo.b[3] / geo.b[4] - 9 / 16) < 0.02, `same height, square and 9:16: ${JSON.stringify(geo)}`);
+  assert.ok(geo.a[4] > 400, "big enough to judge");
+  assert.ok(geo.foot <= geo.h && geo.sh <= geo.h + 1, `everything on one screen: ${JSON.stringify(geo)}`);
+  assert.ok(geo.sw <= geo.w, "no sideways scrolling");
+  assert.match(await ev("document.querySelector('#rvCount').textContent"), new RegExp(`^1 of ${batch.ads.length}`));
+  // Arrows move; X excludes and moves on; the decision is on disk at once.
+  await key("ArrowRight", "ArrowRight", 39);
+  await until("R.i===1", "→");
+  const f1 = await ev("R.list[1].folder");
+  await key("x", "KeyX", 88);
+  await until(`R.i===2 && document.querySelector('#rvStrip').children[1].classList.contains('s-exclude')`, "exclude and advance");
+  const t0 = Date.now(); while (!sel().excluded.includes(f1) && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(sel().excluded, [f1], "selections.json on disk, no download");
+  assert.match(await ev("document.querySelector('#rvCount').textContent"), / 1 excluded/);
+  // Back to it and undo.
+  await key("ArrowLeft", "ArrowLeft", 37);
+  await until("R.i===1 && document.querySelector('.rv-badge').textContent.includes('Excluded')", "←");
+  await key("u", "KeyU", 85);
+  await until("!document.querySelector('#rvStrip').children[1].classList.contains('s-exclude')", "undo");
+  const t1 = Date.now(); while (sel().excluded.length && Date.now() - t1 < 5000) await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(sel().excluded, []);
+  // K keeps: marked, saved, moved on.
+  await key("k", "KeyK", 75);
+  await until("R.i===2 && document.querySelector('#rvStrip').children[1].classList.contains('s-keep')", "keep");
+  // The location filter narrows the list to one location's ads.
+  await ev("rvLoc('BISHAN'); true");
+  await until("R.list.length && R.list.every(a=>a.location==='BISHAN')", "BISHAN only");
+  assert.equal(await ev("R.list.length"), batch.ads.filter((a) => a.location === "BISHAN").length);
+  await ev("rvLoc('all'); true");
+  // Photos: excluding a photo takes its ads; the ads view says why; an ad of that photo cannot be kept on its own.
+  await ev("rvMode('photos'); true");
+  await until(`R.mode==='photos' && location.hash.endsWith('/photos') && document.querySelectorAll('#rvStage img').length===1`, "the photos view");
+  assert.equal(await ev("R.list[R.i].id"), "r01");
+  await key("x", "KeyX", 88);
+  const withR1 = batch.ads.filter((a) => a.photos.includes("r01")).map((a) => a.folder).sort();
+  const t2 = Date.now(); while (JSON.stringify(sel().excluded) !== JSON.stringify(withR1) && Date.now() - t2 < 5000) await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(sel().excluded, withR1, "every ad with r01 is out");
+  // Back returns to the ads view, where those ads show as excluded with their photo.
+  await ev("history.back(); true");
+  await until("R.mode==='ads' && STATE.rmode==='ads' && !location.hash.endsWith('/photos')", "Back to the ads");
+  await ev(`rvGoto(R.list.findIndex(a=>a.photos.includes('r01'))); true`);
+  await until("document.querySelector('#rvInfo').textContent.includes('excluded with photo r01')", "the reason shown");
+  await key("k", "KeyK", 75);
+  await until("document.querySelector('#toast') && !document.querySelector('#toast').hidden && /Photo r01 is excluded/.test(document.querySelector('#toast').textContent)", "keeping it is refused, with the reason");
+  // The campaign list shows where each campaign stands.
+  await ev("go('review'); true");
+  await until("!!document.querySelector('.camps')", "the campaign list");
+  assert.match(await ev("document.querySelector('.camps').textContent"), /excluded/);
+
+  // The Generating screen: a batch part-way through its photos (as progress.json says, mid-run).
+  const gid = "gen-view", gout = join(brands, GYM, "outputs", gid);
+  mkdirSync(join(brands, GYM, "batches", gid), { recursive: true });
+  writeFileSync(join(brands, GYM, "batches", gid, "brief.json"), JSON.stringify({ ...BRIEF, batch_id: gid, generated: 3, max_calls: 6 }, null, 2));
+  mkdirSync(join(gout, "visuals"), { recursive: true });
+  cpSync(join(brands, GYM, "brand-assets", "facility-clean", "r1.png"), join(gout, "visuals", "g01.png"));
+  cpSync(join(brands, GYM, "brand-assets", "facility-clean", "r2.png"), join(gout, "visuals", "g02.png"));
+  writeFileSync(join(gout, "progress.json"), JSON.stringify({ batch_id: gid, stage: "photos", max_calls: 6, attempts: 2, spent_before: 0, calls: 3, real: 2, ads: null, photos: {
+    g01: { scene_id: "m1", scene: "A man holding a plank.", treatment: "t1-bottom-stack", state: "passed", attempt: 2, file: "visuals/g01.png", notes: ["a bystander at the back"] },
+    g02: { scene_id: "m1", scene: "A man holding a plank.", treatment: "t3-right-column", state: "checking", attempt: 1, file: "visuals/g02.png" },
+    g03: { scene_id: "m1", scene: "A man holding a plank.", treatment: "t6-left-column", state: "queued" },
+  } }));
+  await ev(`openGenerating('${gid}'); true`);
+  await until("document.querySelectorAll('.gc').length===3", "the photo cards");
+  assert.match(await ev("document.querySelector('h1').textContent"), /Generating · 1 of 3 photos/);
+  assert.match(await ev("document.querySelector('.sub').textContent"), /3 image calls used of 6 · plus 2 real photos/);
+  const cards = await ev("[...document.querySelectorAll('.gc')].map(c=>c.textContent.replace(/\\s+/g,' '))");
+  assert.match(cards[0], /g01 · m1.*passed.*try 2.*note/); assert.match(cards[1], /checking/); assert.match(cards[2], /queued/);
+  assert.equal(await ev("document.querySelector('.gc img')?.naturalWidth > 0 || new Promise(r=>setTimeout(()=>r(document.querySelector('.gc img').naturalWidth>0),500))"), true, "a passed photo shows as it passes");
+  // Review the passed photos while the rest are made: photos only, no ads yet.
+  await ev("[...document.querySelectorAll('button')].find(b=>/Review the 1 passed photo/.test(b.textContent)).click(); true");
+  await until(`STATE.tab==='review' && R.data && R.mode==='photos'`, "review of the passed photos");
+  assert.deepEqual(await ev("R.data.photos.map(p=>p.id)"), ["g01", "r01", "r02"]);
+  assert.equal(await ev("document.querySelector('.seg button').disabled"), true, "no ads yet");
+  await key("x", "KeyX", 88);
+  const t3 = Date.now(); while (!existsSync(join(gout, "review.json")) && Date.now() - t3 < 5000) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(JSON.parse(readFileSync(join(gout, "review.json"), "utf-8")).photos.g01, "exclude", "a photo can be excluded before its ads exist");
+  assert.ok(!existsSync(join(gout, "selections.json")), "the picks file waits for the ads");
+  assert.ok(!/NETWORK BLOCKED/.test(panel.log()));
 });
