@@ -464,6 +464,7 @@ async function viewBatch(v){
   if (B.gym !== STATE.sel){ Object.assign(B, { gym:STATE.sel, draft:null, mode:'new', view:null, savedId:null, touched:false, loc:0 }); }
   v.innerHTML = '<div class="card"><h3>New batch</h3><p class="hint">Loading…</p></div>';
   B.setup = await api(`/api/client/${STATE.sel}/batch-setup`);
+  B.scenes = await api(`/api/client/${STATE.sel}/scenes`);
   if (!B.draft) B.draft = freshDraft();
   paintBatch(v);
   scheduleCheck(0); schedulePreview(0);
@@ -471,7 +472,13 @@ async function viewBatch(v){
 
 function freshDraft(){
   return { batch_id:'', offer:'', locations:[''], audience:'', generated:2, real:B.setup.photos.slice(0,2).map(p=>p.path),
-    looks_per_photo:2, max_calls:'', attempts:2, seed:'' };
+    looks_per_photo:2, max_calls:'', attempts:2, seed:'', direction_words:'', direction_reference:'' };
+}
+/** The batch's direction, if any: the owner's words and/or an uploaded reference image. */
+function directionFromDraft(){
+  const d = B.draft, words = (d.direction_words||'').trim(), ref = d.direction_reference||'';
+  if (!words && !ref) return null;
+  return { ...(words?{words:d.direction_words}:{}), ...(ref?{reference:ref}:{}) };
 }
 
 /** The brief exactly as typed: words are never trimmed or re-cased — the checks say if they need fixing. */
@@ -480,8 +487,9 @@ function briefFromDraft(){
   const words = { offer:d.offer, locations:d.locations.filter(s=>s!==''), audience:d.audience===''?null:d.audience };
   if (B.mode==='rerender') return { ...B.view.brief, ...words };
   const generated = Number(d.generated)||0, attempts = Number(d.attempts)||1;
+  const direction = directionFromDraft();
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
-    max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}) };
+    max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}) };
 }
 function autoId(){
   const base = `${today()}-${slugify(B.draft.offer).slice(0,40) || 'batch'}`.replace(/-+$/,'');
@@ -519,6 +527,13 @@ function paintBatch(v){
           <div><label for="bSeed">Seed</label><input id="bSeed" class="mono" value="${esc(d.seed)}" placeholder="batch name" oninput="bSet('seed',this.value)"></div>
         </div></details>
       </fieldset>
+      ${re ? '' : `<fieldset style="margin-top:14px"><legend>Direction <span style="font-weight:400">(optional)</span></legend>
+        <p class="hint" style="margin-top:0">Leave empty and the batch draws from the approved scene library. Or say what the photos should show, in words or with a reference image: the plan drafts this batch's scenes from it, you read them, and confirming the run approves them.</p>
+        <label for="bDirWords">In words</label>
+        <textarea id="bDirWords" rows="2" placeholder="e.g. older women doing walking lunges with a coach, bright and cheerful" oninput="bSet('direction_words',this.value)">${esc(d.direction_words)}</textarea>
+        <label>Reference image <span style="font-weight:400">(read into words once; never copied into a photo)</span></label>
+        <div id="bRefs"></div>
+      </fieldset>`}
       <div id="bScenes" class="hint" style="margin-top:8px"></div>
       <div id="bErrors"></div>
       <div id="bSummary" class="summary"></div>
@@ -537,10 +552,98 @@ function paintBatch(v){
     </div>
   </div>
   <div class="card"><h3>Batches</h3><div id="bList"></div></div>
+  <div class="card" id="bSceneCard"></div>
   <div id="bResult"></div>
   <div id="runbox"></div>
   <div id="bModal"></div>`;
-  paintLocs(); paintList(); paintResult(); renderRunBox(); paintDerived();
+  paintLocs(); paintRefs(); paintList(); paintScenes(); paintResult(); renderRunBox(); paintDerived();
+}
+
+/** The uploaded reference images, one of which a batch may follow; plus an upload control. */
+function paintRefs(){
+  const box = $('#bRefs'); if (!box) return;
+  const refs = B.scenes?.references || [], sel = B.draft.direction_reference || '';
+  box.innerHTML = `<div class="thumbs">
+    ${refs.map(r=>`<label><input type="radio" name="bRef" value="${esc(r.name)}" ${sel===r.name?'checked':''} onchange="bRef(this.value)"><img src="${esc(r.url)}" alt=""><span style="font-size:11px">${esc(r.name)}</span></label>`).join('')}
+    </div>
+    <div class="row" style="margin-top:6px"><input type="file" id="bRefFile" accept="image/png,image/jpeg,image/webp" style="width:auto" onchange="bUpload(this)">
+      ${sel?`<button onclick="bRef('')" style="padding:3px 9px;font-size:12px">No reference</button>`:''}<span id="bRefMsg" class="hint"></span></div>`;
+}
+function bRef(name){ B.draft.direction_reference = name; B.touched = true; paintRefs(); scheduleCheck(); }
+/** Upload a reference image as raw bytes: the server keeps image files only, in the client's references folder. */
+async function bUpload(input){
+  const f = input.files?.[0]; if (!f) return;
+  const ext = f.type==='image/png'?'png':f.type==='image/webp'?'webp':'jpg';
+  const base = slugify(f.name.replace(/\.[^.]+$/,'')).slice(0,40) || 'reference';
+  const name = `${base}.${ext}`;
+  const m = $('#bRefMsg'); if (m) m.textContent = 'Uploading…';
+  try {
+    const r = await fetch(`/api/client/${STATE.sel}/reference/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream','x-panel-token':TOKEN}, body: await f.arrayBuffer() });
+    const j = await r.json().catch(()=>({error:'bad response'}));
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    B.scenes = await api(`/api/client/${STATE.sel}/scenes`);
+    B.draft.direction_reference = j.name; B.touched = true; paintRefs(); paintScenes(); scheduleCheck();
+  } catch(e){ const m2 = $('#bRefMsg'); if (m2) m2.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+}
+
+// ── Scene library ────────────────────────────────────────────────────────────
+const TAGS = s => [s.setting, s.people!=null?`${s.people} ${s.people===1?'person':'people'}`:null, s.exercise, s.age, s.equipment, s.muscles, s.pose].filter(Boolean).join(' · ');
+/** Status, a Refresh button, and every draft awaiting approval with Approve / Reject. */
+function paintScenes(){
+  const box = $('#bSceneCard'); if (!box) return;
+  const sc = B.scenes, st = sc?.status;
+  if (!st?.exists){ box.innerHTML = '<h3>Scene library</h3><div class="hint">None yet — generated photos need one (brands/{gym}/scenes.json).</div>'; return; }
+  const drafts = sc.drafts || [];
+  const busy = STATE.run && !STATE.run.done;
+  box.innerHTML = `<div class="row"><h3 style="margin:0">Scene library</h3><div class="spacer"></div>
+      <button onclick="bRefreshConfirm()" ${busy?'disabled':''} style="padding:3px 9px;font-size:12px">Refresh scenes…</button></div>
+    <p class="hint">${st.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${st.total} live (${Object.entries(st.counts).map(([k,n])=>`${n} ${esc(k)}`).join(', ')})${st.retired?` · ${st.retired} retired`:''}${drafts.length?` · <span style="color:var(--warn)">${drafts.length} draft${drafts.length===1?'':'s'} awaiting approval</span>`:''}</p>
+    ${drafts.length ? `<div class="row" style="margin-bottom:6px"><button onclick="bApprove(${JSON.stringify(drafts.map(d=>d.id)).replace(/"/g,'&quot;')})" ${busy?'disabled':''} style="padding:3px 9px;font-size:12px">Approve all ${drafts.length}</button><span class="hint">Nothing is generated from a draft until it is approved. Rejecting asks why; the scene is retired, never deleted.</span></div>` : ''}
+    ${drafts.map(d=>`<div class="chk"><div class="dot opt"></div><div style="flex:1">
+      <div class="t"><span class="mono">${esc(d.id)}</span> <span class="pill">${esc(d.audience)}</span>${d.source&&d.source.startsWith('batch:')?` <span class="pill on">for batch ${esc(d.source.slice(6))}</span>`:''}${d.prefer_layout?` <span class="pill">${esc(d.prefer_layout.split('-')[0])}</span>`:''}</div>
+      <div class="d">${esc(TAGS(d))}${d.covers?.length?` · covers ${esc(d.covers.join(', '))}`:''}${d.direction?.words?` · from your words`:''}${d.direction?.reference?` · from ${esc(d.direction.reference.split('/').pop())}`:''}</div>
+      <div style="font-size:13px;margin:4px 0">${esc(d.scene)}</div>
+      <div class="row"><button onclick="bApprove(['${esc(d.id)}'])" ${busy?'disabled':''} style="padding:2px 8px;font-size:12px">Approve</button><button onclick="bReject('${esc(d.id)}')" ${busy?'disabled':''} style="padding:2px 8px;font-size:12px">Reject…</button></div>
+    </div></div>`).join('')}
+    <div id="bSceneMsg" class="hint"></div>`;
+}
+async function reloadScenes(){ B.scenes = await api(`/api/client/${STATE.sel}/scenes`); B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); paintScenes(); paintRefs(); paintDerived(); }
+async function bApprove(ids){
+  try { const r = await api(`/api/client/${STATE.sel}/scenes/approve`, {method:'POST', body:{ids}}); await reloadScenes(); const m=$('#bSceneMsg'); if (m) m.textContent = `approved: ${r.approved.join(', ')}`; scheduleCheck(0); }
+  catch(e){ const m=$('#bSceneMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+}
+async function bReject(id){
+  const reason = prompt(`Reject ${id} — what was wrong with it? (kept as the reason; the scene is retired, never deleted)`);
+  if (reason === null) return;
+  try { const r = await api(`/api/client/${STATE.sel}/scenes/reject`, {method:'POST', body:{id, reason}}); await reloadScenes(); const m=$('#bSceneMsg'); if (m) m.textContent = `retired ${r.retired}: ${r.reason}`; scheduleCheck(0); }
+  catch(e){ const m=$('#bSceneMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+}
+/** A refresh: audience, how many, and the direction — the library's gaps, your words, or a reference image. Text calls only. */
+function bRefreshConfirm(){
+  const sc = B.scenes, refs = sc.references || [];
+  const aud = (B.check?.summary?.scenes_for) || 'any';
+  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
+    <h3>Refresh scenes</h3>
+    <p class="hint">The agent drafts new scenes for this gym, written to its photography rules and unlike anything in the library. They arrive as drafts for you to approve or reject. One or two text calls; no image calls.</p>
+    <div class="grid">
+      <div><label for="bRfAud">Audience</label><select id="bRfAud">${(sc.audiences||['men','women','any']).map(a=>`<option value="${a}" ${a===aud?'selected':''}>${a}</option>`).join('')}</select></div>
+      <div><label for="bRfN">How many</label><input id="bRfN" type="number" min="1" max="${sc.maxCount||12}" value="6"></div>
+    </div>
+    <label>Direction</label>
+    <div><label style="font-weight:400"><input type="radio" name="bRfDir" value="gaps" checked style="width:auto"> Fill the library's gaps (the thinnest exercises, ages, settings and equipment for this audience)</label></div>
+    <div><label style="font-weight:400"><input type="radio" name="bRfDir" value="words" style="width:auto"> In words</label><textarea id="bRfWords" rows="2" placeholder="e.g. couples in their fifties training together, warm and unposed"></textarea></div>
+    <div><label style="font-weight:400"><input type="radio" name="bRfDir" value="reference" style="width:auto" ${refs.length?'':'disabled'}> Like a reference image${refs.length?'':' (upload one on the batch form first)'}</label>
+      ${refs.length?`<select id="bRfRef">${refs.map(r=>`<option value="${esc(r.name)}">${esc(r.name)}${r.read?' (read before)':''}</option>`).join('')}</select>`:''}</div>
+    <div id="bRfErr"></div>
+    <div class="row"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="bRfGo" onclick="bRefreshGo()">Draft them</button></div></div></div>`;
+}
+function bRefreshGo(){
+  const audience = $('#bRfAud').value, count = parseInt($('#bRfN').value, 10), dir = document.querySelector('input[name="bRfDir"]:checked')?.value;
+  const words = ($('#bRfWords')?.value||'').trim(), reference = $('#bRfRef')?.value || null;
+  if (dir==='words' && words.length < 3){ $('#bRfErr').innerHTML = '<div class="msg err">Say what the scenes should show.</div>'; return; }
+  if (dir==='reference' && !reference){ $('#bRfErr').innerHTML = '<div class="msg err">Pick a reference image.</div>'; return; }
+  bClose();
+  run({kind:'scenes-refresh', gym:STATE.sel, audience, count, ...(dir==='words'?{words}:{}), ...(dir==='reference'?{reference}:{})}, async()=>{ await reloadScenes(); $('#bSceneCard')?.scrollIntoView({behavior:'smooth'}); });
 }
 
 function paintLocs(){
@@ -634,23 +737,39 @@ async function saveBrief(){
 }
 async function bPlan(){
   const s = await saveBrief(); if (!s) return;
-  run({kind:'batch-plan', gym:STATE.sel, batch:s.brief.batch_id}, async()=>{ B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); });
+  // A directed batch's plan drafts its scenes: they appear in the scene library card as drafts for this batch.
+  run({kind:'batch-plan', gym:STATE.sel, batch:s.brief.batch_id}, async()=>{ await reloadScenes(); if (s.brief.direction) $('#bSceneCard')?.scrollIntoView({behavior:'smooth'}); });
 }
 async function bConfirm(){
   const fresh = B.savedId !== briefFromDraft().batch_id; // this confirmation is what saves it
   const s = await saveBrief(); if (!s) return;
   B.createdByConfirm = fresh;
   const b = s.brief, sm = s.summary;
+  // A directed batch runs on the scenes its plan drafted: read them here; confirming approves them.
+  let scenes = [];
+  if (b.direction){
+    const view = await api(`/api/client/${STATE.sel}/batch/${b.batch_id}`).catch(()=>null);
+    scenes = view?.scenes || [];
+    if (!scenes.length){
+      $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bCancel()"><div class="card">
+        <h3>Plan first</h3>
+        <p class="hint">This batch has a direction, so the plan drafts its scenes from it — text calls only — for you to read before anything is generated.</p>
+        <div class="row"><button onclick="bCancel()">Cancel</button><div class="spacer"></div><button class="primary" onclick="bClose();bPlan()">Plan (free)</button></div></div></div>`;
+      B.pending = b; return;
+    }
+  }
+  const pending = scenes.filter(x=>x.draft).map(x=>x.id);
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bCancel()"><div class="card">
     <h3>Run this batch?</h3>
     <p class="hint">These words go on every ad exactly as shown. The run stops at the call limit, whatever happens.</p>
     <div class="words"><div><span>Offer</span>${esc(b.offer)}</div><div><span>Locations</span>${esc(b.locations.join(' / '))}</div><div><span>Audience</span>${b.audience?esc(b.audience):'<i style="color:var(--dim)">none</i>'}</div></div>
+    ${scenes.length?`<div class="words"><div style="color:var(--dim)">Scenes for this batch${pending.length?' — confirming approves them into the library':''}</div>${scenes.map(x=>`<div style="margin:6px 0"><b class="mono">${esc(x.id)}</b>${x.draft?' <span class="pill">draft</span>':''}<br>${esc(x.scene)}</div>`).join('')}</div>`:''}
     <div class="summary">${sm.photos} photos × ${sm.looks} looks × ${sm.locations} locations = <b>${sm.ads} ads</b><br>Up to <b>${b.max_calls} Gemini image call${b.max_calls===1?'':'s'}</b> for ${b.generated} new photo${b.generated===1?'':'s'}</div>
     <div class="row"><button onclick="bCancel()">Cancel</button><div class="spacer"></div>
       <button class="primary" id="bGo" onclick="bGo()">Yes, run — up to ${b.max_calls} image call${b.max_calls===1?'':'s'}</button></div></div></div>`;
-  B.pending = b;
+  B.pending = b; B.pendingScenes = pending;
 }
-function bClose(){ $('#bModal').innerHTML=''; B.pending=null; }
+function bClose(){ $('#bModal').innerHTML=''; B.pending=null; B.pendingScenes=null; }
 /** Cancel: nothing runs, and a brief that only the confirmation had saved is discarded again. */
 async function bCancel(){
   const id = B.pending?.batch_id, fresh = B.createdByConfirm; bClose();
@@ -664,9 +783,9 @@ async function bDiscard(id){
   } catch(e){ bMsg(e.message, 'err'); }
 }
 function bGo(){
-  const b = B.pending; bClose();
-  run({kind:'batch', gym:STATE.sel, batch:b.batch_id, confirm:{offer:b.offer, locations:b.locations, audience:b.audience??null, max_calls:b.max_calls}}, async(code)=>{
-    B.setup = await api(`/api/client/${STATE.sel}/batch-setup`);
+  const b = B.pending, scenes = B.pendingScenes || []; bClose();
+  run({kind:'batch', gym:STATE.sel, batch:b.batch_id, confirm:{offer:b.offer, locations:b.locations, audience:b.audience??null, max_calls:b.max_calls, ...(scenes.length?{scenes}:{})}}, async(code)=>{
+    await reloadScenes();
     if (code===0){ B.view = await api(`/api/client/${STATE.sel}/batch/${b.batch_id}`); B.showAds=true; B.mode='rerender'; B.draft.batch_id=b.batch_id; }
   });
 }

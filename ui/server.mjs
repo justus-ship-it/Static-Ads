@@ -34,7 +34,8 @@ import {
   CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
 } from "../skills/references/client-config.mjs";
 import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
-import { libraryStatus } from "../skills/references/scene-library.mjs";
+import { libraryStatus, readLibrary, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
+import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,11 @@ const BRANDS = resolve(process.env.PANEL_BRANDS_DIR || join(REPO_ROOT, "brands")
 const SWIPE = join(REPO_ROOT, "swipe");
 const BATCH_SCRIPT = join(REPO_ROOT, "skills", "references", "plan-offer-batch.mjs");
 const STORIES_SCRIPT = join(REPO_ROOT, "skills", "references", "make-stories.mjs");
+const REFRESH_SCRIPT = join(REPO_ROOT, "skills", "references", "refresh-scenes.mjs");
+/** A reference image's file name: a slug and an image extension — it becomes a path segment. */
+const REFERENCE_NAME = /^[a-z0-9][a-z0-9-]{0,63}\.(png|jpe?g|webp)$/;
+const MAX_REFERENCE_BYTES = 10 * 1024 * 1024;
+const MAX_REFRESH_COUNT = 12;
 
 const { values: argv } = parseArgs({ options: { port: { type: "string", default: "4310" } } });
 let PORT = parseInt(argv.port, 10);
@@ -94,11 +100,16 @@ const RUNNABLE = {
   checksync: { label: "Check skill/command sync", argv: () => ["skills/references/check-sync.mjs"] },
   // Offer-first batches (Step 6). Built from the gym and batch id only; the brief is the file on disk.
   "batch-plan": { label: "Plan batch (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--dry-run"] },
-  batch: { label: "Run batch", needsBrief: true, spends: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch)] },
+  // A directed batch's drafted scenes are approved by the Run confirmation (approveScenes is set by the
+  // server once the confirmed ids match the drafts on disk — never taken from the browser).
+  batch: { label: "Run batch", needsBrief: true, spends: true, argv: ({ gym, batch, approveScenes }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), ...(approveScenes === true ? ["--approve-scenes"] : [])] },
   "batch-rerender": { label: "Re-render batch with its words (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--render-only"] },
   // Stories/Reels (9:16) versions of the selected ads (Step 8): the batch id and the confirmed call cap only.
   "batch-stories": { label: "Make Stories versions", needsBrief: true, spends: "stories", argv: ({ gym, batch, confirm }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--max-calls", String(confirm.max_calls)] },
   "batch-stories-rerender": { label: "Re-render Stories versions (free)", needsBrief: true, argv: ({ gym, batch }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--render-only"] },
+  // A scene refresh (text calls only): the audience, the count and the direction — words and/or an
+  // uploaded reference image — each checked for shape before it becomes an argument.
+  "scenes-refresh": { label: "Refresh scenes (drafts for approval)", argv: ({ gym, audience, count, words, reference }) => [REFRESH_SCRIPT, "--brand-dir", brandDir(gym), "--audience", audience, "--count", String(count), ...(words ? ["--words", words] : []), ...(reference ? ["--reference", reference] : [])] },
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -119,6 +130,41 @@ const readBody = (req) =>
     req.on("end", () => { try { res(b ? JSON.parse(b) : {}); } catch (e) { rej(e); } });
     req.on("error", rej);
   });
+/** The raw bytes of an upload, refused past `max` — the rest is drained, not reset, so the refusal is read. */
+const readRaw = (req, max) =>
+  new Promise((res, rej) => {
+    const tooBig = () => Object.assign(new Error(`the file is over ${Math.round(max / 1048576)} MB`), { status: 413 });
+    if (Number(req.headers["content-length"]) > max) { req.resume(); return rej(tooBig()); }
+    const chunks = []; let size = 0, failed = false;
+    req.on("data", (c) => { if (failed) return; size += c.length; if (size > max) { failed = true; chunks.length = 0; rej(tooBig()); } else chunks.push(c); });
+    req.on("end", () => { if (!failed) res(Buffer.concat(chunks)); });
+    req.on("error", rej);
+  });
+/** What an image file starts with — the extension alone is not trusted. */
+function imageKind(buf) {
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpg";
+  if (buf.length >= 12 && buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") return "webp";
+  return null;
+}
+const referencesDir = (gym) => join(brandDir(gym), REFERENCES_DIR);
+function listReferences(gym) {
+  const dir = referencesDir(gym);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => REFERENCE_NAME.test(f)).sort().map((name) => ({ name, url: `/files/brands/${gym}/${REFERENCES_DIR}/${name}`, read: existsSync(join(dir, `${name}.description.json`)) }));
+}
+/** The library's drafts and the scenes drafted for a batch, for the panel. */
+const sceneCard = (s) => ({ id: s.id, scene: s.scene, audience: s.audience || "any", pose: s.pose, people: s.people, exercise: s.exercise || null, age: s.age || null, setting: s.setting || null, equipment: s.equipment || null, muscles: s.muscles || null, draft: isDraft(s), source: s.source || null, added: s.added || null, covers: s.covers || null, direction: s.direction || null, prefer_layout: s.prefer_layout || null });
+function sceneDrafts(gym) {
+  const p = join(brandDir(gym), "scenes.json");
+  if (!existsSync(p)) return [];
+  return readLibrary(p).scenes.filter(isDraft).map(sceneCard);
+}
+function batchScenes(gym, batch) {
+  const p = join(brandDir(gym), "scenes.json");
+  if (!existsSync(p)) return [];
+  return readLibrary(p).scenes.filter((s) => s.source === `batch:${batch}` && !isRetired(s)).map(sceneCard);
+}
 
 function listClients() {
   if (!existsSync(BRANDS)) return [];
@@ -319,6 +365,7 @@ function allowedFile(rel) {
   let base = null;
   if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "outputs" && (ext === ".html" || IMAGE_EXT.has(ext))) base = join(BRANDS, parts[1], "outputs");
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "brand-assets" && IMAGE_EXT.has(ext)) base = join(BRANDS, parts[1], "brand-assets");
+  else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === REFERENCES_DIR && parts.length === 4 && REFERENCE_NAME.test(parts[3])) base = join(BRANDS, parts[1], REFERENCES_DIR);
   else if (parts[0] === "swipe" && parts.length >= 3 && (ext === ".html" || IMAGE_EXT.has(ext))) base = SWIPE;
   if (!base) return null;
   const abs = parts[0] === "brands" ? join(base, ...parts.slice(3)) : join(SWIPE, ...parts.slice(1));
@@ -384,6 +431,41 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { errors: [], looks: await job });
     }
 
+    // /api/client/{gym}/scenes · /scenes/approve · /scenes/reject · /reference/{name}
+    const sm = p.match(/^\/api\/client\/([^/]+)\/(scenes|scenes\/approve|scenes\/reject|reference\/([^/]+))$/);
+    if (sm) {
+      const [, gym, what, name] = sm;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      const scenesPath = join(brandDir(gym), "scenes.json");
+      if (what === "scenes" && req.method === "GET") return json(res, 200, { status: sceneStatus(gym), drafts: sceneDrafts(gym), references: listReferences(gym), audiences: AUDIENCES, maxCount: MAX_REFRESH_COUNT, maxWords: MAX_WORDS });
+      if (!existsSync(scenesPath) && what.startsWith("scenes/")) return json(res, 404, { error: "no scene library for this client" });
+      if (what === "scenes/approve" && req.method === "POST") {
+        const { ids } = await readBody(req);
+        if (!Array.isArray(ids) || !ids.length || !ids.every(okSlug)) return json(res, 400, { error: "ids must list the scenes to approve" });
+        try { return json(res, 200, { ok: true, ...approveScenes(scenesPath, ids) }); } catch (e) { return json(res, 400, { error: e.message }); }
+      }
+      if (what === "scenes/reject" && req.method === "POST") {
+        const { id, reason } = await readBody(req);
+        if (!okSlug(id)) return json(res, 400, { error: "id must name the scene to reject" });
+        if (typeof reason !== "string" || reason.trim().length < 3) return json(res, 400, { error: "rejecting a scene needs a reason (what was wrong with it)" });
+        try { return json(res, 200, { ok: true, ...rejectScene(scenesPath, id, reason) }); } catch (e) { return json(res, 400, { error: e.message }); }
+      }
+      // A reference image, uploaded as raw bytes. Image files only, by their first bytes; kept in the
+      // client's gitignored references folder; a replaced image loses its cached reading.
+      if (name && req.method === "PUT") {
+        if (!REFERENCE_NAME.test(name)) return json(res, 400, { error: "the file name must be lower-case letters, digits and hyphens, ending in .png, .jpg or .webp" });
+        let buf;
+        try { buf = await readRaw(req, MAX_REFERENCE_BYTES); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
+        const kind = imageKind(buf);
+        const ext = extname(name).toLowerCase().replace(".jpeg", ".jpg");
+        if (!kind || `.${kind}` !== ext) return json(res, 400, { error: kind ? `this is a ${kind} file; name it .${kind}` : "not an image file (png, jpg or webp)" });
+        mkdirSync(referencesDir(gym), { recursive: true });
+        writeFileSync(join(referencesDir(gym), name), buf);
+        rmSync(join(referencesDir(gym), `${name}.description.json`), { force: true });
+        return json(res, 200, { ok: true, name, url: `/files/brands/${gym}/${REFERENCES_DIR}/${name}` });
+      }
+    }
+
     // /api/client/{gym}/batch-setup · /batch/check · /batch · /batch/{id}
     const bm = p.match(/^\/api\/client\/([^/]+)\/(batch-setup|batch|batch\/check|batch\/([^/]+))$/);
     if (bm) {
@@ -425,6 +507,7 @@ const server = createServer(async (req, res) => {
           gallery: existsSync(join(out, "gallery.html")) ? `/files/brands/${gym}/outputs/${id}/gallery.html` : null,
           selected: existsSync(join(out, "selections.json")),
           stories: (() => { const s = readJsonFile(join(out, "stories.json")); return s ? { ads: s.ads.length, image_calls: s.image_calls, max_calls: s.max_calls, left_out: (s.failed?.length || 0) + (s.left_out?.length || 0) } : null; })(),
+          scenes: batchScenes(gym, id), // what the direction drafted for this batch (drafts until the run is confirmed)
         });
       }
     }
@@ -479,10 +562,31 @@ const server = createServer(async (req, res) => {
       if (body.ratios && !/^(1x1|9x16)(,(1x1|9x16))*$/.test(body.ratios)) return json(res, 400, { error: "ratios must be 1x1 and/or 9x16" });
       if (body.numImages && !/^[1-9][0-9]?$/.test(String(body.numImages))) return json(res, 400, { error: "numImages must be 1-99" });
       const spec = RUNNABLE[kind];
+      if (kind === "scenes-refresh") {
+        if (!okSlug(body.gym) || !existsSync(join(brandDir(body.gym), "scenes.json"))) return json(res, 400, { error: "a refresh needs a client with a scene library" });
+        if (!AUDIENCES.includes(body.audience)) return json(res, 400, { error: `audience must be one of ${AUDIENCES.join(", ")}` });
+        if (!Number.isInteger(body.count) || body.count < 1 || body.count > MAX_REFRESH_COUNT) return json(res, 400, { error: `count must be 1 to ${MAX_REFRESH_COUNT}` });
+        if (body.words != null && (typeof body.words !== "string" || body.words.trim().length < 3 || body.words.length > MAX_WORDS)) return json(res, 400, { error: `words must describe the pictures wanted, up to ${MAX_WORDS} characters` });
+        if (body.reference != null && (!REFERENCE_NAME.test(String(body.reference)) || !existsSync(join(referencesDir(body.gym), body.reference)))) return json(res, 400, { error: "reference must name an uploaded reference image" });
+        const run = startRun(kind, { gym: body.gym, audience: body.audience, count: body.count, words: body.words?.trim() || null, reference: body.reference || null });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
       if (spec.needsBrief) {
         if (!okSlug(body.gym) || !okSlug(body.batch)) return json(res, 400, { error: "a batch run needs gym and batch" });
         const brief = readJsonFile(briefPath(body.gym, body.batch));
         if (!brief) return json(res, 404, { error: `no brief for batch ${body.batch}` });
+        // A directed batch: the scenes its plan drafted are approved by this confirmation — only when
+        // the ids confirmed are exactly the drafts on disk now, so what runs is what was read.
+        delete body.approveScenes;
+        if (kind === "batch" && brief.direction) {
+          const mine = batchScenes(body.gym, body.batch), pending = mine.filter((s) => s.draft).map((s) => s.id).sort();
+          if (!mine.length) return json(res, 409, { error: "plan first: the plan drafts this batch's scenes for you to read before anything is generated" });
+          if (pending.length) {
+            const agreed = [body.confirm?.scenes].flat().filter(Boolean).map(String).sort();
+            if (JSON.stringify(agreed) !== JSON.stringify(pending)) return json(res, 409, { error: "the batch's drafted scenes differ from what was confirmed — plan again, read them, and confirm" });
+            body.approveScenes = true;
+          }
+        }
         // A run that spends must have been confirmed against the brief as it is on disk now: the words
         // and the call cap the person agreed to are exactly what will run.
         if (spec.spends === "stories") {

@@ -19,6 +19,7 @@ import http from "node:http";
 import { launchBrowser } from "../skills/references/render-composites.mjs";
 import { cropImage } from "../skills/references/clean-photo.mjs";
 import { validateBrief, runBatch, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
+import { approveScenes, rejectScene } from "../skills/references/scene-library.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const svg = (w, h, body) => "data:image/svg+xml;base64," + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${body}</svg>`).toString("base64");
@@ -335,4 +336,135 @@ test("U8 Stories versions: refused without a confirmed call cap or without the g
   const again = await runAndWait({ kind: "batch-stories-rerender", gym: GYM, batch: BRIEF.batch_id });
   assert.equal(again.code, 0, again.lines.join("\n"));
   assert.match(again.lines[0], /make-stories\.mjs --brand-dir \S+testgym --batch ref-batch --render-only$/);
+});
+
+// ── U9 scene refresh through the panel (B2) ─────────────────────────────────
+
+const PNG1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+
+test("U9 scenes through the panel: drafts listed; approve and reject write exactly what the CLI writes; uploads are images only, served from references/ alone; the refresh run is built server-side", async () => {
+  const g = join(brands, GYM), p = join(g, "scenes.json");
+  const lib = JSON.parse(readFileSync(p, "utf-8"));
+  lib.scenes.push(
+    { id: "w-d1", audience: "women", pose: "upright", people: 1, age: "older", scene: "A woman in her fifties stepping into a lunge.", draft: true, source: "refresh", added: "2026-09-13", covers: ["age:older"] },
+    { id: "w-d2", audience: "women", pose: "low", people: 3, setting: "group", scene: "Three women holding planks, loosely spaced.", draft: true, source: "refresh", added: "2026-09-13" },
+  );
+  writeFileSync(p, JSON.stringify(lib, null, 2) + "\n");
+  let r = await (await call(`/api/client/${GYM}/scenes`)).json();
+  assert.deepEqual(r.drafts.map((d) => d.id), ["w-d1", "w-d2"]);
+  assert.deepEqual([r.status.drafts, r.status.retired, r.status.total], [2, 0, 1]);
+  assert.deepEqual(r.references, []);
+  assert.deepEqual(r.drafts[0].covers, ["age:older"]);
+  // Approve and reject: refused without the token or a reason; otherwise the file is byte-for-byte what the CLI's functions write.
+  const copy = join(dir, "scenes-copy.json"); cpSync(p, copy);
+  assert.equal((await call(`/api/client/${GYM}/scenes/approve`, { method: "POST", body: { ids: ["w-d1"] }, token: null })).status, 403);
+  assert.equal((await call(`/api/client/${GYM}/scenes/reject`, { method: "POST", body: { id: "w-d2" } })).status, 400, "a reject needs a reason");
+  assert.equal((await call(`/api/client/${GYM}/scenes/reject`, { method: "POST", body: { id: "w-d2", reason: " " } })).status, 400);
+  assert.equal((await call(`/api/client/${GYM}/scenes/reject`, { method: "POST", body: { id: "nope", reason: "no such thing" } })).status, 400);
+  assert.equal((await call(`/api/client/${GYM}/scenes/approve`, { method: "POST", body: { ids: ["w-d1"] } })).status, 200);
+  assert.equal((await call(`/api/client/${GYM}/scenes/reject`, { method: "POST", body: { id: "w-d2", reason: "planks read as a yoga class" } })).status, 200);
+  approveScenes(copy, ["w-d1"]); rejectScene(copy, "w-d2", "planks read as a yoga class");
+  assert.equal(readFileSync(p, "utf-8"), readFileSync(copy, "utf-8"), "the panel writes exactly what the CLI writes");
+  r = await (await call(`/api/client/${GYM}/scenes`)).json();
+  assert.deepEqual([r.drafts.length, r.status.retired, r.status.total], [0, 1, 2]);
+  // Uploads: raw bytes, image files only (by their first bytes), a safe name, the token; served from references/ and nowhere else.
+  const put = (name, body, { token = panel.token } = {}) => raw(`/api/client/${GYM}/reference/${name}`, { method: "PUT", headers: { "content-type": "application/octet-stream", ...(token ? { "x-panel-token": token } : {}) }, body });
+  assert.equal((await put("ad.png", PNG1, { token: null })).status, 403, "no token");
+  assert.equal((await put("ad.png", PNG1)).status, 200);
+  assert.ok(existsSync(join(g, "references", "ad.png")));
+  assert.equal((await fetch(panel.url + `/files/brands/${GYM}/references/ad.png`)).status, 200, "served for the thumbnail");
+  writeFileSync(join(g, "references", "ad.png.description.json"), "{}");
+  assert.equal((await fetch(panel.url + `/files/brands/${GYM}/references/ad.png.description.json`)).status, 404, "only the images are served");
+  assert.equal((await put("notes.png", Buffer.from("this is not an image at all"))).status, 400, "first bytes say it is not an image");
+  assert.equal((await put("ad.jpg", PNG1)).status, 400, "a png named .jpg");
+  assert.equal((await put("Bad%20Name.png", PNG1)).status, 400, "the name must be a slug");
+  assert.equal((await put("big.png", Buffer.concat([PNG1, Buffer.alloc(11 * 1024 * 1024)]))).status, 413, "over 10 MB");
+  assert.equal((await put("ad.png", PNG1)).status, 200, "replacing an image");
+  assert.ok(!existsSync(join(g, "references", "ad.png.description.json")), "a replaced image loses its cached reading");
+  assert.ok(!existsSync(join(g, "references", "notes.png")) && !existsSync(join(g, "references", "big.png")));
+  r = await (await call(`/api/client/${GYM}/scenes`)).json();
+  assert.deepEqual(r.references.map((x) => [x.name, x.read]), [["ad.png", false]]);
+  // The refresh run: the shape of every argument is checked; argv is built here from the gym, audience, count and direction.
+  const post = (body) => call("/api/run", { method: "POST", body });
+  assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "kids", count: 3 })).status, 400);
+  assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 13 })).status, 400);
+  assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: "3" })).status, 400);
+  assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 3, reference: "other.png" })).status, 400, "not uploaded");
+  assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 3, reference: "../.env" })).status, 400);
+  assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 3, words: "x" })).status, 400);
+  const ran = await runAndWait({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 2, words: " older women lunging ", reference: "ad.png", extra: "--approve all" });
+  assert.match(ran.lines[0], /^\$ node skills\/references\/refresh-scenes\.mjs --brand-dir \S+testgym --audience women --count 2 --words older women lunging --reference ad\.png$/, "built server-side; the extra field is ignored");
+  assert.notEqual(ran.code, 0, "there is no model in the tests, so the refresh stops at its first call");
+  assert.ok(ran.lines.some((l) => /network blocked|GEMINI_KEY/.test(l)), ran.lines.join("\n"));
+  r = await (await call(`/api/client/${GYM}/scenes`)).json();
+  assert.equal(r.drafts.length, 0, "nothing was written");
+});
+
+test("U9b a directed batch through the panel: accepted with a direction; refused until planned; its drafts must be the ones confirmed; confirming approves them, and only for that batch", async () => {
+  const g = join(brands, GYM), p = join(g, "scenes.json");
+  const post = (body) => call("/api/run", { method: "POST", body });
+  const brief = { ...BRIEF, batch_id: "directed-ui", audience: "LADIES WANTED", generated: 1, real: [], max_calls: 1, direction: { words: "older women lunging with a coach" } };
+  assert.equal((await call(`/api/client/${GYM}/batch`, { method: "POST", body: { brief } })).status, 200, "a directed brief is accepted");
+  const bad = await call(`/api/client/${GYM}/batch`, { method: "POST", body: { brief: { ...brief, batch_id: "directed-bad", direction: { reference: "nope.png" } } } });
+  assert.equal(bad.status, 400); assert.match((await bad.json()).errors.join(" "), /direction: reference image not found/);
+  const confirm = { offer: brief.offer, locations: brief.locations, audience: brief.audience, max_calls: 1 };
+  let x = await post({ kind: "batch", gym: GYM, batch: "directed-ui", confirm });
+  assert.equal(x.status, 409); assert.match((await x.json()).error, /plan first/);
+  // What the plan would have drafted (the plan itself needs the model), written as the planner writes it.
+  const lib = JSON.parse(readFileSync(p, "utf-8"));
+  lib.scenes.push({ id: "w-ui-1", audience: "women", pose: "upright", people: 2, setting: "coached", scene: "A coach beside a woman in her fifties mid-lunge, a hand ready at her elbow.", draft: true, source: "batch:directed-ui", added: "2026-09-13", direction: brief.direction });
+  writeFileSync(p, JSON.stringify(lib, null, 2) + "\n");
+  let view = await (await call(`/api/client/${GYM}/batch/directed-ui`)).json();
+  assert.deepEqual(view.scenes.map((s) => [s.id, s.draft, s.source]), [["w-ui-1", true, "batch:directed-ui"]], "the batch view lists its drafted scenes");
+  x = await post({ kind: "batch", gym: GYM, batch: "directed-ui", confirm }); assert.equal(x.status, 409, "the scenes were not confirmed");
+  x = await post({ kind: "batch", gym: GYM, batch: "directed-ui", confirm: { ...confirm, scenes: ["w-other"] } }); assert.equal(x.status, 409, "different scenes were confirmed");
+  const ran = await runAndWait({ kind: "batch", gym: GYM, batch: "directed-ui", confirm: { ...confirm, scenes: ["w-ui-1"] } });
+  assert.match(ran.lines[0], /plan-offer-batch\.mjs --brand-dir \S+testgym --brief \S+directed-ui\/brief\.json --approve-scenes$/);
+  assert.ok(ran.lines.some((l) => /1 scene\(s\) confirmed for this batch: w-ui-1/.test(l)), ran.lines.join("\n"));
+  view = await (await call(`/api/client/${GYM}/batch/directed-ui`)).json();
+  assert.deepEqual(view.scenes.map((s) => [s.id, s.draft]), [["w-ui-1", false]]);
+  assert.equal(JSON.parse(readFileSync(p, "utf-8")).scenes.find((s) => s.id === "w-ui-1").approved_via, "directed-ui");
+  // The browser cannot set the approval itself: an ordinary batch never gets the flag.
+  const plain = await runAndWait({ kind: "batch", gym: GYM, batch: BRIEF.batch_id, confirm: { ...WORDS, max_calls: 0 }, approveScenes: true });
+  assert.equal(plain.code, 0, plain.lines.join("\n"));
+  assert.match(plain.lines[0], /brief\.json$/, "no --approve-scenes without a direction");
+});
+
+test("U9c the page: the Direction fields feed the brief, the scene library card shows the library and opens the refresh dialog", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+    return result.value;
+  };
+  const until = async (expression, what, ms = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await ev(expression)) return; await new Promise((r) => setTimeout(r, 150)); }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  const loaded = cdp.once("Page.loadEventFired", sessionId);
+  await cdp.send("Page.navigate", { url: panel.url + "/" }, sessionId);
+  await loaded;
+  await until(`typeof STATE!=='undefined' && STATE.sel==='${GYM}'`, "the panel to load");
+  await ev(`STATE.tab='batch'; render(); true`);
+  await until(`!!document.querySelector('#bDirWords') && !!document.querySelector('#bSceneCard h3')`, "the form and the scene card");
+  assert.equal(await ev(`'direction' in briefFromDraft()`), false, "no direction unless given");
+  const type = (sel, text) => ev(`(()=>{const el=document.querySelector('${sel}'); el.focus(); el.value=${JSON.stringify(text)}; el.dispatchEvent(new Event('input',{bubbles:true})); return true})()`);
+  await type("#bDirWords", "older women lunging with a coach");
+  assert.deepEqual(await ev(`briefFromDraft().direction`), { words: "older women lunging with a coach" });
+  assert.ok(await ev(`!!document.querySelector('input[name="bRef"][value="ad.png"]')`), "the uploaded reference is offered");
+  await ev(`bRef('ad.png'); true`);
+  assert.deepEqual(await ev(`briefFromDraft().direction`), { words: "older women lunging with a coach", reference: "ad.png" });
+  const card = await ev(`document.querySelector('#bSceneCard').textContent`);
+  assert.match(card, /Scene library/); assert.match(card, /1 retired/);
+  await type("#bAud", "LADIES WANTED");
+  await until(`B.check?.summary?.scenes_for==='women'`, "the check to follow the audience");
+  await ev(`bRefreshConfirm(); true`);
+  await until(`!!document.querySelector('.modal')`, "the refresh dialog");
+  const modal = await ev(`document.querySelector('.modal').textContent`);
+  assert.match(modal, /Refresh scenes/); assert.match(modal, /Fill the library's gaps/); assert.match(modal, /Like a reference image/);
+  assert.equal(await ev(`document.querySelector('#bRfAud').value`), "women", "the audience follows the batch's callout");
+  assert.equal(await ev(`document.querySelector('#bRfRef').value`), "ad.png");
+  await ev(`[...document.querySelectorAll('.modal button')].find(b=>b.textContent==='Cancel').click(); true`);
+  assert.equal(await ev(`!!document.querySelector('.modal')`), false);
 });
