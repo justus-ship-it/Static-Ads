@@ -72,6 +72,7 @@ let PORT = parseInt(argv.port, 10);
 // Slugs become path segments, so they are constrained rather than sanitised.
 const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const okSlug = (s) => typeof s === "string" && SLUG.test(s);
+const ONEMAP_URL = process.env.ONEMAP_URL || "https://www.onemap.gov.sg";
 /** A new random token every launch. The panel's page carries it; nothing else can read it. */
 const TOKEN = randomBytes(24).toString("hex");
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".webp"]);
@@ -695,6 +696,29 @@ const server = createServer(async (req, res) => {
         const r = await checkLink({ ...profile, meta_assets: { ...(profile.meta_assets || {}), ...picked } }, { client: graphClient({ config: c }) });
         return json(res, 200, { configured: true, app_secret: !!c.appSecret, used: c.used, ...r });
       } catch (e) { return json(res, 502, { configured: true, error: scrubTokens(e.message), code: e.code ?? null }); }
+    }
+    // A Singapore address or postal code → points on the map, from OneMap (the government's geocoder; no key needed).
+    if (p === "/api/geocode") {
+      const q = (url.searchParams.get("q") || "").trim();
+      if (!q || q.length > 120 || /[\r\n]/.test(q)) return json(res, 400, { error: "give an address or a 6-digit postal code" });
+      try {
+        const r = await fetch(`${ONEMAP_URL}/api/common/elastic/search?${new URLSearchParams({ searchVal: q, returnGeom: "Y", getAddrDetails: "Y", pageNum: "1" })}`, { headers: { accept: "application/json" } });
+        const b = await r.json();
+        const results = (Array.isArray(b.results) ? b.results : []).map((x) => ({ address: String(x.ADDRESS || x.SEARCHVAL || ""), postal_code: /^\d{6}$/.test(String(x.POSTAL || "")) ? String(x.POSTAL) : null, lat: Number(x.LATITUDE), lng: Number(x.LONGITUDE) })).filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lng)).slice(0, 8);
+        return json(res, 200, { results });
+      } catch (e) { return json(res, 502, { error: `OneMap could not be reached (${e.message})` }); }
+    }
+    // Meta place keys (pasted, or from the account's history) → their names and points.
+    const mpl = p.match(/^\/api\/client\/([^/]+)\/meta-places$/);
+    if (mpl && req.method === "GET") {
+      const gym = mpl[1];
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      const keys = (url.searchParams.get("keys") || "").split(",").map((k) => k.trim()).filter(Boolean);
+      if (!keys.length || keys.length > 20 || keys.some((k) => !/^\d{5,20}$/.test(k))) return json(res, 400, { error: "place keys are digits, up to 20 of them" });
+      const c = metaConfig({ gym });
+      if (!c.token) return json(res, 200, { configured: false, places: [] });
+      try { return json(res, 200, { configured: true, places: await graphClient({ config: c }).places(keys) }); }
+      catch (e) { return json(res, 502, { configured: true, error: scrubTokens(e.message) }); }
     }
     if (p === "/api/enums") return json(res, 200, { cta: CTA_ENUM, offerTypes: OFFER_TYPES, priceQualifiers: PRICE_QUALIFIERS, maxLocations: MAX_LOCATIONS });
     if (p === "/api/clients" && req.method === "GET") return json(res, 200, { clients: listClients() });

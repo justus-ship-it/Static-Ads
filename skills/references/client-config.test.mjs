@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES } from "./client-config.mjs";
+import { validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems, MAX_WORDINGS } from "./ad-wordings.mjs";
 
@@ -94,7 +94,11 @@ test("P2 completeness is worked out from the profile and what is on disk: each s
     Object.assign(p.meta_assets, { ad_account_id: "act_1", page_id: "2", business_id: "3", pixel_id: "4", lead_form_id: "5" });
     assert.deepEqual(profileCompleteness(p, { ...have, scenes: { exists: true, approved: true, counts: { men: 3, women: 2 } } }).sections.find((s) => s.id === "targeting").missing, ["a radius pin"]);
     p.targeting_defaults.geo.radius_pins = [{ label: "Tai Seng", postal_code: "534407", radius_km: 5 }];
+    assert.deepEqual(profileCompleteness(p, { ...have, scenes: { exists: true, approved: true, counts: { men: 3, women: 2 } } }).sections.find((s) => s.id === "targeting").missing, ["a radius pin"], "a postal code alone cannot be targeted — it needs a point or a Meta place");
+    p.targeting_defaults.geo.radius_pins = [{ label: "Tai Seng", postal_code: "534407", lat: 1.335, lng: 103.887, radius_km: 5 }];
     assert.equal(profileCompleteness(p, { ...have, scenes: { exists: true, approved: true, counts: { men: 3, women: 2 } } }).ready_to_publish, true);
+    p.targeting_defaults.geo.radius_pins = [{ label: "Sin Ming", place_key: "107327800879305", radius_km: 5 }];
+    assert.equal(profileCompleteness(p, { ...have, scenes: { exists: true, approved: true, counts: { men: 3, women: 2 } } }).ready_to_publish, true, "a Meta place is enough");
     assert.equal(profileCompleteness(p, { ...have, wordings: 0 }).ready_to_create, false, "no offer wording yet");
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
@@ -214,4 +218,34 @@ test("P5 brand palettes: three pairings built from the gym's colours, written li
     assert.deepEqual(validateProfile({ ...p, creative_defaults: { palettes: "both" } }, { gymDir: d }).errors, []);
     assert.equal(CREATIVE_DEFAULTS.palettes, "reference");
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("P6 publishing defaults: the budget's level and bid strategy are checked (a capped strategy needs its amount); pins need a Meta place or a point, a radius in Meta's range, and one pin per callout; the gender per callout is the owner's map first, then the words; the starter is ad-set budget SGD 50/day, Highest volume, ages 25-60", () => {
+  const base = () => structuredClone(PROFILE_STARTER("test-gym", "Test Gym"));
+  const errs = (p) => validateProfile(p).errors;
+  const s = base();
+  assert.deepEqual([s.campaign_defaults.budget.level, s.campaign_defaults.budget.amount, s.campaign_defaults.budget.bid_strategy, s.targeting_defaults.demographics.age_min, s.targeting_defaults.demographics.age_max, "instagram_user_id" in s.meta_assets], ["adset", 50, "LOWEST_COST_WITHOUT_CAP", 25, 60, true]);
+  assert.deepEqual(errs(s), []);
+  assert.deepEqual(Object.keys(BUDGET_LEVELS), ["adset", "campaign"]); assert.equal(BID_STRATEGIES.LOWEST_COST_WITHOUT_CAP, "Highest volume");
+  let p = base(); p.campaign_defaults.budget.level = "ad"; assert.ok(errs(p).some((e) => /budget level must be one of adset, campaign/.test(e)));
+  p = base(); p.campaign_defaults.budget.bid_strategy = "CHEAPEST"; assert.ok(errs(p).some((e) => /bid strategy must be one of/.test(e)));
+  p = base(); p.campaign_defaults.budget.bid_strategy = "COST_CAP"; assert.ok(errs(p).some((e) => /Cost per result goal needs an amount/.test(e)));
+  p.campaign_defaults.budget.bid_cap = 12; assert.deepEqual(errs(p), []);
+  p = base(); p.targeting_defaults.geo.radius_pins = [{ label: "A", place_key: "x1", radius_km: 0.5, location_types: ["work"], callouts: ["BISHAN"] }, { label: "B", lat: "1.3", lng: 103.8, callouts: ["bishan"] }];
+  const e = errs(p);
+  assert.ok(e.some((x) => /pin 1 \(A\): place key "x1" is not a Meta place id/.test(x)), e.join("\n"));
+  assert.ok(e.some((x) => /pin 1 \(A\): radius must be 1-80 km/.test(x)));
+  assert.ok(e.some((x) => /pin 1 \(A\): location types must be home, recent or both/.test(x)));
+  assert.ok(e.some((x) => /pin 2 \(B\): lat must be a number/.test(x)));
+  assert.ok(e.some((x) => /location callout "bishan" is on two pins/.test(x)), "the same callout, whatever its case, cannot be on two pins");
+  p = base(); p.targeting_defaults.demographics.callout_genders = { "MEN WANTED": "boys" }; assert.ok(errs(p).some((x) => /gender for "MEN WANTED" must be one of men, women, all/.test(x)));
+  // Which pin a callout targets, and which gender.
+  const g = base(); g.targeting_defaults.geo.radius_pins = [{ label: "Sin Ming", place_key: "107327800879305", radius_km: 5 }, { label: "Bishan", lat: 1.35, lng: 103.85, radius_km: 3, callouts: ["BISHAN"] }];
+  assert.deepEqual([pinFor(g, "BISHAN").pin.label, pinFor(g, "BISHAN").fallback, pinFor(g, "Bishan").pin.label, pinFor(g, "ANG MO KIO").pin.label, pinFor(g, "ANG MO KIO").fallback, pinFor(g, null).pin.label], ["Bishan", false, "Bishan", "Sin Ming", true, "Sin Ming"]);
+  assert.deepEqual(pinFor(base(), "BISHAN"), { pin: null, fallback: true });
+  assert.deepEqual([pinUsable({ place_key: "107327800879305" }), pinUsable({ lat: 1.3, lng: 103.8 }), pinUsable({ postal_code: "575583" }), pinUsable(null)], [true, true, false, false]);
+  assert.deepEqual(["MEN WANTED", "Fit Fathers", "LADIES OF BISHAN", "Strong Mothers", "EVERYONE", null].map((c) => calloutGender(c)), ["men", "men", "women", "women", "all", "all"]);
+  g.targeting_defaults.demographics.callout_genders = { "EVERYONE": "women", "men wanted": "all" };
+  assert.deepEqual([calloutGender("EVERYONE", g), calloutGender("MEN WANTED", g), calloutGender("Fit Fathers", g)], ["women", "all", "men"], "the owner's map wins, whatever the case; the words decide the rest");
+  assert.deepEqual(GENDER_CHOICES, ["men", "women", "all"]);
 });

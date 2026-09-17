@@ -137,6 +137,21 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
     /** The verified advertiser identities the account's ad sets already carry for regulated regions
      *  (Singapore: the beneficiary and payer of every ad). Meta has no listing edge for them that a
      *  system user can read, but every ad set that delivers in Singapore names them. */
+    /** The Instagram accounts connected to an ad account (the ones a creative may run as). */
+    instagramAccounts: (adAccountId) => list(`${actId(adAccountId)}/instagram_accounts`, { fields: "id,username" }).then((r) => r.map((x) => ({ id: x.id, username: x.username || null }))),
+    /** Meta place keys → names and points (Meta has no place search for third parties; keys come from the account's history or are pasted). */
+    places: async (keys) => { if (!keys.length) return []; const r = await get("search", { type: "adgeolocationmeta", places: JSON.stringify(keys.map(String)) }); return Object.values(r.data?.places || {}).map(placeView); },
+    /** The pins the account's own ad sets already target: named places and dropped points, with how many ad sets use each. */
+    historyPins: async (adAccountId) => {
+      const sets = await list(`${actId(adAccountId)}/adsets`, { fields: "id,name,targeting{geo_locations}", limit: 50 }, { maxPages: 1 });
+      const pins = new Map();
+      for (const s of sets) {
+        const g = s.targeting?.geo_locations || {};
+        for (const p of g.places || []) { const k = `place:${p.key}`; const cur = pins.get(k) || { kind: "place", key: String(p.key), name: p.name || null, lat: num(p.latitude), lng: num(p.longitude), radius_km: num(p.radius), location_types: g.location_types || null, adsets: 0, example: s.name }; cur.adsets++; pins.set(k, cur); }
+        for (const p of g.custom_locations || []) { const k = `point:${p.latitude},${p.longitude}`; const cur = pins.get(k) || { kind: "point", key: null, name: null, lat: num(p.latitude), lng: num(p.longitude), radius_km: num(p.radius), location_types: g.location_types || null, adsets: 0, example: s.name }; cur.adsets++; pins.set(k, cur); }
+      }
+      return [...pins.values()].sort((a, b) => b.adsets - a.adsets);
+    },
     regulationIdentities: async (adAccountId) => {
       const sets = await list(`${actId(adAccountId)}/adsets`, { fields: "id,name,regional_regulated_categories,regional_regulation_identities", limit: 50 });
       const seen = new Map();
@@ -164,7 +179,7 @@ const clean = (v) => (v == null ? "" : String(v).trim());
  */
 export async function checkLink(profile, { client, locale = null } = {}) {
   const m = profile?.meta_assets || {};
-  const out = { version: client.version, me: null, accounts: [], pages: [], businesses: [], chosen: { account: null, page: null, instagram: null, forms: [], pixels: [] }, problems: [], warnings: [] };
+  const out = { version: client.version, me: null, accounts: [], pages: [], businesses: [], chosen: { account: null, page: null, instagram: null, instagram_accounts: [], forms: [], pixels: [], history_pins: [] }, problems: [], warnings: [] };
   out.me = await client.me();
   out.accounts = (await client.adAccounts()).map(accountView);
   out.pages = (await client.pages()).map(pageView);
@@ -180,6 +195,8 @@ export async function checkLink(profile, { client, locale = null } = {}) {
       if (out.chosen.account.status !== "active") out.problems.push(`the ad account is ${out.chosen.account.status || "in an unknown state"}`);
       try { out.chosen.pixels = await client.pixels(accountId); } catch (e) { out.warnings.push(`pixels could not be listed: ${e.message}`); }
       if (clean(m.pixel_id) && !out.chosen.pixels.some((p) => p.id === clean(m.pixel_id))) out.problems.push(`pixel ${m.pixel_id} is not one of the ad account's pixels`);
+      try { out.chosen.instagram_accounts = await client.instagramAccounts(accountId); } catch (e) { out.warnings.push(`Instagram accounts could not be listed: ${e.message}`); }
+      try { out.chosen.history_pins = await client.historyPins(accountId); } catch (e) { out.warnings.push(`the account's existing pins could not be read: ${e.message}`); }
     } catch (e) { out.problems.push(`ad account: ${e.message}`); }
   }
   if (pageId) {
@@ -187,8 +204,6 @@ export async function checkLink(profile, { client, locale = null } = {}) {
     try {
       out.chosen.page = mine || pageView(await client.page(pageId));
       if (!mine) out.warnings.push(`Page ${pageId} is not among the Pages assigned to the system user — publishing from it will fail until it is`);
-      out.chosen.instagram = out.chosen.page.instagram || null;
-      if (clean(m.instagram_actor_id) && out.chosen.instagram?.id !== clean(m.instagram_actor_id)) out.problems.push(`Instagram account ${m.instagram_actor_id} is not the one linked to this Page${out.chosen.instagram ? ` (${out.chosen.instagram.id}, @${out.chosen.instagram.username})` : ""}`);
       try { out.chosen.forms = await client.leadForms(pageId); } catch (e) { out.warnings.push(`lead forms could not be listed: ${e.message}`); }
       if (clean(m.lead_form_id)) {
         const form = out.chosen.forms.find((x) => x.id === clean(m.lead_form_id));
@@ -198,8 +213,18 @@ export async function checkLink(profile, { client, locale = null } = {}) {
     } catch (e) { out.problems.push(`Page: ${e.message}`); }
   }
   if (clean(m.business_id) && out.businesses.length && !out.businesses.some((b) => b.id === clean(m.business_id))) out.warnings.push(`business portfolio ${m.business_id} is not one the token can see`);
+  // The Instagram identity the ads run as: one connected to the ad account (what their creatives carry), or the
+  // Page's own. Chosen by id; with none chosen, the account's only one, else the Page's.
+  const igId = clean(m.instagram_user_id) || clean(m.instagram_actor_id);
+  const known = [...out.chosen.instagram_accounts, ...(out.chosen.page?.instagram ? [out.chosen.page.instagram] : [])];
+  if (igId) {
+    out.chosen.instagram = known.find((x) => x.id === igId) || null;
+    if (!out.chosen.instagram && (accountId || pageId)) out.problems.push(`Instagram account ${igId} is not one connected to this ad account or Page${known.length ? ` (${known.map((x) => `${x.id} @${x.username || "?"}`).join(", ")})` : ""}`);
+  } else out.chosen.instagram = out.chosen.instagram_accounts.length === 1 ? out.chosen.instagram_accounts[0] : out.chosen.page?.instagram || null;
   return out;
 }
+const num = (v) => (v == null || v === "" ? null : Number(v));
+const placeView = (p) => ({ key: String(p.key), name: p.name || null, address: p.address_string || null, lat: num(p.latitude), lng: num(p.longitude), country: p.country_code || null });
 const accountView = (a) => ({ id: a.id, account_id: a.account_id, name: a.name, currency: a.currency, status: ACCOUNT_STATUS[a.account_status] || (a.account_status == null ? null : `status ${a.account_status}`), timezone: a.timezone_name || null, business: a.business ? { id: a.business.id, name: a.business.name } : null });
 const pageView = (p) => ({ id: p.id, name: p.name, category: p.category || null, instagram: p.instagram_business_account ? { id: p.instagram_business_account.id, username: p.instagram_business_account.username || null } : null });
 

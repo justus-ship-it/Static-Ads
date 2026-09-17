@@ -24,6 +24,7 @@ import { join, resolve, basename } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { metaConfig, graphClient, actId, scrubTokens, MetaError } from "./meta-api.mjs";
+import { calloutGender, pinFor, pinUsable, BID_STRATEGIES } from "./client-config.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 export const AD_STATUS = "PAUSED";
@@ -34,7 +35,16 @@ const CTA = "SIGN_UP";
 export const ENHANCEMENTS = ["image_touchups", "image_brightness_and_contrast", "enhance_cta", "text_optimizations", "image_templates", "inline_comment", "image_uncrop", "adapt_to_placement", "product_extensions", "description_automation", "add_text_overlay", "image_background_gen", "image_animation", "text_translation"];
 export const optOut = (features = ENHANCEMENTS) => ({ creative_features_spec: Object.fromEntries(features.map((k) => [k, { enroll_status: "OPT_OUT" }])) });
 /** The gender Meta targets for an audience callout: men, women, or everyone. */
-export const genderFor = (audience) => (/\b(men|man|guys|dads?|fathers?|gents|males?)\b/i.test(audience || "") ? [1] : /\b(ladies|women|woman|mums?|moms?|mothers?|girls|females?)\b/i.test(audience || "") ? [2] : null);
+export const genderFor = (audience, profile = null) => { const g = calloutGender(audience, profile); return g === "men" ? [1] : g === "women" ? [2] : null; };
+/** Never Advantage+ audience (the owner's rule): Meta may not widen the audience past what the ad set says. */
+export const NEVER_ADVANTAGE = Object.freeze({ advantage_audience: 0 });
+/** A pin as Meta's geo_locations: a named place by key, else a dropped point. */
+export const geoFor = (pin) => ({
+  ...(pin.place_key ? { places: [{ key: String(pin.place_key), radius: pin.radius_km || DEFAULT_RADIUS_KM, distance_unit: "kilometer" }] }
+    : { custom_locations: [{ latitude: pin.lat, longitude: pin.lng, radius: pin.radius_km || DEFAULT_RADIUS_KM, distance_unit: "kilometer" }] }),
+  location_types: pin.location_types || ["home", "recent"],
+});
+export const pinWords = (pin, fallback = false) => `${pin.place_name || pin.label || pin.postal_code || "pin"}${pin.place_key ? ` (Meta place ${pin.place_key})` : Number.isFinite(pin.lat) ? ` (${pin.lat}, ${pin.lng})` : ""} · ${pin.radius_km || DEFAULT_RADIUS_KM} km${fallback ? " · the gym's first pin, none names this callout" : ""}`;
 const today = () => new Date().toISOString().slice(0, 10);
 const writeWhole = (p, text) => { writeFileSync(p + ".tmp", text); renameSync(p + ".tmp", p); };
 
@@ -59,34 +69,44 @@ export function buildTestOne({ profile, batch, ad, words = null, storyFile = nul
   const cd = profile.campaign_defaults || {}, budget = cd.budget || {};
   const currency = profile.locale?.currency || "SGD";
   if (budget.currency && budget.currency !== currency) throw new Error(`the budget is in ${budget.currency} but the profile's currency is ${currency}`);
-  const cents = Math.round((budget.amount || 40) * 100);
-  const tg = profile.targeting_defaults || {}, pin = tg.geo?.radius_pins?.[0], dem = tg.demographics || {};
-  if (!pin || !Number.isFinite(pin.lat) || !Number.isFinite(pin.lng)) throw new Error("the profile has no radius pin with latitude and longitude (Targeting & budget)");
+  // The budget sits on the campaign or on each ad set (the owner's choice; ad set by default); the bid strategy with it.
+  const level = budget.level === "campaign" ? "campaign" : "adset";
+  const strategy = budget.bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+  if (!BID_STRATEGIES[strategy]) throw new Error(`bid strategy "${strategy}" is not one Meta knows (Targeting & budget)`);
+  const cents = Math.round((budget.amount || 50) * 100);
+  const capCents = strategy === "LOWEST_COST_WITHOUT_CAP" ? null : Math.round((budget.bid_cap || 0) * 100);
+  if (strategy !== "LOWEST_COST_WITHOUT_CAP" && !(capCents > 0)) throw new Error(`${BID_STRATEGIES[strategy]} needs an amount (Targeting & budget)`);
+  const tg = profile.targeting_defaults || {}, dem = tg.demographics || {};
+  const { pin, fallback } = pinFor(profile, w.location);
+  if (!pinUsable(pin)) throw new Error(`the profile has no usable radius pin${w.location ? ` for ${w.location}` : ""} — a Meta place, or a point with latitude and longitude (Targeting & budget)`);
   // Meta: "Lead Generation ads should always link to external content" — the Page's own address is refused.
   if (!/^https?:\/\/\S+\.\S+$/.test(profile.website || "")) throw new Error("a lead ad must link to an external website and the profile has none — fill in the website on Identity & locations");
-  const genders = genderFor(w.audience);
+  const genders = genderFor(w.audience, profile);
   const attribution = cd.attribution || {};
   const text = words || placeholderWords(profile, ad);
   const campaignName = `${abbr} | TEST | Leads | ${w.offer || batch.batch_id} | ${tag}`;
   return {
-    account, page_id: m.page_id, lead_form_id: m.lead_form_id, pixel_id: m.pixel_id || null,
+    account, page_id: m.page_id, instagram_user_id: m.instagram_user_id || null, lead_form_id: m.lead_form_id, pixel_id: m.pixel_id || null,
+    budget: { level, daily: cents / 100, currency, bid_strategy: strategy, bid_cap: capCents ? capCents / 100 : null },
+    pin: { ...pin, fallback, words: pinWords(pin, fallback) },
     image: { file: ad.file, name: `${batch.batch_id}__${basename(ad.file)}` },
     story: storyFile ? { file: storyFile, name: `${batch.batch_id}__${basename(storyFile)}` } : null,
     campaign: {
       name: campaignName, objective: cd.objective || "OUTCOME_LEADS", status: AD_STATUS, special_ad_categories: cd.special_ad_categories || [],
-      buying_type: cd.buying_type || "AUCTION", daily_budget: cents, bid_strategy: budget.bid_strategy || "LOWEST_COST_WITHOUT_CAP",
+      buying_type: cd.buying_type || "AUCTION", ...(level === "campaign" ? { daily_budget: cents, bid_strategy: strategy } : {}),
     },
     adset: {
       name: `${abbr}_${loc || "ALL"}_TEST_${tag}`, status: AD_STATUS,
       optimization_goal: "LEAD_GENERATION", billing_event: "IMPRESSIONS", destination_type: "ON_AD",
+      ...(level === "adset" ? { daily_budget: cents, bid_strategy: strategy } : {}), ...(capCents ? { bid_amount: capCents } : {}),
       promoted_object: { page_id: m.page_id },
       // Meta: ads that include locations in Singapore must carry the regulated category SINGAPORE_UNIVERSAL and
       // name a verified advertiser as beneficiary and payer (Online Criminal Harms Act, enforced since May 2025).
       ...(singapore ? { regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: m.singapore_beneficiary_id, singapore_universal_payer: m.singapore_payer_id } } : {}),
       targeting: {
-        geo_locations: { custom_locations: [{ latitude: pin.lat, longitude: pin.lng, radius: pin.radius_km || DEFAULT_RADIUS_KM, distance_unit: "kilometer" }], location_types: pin.location_types || ["home", "recent"] },
+        geo_locations: geoFor(pin),
         age_min: dem.age_min ?? 25, age_max: dem.age_max ?? 45, ...(genders ? { genders } : {}),
-        targeting_automation: { advantage_audience: 0 },
+        targeting_automation: { ...NEVER_ADVANTAGE },
       },
       // Lead-generation optimisation only takes a 1-day click window (Meta: "supported combination … (1, 0)");
       // the profile's 7-day click / 1-day view is for conversion campaigns.
@@ -95,7 +115,7 @@ export function buildTestOne({ profile, batch, ad, words = null, storyFile = nul
     creative: {
       name: `${abbr}_TEST_${ad.folder}`,
       object_story_spec: {
-        page_id: m.page_id,
+        page_id: m.page_id, ...(m.instagram_user_id ? { instagram_user_id: m.instagram_user_id } : {}),
         link_data: {
           image_hash: "(the uploaded image's hash)", link: profile.website,
           message: text.message, name: text.headline, description: text.description,
@@ -143,7 +163,7 @@ export async function createTestOne(plan, { client, brandDir, record, log = cons
       try {
         const r = await client.post(`${plan.account}/adcreatives`, spec);
         const kept = Object.keys(spec.degrees_of_freedom_spec?.creative_features_spec || {});
-        return { ...r, link, enhancements: kept.length ? "opted out" : "not opted out — switch Advantage+ creative enhancements off in Ads Manager", opted_out: kept, ...(dropped.length ? { opt_out_refused: dropped } : {}) };
+        return { ...r, link, instagram: plan.instagram_user_id || null, enhancements: kept.length ? "opted out" : "not opted out — switch Advantage+ creative enhancements off in Ads Manager", opted_out: kept, ...(dropped.length ? { opt_out_refused: dropped } : {}) };
       } catch (e) {
         if (!(e instanceof MetaError) || e.code !== 100 || !spec.degrees_of_freedom_spec) throw e;
         // A feature this version does not know for this ad shape is named in the error: drop that one and retry.
@@ -156,7 +176,7 @@ export async function createTestOne(plan, { client, brandDir, record, log = cons
         dropped.push(...Object.keys(spec.degrees_of_freedom_spec.creative_features_spec)); delete spec.degrees_of_freedom_spec;
       }
     }
-  }, (had) => (had.link !== link ? `its link was ${had.link || "the Page"}, the plan's is ${link}` : had.enhancements !== "opted out" ? "its enhancements were not opted out" : false));
+  }, (had) => (had.link !== link ? `its link was ${had.link || "the Page"}, the plan's is ${link}` : had.enhancements !== "opted out" ? "its enhancements were not opted out" : (had.instagram || null) !== (plan.instagram_user_id || null) ? `its Instagram identity was ${had.instagram || "the Page's"}, the plan's is ${plan.instagram_user_id || "the Page's"}` : false));
   // An ad carries its creative: a remade creative means a remade ad (the old one stays PAUSED in the account, recorded as superseded).
   const ad = await step("ad", async () => ({ ...(await client.post(`${plan.account}/ads`, { ...plan.ad, adset_id: adset.id, creative: { creative_id: creative.id } })), creative_id: creative.id }),
     (had) => (had.creative_id !== creative.id ? `it used creative ${had.creative_id || "(unrecorded)"}, the plan's is ${creative.id}` : false));
@@ -194,7 +214,7 @@ if (isMain) {
       console.log(`· Singapore identity: beneficiary ${m.singapore_beneficiary_id}, payer ${m.singapore_payer_id} (${m.labels.singapore_identity}) — kept in the profile`);
     }
     const plan = buildTestOne({ profile, batch, ad, storyFile });
-    console.log(`plan: ${plan.campaign.name}\n  ad set ${plan.adset.name} · ${plan.adset.targeting.geo_locations.custom_locations[0].radius} km round ${plan.adset.targeting.geo_locations.custom_locations[0].latitude},${plan.adset.targeting.geo_locations.custom_locations[0].longitude} · ages ${plan.adset.targeting.age_min}-${plan.adset.targeting.age_max}${plan.adset.targeting.genders ? ` · genders ${plan.adset.targeting.genders.join(",")}` : ""} · ${plan.campaign.daily_budget / 100} ${profile.locale?.currency || "SGD"}/day\n  ad ${plan.ad.name} · image ${plan.image.file}${plan.story ? ` (9:16 on disk: ${plan.story.file}, not used by the test)` : ""}\n  lead form ${plan.lead_form_id} on Page ${plan.page_id} · every object ${AD_STATUS}`);
+    console.log(`plan: ${plan.campaign.name}\n  ad set ${plan.adset.name} · ${plan.pin.words} · ages ${plan.adset.targeting.age_min}-${plan.adset.targeting.age_max}${plan.adset.targeting.genders ? ` · genders ${plan.adset.targeting.genders.join(",")}` : " · everyone"} · ${plan.budget.daily} ${plan.budget.currency}/day on the ${plan.budget.level === "adset" ? "ad set" : "campaign"} · ${BID_STRATEGIES[plan.budget.bid_strategy]}${plan.budget.bid_cap ? ` ${plan.budget.bid_cap}` : ""}\n  ad ${plan.ad.name} · image ${plan.image.file}${plan.story ? ` (9:16 on disk: ${plan.story.file}, not used by the test)` : ""}\n  lead form ${plan.lead_form_id} on Page ${plan.page_id}${plan.instagram_user_id ? ` · Instagram ${plan.instagram_user_id}` : " · no Instagram account chosen (Meta will use a Page-backed one)"} · every object ${AD_STATUS}`);
     if (v["dry-run"]) { console.log(JSON.stringify({ campaign: plan.campaign, adset: plan.adset, creative: plan.creative, ad: plan.ad }, null, 2)); process.exit(0); }
     const path = join(out, "publish-test.json");
     const record = existsSync(path) ? { ...JSON.parse(readFileSync(path, "utf-8")), path } : { path, test: true, gym: v.gym, batch_id: v.batch, ad: ad.folder, account: plan.account, started: new Date().toISOString(), plan: { campaign: plan.campaign, adset: plan.adset, creative: plan.creative, ad: plan.ad, image: plan.image }, created: {}, error: null };

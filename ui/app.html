@@ -606,14 +606,16 @@ ${esc(S.names?.META_APP_SECRET||'META_APP_SECRET')}=…</pre></li>
     ${K?`<p class="hint" style="margin:10px 0">Meta ${esc(K.version)} · ${K.accounts.length} ad account${K.accounts.length===1?'':'s'}, ${K.pages.length} Page${K.pages.length===1?'':'s'} assigned to the system user. Pick this gym's; the ids go into the profile below.</p>
       <div class="grid">
         <div><label>Ad account</label><select onchange="metaPick('ad_account_id',this.value,'account')">${opt(K.accounts, m.ad_account_id&&(m.ad_account_id.startsWith('act_')?m.ad_account_id:'act_'+m.ad_account_id), a=>`${a.name} · ${a.currency} · ${a.status||'?'}${a.business?` · ${a.business.name}`:''}`)}</select></div>
-        <div><label>Facebook Page</label><select onchange="metaPick('page_id',this.value,'page')">${opt(K.pages, m.page_id, x=>`${x.name}${x.instagram?` · @${x.instagram.username}`:' · no Instagram linked'}`)}</select></div>
+        <div><label>Facebook Page</label><select onchange="metaPick('page_id',this.value,'page')">${opt(K.pages, m.page_id, x=>`${x.name}${x.instagram?` · @${x.instagram.username}`:''}`)}</select></div>
+        <div><label>Instagram account <span class="n">· connected to the chosen ad account</span></label><select onchange="metaPick('instagram_user_id',this.value,'instagram')" ${igList(K).length?'':'disabled'}>${opt(igList(K), m.instagram_user_id, x=>`@${x.username||x.id}${x.via==='page'?' · the Page\'s':''}`)}</select>${!m.ad_account_id?'<div class="hint" style="margin:4px 0 0">Choose the ad account to list its Instagram accounts.</div>':igList(K).length?'':'<div class="hint" style="margin:4px 0 0">None connected: Meta will run the ads under a Page-backed Instagram identity.</div>'}</div>
         <div><label>Lead form <span class="n">· of the chosen Page</span></label><select onchange="metaPick('lead_form_id',this.value,'form')" ${K.chosen.forms.length?'':'disabled'}>${opt(K.chosen.forms, m.lead_form_id, x=>`${x.name} · ${(x.status||'').toLowerCase()}${x.leads_count!=null?` · ${x.leads_count} leads`:''}`)}</select>${!m.page_id?'<div class="hint" style="margin:4px 0 0">Choose the Page to list its forms.</div>':''}</div>
         <div><label>Pixel <span class="n">· of the chosen ad account</span></label><select onchange="metaPick('pixel_id',this.value,'pixel')" ${K.chosen.pixels.length?'':'disabled'}>${opt(K.chosen.pixels, m.pixel_id, x=>`${x.name}${x.last_fired_time?` · last fired ${x.last_fired_time.slice(0,10)}`:' · never fired'}`)}</select></div>
         <div><label>Business portfolio</label><select onchange="metaPick('business_id',this.value,'business')" ${K.businesses.length?'':'disabled'}>${opt(K.businesses, m.business_id, x=>x.name)}</select></div>
       </div>
       ${K.chosen.account||K.chosen.page?`<div class="kv" style="margin-top:12px">
         ${K.chosen.account?`<span>Ad account</span><div>${esc(K.chosen.account.name)} · ${esc(K.chosen.account.currency)} · ${esc(K.chosen.account.status||'?')}${K.chosen.account.timezone?` · ${esc(K.chosen.account.timezone)}`:''}</div>`:''}
-        ${K.chosen.page?`<span>Page</span><div>${esc(K.chosen.page.name)}${K.chosen.instagram?` · Instagram @${esc(K.chosen.instagram.username||K.chosen.instagram.id)}`:' · no Instagram account linked'}</div>`:''}
+        ${K.chosen.page?`<span>Page</span><div>${esc(K.chosen.page.name)}</div>`:''}
+        <span>Instagram</span><div>${K.chosen.instagram?`@${esc(K.chosen.instagram.username||K.chosen.instagram.id)} (${esc(K.chosen.instagram.id)})`:'none chosen — Meta will use a Page-backed identity'}</div>
       </div>`:''}
       ${problems}`:''}
   </div>`;
@@ -625,7 +627,7 @@ ${esc(S.names?.META_APP_SECRET||'META_APP_SECRET')}=…</pre></li>
     ${f('business_id','Business portfolio id',L.business?esc(L.business):'Business settings → Business info','e.g. 1234567890')}
     ${f('ad_account_id','Ad account id',L.account?esc(L.account):'Starts with act_ in Ads Manager','act_1234567890')}
     ${f('page_id','Facebook page id',L.page?esc(L.page):'The page the ads run from','')}
-    ${f('instagram_actor_id','Instagram account id',L.instagram?esc(L.instagram):'The Instagram account the ads run from','')}
+    ${f('instagram_user_id','Instagram account id',L.instagram?esc(L.instagram):'The Instagram account the ads run as (one connected to the ad account)','')}
     ${f('pixel_id','Pixel / dataset id',L.pixel?esc(L.pixel):'Events Manager','')}
     ${f('lead_form_id','Lead form id',L.form?esc(L.form):'The instant form the ads send people to','')}
   </div>
@@ -636,19 +638,25 @@ async function metaCheck(){
   MT.busy = true; MT.error = null; paintMeta($('#view'));
   // The ids as they are on the page right now (saved or not), so a freshly picked Page lists its forms.
   const m = STATE.profile.meta_assets || {};
-  const q = new URLSearchParams(Object.entries({ ad_account_id:m.ad_account_id, page_id:m.page_id, instagram_actor_id:m.instagram_actor_id, pixel_id:m.pixel_id, lead_form_id:m.lead_form_id, business_id:m.business_id }).filter(([,v])=>v!=null).map(([k,v])=>[k,String(v).trim()]));
-  try { const r = await api(`/api/client/${STATE.sel}/meta-link?${q}`); MT.link = r.configured ? r : null; if (!r.configured){ MT.status = await api('/api/meta/status'); } }
+  const q = new URLSearchParams(Object.entries({ ad_account_id:m.ad_account_id, page_id:m.page_id, instagram_user_id:m.instagram_user_id, pixel_id:m.pixel_id, lead_form_id:m.lead_form_id, business_id:m.business_id }).filter(([,v])=>v!=null).map(([k,v])=>[k,String(v).trim()]));
+  try {
+    const r = await api(`/api/client/${STATE.sel}/meta-link?${q}`); MT.link = r.configured ? r : null; if (!r.configured){ MT.status = await api('/api/meta/status'); }
+    // The account's only Instagram account is the obvious pick: taken, and said so, unless one is already chosen.
+    if (r.configured && !m.instagram_user_id && r.chosen?.instagram_accounts?.length===1){ const ig = r.chosen.instagram_accounts[0]; setP('meta_assets.instagram_user_id', ig.id); (m.labels ||= {}).instagram = `@${ig.username||ig.id}`; }
+  }
   catch(e){ MT.error = e.message; }
   MT.busy = false; paintMeta($('#view'));
 }
+/** The Instagram accounts an ad may run as: the ad account's, then the Page's own if it is not among them. */
+const igList = (K) => { const acc = K?.chosen?.instagram_accounts || []; const pg = K?.chosen?.page?.instagram; return pg && !acc.some(x=>x.id===pg.id) ? [...acc, { ...pg, via:'page' }] : acc; };
 /** A pick from the lists: the id into the profile, its name beside it for the owner to read later. */
 function metaPick(key, id, kind){
   const K = MT.link, m = STATE.profile.meta_assets, L = (m.labels ||= {});
-  const found = kind==='account' ? K.accounts.find(a=>a.id===id) : kind==='page' ? K.pages.find(x=>x.id===id) : kind==='form' ? K.chosen.forms.find(x=>x.id===id) : kind==='pixel' ? K.chosen.pixels.find(x=>x.id===id) : K.businesses.find(x=>x.id===id);
+  const found = kind==='account' ? K.accounts.find(a=>a.id===id) : kind==='page' ? K.pages.find(x=>x.id===id) : kind==='form' ? K.chosen.forms.find(x=>x.id===id) : kind==='pixel' ? K.chosen.pixels.find(x=>x.id===id) : kind==='instagram' ? igList(K).find(x=>x.id===id) : K.businesses.find(x=>x.id===id);
   setP(`meta_assets.${key}`, id);
-  L[kind] = found ? (kind==='account' ? `${found.name} · ${found.currency}` : found.name) : '';
-  if (kind==='page'){ setP('meta_assets.instagram_actor_id', found?.instagram?.id || ''); L.instagram = found?.instagram ? `@${found.instagram.username||found.instagram.id}` : ''; setP('meta_assets.lead_form_id', ''); L.form = ''; }
-  if (kind==='account'){ setP('meta_assets.pixel_id', ''); L.pixel = ''; }
+  L[kind] = found ? (kind==='account' ? `${found.name} · ${found.currency}` : kind==='instagram' ? `@${found.username||found.id}` : found.name) : '';
+  if (kind==='page'){ setP('meta_assets.lead_form_id', ''); L.form = ''; }
+  if (kind==='account'){ setP('meta_assets.pixel_id', ''); L.pixel = ''; setP('meta_assets.instagram_user_id', ''); L.instagram = ''; }
   // A new account or Page: list its pixels or forms straight away.
   if (kind==='account' || kind==='page') metaCheck(); else paintMeta($('#view'));
 }
@@ -767,46 +775,95 @@ function viewOfferDetails(v){
 function viewTargeting(v){
   const p = STATE.profile; if(!p){v.innerHTML='<div class="empty">No profile.</div>';return;}
   const T = p.targeting_defaults ||= {}, C = p.campaign_defaults ||= {};
-  const dem = T.demographics ||= {}, B2 = C.budget ||= {};
-  const pin = (T.geo ||= {}).radius_pins?.[0] || {};
+  const dem = T.demographics ||= {}, B2 = C.budget ||= {}, G = T.geo ||= {};
+  const pins = G.radius_pins ||= [];
+  const callouts = (p.creative_defaults?.locations || []).map(x=>String(x).trim().toUpperCase()).filter(Boolean);
+  const audiences = (p.creative_defaults?.audiences || []).map(x=>String(x).trim()).filter(Boolean);
+  const cg = dem.callout_genders ||= {};
+  const strategy = B2.bid_strategy || 'LOWEST_COST_WITHOUT_CAP', capped = strategy !== 'LOWEST_COST_WITHOUT_CAP';
+  const hist = MT.link?.chosen?.history_pins || [];
+  const pinCard = (pin, i) => {
+    const claimed = new Set(pins.flatMap((q,j)=>j===i?[]:(q.callouts||[]).map(c=>String(c).toUpperCase())));
+    const mine = new Set((pin.callouts||[]).map(c=>String(c).toUpperCase()));
+    return `<div class="card" style="margin:0 0 10px">
+      <div class="row"><input value="${esc(pin.label||'')}" placeholder="Pin name (e.g. Sin Ming)" style="max-width:220px" oninput="setPin(${i},'label',this.value)">
+        <span class="pill ${pin.place_key?'on':''}" title="how Meta will target it">${pin.place_key?`Meta place · ${esc(pin.place_name||pin.place_key)}`:(Number.isFinite(pin.lat)&&Number.isFinite(pin.lng))?`point · ${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`:'not on the map yet'}</span>
+        <div class="spacer"></div><button class="sm" onclick="removePin(${i})">Remove</button></div>
+      <div class="grid" style="margin-top:10px">
+        <div><label>Address or postal code</label><div class="row" style="gap:6px"><input class="mono" id="pinq_${i}" value="${esc(pin.postal_code||'')}" placeholder="575583, or an address" oninput="setPin(${i},'postal_code',this.value.trim())" onkeydown="if(event.key==='Enter')findPin(${i})"><button class="sm" onclick="findPin(${i})">Find</button></div><div class="hint" id="pinfind_${i}" style="margin:4px 0 0">OneMap puts it on the map (a point). Their own ad sets use a named Meta place instead — pick one from the account's history below, or paste its key.</div></div>
+        <div><label>Meta place key <span class="n">· optional, from the account's history</span></label><div class="row" style="gap:6px"><input class="mono" value="${esc(pin.place_key||'')}" placeholder="e.g. 107327800879305" oninput="setPin(${i},'place_key',this.value.trim()); if(!this.value.trim()) setPin(${i},'place_name','')"><button class="sm" onclick="namePlace(${i})" ${pin.place_key?'':'disabled'}>Look up</button></div>${hist.length?`<select style="margin-top:6px" onchange="if(this.value)pinFromHistory(${i},this.value)"><option value="">— a pin the account already targets —</option>${hist.map((h,k)=>`<option value="${k}">${h.kind==='place'?esc(h.name||h.key):`point ${h.lat?.toFixed(4)}, ${h.lng?.toFixed(4)}`} · ${h.radius_km??'?'} km · ${h.adsets} ad set${h.adsets===1?'':'s'} · e.g. ${esc((h.example||'').slice(0,40))}</option>`).join('')}</select>`:`<div class="hint" style="margin:4px 0 0">${MT.link?'The account targets no pins yet.':'<a href="#" onclick="loadHistory();return false">Load the account\'s existing pins</a> (needs the Meta link).'}</div>`}</div>
+        <div><label>Radius (km)</label><input type="number" min="1" max="80" step="0.5" value="${esc(pin.radius_km??5)}" oninput="setPin(${i},'radius_km',parseFloat(this.value)||null)"></div>
+        <div><label>People</label><select onchange="setPin(${i},'location_types',this.value==='both'?['home','recent']:[this.value])">
+          <option value="both" ${(pin.location_types||[]).length!==1?'selected':''}>living in or recently in the area</option>
+          <option value="home" ${JSON.stringify(pin.location_types)==='["home"]'?'selected':''}>living in the area (heartland gyms)</option>
+          <option value="recent" ${JSON.stringify(pin.location_types)==='["recent"]'?'selected':''}>recently in the area (CBD gyms)</option>
+        </select></div>
+      </div>
+      <div style="margin-top:10px"><label>Location callouts this pin serves</label>
+        ${callouts.length?`<div class="chips">${callouts.map(c=>`<button class="chip ${mine.has(c)?'on':''}" ${claimed.has(c)&&!mine.has(c)?'disabled title="on another pin"':''} onclick="toggleCallout(${i},'${esc(c)}')">${esc(c)}</button>`).join('')}</div>`:'<div class="hint">Add location callouts on Ad defaults first.</div>'}
+        <div class="hint" style="margin:6px 0 0">${i===0?'The first pin also serves any callout with no pin of its own.':''}</div></div>
+    </div>`;
+  };
   v.innerHTML = `
-  <h1>Targeting & budget</h1><p class="sub">Defaults for the Meta campaign. Not used by the creative pipeline.</p>
+  <h1>Targeting & budget</h1><p class="sub">Defaults for publishing to Meta. Every one of them can be changed on the Publish screen before anything is created. Not used by the creative pipeline.</p>
   <div class="card">
     <h3>Budget</h3>
     <div class="grid">
-      <div><label>Daily / lifetime</label><select onchange="setP('campaign_defaults.budget.type',this.value)">
-        ${['daily','lifetime'].map(t=>`<option ${t===B2.type?'selected':''}>${t}</option>`).join('')}</select></div>
-      <div><label>Amount (SGD)</label><input type="number" value="${esc(B2.amount??'')}" oninput="setP('campaign_defaults.budget.amount',parseFloat(this.value)||null)"></div>
-      <div><label>Budget level</label><select onchange="setP('campaign_defaults.budget.level',this.value)">
-        ${['campaign','adset'].map(t=>`<option ${t===B2.level?'selected':''}>${t==='campaign'?'campaign (CBO)':'adset (ABO)'}</option>`).join('')}</select></div>
+      <div><label>Where the budget sits</label><select onchange="setP('campaign_defaults.budget.level',this.value)">
+        <option value="adset" ${(B2.level||'adset')==='adset'?'selected':''}>Ad set budget · each ad set has its own</option>
+        <option value="campaign" ${B2.level==='campaign'?'selected':''}>Campaign budget · Meta spreads it across the ad sets</option></select></div>
+      <div><label>Daily budget (${esc(p.locale?.currency||'SGD')})</label><input type="number" min="1" step="1" value="${esc(B2.amount??50)}" oninput="setP('campaign_defaults.budget.amount',parseFloat(this.value)||null)"><div class="hint" style="margin:4px 0 0">${(B2.level||'adset')==='adset'?'per ad set':'for the whole campaign'}</div></div>
+      <div><label>Bid strategy</label><select onchange="setP('campaign_defaults.budget.bid_strategy',this.value); viewTargeting($('#view'))">
+        ${[['LOWEST_COST_WITHOUT_CAP','Highest volume'],['COST_CAP','Cost per result goal'],['LOWEST_COST_WITH_BID_CAP','Bid cap']].map(([k,l])=>`<option value="${k}" ${k===strategy?'selected':''}>${l}</option>`).join('')}</select></div>
+      ${capped?`<div><label>${strategy==='COST_CAP'?'Cost per result goal':'Bid cap'} (${esc(p.locale?.currency||'SGD')})</label><input type="number" min="0.5" step="0.5" value="${esc(B2.bid_cap??'')}" oninput="setP('campaign_defaults.budget.bid_cap',parseFloat(this.value)||null)"></div>`:''}
       <div><label>Objective</label><select onchange="setP('campaign_defaults.objective',this.value)">
-        ${['OUTCOME_LEADS','OUTCOME_TRAFFIC','OUTCOME_SALES','OUTCOME_AWARENESS','OUTCOME_ENGAGEMENT'].map(t=>`<option ${t===C.objective?'selected':''}>${t}</option>`).join('')}</select></div>
+        ${['OUTCOME_LEADS','OUTCOME_TRAFFIC','OUTCOME_SALES','OUTCOME_AWARENESS','OUTCOME_ENGAGEMENT'].map(t=>`<option ${t===(C.objective||'OUTCOME_LEADS')?'selected':''}>${t}</option>`).join('')}</select></div>
     </div>
   </div>
   <div class="card">
-    <h3>Geo radius</h3>
-    <p class="hint">Gyms are radius businesses. Pin the postal code and pick how far people will travel.</p>
-    <div class="grid">
-      <div><label>Postal code</label><input class="mono" value="${esc(pin.postal_code||p.locations?.[0]?.postal_code||'')}" oninput="setPin('postal_code',this.value)"></div>
-      <div><label>Radius (km)</label><input type="number" step="0.5" value="${esc(pin.radius_km??5)}" oninput="setPin('radius_km',parseFloat(this.value)||null)"></div>
-      <div><label>Location type</label><select onchange="setPin('location_types',this.value==='both'?['home','recent']:[this.value])">
-        <option value="both" ${(pin.location_types||[]).length===2?'selected':''}>home + recent</option>
-        <option value="home" ${JSON.stringify(pin.location_types)==='["home"]'?'selected':''}>home (heartland gyms)</option>
-        <option value="recent" ${JSON.stringify(pin.location_types)==='["recent"]'?'selected':''}>recent (CBD gyms)</option>
-      </select></div>
-    </div>
+    <div class="row"><h3 style="margin:0">Pins · one ad set per location callout</h3><div class="spacer"></div><button class="sm" onclick="addPin()">Add a pin</button></div>
+    <p class="hint">Each location callout on the ads gets its own ad set, targeted round the pin that names it. A pin is a named Meta place (as their own ad sets use) or a point on the map.</p>
+    ${pins.length?pins.map(pinCard).join(''):'<div class="empty">No pins yet. Add one and find it by postal code.</div>'}
   </div>
   <div class="card">
     <h3>Audience</h3>
     <div class="grid">
-      <div><label>Age min</label><input type="number" value="${esc(dem.age_min??'')}" oninput="setP('targeting_defaults.demographics.age_min',parseInt(this.value)||null)"></div>
-      <div><label>Age max</label><input type="number" value="${esc(dem.age_max??'')}" oninput="setP('targeting_defaults.demographics.age_max',parseInt(this.value)||null)"></div>
-      <div><label>Genders</label><select onchange="setP('targeting_defaults.demographics.genders',this.value)">
-        ${['all','men','women'].map(t=>`<option ${t===dem.genders?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div><label>Age min</label><input type="number" min="18" max="65" value="${esc(dem.age_min??'')}" oninput="setP('targeting_defaults.demographics.age_min',parseInt(this.value)||null)"></div>
+      <div><label>Age max</label><input type="number" min="18" max="65" value="${esc(dem.age_max??'')}" oninput="setP('targeting_defaults.demographics.age_max',parseInt(this.value)||null)"></div>
     </div>
+    <div style="margin-top:12px"><label>Gender by audience callout</label>
+      ${audiences.length?`<div class="grid">${audiences.map(a=>{ const key = Object.keys(cg).find(k=>k.trim().toUpperCase()===a.toUpperCase()); const cur = key?cg[key]:guessGender(a); return `<div><label class="n">${esc(a)}</label><select onchange="setGender('${esc(a)}',this.value)">${[['men','men'],['women','women'],['all','everyone']].map(([k,l])=>`<option value="${k}" ${k===cur?'selected':''}>${l}${!key&&k===guessGender(a)?' (from the words)':''}</option>`).join('')}</select></div>`; }).join('')}</div>`:'<div class="hint">Add audience callouts on Ad defaults first.</div>'}
+    </div>
+    <div class="msg ok" style="margin-top:12px">Advantage+ audience is never switched on: Meta may not widen an ad set past what it says here. Detailed targeting (interests) is picked per ad set on the Publish screen.</div>
   </div>
   ${saveBar('profile')}`;
 }
+const guessGender = (a) => /\b(men|man|guys|dads?|fathers?|gents|males?)\b/i.test(a) ? 'men' : /\b(ladies|women|woman|mums?|moms?|mothers?|girls|females?)\b/i.test(a) ? 'women' : 'all';
+function setGender(callout, g){ const cg = (STATE.profile.targeting_defaults.demographics ||= {}).callout_genders ||= {}; for (const k of Object.keys(cg)) if (k.trim().toUpperCase()===callout.toUpperCase()) delete cg[k]; cg[callout] = g; dirty('profile'); }
+function addPin(){ (STATE.profile.targeting_defaults.geo ||= {}).radius_pins ||= []; STATE.profile.targeting_defaults.geo.radius_pins.push({ label:'', postal_code:'', radius_km:5, location_types:['home','recent'], callouts:[] }); dirty('profile'); viewTargeting($('#view')); }
+function removePin(i){ STATE.profile.targeting_defaults.geo.radius_pins.splice(i,1); dirty('profile'); viewTargeting($('#view')); }
+function toggleCallout(i, c){ const pin = STATE.profile.targeting_defaults.geo.radius_pins[i]; const cs = pin.callouts ||= []; const at = cs.findIndex(x=>String(x).toUpperCase()===c); if (at>=0) cs.splice(at,1); else cs.push(c); dirty('profile'); viewTargeting($('#view')); }
+/** OneMap: the typed address or postal code → a point (the first result); more results are offered to choose from. */
+async function findPin(i){
+  const q = $('#pinq_'+i)?.value.trim(); const out = $('#pinfind_'+i); if (!q){ out.textContent = 'Type a postal code or an address first.'; return; }
+  out.textContent = 'Looking it up…';
+  try {
+    const r = await api(`/api/geocode?q=${encodeURIComponent(q)}`);
+    if (!r.results.length){ out.textContent = 'OneMap knows no such place.'; return; }
+    const pick = (k) => { const x = r.results[k]; setPin(i,'lat',x.lat); setPin(i,'lng',x.lng); if (x.postal_code) setPin(i,'postal_code',x.postal_code); if (!STATE.profile.targeting_defaults.geo.radius_pins[i].label) setPin(i,'label',x.address.split(' SINGAPORE')[0].slice(0,40)); viewTargeting($('#view')); };
+    if (r.results.length===1) return pick(0);
+    out.innerHTML = 'Which one? ' + r.results.map((x,k)=>`<a href="#" onclick="return false" data-k="${k}">${esc(x.address)}</a>`).join(' · ');
+    out.querySelectorAll('a').forEach(a=>a.onclick=()=>{ pick(+a.dataset.k); return false; });
+  } catch(e){ out.textContent = e.message; }
+}
+/** A pasted Meta place key → its name and point, from Meta. */
+async function namePlace(i){
+  const pin = STATE.profile.targeting_defaults.geo.radius_pins[i]; if (!/^\d{5,20}$/.test(pin.place_key||'')) return;
+  try { const r = await api(`/api/client/${STATE.sel}/meta-places?keys=${pin.place_key}`); const x = r.places?.[0]; if (!x){ alert(r.configured===false?'The Meta link is not set up.':'Meta knows no place with that key.'); return; } setPin(i,'place_name',x.name||''); if (Number.isFinite(x.lat)){ setPin(i,'lat',x.lat); setPin(i,'lng',x.lng); } if (!pin.label) setPin(i,'label',(x.name||'').slice(0,40)); viewTargeting($('#view')); }
+  catch(e){ alert(e.message); }
+}
+function pinFromHistory(i, k){ const h = (MT.link?.chosen?.history_pins||[])[+k]; if (!h) return; setPin(i,'place_key',h.key||''); setPin(i,'place_name',h.name||''); if (Number.isFinite(h.lat)){ setPin(i,'lat',h.lat); setPin(i,'lng',h.lng); } if (h.radius_km) setPin(i,'radius_km',h.radius_km); if (h.location_types) setPin(i,'location_types',h.location_types); if (!STATE.profile.targeting_defaults.geo.radius_pins[i].label) setPin(i,'label',(h.name||'').slice(0,40)); viewTargeting($('#view')); }
+async function loadHistory(){ try { const r = await api(`/api/client/${STATE.sel}/meta-link`); if (r.configured){ MT.link = r; MT.gym = STATE.sel; } else alert('The Meta link is not set up yet (Meta link page).'); } catch(e){ alert(e.message); } viewTargeting($('#view')); }
 
 // ── Templates (old) ──────────────────────────────────────────────────────────
 function viewGenerate(v){
@@ -1612,10 +1669,10 @@ const setPath = (obj,path,val) => {
 };
 const setP = (path,val)=>{ setPath(STATE.profile,path,val); dirty('profile'); };
 const setO = (path,val)=>{ setPath(STATE.offerDoc,path,val); dirty('offer'); };
-const setPin = (k,val)=>{
-  const g = STATE.profile.targeting_defaults.geo ||= {};
-  (g.radius_pins ||= [])[0] ||= { label:'', location_types:['home','recent'] };
-  g.radius_pins[0][k] = val; dirty('profile');
+const setPin = (i,k,val)=>{
+  const g = (STATE.profile.targeting_defaults ||= {}).geo ||= {};
+  (g.radius_pins ||= [])[i] ||= { label:'', radius_km:5, location_types:['home','recent'], callouts:[] };
+  g.radius_pins[i][k] = val; dirty('profile');
 };
 
 let DIRTY = {};

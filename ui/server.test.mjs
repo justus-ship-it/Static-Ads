@@ -954,6 +954,9 @@ function fakeGraph() {
     if (path === "770000000007/leadgen_forms") return ok({ data: [{ id: "400100000001", name: "12 Week Reset form", status: "ACTIVE", leads_count: 3 }] });
     if (path === "act_111000000001") return ok({ id: "act_111000000001", account_id: "111000000001", name: "Test Gym Ads", currency: "SGD", account_status: 1 });
     if (path === "act_111000000001/adspixels") return ok({ data: [{ id: "600100000001", name: "Test pixel" }] });
+    if (path === "act_111000000001/instagram_accounts") return ok({ data: [{ id: "880000000008", username: "testgym" }] });
+    if (path === "act_111000000001/adsets") return ok({ data: [{ id: "s1", name: "0715 Thomson | Fit Fathers", targeting: { geo_locations: { places: [{ key: "107327800879305", name: "6 Sin Ming Road, Tower 2", latitude: "1.353055", longitude: "103.836321", radius: 5 }], location_types: ["home", "recent"] } } }] });
+    if (path === "search" && u.searchParams.get("type") === "adgeolocationmeta") return ok({ data: { places: Object.fromEntries(JSON.parse(u.searchParams.get("places")).filter((k) => k === "107327800879305").map((k) => [k, { key: k, name: "6 Sin Ming Road, Tower 2", address_string: "Singapore, Singapore", latitude: "1.353055", longitude: "103.836321", country_code: "SG" }])) } });
     res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: `no ${path}`, code: 803 } }));
   });
   return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ server, url: `http://127.0.0.1:${server.address().port}`, calls })));
@@ -1039,22 +1042,102 @@ test("U17 the Meta page: without keys it shows the setup steps and the ids can s
     await until("MT.link && document.querySelectorAll('#view select').length>=5", "the lists");
     text = await ev("document.querySelector('#view').textContent");
     assert.match(text, /token is strategym-panel/); assert.match(text, /Test Gym Ads · SGD · active/); assert.match(text, /Test Gym · @testgym/);
-    // Pick the account and the Page: the ids land in the profile, the Instagram account with the Page, the names beside them.
+    // Pick the account and the Page: the ids land in the profile with the names beside them; the account's only
+    // Instagram account is taken on the check that follows.
     await ev("metaPick('ad_account_id','act_111000000001','account'); metaPick('page_id','770000000007','page'); true");
-    assert.deepEqual(await ev("[STATE.profile.meta_assets.ad_account_id, STATE.profile.meta_assets.page_id, STATE.profile.meta_assets.instagram_actor_id, STATE.profile.meta_assets.labels.account, STATE.profile.meta_assets.labels.page]"), ["act_111000000001", "770000000007", "880000000008", "Test Gym Ads · SGD", "Test Gym"]);
+    assert.deepEqual(await ev("[STATE.profile.meta_assets.ad_account_id, STATE.profile.meta_assets.page_id, STATE.profile.meta_assets.labels.account, STATE.profile.meta_assets.labels.page]"), ["act_111000000001", "770000000007", "Test Gym Ads · SGD", "Test Gym"]);
     assert.equal(await ev("document.querySelector('#mt_ad_account_id').value"), "act_111000000001", "the id field follows the pick");
-    // Check again: the chosen Page's forms and the account's pixels are listed; pick them.
+    // Check again: the chosen Page's forms, the account's pixels and Instagram accounts are listed; pick them.
     await ev("metaCheck(); true");
     await until("MT.link && MT.link.chosen.forms.length===1 && MT.link.chosen.pixels.length===1", "forms and pixels of the chosen assets");
+    assert.deepEqual(await ev("[STATE.profile.meta_assets.instagram_user_id, STATE.profile.meta_assets.labels.instagram, MT.link.chosen.instagram_accounts.map(x=>x.username), MT.link.chosen.instagram.id]"), ["880000000008", "@testgym", ["testgym"], "880000000008"], "the account's only Instagram account, taken and named");
+    assert.ok(await ev("[...document.querySelectorAll('#view select option')].some(o=>/@testgym/.test(o.textContent))"), "offered in the Instagram list");
+    assert.match(await ev("document.querySelector('#view').textContent"), /Instagram@testgym \(880000000008\)/);
     await ev("metaPick('lead_form_id','400100000001','form'); metaPick('pixel_id','600100000001','pixel'); metaPick('business_id','555000000005','business'); true");
     await ev("document.querySelector('#saveBtn_profile').click(); true");
     await until("DIRTY.profile===false", "saved");
     const saved = JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8")).meta_assets;
-    assert.deepEqual([saved.ad_account_id, saved.page_id, saved.instagram_actor_id, saved.lead_form_id, saved.pixel_id, saved.business_id], ["act_111000000001", "770000000007", "880000000008", "400100000001", "600100000001", "555000000005"]);
+    assert.deepEqual([saved.ad_account_id, saved.page_id, saved.instagram_user_id, saved.lead_form_id, saved.pixel_id, saved.business_id], ["act_111000000001", "770000000007", "880000000008", "400100000001", "600100000001", "555000000005"]);
     assert.equal(saved.labels.form, "12 Week Reset form"); assert.equal(saved.labels.pixel, "Test pixel");
     assert.ok(!readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8").includes(META_TOKEN), "ids and names only");
     const ov = await (await call(`/api/client/${GYM}`)).json();
     assert.equal(ov.completeness.sections.find((s) => s.id === "meta").status, "done");
   } finally { await panel.stop(); panel = main; graph.server.close(); }
   assert.ok(!/NETWORK BLOCKED/.test(panel.log()));
+});
+
+/** A fake OneMap: a postal code or an address → points, as the real one answers. */
+function fakeOneMap() {
+  const server = http.createServer((req, res) => {
+    const u = new URL(req.url, "http://x"), q = (u.searchParams.get("searchVal") || "").toUpperCase();
+    const rows = q === "575583" ? [{ SEARCHVAL: "SIN MING PLAZA", ADDRESS: "2 SIN MING ROAD SIN MING PLAZA SINGAPORE 575583", POSTAL: "575583", LATITUDE: "1.352482302799053", LONGITUDE: "103.8357469735082" }]
+      : /BISHAN/.test(q) ? [{ SEARCHVAL: "BISHAN MRT STATION", ADDRESS: "17 BISHAN PLACE BISHAN MRT STATION", POSTAL: "NIL", LATITUDE: "1.3508", LONGITUDE: "103.8485" }, { SEARCHVAL: "JUNCTION 8", ADDRESS: "9 BISHAN PLACE JUNCTION 8 SINGAPORE 579837", POSTAL: "579837", LATITUDE: "1.3503", LONGITUDE: "103.8488" }] : [];
+    res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ found: rows.length, results: rows }));
+  });
+  return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ server, url: `http://127.0.0.1:${server.address().port}` })));
+}
+
+test("U18 Targeting & budget: the budget's level, daily amount and bid strategy, pins found by postal code (OneMap) or taken from the account's history (a Meta place), callouts on pins, the gender per callout — saved as the profile's publishing defaults, refused when two pins claim a callout; Meta place keys are looked up through the link", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+    return result.value;
+  };
+  const until = async (expression, what, ms = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await ev(expression)) return; await new Promise((r) => setTimeout(r, 120)); }
+    throw new Error(`timed out waiting for ${what}: ${await ev("location.hash + ' ' + (document.querySelector('#view')?.textContent||'').slice(0,300)")}`);
+  };
+  const open = async (url) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url }, sessionId); await loaded; };
+  // Without the Meta link, place keys cannot be looked up, and that is said; bad keys are refused before any call.
+  let r = await call(`/api/client/${GYM}/meta-places?keys=abc`); assert.equal(r.status, 400);
+  r = await (await call(`/api/client/${GYM}/meta-places?keys=107327800879305`)).json(); assert.deepEqual(r, { configured: false, places: [] });
+  const graph = await fakeGraph(), onemap = await fakeOneMap();
+  const main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url, ONEMAP_URL: onemap.url });
+  try {
+    // The geocoder: a postal code → one point; an address → several; nothing → none; an empty query refused.
+    r = await (await call("/api/geocode?q=575583")).json();
+    assert.deepEqual(r.results, [{ address: "2 SIN MING ROAD SIN MING PLAZA SINGAPORE 575583", postal_code: "575583", lat: 1.352482302799053, lng: 103.8357469735082 }]);
+    assert.equal((await (await call("/api/geocode?q=Bishan")).json()).results.length, 2);
+    assert.deepEqual((await (await call("/api/geocode?q=nowhere")).json()).results, []);
+    assert.equal((await call("/api/geocode?q=")).status, 400);
+    r = await (await call(`/api/client/${GYM}/meta-places?keys=107327800879305,55555`)).json();
+    assert.deepEqual(r.places.map((p) => [p.key, p.name, p.lat]), [["107327800879305", "6 Sin Ming Road, Tower 2", 1.353055]]);
+    // The gym's ad account is linked (the history of pins is read from it).
+    const cur = JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8"));
+    assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: { ...cur, meta_assets: { ...(cur.meta_assets || {}), ad_account_id: "act_111000000001" } } })).status, 200);
+    // The page: defaults as decided — ad-set budget, 50 a day, Highest volume — with the campaign level and a capped bid available.
+    await open(`${panel.url}/?u18#/${GYM}/targeting`);
+    await until("/Where the budget sits/.test(document.querySelector('#view')?.textContent||'')", "the Targeting page");
+    const sel = (label) => `[...document.querySelectorAll('#view label')].find(l=>l.textContent.startsWith(${JSON.stringify(label)})).parentElement.querySelector('select,input').value`;
+    assert.deepEqual(await ev(`[${sel("Where the budget sits")}, ${sel("Daily budget")}, ${sel("Bid strategy")}]`), ["adset", "50", "LOWEST_COST_WITHOUT_CAP"]);
+    assert.match(await ev("document.querySelector('#view').textContent"), /Advantage\+ audience is never switched on/);
+    await ev("setP('campaign_defaults.budget.bid_strategy','COST_CAP'); viewTargeting(document.querySelector('#view')); true");
+    assert.equal(await ev("[...document.querySelectorAll('#view label')].some(l=>/Cost per result goal \\(SGD\\)/.test(l.textContent))"), true, "a capped strategy asks for its amount");
+    await ev("setP('campaign_defaults.budget.bid_strategy','LOWEST_COST_WITHOUT_CAP'); setP('campaign_defaults.budget.level','campaign'); setP('campaign_defaults.budget.amount',80); STATE.profile.creative_defaults = { locations: ['BISHAN','ANG MO KIO'], audiences: ['MEN WANTED','LADIES WANTED'] }; viewTargeting(document.querySelector('#view')); true");
+    // A pin found by postal code, serving one callout; a second from the account's history (a named Meta place).
+    await ev("addPin(); document.querySelector('#pinq_0').value = '575583'; true");
+    await ev("findPin(0)");
+    await until("Number.isFinite(STATE.profile.targeting_defaults.geo.radius_pins[0].lat)", "the point from OneMap");
+    assert.deepEqual(await ev("(({label, postal_code, lat, lng, radius_km}) => [label, postal_code, lat, lng, radius_km])(STATE.profile.targeting_defaults.geo.radius_pins[0])"), ["2 SIN MING ROAD SIN MING PLAZA", "575583", 1.352482302799053, 103.8357469735082, 5]);
+    await ev("toggleCallout(0,'BISHAN'); true");
+    await ev("loadHistory()");
+    await until("MT.link && MT.link.chosen.history_pins.length===1", "the account's pins: " + JSON.stringify(await ev("[MT.link && MT.link.chosen, document.querySelector('#view').innerHTML.length]")));
+    await ev("addPin(); pinFromHistory(1, 0); toggleCallout(1,'ANG MO KIO'); setGender('MEN WANTED','all'); setP('targeting_defaults.demographics.age_min',25); setP('targeting_defaults.demographics.age_max',60); true");
+    assert.deepEqual(await ev("(({label, place_key, place_name, radius_km, callouts}) => [label, place_key, place_name, radius_km, callouts])(STATE.profile.targeting_defaults.geo.radius_pins[1])"), ["6 Sin Ming Road, Tower 2", "107327800879305", "6 Sin Ming Road, Tower 2", 5, ["ANG MO KIO"]]);
+    assert.equal(await ev("[...document.querySelectorAll('#view .chip')].filter(c=>c.disabled).map(c=>c.textContent).join()"), "ANG MO KIO,BISHAN", "a callout on one pin cannot be put on another");
+    await ev("document.querySelector('#saveBtn_profile').click(); true");
+    await until("DIRTY.profile===false", "saved");
+    const saved = JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8"));
+    assert.deepEqual([saved.campaign_defaults.budget.level, saved.campaign_defaults.budget.amount, saved.campaign_defaults.budget.bid_strategy, saved.targeting_defaults.demographics.callout_genders, saved.targeting_defaults.geo.radius_pins.map((p) => [p.callouts, p.place_key || null, Number.isFinite(p.lat)])], ["campaign", 80, "LOWEST_COST_WITHOUT_CAP", { "MEN WANTED": "all" }, [[["BISHAN"], null, true], [["ANG MO KIO"], "107327800879305", true]]]);
+    // A profile whose pins both claim a callout is refused, and nothing is written.
+    const bad = structuredClone(saved); bad.targeting_defaults.geo.radius_pins[1].callouts = ["bishan"];
+    const put = await call(`/api/client/${GYM}`, { method: "PUT", body: bad });
+    assert.equal(put.status, 400); assert.match(JSON.stringify(await put.json()), /location callout \\"bishan\\" is on two pins/);
+    assert.deepEqual(JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8")).targeting_defaults.geo.radius_pins[1].callouts, ["ANG MO KIO"]);
+    const ov = await (await call(`/api/client/${GYM}`)).json();
+    assert.equal(ov.completeness.sections.find((s) => s.id === "targeting").status, "done");
+  } finally { await panel.stop(); panel = main; graph.server.close(); onemap.server.close(); }
 });

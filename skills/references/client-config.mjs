@@ -337,7 +337,29 @@ export function catalogueFor(profile, catalogue = loadCatalogue()) {
 const SECRET_KEY = /^(token|access_token|.*_access_token|.*_user_token|app_secret|client_secret|secret|password|api[_-]?key|apikey)$/i;
 const SECRET_VALUE = /^(EAA[A-Za-z0-9]{30,}|AIza[0-9A-Za-z_-]{30,})$/;
 // singapore_*: the verified advertiser identity Meta requires on every ad set delivering in Singapore (beneficiary and payer).
-export const META_ID = { ad_account_id: /^(act_)?\d{5,20}$/, page_id: /^\d{5,20}$/, instagram_actor_id: /^\d{5,20}$/, pixel_id: /^\d{5,20}$/, business_id: /^\d{5,20}$/, lead_form_id: /^\d{5,20}$/, singapore_beneficiary_id: /^\d{5,20}$/, singapore_payer_id: /^\d{5,20}$/ };
+/** Meta's bid strategies, named as Ads Manager names them. */
+export const BID_STRATEGIES = { LOWEST_COST_WITHOUT_CAP: "Highest volume", COST_CAP: "Cost per result goal", LOWEST_COST_WITH_BID_CAP: "Bid cap" };
+export const BUDGET_LEVELS = { adset: "Ad set budget", campaign: "Campaign budget (Advantage+ campaign budget)" };
+export const GENDER_CHOICES = ["men", "women", "all"];
+export const RADIUS_KM = { min: 1, max: 80 };
+/** The gender an audience callout targets: the profile's own map first, then the words. */
+export function calloutGender(callout, profile = null) {
+  const map = profile?.targeting_defaults?.demographics?.callout_genders || {};
+  const key = Object.keys(map).find((k) => k.trim().toUpperCase() === String(callout || "").trim().toUpperCase());
+  if (key && GENDER_CHOICES.includes(map[key])) return map[key];
+  const a = String(callout || "");
+  return /\b(men|man|guys|dads?|fathers?|gents|males?)\b/i.test(a) ? "men" : /\b(ladies|women|woman|mums?|moms?|mothers?|girls|females?)\b/i.test(a) ? "women" : "all";
+}
+/** The radius pin a location callout targets: the pin naming it, else the gym's first pin (a fallback the plan says so). */
+export function pinFor(profile, callout) {
+  const pins = profile?.targeting_defaults?.geo?.radius_pins || [];
+  const want = String(callout || "").trim().toUpperCase();
+  const own = want && pins.find((p) => (p.callouts || []).some((c) => String(c).trim().toUpperCase() === want));
+  return own ? { pin: own, fallback: false } : pins[0] ? { pin: pins[0], fallback: true } : { pin: null, fallback: true };
+}
+/** Is this pin enough to target with: a Meta place, or a point on the map. */
+export const pinUsable = (pin) => !!pin && (/^\d{5,20}$/.test(String(pin.place_key || "")) || (Number.isFinite(pin.lat) && Number.isFinite(pin.lng)));
+export const META_ID = { ad_account_id: /^(act_)?\d{5,20}$/, page_id: /^\d{5,20}$/, instagram_user_id: /^\d{5,20}$/, instagram_actor_id: /^\d{5,20}$/, pixel_id: /^\d{5,20}$/, business_id: /^\d{5,20}$/, lead_form_id: /^\d{5,20}$/, singapore_beneficiary_id: /^\d{5,20}$/, singapore_payer_id: /^\d{5,20}$/ };
 
 /**
  * Format problems in a profile: what would make a saved profile wrong, not what leaves it unfinished
@@ -403,6 +425,32 @@ export function validateProfile(profile, { gymDir = null } = {}) {
     const v = profile.meta_assets?.[k];
     if (v != null && v !== "" && !re.test(String(v))) errors.push(`Meta ${k.replace(/_/g, " ")} "${v}" is not an id (digits${k === "ad_account_id" ? ", optionally after act_" : ""})`);
   }
+  // Publishing defaults: the budget's level and bid strategy, every pin, the callout → gender map.
+  const b = profile.campaign_defaults?.budget;
+  if (isObj(b)) {
+    if (b.level != null && !BUDGET_LEVELS[b.level]) errors.push(`budget level must be one of ${Object.keys(BUDGET_LEVELS).join(", ")}`);
+    if (b.bid_strategy != null && !BID_STRATEGIES[b.bid_strategy]) errors.push(`bid strategy must be one of ${Object.keys(BID_STRATEGIES).join(", ")}`);
+    if (b.bid_strategy && b.bid_strategy !== "LOWEST_COST_WITHOUT_CAP" && !(b.bid_cap > 0)) errors.push(`${BID_STRATEGIES[b.bid_strategy] || b.bid_strategy} needs an amount (bid_cap)`);
+  }
+  const pins = profile.targeting_defaults?.geo?.radius_pins;
+  if (pins != null && !Array.isArray(pins)) errors.push("targeting: radius_pins must be a list");
+  const claimed = {};
+  (Array.isArray(pins) ? pins : []).forEach((pin, i) => {
+    const name = `pin ${i + 1}${pin?.label ? ` (${pin.label})` : ""}`;
+    if (!isObj(pin)) { errors.push(`${name}: not a pin`); return; }
+    if (pin.postal_code && !/^\d{6}$/.test(String(pin.postal_code))) errors.push(`${name}: postal code "${pin.postal_code}" must be 6 digits`);
+    if (pin.place_key && !/^\d{5,20}$/.test(String(pin.place_key))) errors.push(`${name}: place key "${pin.place_key}" is not a Meta place id (digits)`);
+    for (const k of ["lat", "lng"]) if (pin[k] != null && pin[k] !== "" && !Number.isFinite(pin[k])) errors.push(`${name}: ${k} must be a number`);
+    if (pin.radius_km != null && !(pin.radius_km >= RADIUS_KM.min && pin.radius_km <= RADIUS_KM.max)) errors.push(`${name}: radius must be ${RADIUS_KM.min}-${RADIUS_KM.max} km (Meta's range)`);
+    if (pin.location_types != null && (!Array.isArray(pin.location_types) || !pin.location_types.length || pin.location_types.some((t) => !["home", "recent"].includes(t)))) errors.push(`${name}: location types must be home, recent or both`);
+    if (pin.callouts != null && !Array.isArray(pin.callouts)) errors.push(`${name}: callouts must be a list`);
+    for (const c of Array.isArray(pin.callouts) ? pin.callouts : []) {
+      const key = String(c).trim().toUpperCase();
+      if (claimed[key] != null) errors.push(`location callout "${c}" is on two pins (${claimed[key]} and ${name}) — one pin per callout`);
+      claimed[key] = name;
+    }
+  });
+  for (const [c, g] of Object.entries(profile.targeting_defaults?.demographics?.callout_genders || {})) if (!GENDER_CHOICES.includes(g)) errors.push(`the gender for "${c}" must be one of ${GENDER_CHOICES.join(", ")}`);
   return { errors, warnings };
 }
 
@@ -434,7 +482,7 @@ export function profileCompleteness(profile, { gymDir = null, cleanPhotos = 0, s
     S("scenes", "Scene library", "scenes", [["an approved scene library", !!scenes?.exists && !!scenes?.approved], ...audiences.filter((a, i, all) => all.indexOf(a) === i && a !== "any").map((a) => [`scenes for ${a}`, sceneFor(a)])]),
     S("offers", "Offer wording", "offer", [["at least one offer wording", wordings > 0]]),
     S("defaults", "Ad defaults", "defaults", [["at least one location callout", (cd.locations || []).length > 0]]),
-    S("targeting", "Targeting & budget", "targeting", [["a radius pin", !!pin.postal_code], ["an age range", dem.age_min != null && dem.age_max != null], ["a budget", p.campaign_defaults?.budget?.amount > 0]], { for: "publishing" }),
+    S("targeting", "Targeting & budget", "targeting", [["a radius pin", pinUsable(pin)], ["an age range", dem.age_min != null && dem.age_max != null], ["a budget", p.campaign_defaults?.budget?.amount > 0]], { for: "publishing" }),
     S("meta", "Meta link", "meta", [["ad account id", !!m.ad_account_id], ["Facebook page id", !!m.page_id], ["business portfolio id", !!m.business_id], ["pixel id", !!m.pixel_id], ["lead form id", !!m.lead_form_id]], { for: "publishing" }),
   ];
   const create = sections.filter((s) => s.for !== "publishing");
@@ -518,7 +566,7 @@ export const PROFILE_STARTER = (gym, displayName = "") => ({
     differentiators: [],
     known_objections: [],
   },
-  meta_assets: { business_id: "", ad_account_id: "", page_id: "", instagram_actor_id: "", pixel_id: "", lead_form_id: "", primary_conversion_event: "Lead" },
+  meta_assets: { business_id: "", ad_account_id: "", page_id: "", instagram_user_id: "", pixel_id: "", lead_form_id: "", primary_conversion_event: "Lead" },
   creative_defaults: { ...CREATIVE_DEFAULTS },
   brand_lock: {
     locked_by: "client",
@@ -551,7 +599,7 @@ export const PROFILE_STARTER = (gym, displayName = "") => ({
   },
   targeting_defaults: {
     geo: { countries: ["SG"], mode: "radius", radius_pins: [], excluded_pins: [] },
-    demographics: { age_min: 25, age_max: 45, genders: "all", locales: ["en_SG"] },
+    demographics: { age_min: 25, age_max: 60, genders: "all", locales: ["en_SG"], callout_genders: {} },
     detailed_targeting: {
       strategy: "broad_first",
       interests: [],
@@ -571,7 +619,7 @@ export const PROFILE_STARTER = (gym, displayName = "") => ({
     objective: "OUTCOME_LEADS",
     buying_type: "AUCTION",
     special_ad_categories: [],
-    budget: { level: "campaign", type: "daily", amount: 40, currency: "SGD", bid_strategy: "LOWEST_COST_WITHOUT_CAP", bid_cap: null },
+    budget: { level: "adset", type: "daily", amount: 50, currency: "SGD", bid_strategy: "LOWEST_COST_WITHOUT_CAP", bid_cap: null },
     attribution: { click_window_days: 7, view_window_days: 1 },
     status_on_create: "PAUSED",
   },

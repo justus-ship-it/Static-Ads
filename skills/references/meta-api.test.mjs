@@ -28,6 +28,14 @@ const answers = {
   "77": (q) => (q.get("fields") === "access_token" ? { access_token: "PAGE-TOKEN-77" } : { id: "77", name: "Sculpt Society", instagram_business_account: { id: "88", username: "sculptsociety" } }),
   "77/leadgen_forms": () => ({ data: [{ id: "4001", name: "12 Week Reset", status: "ACTIVE", leads_count: 12 }, { id: "4002", name: "Old form", status: "ARCHIVED" }] }),
   "act_111/adspixels": () => ({ data: [{ id: "6001", name: "Sculpt pixel", last_fired_time: "2026-09-12T10:00:00+0000" }] }),
+  "act_111/instagram_accounts": () => ({ data: [{ id: "88", username: "sculptsociety" }, { id: "86", username: "sculpt_old" }] }),
+  "act_111/adsets": () => ({ data: [
+    { id: "s1", name: "0715 Thomson | Fit Fathers", targeting: { geo_locations: { places: [{ key: "107327800879305", name: "6 Sin Ming Road, Tower 2", latitude: "1.353055", longitude: "103.836321", radius: 5, distance_unit: "kilometer" }], location_types: ["home", "recent"] } } },
+    { id: "s2", name: "0331 Thomson | Abs", targeting: { geo_locations: { places: [{ key: "107327800879305", name: "6 Sin Ming Road, Tower 2", latitude: "1.353055", longitude: "103.836321", radius: 5 }], location_types: ["home", "recent"] } } },
+    { id: "s3", name: "Bishan test", targeting: { geo_locations: { custom_locations: [{ latitude: 1.3524823, longitude: 103.835747, radius: 3, distance_unit: "kilometer" }], location_types: ["home"] } } },
+    { id: "s4", name: "no geo" },
+  ] }),
+  "search": (q) => (q.get("type") === "adgeolocationmeta" ? { data: { places: Object.fromEntries(JSON.parse(q.get("places")).filter((k) => k === "107327800879305").map((k) => [k, { key: k, type: "place", name: "6 Sin Ming Road, Tower 2", address_string: "Singapore, Singapore", latitude: "1.353055", longitude: "103.836321", country_code: "SG" }])) } } : { data: [] }),
   "act_111": () => ({ id: "act_111", account_id: "111", name: "Sculpt Society Ads", currency: "SGD", account_status: 1 }),
   "act_333": () => ({ id: "act_333", account_id: "333", name: "Foreign account", currency: "USD", account_status: 1 }),
 };
@@ -93,8 +101,18 @@ test("M1 every call carries the token and appsecret_proof on the pinned version 
 });
 
 test("M2 the link for a gym: who the token is, what it can act on, and the chosen assets resolved — currency, status, the Page's Instagram, its forms, the account's pixels — with problems in words", async () => {
-  const profile = { locale: { currency: "SGD" }, meta_assets: { ad_account_id: "act_111", page_id: "77", instagram_actor_id: "88", pixel_id: "6001", lead_form_id: "4001", business_id: "555" } };
+  const profile = { locale: { currency: "SGD" }, meta_assets: { ad_account_id: "act_111", page_id: "77", instagram_user_id: "88", pixel_id: "6001", lead_form_id: "4001", business_id: "555" } };
   const r = await checkLink(profile, { client: client() });
+  assert.deepEqual(r.chosen.instagram_accounts, [{ id: "88", username: "sculptsociety" }, { id: "86", username: "sculpt_old" }], "the Instagram accounts connected to the ad account");
+  assert.deepEqual(r.chosen.history_pins.map((p) => [p.kind, p.key, p.name, p.radius_km, p.adsets, p.example]), [["place", "107327800879305", "6 Sin Ming Road, Tower 2", 5, 2, "0715 Thomson | Fit Fathers"], ["point", null, null, 3, 1, "Bishan test"]], "the pins the account already targets, most used first");
+  assert.deepEqual(await client().places(["107327800879305", "55555"]), [{ key: "107327800879305", name: "6 Sin Ming Road, Tower 2", address: "Singapore, Singapore", lat: 1.353055, lng: 103.836321, country: "SG" }], "a key Meta does not know is simply absent");
+  // The legacy actor id still resolves; with none chosen, the account's only Instagram account, else the Page's.
+  assert.equal((await checkLink({ meta_assets: { ad_account_id: "act_111", page_id: "77", instagram_actor_id: "86" } }, { client: client() })).chosen.instagram.username, "sculpt_old");
+  answers["act_111/instagram_accounts"] = () => ({ data: [{ id: "86", username: "sculpt_old" }] });
+  assert.equal((await checkLink({ meta_assets: { ad_account_id: "act_111", page_id: "77" } }, { client: client() })).chosen.instagram.id, "86", "the account's only one");
+  answers["act_111/instagram_accounts"] = () => ({ data: [] });
+  assert.equal((await checkLink({ meta_assets: { ad_account_id: "act_111", page_id: "77" } }, { client: client() })).chosen.instagram.id, "88", "else the Page's");
+  answers["act_111/instagram_accounts"] = () => ({ data: [{ id: "88", username: "sculptsociety" }, { id: "86", username: "sculpt_old" }] });
   assert.equal(r.version, META_API_VERSION);
   assert.equal(r.me.name, "strategym-panel");
   assert.deepEqual(r.accounts.map((a) => [a.id, a.status]), [["act_111", "active"], ["act_222", "disabled"]]);
@@ -110,11 +128,11 @@ test("M2 the link for a gym: who the token is, what it can act on, and the chose
   assert.equal(r2.chosen.account.id, "act_111"); assert.deepEqual(r2.problems, []);
   // Wrong choices are said in words: a pixel not on the account, an archived form, an Instagram account not the Page's,
   // a foreign currency, a disabled account, an account or Page the system user cannot act on.
-  const bad = await checkLink({ locale: { currency: "SGD" }, meta_assets: { ad_account_id: "act_333", page_id: "77", instagram_actor_id: "89", pixel_id: "6009", lead_form_id: "4002", business_id: "123" } }, { client: client() });
+  const bad = await checkLink({ locale: { currency: "SGD" }, meta_assets: { ad_account_id: "act_333", page_id: "77", instagram_user_id: "89", pixel_id: "6009", lead_form_id: "4002", business_id: "123" } }, { client: client() });
   assert.ok(bad.problems.some((p) => /bills in USD; the profile's budgets are in SGD/.test(p)), bad.problems.join("\n"));
   assert.ok(bad.problems.some((p) => /pixel 6009 is not one of the ad account's pixels/.test(p)));
   assert.ok(bad.problems.some((p) => /lead form "Old form" is archived/.test(p)));
-  assert.ok(bad.problems.some((p) => /Instagram account 89 is not the one linked to this Page \(88, @sculptsociety\)/.test(p)));
+  assert.ok(bad.problems.some((p) => /Instagram account 89 is not one connected to this ad account or Page \(88 @sculptsociety\)/.test(p)), bad.problems.join("\n"));
   assert.ok(bad.warnings.some((w) => /act_333 is not among the accounts assigned/.test(w)));
   assert.ok(bad.warnings.some((w) => /business portfolio 123 is not one the token can see/.test(w)));
   const disabled = await checkLink({ meta_assets: { ad_account_id: "act_222" } }, { client: client() });
@@ -126,7 +144,7 @@ test("M2 the link for a gym: who the token is, what it can act on, and the chose
   // Nothing chosen yet: the lists alone, no lookups.
   calls = [];
   const none = await checkLink({}, { client: client() });
-  assert.deepEqual(none.chosen, { account: null, page: null, instagram: null, forms: [], pixels: [] });
+  assert.deepEqual(none.chosen, { account: null, page: null, instagram: null, instagram_accounts: [], forms: [], pixels: [], history_pins: [] });
   assert.ok(!calls.some((c) => /leadgen_forms|adspixels/.test(c.path)));
   assert.ok(!JSON.stringify([r, bad, unknown, none]).includes(TOKEN) && !JSON.stringify([r, bad]).includes("PAGE-TOKEN"), "no token in what the panel is given");
 });
@@ -163,7 +181,7 @@ test("M3 the keys come from .env per gym — the gym's own suffixed keys first, 
 });
 
 test("M4 one of everything (meta-publish): the payloads are built from the profile and the ad — cents budget, the pin, the callout's gender, PAUSED everywhere, the lead form on the button, placeholders that say so, Singapore's category, identity and 1-day click window; a missing id stops it before any call; the identity is read from the account's existing ad sets", async () => {
-  const { buildTestOne, placeholderWords, genderFor, AD_STATUS, adsManagerUrl } = await import("./meta-publish.mjs");
+  const { buildTestOne, placeholderWords, genderFor, AD_STATUS, adsManagerUrl, NEVER_ADVANTAGE, geoFor } = await import("./meta-publish.mjs");
   const profile = { display_name: "Sculpt Society", gym_abbr: "SCS", website: "https://sculptsociety.com.sg", locale: { country: "SG", currency: "SGD" },
     meta_assets: { ad_account_id: "act_111", page_id: "77", lead_form_id: "4001", pixel_id: "6001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
     campaign_defaults: { objective: "OUTCOME_LEADS", budget: { amount: 40, currency: "SGD", bid_strategy: "LOWEST_COST_WITHOUT_CAP" }, attribution: { click_window_days: 7, view_window_days: 1 } },
@@ -172,8 +190,31 @@ test("M4 one of everything (meta-publish): the payloads are built from the profi
   const ad = { folder: "101-c01-bishan-t3-green-white", file: "101-c01-bishan-t3-green-white/1x1/c01-bishan_1x1_v1.png", words: { location: "BISHAN", audience: "MEN WANTED", offer: "12 Week Total Body Reset", free: false } };
   const p = buildTestOne({ profile, batch, ad, storyFile: "x/9x16/c01_9x16_v1.png", tag: "2026-09-13" });
   assert.equal(p.account, "act_111");
-  assert.deepEqual(p.campaign, { name: "SCS | TEST | Leads | 12 Week Total Body Reset | 2026-09-13", objective: "OUTCOME_LEADS", status: "PAUSED", special_ad_categories: [], buying_type: "AUCTION", daily_budget: 4000, bid_strategy: "LOWEST_COST_WITHOUT_CAP" });
+  assert.deepEqual(p.campaign, { name: "SCS | TEST | Leads | 12 Week Total Body Reset | 2026-09-13", objective: "OUTCOME_LEADS", status: "PAUSED", special_ad_categories: [], buying_type: "AUCTION" }, "ad-set budgets by default: the campaign carries none");
+  assert.deepEqual([p.adset.daily_budget, p.adset.bid_strategy, p.adset.bid_amount, p.budget], [4000, "LOWEST_COST_WITHOUT_CAP", undefined, { level: "adset", daily: 40, currency: "SGD", bid_strategy: "LOWEST_COST_WITHOUT_CAP", bid_cap: null }]);
   assert.equal(p.adset.name, "SCS_BISHAN_TEST_2026-09-13"); assert.equal(p.adset.status, "PAUSED");
+  // Campaign budget instead; a capped strategy carries its bid; an unknown strategy or a missing cap stops the plan.
+  const cbo = buildTestOne({ profile: { ...profile, campaign_defaults: { budget: { level: "campaign", amount: 60, currency: "SGD", bid_strategy: "COST_CAP", bid_cap: 15 } } }, batch, ad });
+  assert.deepEqual([cbo.campaign.daily_budget, cbo.campaign.bid_strategy, cbo.adset.daily_budget, cbo.adset.bid_strategy, cbo.adset.bid_amount, cbo.budget.level], [6000, "COST_CAP", undefined, undefined, 1500, "campaign"]);
+  assert.throws(() => buildTestOne({ profile: { ...profile, campaign_defaults: { budget: { amount: 40, bid_strategy: "COST_CAP" } } }, batch, ad }), /Cost per result goal needs an amount/);
+  assert.throws(() => buildTestOne({ profile: { ...profile, campaign_defaults: { budget: { amount: 40, bid_strategy: "MAGIC" } } }, batch, ad }), /bid strategy "MAGIC"/);
+  assert.equal(buildTestOne({ profile: { ...profile, campaign_defaults: { budget: {} } }, batch, ad }).adset.daily_budget, 5000, "SGD 50/day when nothing is set");
+  // Pins: the one naming the callout (a Meta place by key), else the first (said so); the gender map over the words; never Advantage+.
+  const pinned = { ...profile, targeting_defaults: { ...profile.targeting_defaults, geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", place_name: "6 Sin Ming Road, Tower 2", radius_km: 5 }, { label: "Bishan", lat: 1.35, lng: 103.85, radius_km: 3, location_types: ["home"], callouts: ["BISHAN"] }] }, demographics: { age_min: 25, age_max: 60, callout_genders: { "MEN WANTED": "all" } } } };
+  const b1 = buildTestOne({ profile: pinned, batch, ad });
+  assert.deepEqual(b1.adset.targeting.geo_locations, { custom_locations: [{ latitude: 1.35, longitude: 103.85, radius: 3, distance_unit: "kilometer" }], location_types: ["home"] });
+  assert.deepEqual([b1.pin.label, b1.pin.fallback, b1.adset.targeting.genders, b1.adset.targeting.age_max], ["Bishan", false, undefined, 60], "the owner's map says MEN WANTED is for everyone here");
+  const b2 = buildTestOne({ profile: pinned, batch, ad: { ...ad, words: { ...ad.words, location: "ANG MO KIO" } } });
+  assert.deepEqual(b2.adset.targeting.geo_locations, { places: [{ key: "107327800879305", radius: 5, distance_unit: "kilometer" }], location_types: ["home", "recent"] }, "a named Meta place, as their own ad sets do");
+  assert.deepEqual([b2.pin.label, b2.pin.fallback], ["Sin Ming", true]); assert.match(b2.pin.words, /6 Sin Ming Road, Tower 2 \(Meta place 107327800879305\) · 5 km · the gym's first pin/);
+  assert.deepEqual(b1.adset.targeting.targeting_automation, { advantage_audience: 0 }); assert.deepEqual(NEVER_ADVANTAGE, { advantage_audience: 0 });
+  assert.equal(JSON.stringify(buildTestOne({ profile: pinned, batch, ad })).includes('"advantage_audience":1'), false);
+  assert.throws(() => buildTestOne({ profile: { ...profile, targeting_defaults: { geo: { radius_pins: [{ label: "Only a code", postal_code: "575583" }] } } }, batch, ad }), /no usable radius pin for BISHAN/);
+  // The Instagram identity on the creative when the profile has one; none, and Meta picks a Page-backed one (said in the plan).
+  assert.equal(p.creative.object_story_spec.instagram_user_id, undefined); assert.equal(p.instagram_user_id, null);
+  const ig = buildTestOne({ profile: { ...profile, meta_assets: { ...profile.meta_assets, instagram_user_id: "17841406469590226" } }, batch, ad });
+  assert.equal(ig.creative.object_story_spec.instagram_user_id, "17841406469590226"); assert.equal(ig.instagram_user_id, "17841406469590226");
+  assert.deepEqual(geoFor({ lat: 1.3, lng: 103.8 }), { custom_locations: [{ latitude: 1.3, longitude: 103.8, radius: 5, distance_unit: "kilometer" }], location_types: ["home", "recent"] });
   assert.deepEqual([p.adset.optimization_goal, p.adset.billing_event, p.adset.destination_type, p.adset.promoted_object], ["LEAD_GENERATION", "IMPRESSIONS", "ON_AD", { page_id: "77" }]);
   assert.deepEqual(p.adset.targeting.geo_locations.custom_locations, [{ latitude: 1.3524823, longitude: 103.835747, radius: 5, distance_unit: "kilometer" }]);
   assert.deepEqual([p.adset.targeting.age_min, p.adset.targeting.age_max, p.adset.targeting.genders, p.adset.targeting.targeting_automation], [25, 45, [1], { advantage_audience: 0 }]);
@@ -197,12 +238,13 @@ test("M4 one of everything (meta-publish): the payloads are built from the profi
   assert.deepEqual([own.creative.object_story_spec.link_data.message, own.creative.object_story_spec.link_data.name, own.adset.targeting.genders], ["m", "h", [2]]);
   assert.equal(buildTestOne({ profile, batch, ad: { ...ad, words: { ...ad.words, audience: null } } }).adset.targeting.genders, undefined);
   assert.deepEqual([genderFor("MEN WANTED"), genderFor("Fit Fathers"), genderFor("LADIES OF BISHAN"), genderFor("Strong Mothers"), genderFor("EVERYONE")], [[1], [1], [2], [2], null]);
+  assert.deepEqual(genderFor("EVERYONE", { targeting_defaults: { demographics: { callout_genders: { EVERYONE: "women" } } } }), [2]);
   // Outside Singapore the regulated fields are left out; a missing id stops the plan.
   const abroad = buildTestOne({ profile: { ...profile, locale: { country: "MY", currency: "MYR" }, campaign_defaults: { ...profile.campaign_defaults, budget: { amount: 40, currency: "MYR" } } }, batch, ad });
   assert.equal(abroad.adset.regional_regulated_categories, undefined); assert.equal(abroad.adset.regional_regulation_identities, undefined);
   assert.throws(() => buildTestOne({ profile: { ...profile, meta_assets: { ...profile.meta_assets, lead_form_id: "" } }, batch, ad }), /missing lead_form_id/);
   assert.throws(() => buildTestOne({ profile: { ...profile, meta_assets: { ...profile.meta_assets, singapore_payer_id: "" } }, batch, ad }), /missing singapore_payer_id .*verified advertiser/);
-  assert.throws(() => buildTestOne({ profile: { ...profile, targeting_defaults: { geo: { radius_pins: [] } } }, batch, ad }), /no radius pin/);
+  assert.throws(() => buildTestOne({ profile: { ...profile, targeting_defaults: { geo: { radius_pins: [] } } }, batch, ad }), /no usable radius pin/);
   assert.throws(() => buildTestOne({ profile: { ...profile, campaign_defaults: { budget: { amount: 40, currency: "USD" } } }, batch, ad }), /budget is in USD/);
   assert.match(placeholderWords({ display_name: "X" }, { words: {} }).message, /PLACEHOLDER/);
   // The verified identity, read from the ad sets the account already runs (the fake carries two categories).
