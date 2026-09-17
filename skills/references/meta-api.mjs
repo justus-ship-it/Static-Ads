@@ -68,7 +68,7 @@ export function explainError(err, path = "") {
   if (code === 190) return `the Meta token is invalid or has expired (${msg}) — generate a new system-user token and put it in .env`;
   if (code === 10 || code === 200 || (code >= 200 && code <= 299)) return `the token is not allowed to do this (${msg}) — the system user needs ${METAPERMS_TEXT} and the asset assigned to it`;
   if (code === 4 || code === 17 || code === 32 || code === 613) return `Meta is rate-limiting these calls (${msg}) — wait a few minutes and check again`;
-  if (code === 100) return `Meta did not accept the request${path ? ` to ${path}` : ""} (${msg}) — an id in the profile may be wrong`;
+  if (code === 100) return `Meta did not accept the request${path ? ` to ${path}` : ""} (${msg})${err?.error_user_msg ? "" : " — a field or an id may be wrong"}`;
   if (code === 803) return `Meta knows no object with that id${path ? ` (${path})` : ""} — the id in the profile may be wrong, or the asset is not assigned to the system user`;
   return `Meta answered with an error${path ? ` for ${path}` : ""}: ${msg}${code != null ? ` (code ${code}${sub != null ? `/${sub}` : ""})` : ""}`;
 }
@@ -95,6 +95,20 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
     }
     return body;
   }
+  /** A write: form-encoded (objects as JSON), the token and proof in the body. Same errors as get. */
+  async function post(path, params = {}, { token } = {}) {
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries({ ...params, ...auth(token) })) if (v !== undefined && v !== null) body.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
+    let res, out;
+    try { res = await f(`${base}/${path.replace(/^\//, "")}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" }, body: body.toString() }); }
+    catch (e) { throw new MetaError(`could not reach Meta (${scrubTokens(e.message)})`, { path }); }
+    try { out = await res.json(); } catch { throw new MetaError(`Meta answered ${res.status} with something that is not JSON`, { status: res.status, path }); }
+    if (!res.ok || out?.error) {
+      const e = out?.error || {};
+      throw new MetaError(explainError(e, path) + (e.error_user_msg ? ` — ${scrubTokens(e.error_user_msg)}` : ""), { code: e.code ?? null, subcode: e.error_subcode ?? null, type: e.type ?? null, status: res.status, trace: e.fbtrace_id ?? null, path });
+    }
+    return out;
+  }
   /** Every item of a paged edge, page after page (never more than maxPages). */
   async function list(path, params = {}, opts = {}) {
     const out = [];
@@ -109,7 +123,7 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
   }
   return {
     version: META_API_VERSION,
-    get, list,
+    get, list, post,
     me: () => get("me", { fields: "id,name" }),
     adAccounts: () => list("me/adaccounts", { fields: "id,account_id,name,currency,account_status,timezone_name,business{id,name}" }),
     pages: () => list("me/accounts", { fields: "id,name,category,instagram_business_account{id,username}" }),
@@ -120,6 +134,24 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
     pageToken: async (id) => (await get(id, { fields: "access_token" })).access_token,
     leadForms: async (pageId) => { const token = await get(pageId, { fields: "access_token" }).then((r) => r.access_token); return list(`${pageId}/leadgen_forms`, { fields: "id,name,status,created_time,leads_count" }, { token }); },
     pixels: (adAccountId) => list(`${actId(adAccountId)}/adspixels`, { fields: "id,name,last_fired_time" }),
+    /** The verified advertiser identities the account's ad sets already carry for regulated regions
+     *  (Singapore: the beneficiary and payer of every ad). Meta has no listing edge for them that a
+     *  system user can read, but every ad set that delivers in Singapore names them. */
+    regulationIdentities: async (adAccountId) => {
+      const sets = await list(`${actId(adAccountId)}/adsets`, { fields: "id,name,regional_regulated_categories,regional_regulation_identities", limit: 50 });
+      const seen = new Map();
+      for (const s of sets) {
+        const ids = s.regional_regulation_identities || {};
+        for (const cat of s.regional_regulated_categories || []) {
+          const prefix = cat.toLowerCase(), ben = ids[`${prefix}_beneficiary`] || ids.universal_beneficiary, pay = ids[`${prefix}_payer`] || ids.universal_payer;
+          if (!ben && !pay) continue;
+          const key = `${cat}|${ben}|${pay}`;
+          const cur = seen.get(key) || { category: cat, beneficiary: ben || null, payer: pay || null, adsets: 0, example: s.name };
+          cur.adsets++; seen.set(key, cur);
+        }
+      }
+      return [...seen.values()].sort((a, b) => b.adsets - a.adsets);
+    },
   };
 }
 export const actId = (id) => (String(id).startsWith("act_") ? String(id) : `act_${id}`);

@@ -9,7 +9,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHmac } from "node:crypto";
@@ -35,10 +35,11 @@ const errorFor = (path) => null;
 let errorHook = errorFor;
 
 before(async () => {
-  server = http.createServer((req, res) => {
+  server = http.createServer(async (req, res) => {
     const u = new URL(req.url, "http://x");
     const path = u.pathname.replace(`/${META_API_VERSION}/`, "");
-    calls.push({ path, q: u.searchParams, version: u.pathname.split("/")[1] });
+    if (req.method === "POST") { let body = ""; for await (const chunk of req) body += chunk; for (const [k, v] of new URLSearchParams(body)) u.searchParams.set(k, v); }
+    calls.push({ path, q: u.searchParams, version: u.pathname.split("/")[1], method: req.method });
     const err = errorHook(path, u.searchParams);
     if (err) { res.writeHead(err.status || 400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: err.error })); }
     if (u.searchParams.get("access_token") !== TOKEN && !(path.endsWith("/leadgen_forms") && u.searchParams.get("access_token") === "PAGE-TOKEN-77")) { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: "Invalid OAuth access token", code: 190, type: "OAuthException" } })); }
@@ -159,4 +160,136 @@ test("M3 the keys come from .env per gym — the gym's own suffixed keys first, 
     c = metaConfig({ env: { META_ACCESS_TOKEN_SCULPT_SOCIETY: "" }, envFile, gym: "sculpt-society" });
     assert.equal(c.token, "", "the environment's empty value wins over the file for that name");
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("M4 one of everything (meta-publish): the payloads are built from the profile and the ad — cents budget, the pin, the callout's gender, PAUSED everywhere, the lead form on the button, placeholders that say so, Singapore's category, identity and 1-day click window; a missing id stops it before any call; the identity is read from the account's existing ad sets", async () => {
+  const { buildTestOne, placeholderWords, genderFor, AD_STATUS, adsManagerUrl } = await import("./meta-publish.mjs");
+  const profile = { display_name: "Sculpt Society", gym_abbr: "SCS", website: "https://sculptsociety.com.sg", locale: { country: "SG", currency: "SGD" },
+    meta_assets: { ad_account_id: "act_111", page_id: "77", lead_form_id: "4001", pixel_id: "6001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+    campaign_defaults: { objective: "OUTCOME_LEADS", budget: { amount: 40, currency: "SGD", bid_strategy: "LOWEST_COST_WITHOUT_CAP" }, attribution: { click_window_days: 7, view_window_days: 1 } },
+    targeting_defaults: { geo: { radius_pins: [{ label: "Sin Ming", lat: 1.3524823, lng: 103.835747, radius_km: 5, location_types: ["home", "recent"] }] }, demographics: { age_min: 25, age_max: 45 } } };
+  const batch = { batch_id: "b1" };
+  const ad = { folder: "101-c01-bishan-t3-green-white", file: "101-c01-bishan-t3-green-white/1x1/c01-bishan_1x1_v1.png", words: { location: "BISHAN", audience: "MEN WANTED", offer: "12 Week Total Body Reset", free: false } };
+  const p = buildTestOne({ profile, batch, ad, storyFile: "x/9x16/c01_9x16_v1.png", tag: "2026-09-13" });
+  assert.equal(p.account, "act_111");
+  assert.deepEqual(p.campaign, { name: "SCS | TEST | Leads | 12 Week Total Body Reset | 2026-09-13", objective: "OUTCOME_LEADS", status: "PAUSED", special_ad_categories: [], buying_type: "AUCTION", daily_budget: 4000, bid_strategy: "LOWEST_COST_WITHOUT_CAP" });
+  assert.equal(p.adset.name, "SCS_BISHAN_TEST_2026-09-13"); assert.equal(p.adset.status, "PAUSED");
+  assert.deepEqual([p.adset.optimization_goal, p.adset.billing_event, p.adset.destination_type, p.adset.promoted_object], ["LEAD_GENERATION", "IMPRESSIONS", "ON_AD", { page_id: "77" }]);
+  assert.deepEqual(p.adset.targeting.geo_locations.custom_locations, [{ latitude: 1.3524823, longitude: 103.835747, radius: 5, distance_unit: "kilometer" }]);
+  assert.deepEqual([p.adset.targeting.age_min, p.adset.targeting.age_max, p.adset.targeting.genders, p.adset.targeting.targeting_automation], [25, 45, [1], { advantage_audience: 0 }]);
+  assert.deepEqual(p.adset.attribution_spec, [{ event_type: "CLICK_THROUGH", window_days: 1 }], "lead generation only takes a 1-day click window, whatever the profile says for conversions");
+  assert.deepEqual(p.adset.regional_regulated_categories, ["SINGAPORE_UNIVERSAL"]);
+  assert.deepEqual(p.adset.regional_regulation_identities, { singapore_universal_beneficiary: "4260400000000001", singapore_universal_payer: "4260400000000001" });
+  const ld = p.creative.object_story_spec.link_data;
+  assert.equal(p.creative.object_story_spec.page_id, "77");
+  assert.deepEqual(ld.call_to_action, { type: "SIGN_UP", value: { lead_gen_form_id: "4001" } });
+  assert.match(ld.message, /^\[PLACEHOLDER primary text\] 12 Week Total Body Reset at Sculpt Society, Bishan\./); assert.match(ld.name, /^\[PLACEHOLDER headline\]/); assert.match(ld.description, /^\[PLACEHOLDER/);
+  assert.equal(ld.link, "https://sculptsociety.com.sg", "a lead ad links to the gym's website (Meta refuses the Page's own address)");
+  const features = p.creative.degrees_of_freedom_spec.creative_features_spec;
+  assert.equal(features.standard_enhancements, undefined, "the blanket switch is deprecated");
+  assert.ok(Object.keys(features).length >= 12 && ["image_touchups", "text_optimizations", "add_text_overlay", "image_templates", "enhance_cta"].every((k) => features[k]?.enroll_status === "OPT_OUT"), "every enhancement that can rewrite the ad is opted out by name");
+  assert.throws(() => buildTestOne({ profile: { ...profile, website: "" }, batch, ad }), /must link to an external website/);
+  assert.equal(p.ad.status, "PAUSED"); assert.equal(AD_STATUS, "PAUSED");
+  assert.equal(p.image.name, "b1__c01-bishan_1x1_v1.png"); assert.equal(p.story.file, "x/9x16/c01_9x16_v1.png");
+  assert.equal(adsManagerUrl("act_111", "9"), "https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=111&selected_campaign_ids=9");
+  // The owner's own words replace the placeholders; the callout decides the gender; no callout, everyone.
+  const own = buildTestOne({ profile, batch, ad: { ...ad, words: { ...ad.words, audience: "LADIES WANTED" } }, words: { message: "m", headline: "h", description: "d" } });
+  assert.deepEqual([own.creative.object_story_spec.link_data.message, own.creative.object_story_spec.link_data.name, own.adset.targeting.genders], ["m", "h", [2]]);
+  assert.equal(buildTestOne({ profile, batch, ad: { ...ad, words: { ...ad.words, audience: null } } }).adset.targeting.genders, undefined);
+  assert.deepEqual([genderFor("MEN WANTED"), genderFor("Fit Fathers"), genderFor("LADIES OF BISHAN"), genderFor("Strong Mothers"), genderFor("EVERYONE")], [[1], [1], [2], [2], null]);
+  // Outside Singapore the regulated fields are left out; a missing id stops the plan.
+  const abroad = buildTestOne({ profile: { ...profile, locale: { country: "MY", currency: "MYR" }, campaign_defaults: { ...profile.campaign_defaults, budget: { amount: 40, currency: "MYR" } } }, batch, ad });
+  assert.equal(abroad.adset.regional_regulated_categories, undefined); assert.equal(abroad.adset.regional_regulation_identities, undefined);
+  assert.throws(() => buildTestOne({ profile: { ...profile, meta_assets: { ...profile.meta_assets, lead_form_id: "" } }, batch, ad }), /missing lead_form_id/);
+  assert.throws(() => buildTestOne({ profile: { ...profile, meta_assets: { ...profile.meta_assets, singapore_payer_id: "" } }, batch, ad }), /missing singapore_payer_id .*verified advertiser/);
+  assert.throws(() => buildTestOne({ profile: { ...profile, targeting_defaults: { geo: { radius_pins: [] } } }, batch, ad }), /no radius pin/);
+  assert.throws(() => buildTestOne({ profile: { ...profile, campaign_defaults: { budget: { amount: 40, currency: "USD" } } }, batch, ad }), /budget is in USD/);
+  assert.match(placeholderWords({ display_name: "X" }, { words: {} }).message, /PLACEHOLDER/);
+  // The verified identity, read from the ad sets the account already runs (the fake carries two categories).
+  answers["act_111/adsets"] = () => ({ data: [
+    { id: "1", name: "0715 Thomson | Fit Fathers", regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: "4260400000000001", singapore_universal_payer: "4260400000000001" } },
+    { id: "2", name: "0331 Thomson | Abs", regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: "4260400000000001", singapore_universal_payer: "4260400000000001" } },
+    { id: "3", name: "old", regional_regulated_categories: ["TAIWAN_UNIVERSAL"], regional_regulation_identities: { taiwan_universal_beneficiary: "5", taiwan_universal_payer: "6" } },
+    { id: "4", name: "none" },
+  ] });
+  const ids = await client().regulationIdentities("111");
+  assert.deepEqual(ids, [{ category: "SINGAPORE_UNIVERSAL", beneficiary: "4260400000000001", payer: "4260400000000001", adsets: 2, example: "0715 Thomson | Fit Fathers" }, { category: "TAIWAN_UNIVERSAL", beneficiary: "5", payer: "6", adsets: 1, example: "old" }]);
+  delete answers["act_111/adsets"];
+});
+
+test("M5 createTestOne: the five objects are made in order and recorded as they land; a re-run makes nothing; a creative whose link or opt-out no longer matches the plan is remade — and its ad with it — with the old ids kept as superseded; a feature Meta refuses by name is dropped and retried; a refused opt-out as a whole makes the creative without it and says so", async () => {
+  const { buildTestOne, createTestOne, ENHANCEMENTS } = await import("./meta-publish.mjs");
+  const d = mkdtempSync(join(tmpdir(), "meta-publish-"));
+  try {
+    mkdirSync(join(d, "outputs", "b1", "101-c01-bishan-t3-green-white", "1x1"), { recursive: true });
+    writeFileSync(join(d, "outputs", "b1", "101-c01-bishan-t3-green-white", "1x1", "c01-bishan_1x1_v1.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]));
+    const profile = { display_name: "Sculpt Society", gym_abbr: "SCS", website: "https://sculptsociety.com.sg", locale: { country: "SG", currency: "SGD" },
+      meta_assets: { ad_account_id: "act_111", page_id: "77", lead_form_id: "4001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+      campaign_defaults: { budget: { amount: 40, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ lat: 1.35, lng: 103.83, radius_km: 5 }] } } };
+    const ad = { folder: "101-c01-bishan-t3-green-white", file: "101-c01-bishan-t3-green-white/1x1/c01-bishan_1x1_v1.png", words: { location: "BISHAN", audience: "MEN WANTED", offer: "12 Week Total Body Reset" } };
+    const plan = buildTestOne({ profile, batch: { batch_id: "b1" }, ad, tag: "2026-09-17" });
+    let n = 0, refuse = null;
+    const bodies = [];
+    Object.assign(answers, {
+      "act_111/adimages": (q) => { bodies.push(["adimages", q]); return { images: { [q.get("name")]: { hash: "h4sh", url: "https://cdn/x.png" } } }; },
+      "act_111/campaigns": (q) => { bodies.push(["campaigns", q]); return { id: "c" + ++n }; },
+      "act_111/adsets": (q) => { bodies.push(["adsets", q]); return { id: "s" + ++n }; },
+      "act_111/adcreatives": (q) => { bodies.push(["adcreatives", q]); return { id: "cr" + ++n }; },
+      "act_111/ads": (q) => { bodies.push(["ads", q]); return { id: "ad" + ++n }; },
+    });
+    errorHook = (path, q) => (path === "act_111/adcreatives" && refuse ? refuse(q) : null);
+    const path = join(d, "outputs", "b1", "publish-test.json");
+    const fresh = () => ({ path, test: true, batch_id: "b1", ad: ad.folder, account: "act_111", created: {}, error: null });
+    const log = [];
+    // 1. Everything made, in order, each POST carrying the token, with the plan's payloads.
+    const record = fresh();
+    const r = await createTestOne(plan, { client: client(), brandDir: d, record, log: (m) => log.push(m) });
+    assert.deepEqual(bodies.map((b) => b[0]), ["adimages", "campaigns", "adsets", "adcreatives", "ads"]);
+    assert.ok(bodies.every((b) => b[1].get("access_token") === TOKEN && b[1].get("appsecret_proof")), "every POST is signed");
+    assert.equal(bodies[0][1].get("bytes"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).toString("base64"));
+    assert.equal(JSON.parse(bodies[2][1].get("targeting")).genders[0], 1); assert.equal(bodies[2][1].get("campaign_id"), "c1"); assert.equal(bodies[2][1].get("status"), "PAUSED");
+    const spec = JSON.parse(bodies[3][1].get("degrees_of_freedom_spec")).creative_features_spec;
+    assert.deepEqual(Object.keys(spec).sort(), [...ENHANCEMENTS].sort()); assert.ok(Object.values(spec).every((v) => v.enroll_status === "OPT_OUT"));
+    assert.equal(JSON.parse(bodies[3][1].get("object_story_spec")).link_data.image_hash, "h4sh");
+    assert.equal(JSON.parse(bodies[3][1].get("object_story_spec")).link_data.link, "https://sculptsociety.com.sg");
+    assert.deepEqual([bodies[4][1].get("adset_id"), bodies[4][1].get("creative"), bodies[4][1].get("status")], ["s2", JSON.stringify({ creative_id: "cr3" }), "PAUSED"]);
+    assert.deepEqual([r.campaign.id, r.adset.id, r.creative.id, r.ad.id, r.creative.enhancements, r.ad.creative_id], ["c1", "s2", "cr3", "ad4", "opted out", "cr3"]);
+    const onDisk = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([onDisk.created.image.hash, onDisk.created.campaign.id, onDisk.created.ad.id, onDisk.done > "", onDisk.path], ["h4sh", "c1", "ad4", true, undefined]);
+    // 2. A re-run makes nothing.
+    bodies.length = 0;
+    const again = await createTestOne(plan, { client: client(), brandDir: d, record: { ...JSON.parse(readFileSync(path, "utf-8")), path }, log: (m) => log.push(m) });
+    assert.equal(bodies.length, 0, "no call at all"); assert.deepEqual([again.creative.id, again.ad.id], ["cr3", "ad4"]);
+    // 3. The plan's link changed (the website was filled in later): the creative and its ad are remade, the old ones kept.
+    const stale = { ...JSON.parse(readFileSync(path, "utf-8")), path };
+    stale.created.creative.link = "https://www.facebook.com/77/";
+    const r3 = await createTestOne(plan, { client: client(), brandDir: d, record: stale, log: (m) => log.push(m) });
+    assert.deepEqual(bodies.map((b) => b[0]), ["adcreatives", "ads"], "only the creative and the ad");
+    assert.deepEqual([r3.campaign.id, r3.adset.id, r3.creative.id, r3.ad.id], ["c1", "s2", "cr5", "ad6"]);
+    assert.deepEqual(JSON.parse(readFileSync(path, "utf-8")).superseded.map((x) => [x.step, x.id]), [["creative", "cr3"], ["ad", "ad4"]]);
+    assert.match(log.find((m) => /creative: cr3 no longer/.test(m)), /its link was https:\/\/www.facebook.com\/77\//);
+    // 4. Meta refuses one feature by name: dropped and retried; the record says which.
+    let mark = calls.length;
+    const creativeCalls = () => calls.slice(mark).filter((c) => c.path === "act_111/adcreatives").map((c) => c.q);
+    refuse = (q) => (JSON.parse(q.get("degrees_of_freedom_spec") || "{}").creative_features_spec?.image_uncrop ? { error: { message: "Invalid parameter", code: 100, error_user_msg: "image_uncrop is not available for this ad" } } : null);
+    const r4 = await createTestOne(plan, { client: client(), brandDir: d, record: fresh(), log: (m) => log.push(m) });
+    const specs = creativeCalls().map((q) => Object.keys(JSON.parse(q.get("degrees_of_freedom_spec")).creative_features_spec));
+    assert.equal(specs.length, 2); assert.ok(specs[0].includes("image_uncrop") && !specs[1].includes("image_uncrop") && specs[1].length === ENHANCEMENTS.length - 1);
+    assert.deepEqual([r4.creative.enhancements, r4.creative.opt_out_refused], ["opted out", ["image_uncrop"]]);
+    // 5. The opt-out as a whole is refused: made without it, and the record says so.
+    mark = calls.length;
+    refuse = (q) => (q.get("degrees_of_freedom_spec") ? { error: { message: "Invalid parameter", code: 100, error_user_msg: "degrees_of_freedom_spec is not supported for this creative" } } : null);
+    const r5 = await createTestOne(plan, { client: client(), brandDir: d, record: fresh(), log: (m) => log.push(m) });
+    assert.equal(creativeCalls().length, 2); assert.equal(creativeCalls()[1].get("degrees_of_freedom_spec"), null);
+    assert.match(r5.creative.enhancements, /not opted out/); assert.equal(r5.creative.opt_out_refused.length, ENHANCEMENTS.length);
+    // 6. Any other refusal stops the run where it is, recorded with its step.
+    refuse = () => ({ error: { message: "Invalid parameter", code: 100, error_user_msg: "Lead Generation ads should always link to external content" } });
+    const rec6 = fresh();
+    await assert.rejects(createTestOne(plan, { client: client(), brandDir: d, record: rec6, log: () => {} }), /external content/);
+    assert.equal(rec6.error.step, "creative"); assert.ok(rec6.created.adset?.id && !rec6.created.creative);
+  } finally {
+    errorHook = errorFor;
+    for (const k of ["act_111/adimages", "act_111/campaigns", "act_111/adsets", "act_111/adcreatives", "act_111/ads"]) delete answers[k];
+    rmSync(d, { recursive: true, force: true });
+  }
 });
