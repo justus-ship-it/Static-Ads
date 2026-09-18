@@ -557,6 +557,15 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   } catch (e) { prog.set({ stage: "failed", error: e.message }); throw e; }
 }
 
+
+/** The run is over: say so and leave. Something (a socket, a timer) has kept a finished run alive for minutes
+ *  before — the panel then shows "running" over a batch that is done — so the CLI ends the process itself,
+ *  after its last line has been written. BATCH_DEBUG_HANDLES=1 names what was still open. */
+export function exitWhenWritten(code = 0) {
+  if (process.env.BATCH_DEBUG_HANDLES) console.error(`still open at exit: ${process.getActiveResourcesInfo().join(", ") || "nothing"}`);
+  process.stdout.write("", () => process.stderr.write("", () => process.exit(code)));
+}
+
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const { values: v } = parseArgs({ options: {
@@ -574,8 +583,9 @@ if (isMain) {
   try {
     const r = await runBatch({ brandDir, brief: JSON.parse(readFileSync(briefPath, "utf-8")), outDir: v.out, dryRun: v["dry-run"], renderOnly: v["render-only"], approveScenes: v["approve-scenes"] });
     if (!r.dryRun) console.log(`gallery: ${join(r.out, "gallery.html")}`);
+    exitWhenWritten(0);
   } catch (e) {
     console.error(e.message);
-    process.exit(1);
+    exitWhenWritten(1);
   }
 }

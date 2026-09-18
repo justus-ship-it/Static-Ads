@@ -32,6 +32,7 @@
  */
 
 import { readFileSync, mkdtempSync, rmSync } from "fs";
+import { whenGeminiFree } from "./gemini-busy.mjs";
 import { extname, join } from "path";
 import { tmpdir } from "os";
 import { loadCatalogue, layoutFor } from "./render-composites.mjs";
@@ -80,18 +81,21 @@ const CONFIRM_SCHEMA = { type: "OBJECT", properties: { findings: { type: "ARRAY"
 
 /** One vision call. `imagePath` may be a list: the images follow the question in that order — or null
  *  for a text-only call to the same model (refresh-scenes.mjs drafts scenes with it). */
-export async function callVision(imagePath, text, schema, { model = CHECK_MODEL, fetchImpl = fetch, key = loadGeminiKey() } = {}) {
+export async function callVision(imagePath, text, schema, { model = CHECK_MODEL, fetchImpl = fetch, key = loadGeminiKey(), retry = {} } = {}) {
   if (!key) throw new Error("GEMINI_KEY not found (.env or environment)");
   const images = (imagePath == null ? [] : [imagePath].flat()).map((p) => ({ inline_data: { mime_type: MIME[extname(p).toLowerCase()] || "image/png", data: readFileSync(p).toString("base64") } }));
   const body = {
     contents: [{ parts: [{ text }, ...images] }],
     generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0 },
   };
-  const res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`vision check failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-  const out = await res.json();
+  // A busy Gemini (503 "high demand", 429, a dropped connection) is waited out — 10, 20, 40 s — never a stopped run.
+  const out = await whenGeminiFree(async () => {
+    const res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key }, body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`vision check failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    return res.json();
+  }, { label: "vision check", ...retry });
   const txt = out.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text;
   if (!txt) throw new Error("vision check returned no answer");
   return JSON.parse(txt);

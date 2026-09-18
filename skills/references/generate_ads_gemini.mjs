@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 
 import { join, extname, resolve, dirname, isAbsolute } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
+import { whenGeminiFree } from "./gemini-busy.mjs";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -26,8 +27,6 @@ const GEMINI_MODEL = "gemini-3.1-flash-image-preview";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const DEFAULT_NUM_IMAGES = 4;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 10000;
 const REQUEST_DELAY_MS = 2000; // Delay between requests to avoid rate limits
 
 /**
@@ -109,18 +108,20 @@ async function generateImage(prompt, referenceImageParts, { aspectRatio, imageSi
   };
 
   const url = `${GEMINI_URL}?key=${GEMINI_KEY}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Gemini API error (${res.status}): ${text}`);
-  }
-
-  const data = await res.json();
+  // A busy Gemini (503 "high demand", 429, a dropped connection) is waited out — 10, 20, 40 s — here, for
+  // every caller (the batch runner, Stories, the clean-up edit, the old template path); any other fault stops.
+  const data = await whenGeminiFree(async () => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Gemini API error (${res.status}): ${text}`);
+    }
+    return res.json();
+  }, { label: "image call" });
   const candidates = data.candidates || [];
   if (candidates.length === 0) {
     const blockReason = data.promptFeedback?.blockReason;
@@ -197,29 +198,15 @@ async function runSingleImage(promptData, referenceImageParts, outputDir, ratio,
     : "";
   const fullPrompt = `${promptData.prompt}${anchorNote}\n\n${ratioInstruction}`;
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      console.log(`  ${label} — generating (attempt ${attempt})...`);
-      const result = await generateImage(fullPrompt, referenceImageParts);
+  console.log(`  ${label} — generating...`);
+  const result = await generateImage(fullPrompt, referenceImageParts); // waits out a busy Gemini itself
 
-      const filename = `${templateName}_${ratioFolder}_v${imageIdx + 1}.${result.ext}`;
-      const savePath = join(ratioDir, filename);
-      writeFileSync(savePath, result.buffer);
+  const filename = `${templateName}_${ratioFolder}_v${imageIdx + 1}.${result.ext}`;
+  const savePath = join(ratioDir, filename);
+  writeFileSync(savePath, result.buffer);
 
-      console.log(`  ${label} — DONE (${(result.buffer.length / 1024).toFixed(0)} KB)`);
-      return { filename, ratioFolder, ratio, width: null, height: null };
-    } catch (err) {
-      const isRetryable = err.message.includes("429") || err.message.includes("500") || err.message.includes("503") || err.message.includes("overloaded");
-      if (isRetryable && attempt < MAX_RETRIES) {
-        const delay = RETRY_DELAY_MS * attempt;
-        console.warn(`  ${label} — failed (attempt ${attempt}/${MAX_RETRIES}): ${err.message.slice(0, 100)}`);
-        console.warn(`  ${label} — retrying in ${delay / 1000}s...`);
-        await sleep(delay);
-        continue;
-      }
-      throw err;
-    }
-  }
+  console.log(`  ${label} — DONE (${(result.buffer.length / 1024).toFixed(0)} KB)`);
+  return { filename, ratioFolder, ratio, width: null, height: null };
 }
 
 /**

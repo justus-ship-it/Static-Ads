@@ -41,7 +41,7 @@ import { poseProblem } from "./visual-prompts.mjs";
 import { checkSibling } from "./check-quality.mjs";
 import { renderPlan } from "./assign-variants.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
-import { resolveSelections, loadRulings, withRulings, CHECKS_VERSION } from "./plan-offer-batch.mjs";
+import { resolveSelections, loadRulings, withRulings, CHECKS_VERSION, exitWhenWritten } from "./plan-offer-batch.mjs";
 import { catalogueFor } from "./client-config.mjs";
 import { inPage, LOAD } from "./clean-photo.mjs";
 
@@ -402,8 +402,9 @@ if (isMain) {
   try {
     const r = await runStories({ brandDir: resolve(v["brand-dir"]), batchId: v.batch, maxCalls: v["max-calls"] ? parseInt(v["max-calls"], 10) : DEFAULT_MAX_CALLS, attempts: parseInt(v.attempts, 10), dryRun: v["dry-run"], renderOnly: v["render-only"] });
     if (!r.dryRun) console.log(`gallery: ${join(r.out, "gallery.html")}`);
+    exitWhenWritten(0);
   } catch (e) {
     console.error(e.message);
-    process.exit(1);
+    exitWhenWritten(1);
   }
 }

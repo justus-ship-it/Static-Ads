@@ -37,6 +37,7 @@ import {
 import { imageSize } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
+import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
@@ -73,6 +74,7 @@ let PORT = parseInt(argv.port, 10);
 const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const okSlug = (s) => typeof s === "string" && SLUG.test(s);
 const ONEMAP_URL = process.env.ONEMAP_URL || "https://www.onemap.gov.sg";
+const isPlainObject = (v) => v && typeof v === "object" && !Array.isArray(v);
 /** A new random token every launch. The panel's page carries it; nothing else can read it. */
 const TOKEN = randomBytes(24).toString("hex");
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".webp"]);
@@ -707,6 +709,50 @@ const server = createServer(async (req, res) => {
         const results = (Array.isArray(b.results) ? b.results : []).map((x) => ({ address: String(x.ADDRESS || x.SEARCHVAL || ""), postal_code: /^\d{6}$/.test(String(x.POSTAL || "")) ? String(x.POSTAL) : null, lat: Number(x.LATITUDE), lng: Number(x.LONGITUDE) })).filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lng)).slice(0, 8);
         return json(res, 200, { results });
       } catch (e) { return json(res, 502, { error: `OneMap could not be reached (${e.message})` }); }
+    }
+    // /api/client/{gym}/targeting[/{id}] — the detailed-targeting presets: imported from the account's own ad sets
+    // (with what they cost and brought), its saved audiences, or built by the owner from Meta's search.
+    const tg = p.match(/^\/api\/client\/([^/]+)\/targeting(?:\/([^/]+))?$/);
+    if (tg) {
+      const gym = tg[1], id = tg[2] ? decodeURIComponent(tg[2]) : null;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym);
+      const view = (extra = {}) => { const d = readPresets(dir); return { account: d.account, imported: d.imported, presets: livePresets(d), retired: d.presets.filter((x) => x.retired), ...extra }; };
+      try {
+        if (!id && req.method === "GET") {
+          const q = url.searchParams;
+          return json(res, 200, view(q.get("suggest") != null ? { suggested: rankPresets(readPresets(dir), { gender: q.get("gender") || "all", words: q.get("suggest") || "" }) } : {}));
+        }
+        if (id === "import" && req.method === "POST") {
+          const profile = readJsonFile(join(dir, "gym-profile.json")) || {};
+          const c = metaConfig({ gym });
+          if (!c.token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+          if (!profile.meta_assets?.ad_account_id) return json(res, 409, { error: "pick the gym's ad account on the Meta link page first" });
+          const r = await importPresets({ client: graphClient({ config: c }), accountId: profile.meta_assets.ad_account_id, gymDir: dir });
+          return json(res, 200, view({ added: r.added, adsets: r.adsets, with_results: r.with_results, saved: r.saved }));
+        }
+        if (!id && req.method === "POST") { const { name, spec, notes } = await readBody(req); return json(res, 200, view({ preset: addPreset(dir, { name, spec, notes }) })); }
+        if (id === "search" && req.method === "GET") {
+          const q = (url.searchParams.get("q") || "").trim();
+          if (!q || q.length > 80 || /[\r\n]/.test(q)) return json(res, 400, { error: "give a word or two to search Meta's targeting for" });
+          const profile = readJsonFile(join(dir, "gym-profile.json")) || {}, c = metaConfig({ gym });
+          if (!c.token || !profile.meta_assets?.ad_account_id) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+          return json(res, 200, { results: await graphClient({ config: c }).targetingSearch(profile.meta_assets.ad_account_id, q) });
+        }
+        if (id === "estimate" && req.method === "POST") {
+          // Meta's reach for a spec with a pin, ages and gender — its own words for it beside the number.
+          const { spec = {}, targeting = {} } = await readBody(req);
+          const problems = specProblems(spec); if (problems.length) return json(res, 400, { error: problems.join("; ") });
+          const profile = readJsonFile(join(dir, "gym-profile.json")) || {}, c = metaConfig({ gym });
+          if (!c.token || !profile.meta_assets?.ad_account_id) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+          const full = { ...(isPlainObject(targeting) ? targeting : {}), ...normaliseSpec(spec), targeting_automation: { advantage_audience: 0 } };
+          const client = graphClient({ config: c }), acct = profile.meta_assets.ad_account_id;
+          const [reach, sentences] = await Promise.all([client.deliveryEstimate(acct, full), client.targetingSentences(acct, full).catch(() => [])]);
+          return json(res, 200, { reach, sentences, summary: summarise(spec) });
+        }
+        if (id && req.method === "PUT") { const { name, notes, restore } = await readBody(req); return json(res, 200, view({ preset: restore ? restorePreset(dir, id) : renamePreset(dir, id, { name, notes }) })); }
+        if (id && req.method === "DELETE") { const { reason } = await readBody(req); return json(res, 200, view({ preset: retirePreset(dir, id, reason) })); }
+      } catch (e) { return json(res, e.code === 190 || e.trace ? 502 : 400, { error: scrubTokens(e.message) }); }
     }
     // Meta place keys (pasted, or from the account's history) → their names and points.
     const mpl = p.match(/^\/api\/client\/([^/]+)\/meta-places$/);

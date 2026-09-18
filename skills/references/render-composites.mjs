@@ -464,6 +464,10 @@ export async function launchBrowser() {
       proc.kill();
       await Promise.race([exited, grace(2000)]);
       if (proc.exitCode === null) proc.kill("SIGKILL");
+      // Chrome's helper processes inherit its stdio pipes and can outlive it: let go of our ends and of the
+      // child itself, or Node waits on those pipes and a finished run lingers for minutes (seen 2026-09-17).
+      for (const st of [proc.stdin, proc.stdout, proc.stderr]) { try { st?.destroy(); } catch {} }
+      proc.unref();
       rmSync(profile, { recursive: true, force: true });
       rmSync(work, { recursive: true, force: true });
     },

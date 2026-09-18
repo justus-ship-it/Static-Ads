@@ -152,6 +152,32 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
       }
       return [...pins.values()].sort((a, b) => b.adsets - a.adsets);
     },
+    /** Every ad set the account has run, with its targeting — the raw material of the targeting library. */
+    adsetHistory: (adAccountId) => list(`${actId(adAccountId)}/adsets`, { fields: "id,name,status,effective_status,created_time,updated_time,daily_budget,campaign{id,name,objective},targeting{age_min,age_max,genders,flexible_spec,exclusions,custom_audiences,excluded_custom_audiences,geo_locations,targeting_automation,publisher_platforms}", limit: 100 }),
+    /** Spend and leads per ad set over its whole life (or a preset window): `lead` is Meta's count of instant-form leads. */
+    adsetInsights: async (adAccountId, { datePreset = "maximum" } = {}) => (await list(`${actId(adAccountId)}/insights`, { level: "adset", fields: "adset_id,adset_name,spend,impressions,clicks,actions,date_start,date_stop", date_preset: datePreset, limit: 100 })).map((r) => ({
+      adset_id: r.adset_id, adset_name: r.adset_name || null, spend: Number(r.spend || 0), impressions: Number(r.impressions || 0), clicks: Number(r.clicks || 0),
+      leads: Number((r.actions || []).find((a) => a.action_type === "lead")?.value || 0), date_start: r.date_start || null, date_stop: r.date_stop || null,
+    })),
+    /** The account's saved audiences (made in Ads Manager), each with its targeting. */
+    savedAudiences: (adAccountId) => list(`${actId(adAccountId)}/saved_audiences`, { fields: "id,name,targeting,approximate_count_lower_bound,approximate_count_upper_bound,time_updated" }),
+    /** The account's custom audiences (lists, engagers, lookalikes) — named in presets, never made here. */
+    customAudiences: (adAccountId) => list(`${actId(adAccountId)}/customaudiences`, { fields: "id,name,subtype,approximate_count_lower_bound,delivery_status" }).then((r) => r.map((a) => ({ id: a.id, name: a.name, subtype: a.subtype || null, size: a.approximate_count_lower_bound ?? null, ready: a.delivery_status?.code === 200, status: a.delivery_status?.description || null }))),
+    /** Meta's own search: interests first (the interest search matches the words; the account's search matches loosely),
+     *  then behaviours and demographics from the account's search — what an ad set may name. */
+    targetingSearch: async (adAccountId, q, { limit = 25 } = {}) => {
+      const view = (x) => ({ id: String(x.id), name: x.name, type: x.type || "interests", path: x.path || [], size_lower: x.audience_size_lower_bound ?? null, size_upper: x.audience_size_upper_bound ?? null });
+      const [interests, wide] = await Promise.all([
+        get("search", { type: "adinterest", q, limit }).then((r) => (r.data || []).map(view)).catch(() => []),
+        get(`${actId(adAccountId)}/targetingsearch`, { q, limit }).then((r) => (r.data || []).map(view)).catch(() => []),
+      ]);
+      const seen = new Set(interests.map((x) => x.id));
+      return [...interests, ...wide.filter((x) => x.type !== "interests" && !seen.has(x.id))].slice(0, limit);
+    },
+    /** How many people a targeting reaches (monthly), for the goal the ad sets optimise for. */
+    deliveryEstimate: (adAccountId, targeting, { optimizationGoal = "LEAD_GENERATION" } = {}) => get(`${actId(adAccountId)}/delivery_estimate`, { optimization_goal: optimizationGoal, targeting_spec: JSON.stringify(targeting) }).then((r) => { const d = r.data?.[0] || {}; return { lower: d.estimate_mau_lower_bound ?? null, upper: d.estimate_mau_upper_bound ?? null, ready: d.estimate_ready ?? null }; }),
+    /** Meta's own words for a targeting, line by line ("Location: …", "Age: …", "Interests: …"). */
+    targetingSentences: (adAccountId, targeting) => get(`${actId(adAccountId)}/targetingsentencelines`, { targeting_spec: JSON.stringify(targeting) }).then((r) => (r.targetingsentencelines || []).map((l) => `${l.content} ${(l.children || []).join("; ")}`.trim())),
     regulationIdentities: async (adAccountId) => {
       const sets = await list(`${actId(adAccountId)}/adsets`, { fields: "id,name,regional_regulated_categories,regional_regulation_identities", limit: 50 });
       const seen = new Map();

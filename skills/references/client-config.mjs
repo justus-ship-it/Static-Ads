@@ -451,6 +451,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
     }
   });
   for (const [c, g] of Object.entries(profile.targeting_defaults?.demographics?.callout_genders || {})) if (!GENDER_CHOICES.includes(g)) errors.push(`the gender for "${c}" must be one of ${GENDER_CHOICES.join(", ")}`);
+  for (const [c, v] of Object.entries(profile.targeting_defaults?.detailed_targeting?.callout_presets || {})) if (typeof v !== "string" || !/^(suggest|broad|[0-9a-f]{12})$/.test(v)) errors.push(`the detailed targeting for "${c}" must be "suggest", "broad" or a preset id`);
   return { errors, warnings };
 }
 

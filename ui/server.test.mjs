@@ -955,7 +955,16 @@ function fakeGraph() {
     if (path === "act_111000000001") return ok({ id: "act_111000000001", account_id: "111000000001", name: "Test Gym Ads", currency: "SGD", account_status: 1 });
     if (path === "act_111000000001/adspixels") return ok({ data: [{ id: "600100000001", name: "Test pixel" }] });
     if (path === "act_111000000001/instagram_accounts") return ok({ data: [{ id: "880000000008", username: "testgym" }] });
-    if (path === "act_111000000001/adsets") return ok({ data: [{ id: "s1", name: "0715 Thomson | Fit Fathers", targeting: { geo_locations: { places: [{ key: "107327800879305", name: "6 Sin Ming Road, Tower 2", latitude: "1.353055", longitude: "103.836321", radius: 5 }], location_types: ["home", "recent"] } } }] });
+    if (path === "act_111000000001/adsets") return ok({ data: [
+      { id: "s1", name: "0715 Thomson | Fit Fathers | Audience: Thomson + 5KM, Male, Fitness+Fatherhood, 25-60", created_time: "2026-07-15T21:02:30+0800", updated_time: "2026-08-14T14:30:00+0800", targeting: { age_min: 25, age_max: 60, genders: [1], flexible_spec: [{ interests: [{ id: "6003277229371", name: "Physical fitness (fitness)" }] }, { interests: [{ id: "6003101323797", name: "Fatherhood (children and parenting)" }] }], geo_locations: { places: [{ key: "107327800879305", name: "6 Sin Ming Road, Tower 2", latitude: "1.353055", longitude: "103.836321", radius: 5 }], location_types: ["home", "recent"] } } },
+      { id: "s2", name: "0423 Broad", created_time: "2026-04-23T10:00:00+0800", targeting: { age_min: 25, age_max: 60, genders: [1], geo_locations: { custom_locations: [{ latitude: 1.35, longitude: 103.83, radius: 5 }] } } },
+    ] });
+    if (path === "act_111000000001/insights") return ok({ data: [{ adset_id: "s1", spend: "2530.59", impressions: "100", actions: [{ action_type: "lead", value: "45" }, { action_type: "link_click", value: "9" }] }, { adset_id: "s2", spend: "300", impressions: "100", actions: [{ action_type: "lead", value: "60" }] }] });
+    if (path === "act_111000000001/saved_audiences") return ok({ data: [{ id: "sa1", name: "Healthy food", targeting: { flexible_spec: [{ interests: [{ id: "6003300000001", name: "Organic food" }] }] }, approximate_count_lower_bound: 2200000 }] });
+    if (path === "search" && u.searchParams.get("type") === "adinterest") return ok({ data: /yoga/i.test(u.searchParams.get("q")) ? [{ id: "6003200000001", name: "Yoga", audience_size_lower_bound: 500000000, path: ["Interests", "Fitness and wellness", "Yoga"] }] : [] });
+    if (path === "act_111000000001/targetingsearch") return ok({ data: /yoga/i.test(u.searchParams.get("q")) ? [{ id: "6003200000001", name: "Yoga", type: "interests" }, { id: "6002700000001", name: "Frequent travellers", type: "behaviors", path: ["Behaviours", "Travel"] }] : [] });
+    if (path === "act_111000000001/delivery_estimate") { const t = JSON.parse(u.searchParams.get("targeting_spec")); return ok({ data: [{ estimate_mau_lower_bound: t.flexible_spec ? 12000 : 370000, estimate_mau_upper_bound: t.flexible_spec ? 14100 : 435300, estimate_ready: true }] }); }
+    if (path === "act_111000000001/targetingsentencelines") return ok({ targetingsentencelines: [{ content: "Location:", children: ["Singapore: 6 Sin Ming Road, Tower 2 (+5 km)"] }, { content: "Interests:", children: ["Yoga"] }] });
     if (path === "search" && u.searchParams.get("type") === "adgeolocationmeta") return ok({ data: { places: Object.fromEntries(JSON.parse(u.searchParams.get("places")).filter((k) => k === "107327800879305").map((k) => [k, { key: k, name: "6 Sin Ming Road, Tower 2", address_string: "Singapore, Singapore", latitude: "1.353055", longitude: "103.836321", country_code: "SG" }])) } });
     res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: `no ${path}`, code: 803 } }));
   });
@@ -1124,7 +1133,7 @@ test("U18 Targeting & budget: the budget's level, daily amount and bid strategy,
     assert.deepEqual(await ev("(({label, postal_code, lat, lng, radius_km}) => [label, postal_code, lat, lng, radius_km])(STATE.profile.targeting_defaults.geo.radius_pins[0])"), ["2 SIN MING ROAD SIN MING PLAZA", "575583", 1.352482302799053, 103.8357469735082, 5]);
     await ev("toggleCallout(0,'BISHAN'); true");
     await ev("loadHistory()");
-    await until("MT.link && MT.link.chosen.history_pins.length===1", "the account's pins: " + JSON.stringify(await ev("[MT.link && MT.link.chosen, document.querySelector('#view').innerHTML.length]")));
+    await until("MT.link && MT.link.chosen.history_pins.length===2", "the account's pins: " + JSON.stringify(await ev("[MT.link && MT.link.chosen, document.querySelector('#view').innerHTML.length]")));
     await ev("addPin(); pinFromHistory(1, 0); toggleCallout(1,'ANG MO KIO'); setGender('MEN WANTED','all'); setP('targeting_defaults.demographics.age_min',25); setP('targeting_defaults.demographics.age_max',60); true");
     assert.deepEqual(await ev("(({label, place_key, place_name, radius_km, callouts}) => [label, place_key, place_name, radius_km, callouts])(STATE.profile.targeting_defaults.geo.radius_pins[1])"), ["6 Sin Ming Road, Tower 2", "107327800879305", "6 Sin Ming Road, Tower 2", 5, ["ANG MO KIO"]]);
     assert.equal(await ev("[...document.querySelectorAll('#view .chip')].filter(c=>c.disabled).map(c=>c.textContent).join()"), "ANG MO KIO,BISHAN", "a callout on one pin cannot be put on another");
@@ -1140,4 +1149,75 @@ test("U18 Targeting & budget: the budget's level, daily amount and bid strategy,
     const ov = await (await call(`/api/client/${GYM}`)).json();
     assert.equal(ov.completeness.sections.find((s) => s.id === "targeting").status, "done");
   } finally { await panel.stop(); panel = main; graph.server.close(); onemap.server.close(); }
+});
+
+test("U19 the targeting library in the panel: presets imported from the account's own ad sets and results (Broad with its own record), saved audiences joining, renamed / retired with a reason / restored, one built from Meta's search with a reach estimate, all through the API; the page lists them and picks one per audience callout into the profile", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+    return result.value;
+  };
+  const until = async (expression, what, ms = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await ev(expression)) return; await new Promise((r) => setTimeout(r, 120)); }
+    throw new Error(`timed out waiting for ${what}: ${await ev("location.hash + ' ' + (document.querySelector('#view')?.textContent||'').slice(0,300)")}`);
+  };
+  const open = async (url) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url }, sessionId); await loaded; };
+  // Without the Meta link: the list is empty and an import says what is missing.
+  let r = await (await call(`/api/client/${GYM}/targeting`)).json();
+  assert.deepEqual([r.presets, r.retired, r.imported], [[], [], null]);
+  r = await call(`/api/client/${GYM}/targeting/import`, { method: "POST", body: {} }); assert.equal(r.status, 409); assert.match((await r.json()).error, /Meta link is not set up/);
+  const graph = await fakeGraph();
+  const main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  try {
+    const cur = JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8"));
+    assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: { ...cur, creative_defaults: { ...(cur.creative_defaults || {}), audiences: ["MEN WANTED", "LADIES WANTED"] }, meta_assets: { ...(cur.meta_assets || {}), ad_account_id: "act_111000000001" } } })).status, 200);
+    r = await (await call(`/api/client/${GYM}/targeting/import`, { method: "POST", body: {} })).json();
+    assert.deepEqual([r.adsets, r.with_results, r.saved, r.added, r.presets.map((p) => p.name)], [2, 2, 1, 3, ["Broad", "Fitness+Fatherhood", "Healthy food"]]);
+    const broad = r.presets[0], dads = r.presets[1];
+    assert.deepEqual([broad.stats.adsets, broad.stats.leads, broad.stats.cost_per_lead, dads.stats.cost_per_lead, dads.stats.genders.men, dads.summary.length, r.presets[2].source], [1, 60, 5, 56.24, 1, 2, "saved_audience"]);
+    assert.ok(existsSync(join(brands, GYM, "targeting-presets.json")) && !readFileSync(join(brands, GYM, "targeting-presets.json"), "utf-8").includes(META_TOKEN));
+    // Suggested for a men's ad set: Broad (ran for men, cheapest) before Fitness+Fatherhood; the reasons in words.
+    r = await (await call(`/api/client/${GYM}/targeting?suggest=${encodeURIComponent("12 Week Total Body Reset MEN WANTED")}&gender=men`)).json();
+    assert.deepEqual(r.suggested.map((x) => x.name), ["Broad", "Fitness+Fatherhood", "Healthy food"]); assert.match(r.suggested[0].why, /ran for men 1 time · 60 leads at 5.00 each/);
+    // Rename, retire (a reason is needed), restore.
+    r = await (await call(`/api/client/${GYM}/targeting/${dads.id}`, { method: "PUT", body: { name: "Dads who train", notes: "expensive" } })).json();
+    assert.deepEqual([r.preset.name, r.preset.notes, r.preset.renamed], ["Dads who train", "expensive", true]);
+    assert.equal((await call(`/api/client/${GYM}/targeting/${dads.id}`, { method: "DELETE", body: { reason: "" } })).status, 400);
+    r = await (await call(`/api/client/${GYM}/targeting/${dads.id}`, { method: "DELETE", body: { reason: "too costly" } })).json();
+    assert.deepEqual([r.presets.map((p) => p.name), r.retired.map((p) => [p.name, p.retired.reason])], [["Broad", "Healthy food"], [["Dads who train", "too costly"]]]);
+    r = await (await call(`/api/client/${GYM}/targeting/${dads.id}`, { method: "PUT", body: { restore: true } })).json();
+    assert.equal(r.presets.length, 3);
+    assert.equal((await call(`/api/client/${GYM}/targeting/broad`, { method: "DELETE", body: { reason: "x" } })).status, 400, "Broad stays");
+    // Meta's search and reach estimate; a preset built from them.
+    r = await (await call(`/api/client/${GYM}/targeting/search?q=yoga`)).json();
+    assert.deepEqual(r.results.map((x) => [x.name, x.type]), [["Yoga", "interests"], ["Frequent travellers", "behaviors"]], "interests first, then the rest of the account's search");
+    assert.equal((await call(`/api/client/${GYM}/targeting/search?q=`)).status, 400);
+    const yoga = { flexible_spec: [{ interests: [{ id: "6003200000001", name: "Yoga" }] }] };
+    r = await (await call(`/api/client/${GYM}/targeting/estimate`, { method: "POST", body: { spec: yoga, targeting: { geo_locations: { places: [{ key: "107327800879305", radius: 5, distance_unit: "kilometer" }] }, age_min: 25, age_max: 60 } } })).json();
+    assert.deepEqual([r.reach, r.sentences, r.summary], [{ lower: 12000, upper: 14100, ready: true }, ["Location: Singapore: 6 Sin Ming Road, Tower 2 (+5 km)", "Interests: Yoga"], ["Yoga (interests)"]]);
+    const est = graph.calls.filter((c) => c === "act_111000000001/delivery_estimate").length; assert.equal(est, 1);
+    assert.equal((await call(`/api/client/${GYM}/targeting/estimate`, { method: "POST", body: { spec: { targeting_automation: { advantage_audience: 1 } } } })).status, 400, "Advantage+ audience never reaches Meta");
+    r = await (await call(`/api/client/${GYM}/targeting`, { method: "POST", body: { name: "Yoga people", spec: yoga } })).json();
+    assert.deepEqual([r.preset.source, r.preset.summary, r.presets.length], ["owner", ["Yoga (interests)"], 4]);
+    assert.match((await (await call(`/api/client/${GYM}/targeting`, { method: "POST", body: { name: "Again", spec: yoga } })).json()).error, /already the preset "Yoga people"/);
+    // The page: the table, and the preset picked per audience callout into the profile.
+    await open(`${panel.url}/?u19#/${GYM}/targeting`);
+    await until("document.querySelectorAll('table.tbl tbody tr').length===4", "the presets table");
+    const text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /Dads who train/); assert.match(text, /56\.24/); assert.match(text, /Yoga people/); assert.match(text, /Broad — no detailed targeting/);
+    await ev(`setCalloutPreset('MEN WANTED', '${dads.id}'); setCalloutPreset('LADIES WANTED', 'suggest'); document.querySelector('#saveBtn_profile').click(); true`);
+    await until("DIRTY.profile===false", "saved");
+    const saved = JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8"));
+    assert.deepEqual(saved.targeting_defaults.detailed_targeting.callout_presets, { "MEN WANTED": dads.id }, "'suggest' is the default and is not written");
+    const bad = structuredClone(saved); bad.targeting_defaults.detailed_targeting.callout_presets = { "MEN WANTED": "nope" };
+    assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: bad })).status, 400);
+    await ev("presetNew(); document.querySelector('#npq').value='yoga'; true"); await ev("npSearch()");
+    await until("NP.results.length===2", "search results in the modal");
+    await ev("npAdd(0,0); npAdd(1,1); true"); await ev("npEstimate()");
+    await until("NP.estimate && NP.estimate.reach", "the estimate");
+    assert.match(await ev("document.querySelector('#gModal').textContent"), /Reach about 12,000–14,100 people a month/);
+  } finally { await panel.stop(); panel = main; graph.server.close(); }
 });

@@ -394,3 +394,31 @@ test("V18 a second run never overwrites a first run's photos: every attempt keep
     assert.deepEqual(files.map((f) => readFileSync(join(dir, f), "utf-8")), ["photo 1", "photo 2", "photo 3", "photo 4"], "four photos, four files, none replaced");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("V19 a busy Gemini is waited out, never a stopped run: a 503 'high demand' (or 429, a dropped connection) on the vision call is tried again after 10, 20 and 40 s and then answered; the waits are logged so the run is seen alive; any other fault stops at once; after the last wait the busy answer is the error", async () => {
+  const { whenGeminiFree, isBusy, BUSY_WAITS_MS } = await import("./gemini-busy.mjs");
+  const { callVision } = await import("./check-visual.mjs");
+  assert.deepEqual(BUSY_WAITS_MS, [10000, 20000, 40000]);
+  assert.deepEqual(["vision check failed (503): {\"error\":{\"message\":\"This model is currently experiencing high demand\"}}", "429 Too Many Requests", "fetch failed", "Gemini overloaded", "vision check failed (400): bad request", "GEMINI_KEY not found"].map(isBusy), [true, true, true, true, false, false]);
+  // Two busy answers, then the answer: the caller sees only the answer and the two waits.
+  const slept = [], logged = [];
+  let n = 0;
+  const fake = async () => (++n < 3 ? { ok: false, status: 503, text: async () => '{"error":{"code":503,"message":"This model is currently experiencing high demand. Spikes in demand are usually temporary.","status":"UNAVAILABLE"}}' }
+    : { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ fine: true }) }] } }] }) });
+  const r = await callVision(null, "q", { type: "OBJECT" }, { key: "K", fetchImpl: fake, retry: { sleep: async (ms) => slept.push(ms), log: (m) => logged.push(m) } });
+  assert.deepEqual([r, n, slept], [{ fine: true }, 3, [10000, 20000]]);
+  assert.equal(logged[0], "  vision check: Gemini is busy (This model is currently experiencing high demand. Spikes in demand are usually temporary.) — trying again in 10 s (1 of 3)", "Google's own sentence, not its JSON");
+  assert.match(logged[1], /trying again in 20 s \(2 of 3\)/);
+  // Busy four times: three waits, then the busy answer is the error.
+  n = 0; slept.length = 0;
+  await assert.rejects(callVision(null, "q", { type: "OBJECT" }, { key: "K", fetchImpl: async () => ({ ok: false, status: 503, text: async () => "busy" }), retry: { sleep: async (ms) => slept.push(ms), log: () => {} } }), /vision check failed \(503\)/);
+  assert.deepEqual(slept, [10000, 20000, 40000]);
+  // Any other fault is not waited on.
+  slept.length = 0;
+  await assert.rejects(callVision(null, "q", { type: "OBJECT" }, { key: "K", fetchImpl: async () => ({ ok: false, status: 400, text: async () => "bad schema" }), retry: { sleep: async (ms) => slept.push(ms), log: () => {} } }), /vision check failed \(400\)/);
+  assert.deepEqual(slept, []);
+  // The helper alone, for the image call: a dropped connection counts as busy too.
+  let tries = 0;
+  const out = await whenGeminiFree(async () => { if (++tries < 2) throw new Error("fetch failed"); return "image"; }, { sleep: async () => {}, log: () => {} });
+  assert.deepEqual([out, tries], ["image", 2]);
+});
