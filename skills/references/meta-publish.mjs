@@ -27,6 +27,7 @@ import { parseArgs } from "util";
 import { metaConfig, graphClient, actId, scrubTokens, MetaError } from "./meta-api.mjs";
 import { calloutGender, pinFor, pinUsable, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
 import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
+import { textOptionsFor, MAX_OPTIONS } from "./draft-copy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 export const AD_STATUS = "PAUSED";
@@ -152,30 +153,37 @@ export function campaignWords(profile, batch, words = {}) {
   return { ...w, placeholders };
 }
 /** The placement rules for one creative: the 9:16 on Stories and Reels, the 1:1 everywhere else (their own ads' shape). */
-export const PLACEMENT_RULES = (squareLabel, storyLabel) => [
-  { customization_spec: { publisher_platforms: ["facebook", "instagram"], facebook_positions: ["story", "facebook_reels"], instagram_positions: ["story", "reels"] }, image_label: { name: storyLabel }, priority: 1 },
-  { customization_spec: { age_min: 13, age_max: 65 }, image_label: { name: squareLabel }, priority: 2 },
+export const PLACEMENT_RULES = (squareLabel, storyLabel, copyLabel = null) => [
+  { customization_spec: { publisher_platforms: ["facebook", "instagram"], facebook_positions: ["story", "facebook_reels"], instagram_positions: ["story", "reels"] }, image_label: { name: storyLabel }, ...(copyLabel ? { body_label: { name: copyLabel }, title_label: { name: copyLabel }, description_label: { name: copyLabel } } : {}), priority: 1 },
+  { customization_spec: { age_min: 13, age_max: 65 }, image_label: { name: squareLabel }, ...(copyLabel ? { body_label: { name: copyLabel }, title_label: { name: copyLabel }, description_label: { name: copyLabel } } : {}), priority: 2 },
 ];
 /** One ad's creative: two images by placement when the ad has a Stories version, else the 1:1 alone. Hashes are filled in when the images are uploaded. */
 /** Multi-advertiser ads (the ad shown beside other advertisers' ads): never — the owner's rule (2026-09-18). */
 export const NO_MULTI_ADVERTISER = Object.freeze({ enroll_status: "OPT_OUT" });
-export function creativeFor({ name, page_id, instagram_user_id, website, form_id, words, story }) {
+export function creativeFor({ name, page_id, instagram_user_id, website, form_id, words, story, texts = null }) {
   const identity = { page_id, ...(instagram_user_id ? { instagram_user_id } : {}) };
   const cta = words.cta || CTA;
-  if (story) {
+  const options = texts?.length ? texts : [words];
+  // Several texts (Meta's text options, up to five each) need asset_feed_spec; so does a Stories version. With one
+  // image and several texts the 1:1 carries both placement labels, so the two rules Meta requires still hold.
+  if (story || options.length > 1) {
+    const label = options.length > 1 ? "copy" : null;
+    const tag = (t) => (label ? { text: t, adlabels: [{ name: label }] } : { text: t });
+    const uniq = (list) => [...new Set(list.filter((t) => t != null && t !== ""))];
     return {
       name, object_story_spec: identity, contextual_multi_ads: { ...NO_MULTI_ADVERTISER },
       asset_feed_spec: {
-        images: [{ hash: "(1:1 hash)", adlabels: [{ name: "square" }] }, { hash: "(9:16 hash)", adlabels: [{ name: "story" }] }],
-        bodies: [{ text: words.message }], titles: [{ text: words.headline }], descriptions: [{ text: words.description }],
+        images: story ? [{ hash: "(1:1 hash)", adlabels: [{ name: "square" }] }, { hash: "(9:16 hash)", adlabels: [{ name: "story" }] }] : [{ hash: "(1:1 hash)", adlabels: [{ name: "square" }, { name: "story" }] }],
+        bodies: uniq(options.map((o) => o.message)).slice(0, MAX_OPTIONS).map(tag), titles: uniq(options.map((o) => o.headline)).slice(0, MAX_OPTIONS).map(tag), descriptions: (uniq(options.map((o) => o.description)).slice(0, MAX_OPTIONS).map(tag).length ? uniq(options.map((o) => o.description)).slice(0, MAX_OPTIONS).map(tag) : [{ text: " " }]),
         link_urls: [{ website_url: website }], call_to_action_types: [cta], call_to_actions: [{ type: cta, value: { lead_gen_form_id: form_id } }],
-        ad_formats: ["SINGLE_IMAGE"], optimization_type: "PLACEMENT", asset_customization_rules: PLACEMENT_RULES("square", "story"),
+        ad_formats: ["SINGLE_IMAGE"], optimization_type: "PLACEMENT", asset_customization_rules: PLACEMENT_RULES("square", "story", label),
       },
       degrees_of_freedom_spec: optOut(),
     };
   }
+  const one = options[0];
   return {
-    name, object_story_spec: { ...identity, link_data: { image_hash: "(1:1 hash)", link: website, message: words.message, name: words.headline, description: words.description, call_to_action: { type: cta, value: { lead_gen_form_id: form_id } } } },
+    name, object_story_spec: { ...identity, link_data: { image_hash: "(1:1 hash)", link: website, message: one.message, name: one.headline, description: one.description, call_to_action: { type: cta, value: { lead_gen_form_id: form_id } } } },
     contextual_multi_ads: { ...NO_MULTI_ADVERTISER }, degrees_of_freedom_spec: optOut(),
   };
 }
@@ -187,7 +195,7 @@ export function creativeFor({ name, page_id, instagram_user_id, website, form_id
  *   kept:    [{ folder, file, location, words, story: file|null }]
  *   settings: { campaign: { name, level, daily, bid_strategy, bid_cap }, adsets: { [CALLOUT]: { pin, radius_km, age_min, age_max, gender, preset, daily } }, words: { message, headline, description, cta }, destination: { lead_form_id, instagram_user_id } }
  */
-export function buildPlan({ profile, batch, kept, presets = { presets: [] }, settings = {}, tag = today() }) {
+export function buildPlan({ profile, batch, kept, presets = { presets: [] }, settings = {}, copies = [], tag = today() }) {
   const problems = [], warnings = [];
   const m = profile.meta_assets || {}, dest = settings.destination || {};
   const singapore = (profile.locale?.country || "SG") === "SG";
@@ -207,8 +215,13 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   const cap = strategy === "LOWEST_COST_WITHOUT_CAP" ? null : num(sc.bid_cap, 0.01, 100000) ?? num(bd.bid_cap, 0.01, 100000);
   if (strategy !== "LOWEST_COST_WITHOUT_CAP" && !cap) problems.push(`${BID_STRATEGIES[strategy]} needs an amount`);
   const offer = kept[0]?.words?.offer || batch.offer || batch.batch_id;
-  const words = campaignWords(profile, { offer, batch_id: batch.batch_id }, settings.words || {});
-  if (words.placeholders.length) warnings.push(`placeholder words for the ${words.placeholders.join(", ")}: type the campaign's words before the ads go live`);
+  // The copy: the kept copies (the owner's picks) as text options, `max_options` per ad (five by default); with none kept,
+  // the settings' single words, else placeholders that say so.
+  const maxOptions = Math.max(1, Math.min(MAX_OPTIONS, Number.isInteger(settings.copy?.max_options) ? settings.copy.max_options : MAX_OPTIONS));
+  const keptCopy = (copies || []).filter((c) => c && c.message && c.headline).map((c) => ({ id: c.id, message: c.message, headline: c.headline, description: c.description || "", cta: settings.words?.cta && CTA_TYPES[settings.words.cta] ? settings.words.cta : CTA }));
+  const words = keptCopy.length ? { ...keptCopy[0], placeholders: [] } : campaignWords(profile, { offer, batch_id: batch.batch_id }, settings.words || {});
+  if (words.placeholders.length) warnings.push(`placeholder words for the ${words.placeholders.join(", ")}: draft and keep copy, or type the campaign's words, before the ads go live`);
+  if (keptCopy.length > maxOptions) warnings.push(`${keptCopy.length} copies kept, ${maxOptions} per ad: they rotate across the ads so every copy runs`);
   const date = mmdd(batch.batch_id);
   const campaign = {
     name: clean1(sc.name, 120) || `${date} ${offer} | ${abbr} | ${kept[0]?.words?.audience ? titleCase(kept[0].words.audience) : "Leads"}`,
@@ -263,21 +276,22 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   });
   const noStory = kept.filter((a) => !a.story);
   if (noStory.length) warnings.push(`${noStory.length} of ${kept.length} ads have no Stories version: on Stories and Reels Meta will show the 1:1 (Make Stories versions on the Review screen first)`);
-  const ads = kept.map((a) => {
+  const ads = kept.map((a, i) => {
     const callout = String(a.location || a.words?.location || "ALL").toUpperCase();
     const name = `${date} ${titleCase(callout)} | ${offer} | Image: ${a.folder}`;
+    const texts = textOptionsFor(keptCopy, maxOptions, i);
     return {
-      folder: a.folder, adset: callout, name,
+      folder: a.folder, adset: callout, name, copies: texts.map((t) => t.id),
       image: { file: a.file, name: `${batch.batch_id}__${basename(a.file)}` },
       story: a.story ? { file: a.story, name: `${batch.batch_id}__${basename(a.story)}` } : null,
-      creative: creativeFor({ name: name.slice(0, 400), page_id, instagram_user_id, website: profile.website, form_id: lead_form_id, words, story: !!a.story }),
+      creative: creativeFor({ name: name.slice(0, 400), page_id, instagram_user_id, website: profile.website, form_id: lead_form_id, words, story: !!a.story, texts }),
       payload: { name: name.slice(0, 400), status: AD_STATUS },
     };
   });
   return {
     account, page_id, instagram_user_id, lead_form_id, website: profile.website || null, currency,
     budget: { level, daily, bid_strategy: strategy, bid_cap: cap, per_day_total: level === "campaign" ? daily : adsets.reduce((t, s) => t + (s.budget?.daily || 0), 0) },
-    campaign, adsets, ads, words, counts: { adsets: adsets.length, ads: ads.length, with_story: kept.length - noStory.length },
+    campaign, adsets, ads, words, copy: { kept: keptCopy.length, max_options: maxOptions, per_ad: Math.min(maxOptions, keptCopy.length) || 0, rotating: keptCopy.length > maxOptions }, counts: { adsets: adsets.length, ads: ads.length, with_story: kept.length - noStory.length },
     problems, warnings, ready: problems.length === 0,
   };
 }
@@ -362,7 +376,7 @@ export async function createPlan(plan, { client, batchDir, record, log = console
   const adsToMake = first ? plan.ads.slice(0, first) : plan.ads;
   const callouts = [...new Set(adsToMake.map((a) => a.adset))];
   const setFacts = (set) => ({ callout: set.callout, audience: set.audience, pin: set.pin?.label || set.pin?.place_name || null, place_key: set.pin?.place_key || null, radius_km: set.pin?.radius_km ?? null, age_min: set.age_min, age_max: set.age_max, gender: set.gender, preset: set.preset?.name || null, preset_id: set.preset?.id || null, level: plan.budget.level, daily: set.budget?.daily ?? plan.budget.daily, bid_strategy: plan.budget.bid_strategy });
-  const adFacts = (ad) => ({ has_story: !!ad.story, form_id: plan.lead_form_id, instagram_user_id: plan.instagram_user_id, cta: plan.words.cta, headline: plan.words.headline, message: plan.words.message, description: plan.words.description, placeholders: plan.words.placeholders.length > 0, name: ad.name });
+  const adFacts = (ad) => ({ has_story: !!ad.story, form_id: plan.lead_form_id, instagram_user_id: plan.instagram_user_id, cta: plan.words.cta, headline: plan.words.headline, message: plan.words.message, description: plan.words.description, placeholders: plan.words.placeholders.length > 0, copies: ad.copies || [], text_options: (ad.copies || []).length || 1, name: ad.name });
   for (const callout of callouts) {
     const set = plan.adsets.find((x) => x.callout === callout);
     const key = adsetKey(set.payload), had = rec.adsets[callout];
@@ -455,10 +469,11 @@ if (isMain) {
       const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
       const { readPresets } = await import("./meta-targeting.mjs");
       const settings = existsSync(join(out, "publish-settings.json")) ? JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")) : {};
-      const plan = buildPlan({ profile, batch, kept: keptAds(out), presets: readPresets(brandDir), settings });
+      const { keptCopies } = await import("./draft-copy.mjs");
+      const plan = buildPlan({ profile, batch, kept: keptAds(out), presets: readPresets(brandDir), settings, copies: keptCopies(out) });
       const first = v.first ? parseInt(v.first, 10) : null;
       if (v.first && !(Number.isInteger(first) && first >= 1)) throw new Error("--first takes a whole number of ads");
-      console.log(`plan: ${plan.campaign.name} · ${plan.counts.adsets} ad set(s) · ${plan.counts.ads} ad(s), ${plan.counts.with_story} with a Stories version · ${plan.budget.per_day_total} ${plan.currency}/day in all · every object ${AD_STATUS}${first ? ` · this run: the first ${first} ad(s)` : ""}`);
+      console.log(`plan: ${plan.campaign.name} · ${plan.counts.adsets} ad set(s) · ${plan.counts.ads} ad(s), ${plan.counts.with_story} with a Stories version · ${plan.copy.kept ? `${plan.copy.kept} copies kept, ${plan.copy.per_ad} per ad${plan.copy.rotating ? " (rotating)" : ""}` : "placeholder words"} · ${plan.budget.per_day_total} ${plan.currency}/day in all · every object ${AD_STATUS}${first ? ` · this run: the first ${first} ad(s)` : ""}`);
       for (const w of plan.warnings) console.log(`  warning: ${w}`);
       for (const x of plan.problems) console.log(`  problem: ${x}`);
       if (!plan.ready) throw new Error("the plan has problems — fix them on the Publish screen first");

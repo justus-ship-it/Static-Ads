@@ -259,11 +259,11 @@ let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'
 // The rail: the daily path first (Create, Review, Exports), the library next, the client's setup last.
 const NAV = [
   ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'], ['results','Results','▤'],
-  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'],
+  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'],
   ['sec','Profile'], ['overview','Overview','◎'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'], ['generate','Templates (old)','·'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -368,6 +368,7 @@ function render(){
   if (STATE.tab==='exports') return viewExports(v, seq);
   if (STATE.tab==='publish') return STATE.batch ? viewPublish(v, seq) : viewExports(v, seq);
   if (STATE.tab==='results') return viewResults(v, seq);
+  if (STATE.tab==='copy') return viewCopyRefs(v, seq);
   if (STATE.tab==='scenes') return viewScenes(v, seq);
   if (STATE.tab==='photos') return viewPhotos(v, seq);
   if (STATE.tab==='references') return viewReferences(v, seq);
@@ -1572,6 +1573,33 @@ async function viewExports(v, seq=VIEW_SEQ){
       <button class="sm" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm primary" onclick="openPublish('${esc(b.id)}')">Publish…</button></div></div>`; }).join('') : '<div class="empty">No campaign has ads yet. Create one first.</div>'}`;
 }
 
+// ── Copy (Library) ───────────────────────────────────────────────────────────
+// The gym's copy references: the best past ads' words with their results (brought in from the account on Results)
+// and anything the owner pastes. The drafter reads them; nothing here goes to Meta.
+const CR = { gym:null, data:null, busy:false, msg:null, form:{} };
+async function viewCopyRefs(v, seq=VIEW_SEQ){
+  if (CR.gym !== STATE.sel || !CR.data){ v.innerHTML = '<h1>Copy</h1><p class="sub">Loading…</p>'; CR.gym = STATE.sel; CR.data = null; try { CR.data = await api(`/api/client/${STATE.sel}/copy-refs`); } catch(e){ CR.data = { refs:[], shown:[], error:e.message }; } if (seq !== VIEW_SEQ) return; }
+  paintCopyRefs(v);
+}
+function paintCopyRefs(v){
+  const D = CR.data, cur = STATE.profile?.locale?.currency || 'SGD', shown = new Set(D.shown||[]);
+  const refs = [...(D.refs||[])].sort((a,b)=> (a.source==='owner')-(b.source==='owner') ? (a.source==='owner'?-1:1) : ((a.results?.cost_per_lead??Infinity)-(b.results?.cost_per_lead??Infinity)));
+  v.innerHTML = `<h1>Copy</h1><p class="sub">The words the drafter learns from: this gym's best past ads (brought in from Results) and copy you paste. Up to ten are shown to the model per draft: yours first, then the account's by cost per lead, Singapore only. Nothing here goes to Meta.</p>
+  ${D.error?`<div class="msg err">${esc(D.error)}</div>`:''}${CR.msg?`<div class="msg ${/failed|could not/i.test(CR.msg)?'err':'ok'}">${esc(CR.msg)}</div>`:''}
+  <div class="card"><h3>Add a reference</h3><p class="hint">A copy that worked, from anywhere, pasted as written. The agent reads it and writes the note: its angle and why it works (yours to edit after). The drafter copies structure and angle, never sentences.</p>
+    <div class="grid"><div style="grid-column:span 2"><label>Primary text</label><textarea id="crMsg" rows="4" style="width:100%" oninput="CR.form.message=this.value">${esc(CR.form.message||'')}</textarea></div><div><label>Headline</label><input id="crHead" value="${esc(CR.form.headline||'')}" oninput="CR.form.headline=this.value"></div></div>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button class="primary" onclick="crAdd()" ${CR.busy?'disabled':''}>${CR.busy?'Reading the copy…':'Add'}</button></div></div>
+  <div class="card"><h3>References · ${refs.length}${D.retired?` <span class="hint">(${D.retired} retired)</span>`:''}</h3>
+    ${refs.length?refs.map(r=>`<div style="padding:10px 0;border-bottom:1px solid var(--line)"><div class="row" style="gap:8px"><b>${esc(r.headline||'(no headline)')}</b>${r.angle?`<span class="pill">${esc(r.angle)}</span>`:''}<span class="pill ${shown.has(r.id)?'on':''}" title="${shown.has(r.id)?'shown to the drafter':'not among the ten shown'}">${r.source==='owner'?'yours':'account'}${shown.has(r.id)?' · shown':''}</span>${r.results?`<span class="hint">${r.results.leads} leads${r.results.cost_per_lead!=null?` at ${money(r.results.cost_per_lead,cur)}`:''}${r.results.abroad?` · <span style="color:var(--warn)">reached ${esc(r.results.abroad)}</span>`:''}</span>`:''}<div class="spacer"></div><button class="sm" onclick="crRetire('${esc(r.id)}')">Retire</button></div>
+      <div class="hint" style="white-space:pre-wrap;margin-top:4px">${esc((r.message||'(no primary text)').slice(0,600))}${(r.message||'').length>600?'…':''}</div>
+      <div class="row" style="margin-top:6px;gap:6px"><input value="${esc(r.note||'')}" placeholder="why it works (the agent's note, yours to edit)" style="max-width:520px" onchange="crNote('${esc(r.id)}',this.value)"><span class="hint">${esc(r.ad||'')}</span></div></div>`).join(''):'<div class="empty">None yet. Bring the account\'s best ads in from Results, or add one above.</div>'}
+  </div>`;
+}
+async function crAdd(){ CR.busy = true; CR.msg = null; CR.form = { message:$('#crMsg').value, headline:$('#crHead').value }; paintCopyRefs($('#view'));
+  try { CR.data = await api(`/api/client/${STATE.sel}/copy-refs`, { method:'POST', body:CR.form }); CR.msg = CR.data.analysis_error ? 'Added, but the agent could not read it (' + CR.data.analysis_error + '). Write the note yourself below.' : 'Added. The agent read it as ' + (CR.data.ref?.angle || 'no clear angle') + '; its note is below, yours to edit.'; CR.form = {}; } catch(e){ CR.msg = 'Could not add: ' + e.message + ' (what you typed is still below)'; } CR.busy = false; paintCopyRefs($('#view')); }
+async function crNote(id, note){ try { CR.data = await api(`/api/client/${STATE.sel}/copy-refs/${encodeURIComponent(id)}`, { method:'PUT', body:{ note } }); } catch(e){ CR.msg = e.message; paintCopyRefs($('#view')); } }
+async function crRetire(id){ try { CR.data = await api(`/api/client/${STATE.sel}/copy-refs/${encodeURIComponent(id)}`, { method:'PUT', body:{ retired:true } }); } catch(e){ CR.msg = e.message; } paintCopyRefs($('#view')); }
+
 // ── Results ─────────────────────────────────────────────────────────────────
 // Three levels, one at a time, as Ads Manager shows them: campaigns → the ad sets of one campaign → the ads of one ad set.
 const RS = { gym:null, data:null, level:'campaigns', campaign:null, adset:null, sort:{ campaigns:'cost_per_lead', adsets:'cost_per_lead', ads:'cost_per_lead' }, source:'all', busy:false, error:null, hsel:new Set(), msg:null };
@@ -1679,11 +1707,7 @@ function paintPublish(v){
   ${P.adsets.map(adsetCard).join('')}
   <div class="card"><h3>Ads · ${P.counts.ads} kept, ${P.counts.with_story} with a Stories version</h3><p class="hint">Each ad carries its 1:1 for feeds and its 9:16 for Stories and Reels (one creative, two images by placement).</p>
     ${P.adsets.map(a=>`<div class="hint" style="margin:8px 0 4px"><b>${esc(a.callout)}</b> · ${a.ads.length}</div><div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-start">${P.ads.filter(x=>x.adset===a.callout).map(adRow).join('')}</div>`).join('')}</div>
-  <div class="card"><h3>Campaign words ${P.words.placeholders.length?'<span class="pill warn">placeholders</span>':''}</h3><p class="hint">The primary text, headline and description beside every ad in this campaign. Placeholders say so until you type the words; the copy skill fills them in later.</p>
-    <label>Primary text</label><textarea rows="4" style="width:100%" onchange="pbSet('words.message',this.value)">${esc(sw.message||'')}</textarea>
-    <div class="grid" style="margin-top:8px"><div><label>Headline</label><input value="${esc(sw.headline||'')}" onchange="pbSet('words.headline',this.value)"></div><div><label>Description</label><input value="${esc(sw.description||'')}" onchange="pbSet('words.description',this.value)"></div>
-    <div><label>Button</label><select onchange="pbSet('words.cta',this.value)">${Object.entries(D.cta).map(([k,l])=>`<option value="${k}" ${k===P.words.cta?'selected':''}>${l}</option>`).join('')}</select></div></div>
-    <div class="hint" style="margin-top:8px">As it will read: <i>${esc(P.words.message)}</i> · <b>${esc(P.words.headline)}</b> · ${esc(P.words.description)}</div></div>
+  ${copyCard(D, P, sw)}
   <div class="card"><div class="row"><h3 style="margin:0">Destination and identity</h3><div class="spacer"></div><button class="sm" onclick="pbLoadLink()" ${PB.busy?'disabled':''}>${PB.link?'Reload the lists':'Load the Page\'s forms and Instagram accounts'}</button></div>
     <div class="grid" style="margin-top:10px">
       <div><label>Instant form</label>${PB.link?`<select onchange="pbSet('destination.lead_form_id',this.value||null)">${(PB.link.chosen?.forms||[]).map(f=>`<option value="${esc(f.id)}" ${f.id===P.lead_form_id?'selected':''}>${esc(f.name)} · ${(f.status||'').toLowerCase()}${f.leads_count!=null?` · ${f.leads_count} leads`:''}</option>`).join('')}</select>`:`<div class="mono">${esc(P.lead_form_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.form||'the profile\'s form')}</div>`}</div>
@@ -1697,6 +1721,53 @@ function paintPublish(v){
   <div id="runbox"></div><div id="bModal"></div>`;
   renderRunBox();
 }
+/** The campaign's copy: drafts to keep or exclude, the owner's own, how many text options each ad carries. */
+function copyCard(D, P, sw){
+  const C = D.copy || { drafts:[], references:0, max_options:5 }, drafts = C.drafts || [];
+  const kept = drafts.filter(d=>d.status==='keep').sort((a,b)=>(a.kept_at||'').localeCompare(b.kept_at||'')), open = drafts.filter(d=>d.status==='draft'), out = drafts.filter(d=>d.status==='exclude');
+  const n = P.copy?.max_options || 5;
+  const card = (d) => `<div class="card" style="margin:0 0 8px;padding:12px 14px;${d.status==='exclude'?'opacity:.55':''}" id="cp_${esc(d.id)}">
+    <div class="row" style="gap:8px"><b style="font-size:14px">${esc(d.headline)}</b>${d.angle?`<span class="pill">${esc(d.angle)}</span>`:''}<span class="pill ${d.status==='keep'?'on':d.status==='exclude'?'err':''}">${d.status==='keep'?'kept':d.status==='exclude'?'excluded':'draft'}</span>${d.source==='owner'?'<span class="pill">yours</span>':''}<div class="spacer"></div>
+      ${d.status!=='keep'?`<button class="sm ok" onclick="cpDecide('${esc(d.id)}','keep')">Keep</button>`:''}${d.status!=='exclude'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','exclude')">Exclude</button>`:''}${d.status!=='draft'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','draft')">Undo</button>`:''}<button class="sm" onclick="cpEdit('${esc(d.id)}')">Edit</button></div>
+    <div style="white-space:pre-wrap;font-size:13px;margin-top:6px">${esc(d.message)}</div>${d.description?`<div class="hint" style="margin-top:4px">${esc(d.description)}</div>`:''}</div>`;
+  return `<div class="card"><div class="row"><h3 style="margin:0">Copy ${kept.length?`<span class="pill on">${kept.length} kept</span>`:'<span class="pill warn">placeholders</span>'}</h3><div class="spacer"></div>
+      <label style="margin:0" for="cpN">Text options per ad</label><select id="cpN" style="width:auto" onchange="pbSet('copy.max_options',parseInt(this.value,10))">${[1,2,3,4,5].map(k=>`<option value="${k}" ${k===n?'selected':''}>${k}</option>`).join('')}</select>
+      <button class="sm" onclick="cpOwn()">Add your own</button><button class="${kept.length?'sm':'sm primary'}" onclick="cpDraft()" ${PB.busy?'disabled':''}>${PB.busy?'Working…':'Draft 10 copies…'}</button></div>
+    <p class="hint">The primary text, headline and description beside the ads. Drafts come from the offer's exact words, the audience, the locations and the gym's copy references (${C.references} shown to the model); the rules are checked in code: the offer named exactly, nothing from the never-list, no price, no free trial, no before-and-after. Keep the ones you want: each ad carries up to ${n} of them as Meta text options${kept.length>n?`, and with ${kept.length} kept they rotate so every copy runs`:''}. Meta reports which text wins.</p>
+    ${kept.length?`<div class="hint" style="margin:8px 0 4px"><b>Kept · ${kept.length}</b> · button: <select style="width:auto" onchange="pbSet('words.cta',this.value)">${Object.entries(D.cta).map(([k,l])=>`<option value="${k}" ${k===P.words.cta?'selected':''}>${l}</option>`).join('')}</select></div>${kept.map(card).join('')}`:''}
+    ${open.length?`<div class="hint" style="margin:8px 0 4px"><b>Drafts · ${open.length}</b></div>${open.map(card).join('')}`:''}
+    ${out.length?`<details style="margin-top:6px"><summary class="hint">Excluded · ${out.length}</summary>${out.map(card).join('')}</details>`:''}
+    ${!drafts.length?`<div class="hint" style="margin-top:8px">Nothing yet. Draft copies, or add your own. Until something is kept the ads carry placeholders that say so: <i>${esc(P.words.message)}</i></div>`:''}
+    ${PB.cpmsg?`<div class="msg ${/could not|failed/i.test(PB.cpmsg)?'err':'ok'}" style="margin-top:8px">${esc(PB.cpmsg)}</div>`:''}
+  </div>`;
+}
+async function cpReload(){ try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/publish`); PB.data = r; PB.settings = r.settings; } catch(e){ PB.error = e.message; } }
+async function cpDraft(){ const v = prompt('How many copies to draft? (1-20)', '10'); if (v==null) return; const count = parseInt(v,10); if (!Number.isInteger(count)||count<1||count>20){ toast('A whole number, 1 to 20.','err'); return; }
+  PB.busy = true; PB.cpmsg = null; paintPublish($('#view'));
+  try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/draft`, { method:'POST', body:{ count } }); PB.cpmsg = `Drafted ${r.added} (${r.calls} call${r.calls===1?'':'s'}).${r.dropped.length?' Dropped: '+r.dropped.map(d=>`"${d.headline}" (${d.why})`).join('; '):''}`; await cpReload(); }
+  catch(e){ PB.cpmsg = 'Drafting failed: ' + e.message; }
+  PB.busy = false; paintPublish($('#view')); }
+async function cpDecide(id, status){ try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${id}`, { method:'PUT', body:{ status } }); await cpReload(); } catch(e){ PB.cpmsg = e.message; } paintPublish($('#view')); }
+async function cpEdit(id){ const d = (PB.data.copy?.drafts||[]).find(x=>x.id===id); if (!d) return; const headline = prompt('Headline', d.headline); if (headline==null) return; const message = prompt('Primary text', d.message); if (message==null) return; const description = prompt('Description (may be empty)', d.description||''); if (description==null) return;
+  try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${id}`, { method:'PUT', body:{ headline, message, description } }); await cpReload(); } catch(e){ PB.cpmsg = 'Not saved: ' + e.message; } paintPublish($('#view')); }
+function cpOwn(err){
+  const f = PB.ownForm || (PB.ownForm = { headline:'', message:'', description:'' });
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)cpOwnClose()"><div class="card" style="max-width:640px">
+    <h3>Add your own copy</h3><p class="hint">Checked by the same rules as the drafts: the offer named exactly, nothing the gym never says, no price. Kept at once.</p>
+    ${err?`<div class="msg err">${esc(err)}</div>`:''}
+    <label>Headline</label><input id="cpOwnHead" value="${esc(f.headline)}" oninput="PB.ownForm.headline=this.value">
+    <label style="margin-top:8px">Primary text</label><textarea id="cpOwnMsg" rows="8" style="width:100%" oninput="PB.ownForm.message=this.value">${esc(f.message)}</textarea>
+    <label style="margin-top:8px">Description (optional)</label><input id="cpOwnDesc" value="${esc(f.description)}" oninput="PB.ownForm.description=this.value">
+    <div class="row" style="margin-top:12px"><div class="spacer"></div><button class="sm" onclick="cpOwnClose()">Cancel</button><button class="primary" onclick="cpOwnSave()">Add and keep</button></div></div></div>`;
+  $('#cpOwnHead').focus();
+}
+function cpOwnClose(){ $('#gModal').innerHTML = ''; }
+async function cpOwnSave(){
+  const body = { headline:$('#cpOwnHead').value, message:$('#cpOwnMsg').value, description:$('#cpOwnDesc').value }; PB.ownForm = { ...body };
+  try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy`, { method:'POST', body }); PB.ownForm = null; cpOwnClose(); await cpReload(); PB.cpmsg = 'Added and kept.'; paintPublish($('#view')); }
+  catch(e){ cpOwn('Not added: ' + e.message + '. Your text is kept here; fix it and try again.'); }
+}
+
 /** What is on Meta already for this batch: the record written as each object landed. */
 function publishedCard(rec, P){
   if (!rec) return '';

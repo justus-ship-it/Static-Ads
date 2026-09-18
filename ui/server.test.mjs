@@ -1293,7 +1293,7 @@ test("U20 the Publish screen: the plan for a batch's kept ads from the API (noth
   await open(`${panel.url}/?u20#/${GYM}/publish/${BRIEF.batch_id}`);
   await until("PB.data && /Create on Facebook/.test(document.querySelector('#view')?.textContent||'')", "the Publish screen");
   let text = await ev("document.querySelector('#view').textContent");
-  assert.match(text, /Publish Test campaign/); assert.match(text, /Ad sets · one per location callout/); assert.match(text, /Campaign words/); assert.match(text, /Destination and identity/); assert.match(text, /Come and train\./);
+  assert.match(text, /Publish Test campaign/); assert.match(text, /Ad sets · one per location callout/); assert.match(text, /Copy/); assert.match(text, /Destination and identity/); assert.match(text, /Text options per ad/);
   assert.equal(await ev("document.querySelectorAll('#view img').length"), r.plan.ads.length, "every kept ad shown");
   assert.equal(await ev("[...document.querySelectorAll('#view h3')].filter(h=>h.textContent.trim()==='" + first + "').length"), 1, "an ad set card per callout");
   assert.ok(await ev("[...document.querySelectorAll('#view button.primary')].some(b=>/Create on Facebook, paused/.test(b.textContent) && !b.disabled)"), "a ready plan can be created (U21 does)");
@@ -1469,4 +1469,60 @@ test("U23 the account's history in the panel: pulled from Meta into the gym fold
     assert.deepEqual(await ev("[...RS.hsel]"), ["900000000002"], "the top by leads");
     assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Bring 1 into the library/.test(b.textContent) && !b.disabled)"));
   } finally { await panel.stop(); panel = main; graph.server.close(); }
+});
+
+test("U24 copy in the panel: the gym's copy references (list, add, note, retire) and a campaign's copy (the owner's own checked by the rules and kept at once; keep / exclude / edit; the number of text options saved per batch); the plan carries the kept copies as text options; the Publish screen's Copy card and the Library's Copy page show them", async () => {
+  const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
+  await linkTestGym();
+  rmSync(join(out, "copy.json"), { force: true }); rmSync(join(g, "copy-references.json"), { force: true }); rmSync(join(out, "publish-settings.json"), { force: true });
+  // References.
+  let r = await (await call(`/api/client/${GYM}/copy-refs`)).json();
+  assert.deepEqual([r.refs, r.shown], [[], []]);
+  r = await (await call(`/api/client/${GYM}/copy-refs`, { method: "POST", body: { message: "Ladies in Bishan, if nothing stuck it was the plan. Tap Sign up.", headline: "A reset that sticks", note: "pain hook" } })).json();
+  assert.deepEqual([r.refs.length, r.ref.source, r.shown, r.ref.note], [1, "owner", [r.ref.id], ""], "kept even though the model cannot be reached in tests; the note stays empty");
+  assert.match(r.analysis_error, /network blocked|GEMINI_KEY/, "and the page is told why the note is empty");
+  const r2 = await (await call(`/api/client/${GYM}/copy-refs`, { method: "POST", body: { message: "Pasted — as written", headline: "h" } })).json(); assert.equal(r2.ref.message, "Pasted — as written", "a pasted reference keeps its dashes");
+  await call(`/api/client/${GYM}/copy-refs/${r2.ref.id}`, { method: "PUT", body: { retired: true } });
+  r = await (await call(`/api/client/${GYM}/copy-refs/${r.ref.id}`, { method: "PUT", body: { note: "the opener" } })).json(); assert.equal(r.refs[0].note, "the opener");
+  const refId = r.refs[0].id;
+  // The campaign's copy: nothing yet; the owner's own is checked (the offer named exactly) and kept at once.
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`)).json();
+  assert.deepEqual([r.drafts, r.kept, r.references, r.max_options], [[], [], 1, 5]);
+  let bad = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`, { method: "POST", body: { message: "No offer named. Tap Sign up.", headline: "Hi" } });
+  assert.equal(bad.status, 400); assert.match((await bad.json()).error, /not named exactly/);
+  bad = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`, { method: "POST", body: { message: `Free trial of the ${WORDS.offer}`, headline: "Hi" } });
+  assert.match((await bad.json()).error, /free trial/);
+  const mk = async (n) => (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`, { method: "POST", body: { message: `Copy ${n}: the ${WORDS.offer} in Bishan. Tap Sign up.`, headline: `Headline ${n}`, description: "" } })).json()).draft;
+  const a = await mk(1), b = await mk(2);
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`)).json();
+  assert.deepEqual([r.drafts.length, r.kept, r.drafts[0].source, r.drafts[0].status], [2, [a.id, b.id], "owner", "keep"]);
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/${b.id}`, { method: "PUT", body: { status: "exclude" } })).json(); assert.deepEqual(r.kept, [a.id]);
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/${a.id}`, { method: "PUT", body: { headline: "Dash — here" } })).json(); assert.equal(r.drafts.find((d) => d.id === a.id).headline, "Dash - here", "an edit's dash becomes a hyphen, never a refusal");
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/${a.id}`, { method: "PUT", body: { headline: "Edited headline" } })).json(); assert.equal(r.drafts.find((d) => d.id === a.id).headline, "Edited headline");
+  assert.equal((await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/draft`, { method: "POST", body: { count: 99 } })).status, 400);
+  assert.equal((await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/nope`, { method: "PUT", body: { status: "keep" } })).status, 400);
+  // The plan carries the kept copy; the setting for text options is saved and bounded.
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+  assert.deepEqual([r.plan.copy.kept, r.plan.words.headline, r.plan.words.placeholders, r.copy.drafts.length, r.plan.ads[0].copies], [1, "Edited headline", [], 2, [a.id]]);
+  assert.equal(r.plan.ads[0].creative.object_story_spec.link_data?.name || r.plan.ads[0].creative.asset_feed_spec.titles[0].text, "Edited headline");
+  assert.equal((await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { copy: { max_options: 7 } } })).status, 400);
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { copy: { max_options: 2 } } })).json();
+  assert.equal(r.plan.copy.max_options, 2);
+  // The pages.
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+  const open = async (url, ready, what) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url }, sessionId); await loaded; const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); if (!(await ev(ready))) throw new Error("timed out waiting for " + what); };
+  await open(`${panel.url}/?u24#/${GYM}/publish/${BRIEF.batch_id}`, "!!PB.data && /Copy/.test(document.querySelector('#view')?.textContent||'') && document.querySelector('#cpN')", "the Publish screen");
+  let text = await ev("document.querySelector('#view').textContent");
+  assert.match(text, /1 kept/); assert.match(text, /Edited headline/); assert.match(text, /Excluded · 1/); assert.equal(await ev("document.querySelector('#cpN').value"), "2");
+  assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Draft 10 copies/.test(b.textContent))"));
+  await ev(`cpDecide('${b.id}','keep')`);
+  text = await ev("document.querySelector('#view').textContent"); assert.match(text, /2 kept/);
+  await open(`${panel.url}/?u24b#/${GYM}/copy`, "!!CR.data && /References · 1/.test(document.querySelector('#view')?.textContent||'')", "the Copy page");
+  text = await ev("document.querySelector('#view').textContent");
+  assert.match(text, /A reset that sticks/); assert.match(text, /yours · shown/); assert.ok(await ev("[...document.querySelectorAll('#view input')].some(i=>i.value==='the opener')"), "the note in its field");
+  await ev("document.querySelector('#crMsg').value='Another one worth learning from. Tap Sign up.'; document.querySelector('#crHead').value='Second'; true"); await ev("crAdd()");
+  assert.match(await ev("document.querySelector('#view').textContent"), /References · 2/);
+  await ev(`crRetire('${refId}')`);
+  assert.match(await ev("document.querySelector('#view').textContent"), /References · 1/);
 });
