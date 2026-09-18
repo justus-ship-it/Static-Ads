@@ -1631,8 +1631,39 @@ function paintPublish(v){
       <div><label>Instagram account</label>${PB.link?`<select onchange="pbSet('destination.instagram_user_id',this.value)"><option value="" ${!P.instagram_user_id?'selected':''}>none · a Page-backed identity</option>${igList(PB.link).map(x=>`<option value="${esc(x.id)}" ${x.id===P.instagram_user_id?'selected':''}>@${esc(x.username||x.id)}</option>`).join('')}</select>`:`<div class="mono">${esc(P.instagram_user_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.instagram||'')}</div>`}</div>
       <div><label>Link</label><div class="mono">${esc(P.website||'none')}</div></div>
     </div></div>
+  ${publishedCard(D.published, P)}
   <div class="card"><div class="row"><div><b>${P.counts.adsets} ad set${P.counts.adsets===1?'':'s'}, ${P.counts.ads} ads, ${money(P.budget.per_day_total,cur)} a day, all paused.</b><div class="hint">${P.ready?'Ready to create.':'Fix the problems above first.'}${S.updated?` Settings saved ${esc(S.updated.slice(0,16).replace('T',' '))}.`:''}</div></div><div class="spacer"></div>
-    <button class="primary" disabled title="the next step (E3) wires this button">Create on Facebook, paused</button></div></div>`;
+    <button class="primary" onclick="pbCreateConfirm()" ${P.ready&&!PB.busy&&!(STATE.run&&!STATE.run.done)?'':'disabled'}>${D.published?.ads&&Object.keys(D.published.ads).length?'Continue creating on Facebook':'Create on Facebook, paused'}</button></div></div>
+  <div id="runbox"></div><div id="bModal"></div>`;
+  renderRunBox();
+}
+/** What is on Meta already for this batch: the record written as each object landed. */
+function publishedCard(rec, P){
+  if (!rec) return '';
+  const made = Object.keys(rec.ads||{}).length, sets = Object.values(rec.adsets||{});
+  const url = rec.campaign?.id ? `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${esc((rec.account||'').replace(/^act_/,''))}&selected_campaign_ids=${esc(rec.campaign.id)}` : null;
+  const stale = Object.keys(rec.ads||{}).filter(f=>!P.ads.some(a=>a.folder===f));
+  return `<div class="card"><h3>On Facebook ${rec.done?'<span class="pill on">complete</span>':`<span class="pill warn">${made} of ${P.counts.ads} ads</span>`}</h3>
+    <div class="kv"><span>Campaign</span><div>${rec.campaign?`${esc(rec.campaign.name)} · ${esc(rec.campaign.id)}${url?` · <a href="${url}" target="_blank" rel="noopener">open in Ads Manager</a>`:''}`:'not yet'}</div>
+      <span>Ad sets</span><div>${sets.length?sets.map(x=>`${esc(x.name)} · ${esc(x.id)}`).join('<br>'):'not yet'}</div>
+      <span>Ads</span><div>${made} made, all paused${rec.superseded?.length?` · ${rec.superseded.length} remade (the old ones stay paused)`:''}${stale.length?` · <span style="color:var(--warn)">${stale.length} on Meta but no longer kept here (paused; pause or delete them in Ads Manager)</span>`:''}</div>
+      ${rec.error?`<span>Stopped</span><div style="color:var(--err)">${esc(rec.error.step)} ${esc(rec.error.what||'')}: ${esc(rec.error.message)}</div>`:''}
+      <span>Last run</span><div>${rec.runs?.length?esc((rec.runs.at(-1).finished||rec.runs.at(-1).started).slice(0,16).replace('T',' ')):'—'}</div></div></div>`;
+}
+function pbCreateConfirm(){
+  const P = PB.data.plan, cur = P.currency, made = Object.keys(PB.data.published?.ads||{}).length;
+  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
+    <h2>${made?'Continue creating on Facebook?':'Create on Facebook?'}</h2>
+    <p class="hint">In ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account: the campaign, ${P.counts.adsets} ad set${P.counts.adsets===1?'':'s'} and ${P.counts.ads} ad${P.counts.ads===1?'':'s'} as shown on this screen — every object <b>paused</b>. Nothing runs or spends until you switch it on in Ads Manager. Made already: ${made} ad${made===1?'':'s'}, reused.</p>
+    <div class="summary"><b>${esc(P.campaign.name)}</b> · ${money(P.budget.per_day_total,cur)} a day once switched on${P.words.placeholders.length?' · <span style="color:var(--warn)">placeholder words</span>':''}</div>
+    <div class="row"><label for="pbFirst" style="margin:0">Only the first</label><input id="pbFirst" type="number" min="1" max="${P.counts.ads}" placeholder="all" style="width:80px"><span class="hint" style="margin:0">ads this run (leave empty for all ${P.counts.ads})</span></div>
+    <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" onclick="pbCreateGo()">Yes, create them paused</button></div></div></div>`;
+}
+function pbCreateGo(){
+  const P = PB.data.plan, v = $('#pbFirst').value.trim(), first = v ? parseInt(v, 10) : null; bClose();
+  if (v && !(Number.isInteger(first) && first >= 1)) { toast('"Only the first" is a whole number of ads.', 'err'); return; }
+  run({kind:'batch-publish', gym:PB.gym, batch:PB.id, confirm:{ ads:P.counts.ads, adsets:P.counts.adsets, per_day:P.budget.per_day_total, ...(first ? { first } : {}) }}, async()=>{ PB.data = null; if (STATE.tab==='publish' && STATE.batch===PB.id) viewPublish($('#view')); });
+  paintPublish($('#view'));
 }
 function pbSet(path, val){ setPath(PB.settings, path, val); pbSave(); }
 function pbSetAdset(callout, k, val){ ((PB.settings.adsets ||= {})[callout] ||= {})[k] = val; delete PB.estimates[callout]; pbSave(); }

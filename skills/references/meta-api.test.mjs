@@ -357,7 +357,8 @@ test("M6 the publish plan for a batch: the kept ads only (excluded ads and photo
     const p = buildPlan({ profile, batch, kept, presets });
     assert.deepEqual([p.ready, p.problems, p.counts], [true, [], { adsets: 2, ads: 3, with_story: 1 }]);
     assert.deepEqual([p.account, p.page_id, p.instagram_user_id, p.lead_form_id, p.website], ["act_111", "77", "88", "4001", "https://sculptsociety.com.sg"]);
-    assert.deepEqual(p.campaign, { name: "0913 12 Week Total Body Reset | SCS | Men Wanted", objective: "OUTCOME_LEADS", status: "PAUSED", special_ad_categories: [], buying_type: "AUCTION" }, "an ad-set budget: none on the campaign");
+    assert.deepEqual(p.campaign, { name: "0913 12 Week Total Body Reset | SCS | Men Wanted", objective: "OUTCOME_LEADS", status: "PAUSED", special_ad_categories: [], buying_type: "AUCTION", is_adset_budget_sharing_enabled: false }, "an ad-set budget: none on the campaign, and no sharing between ad sets (Meta requires the answer)");
+  assert.equal(buildPlan({ profile, batch, kept, presets, settings: { campaign: { level: "campaign" } } }).campaign.is_adset_budget_sharing_enabled, undefined, "not sent with a campaign budget");
     assert.deepEqual(p.budget, { level: "adset", daily: 50, bid_strategy: "LOWEST_COST_WITHOUT_CAP", bid_cap: null, per_day_total: 100 });
     const [bishan, amk] = p.adsets;
     assert.deepEqual([bishan.callout, bishan.ads, bishan.pin.label, bishan.pin.fallback, bishan.pin.radius_km, bishan.age_min, bishan.age_max, bishan.gender, bishan.preset.id, bishan.preset.how.startsWith("suggested: ran for men 14 times")], ["BISHAN", [ads[0].folder], "Bishan", false, 3, 25, 60, "men", "broad", true]);
@@ -378,6 +379,7 @@ test("M6 the publish plan for a batch: the kept ads only (excluded ads and photo
     assert.deepEqual([afs.asset_customization_rules[0].customization_spec.facebook_positions, afs.asset_customization_rules[0].customization_spec.instagram_positions, afs.asset_customization_rules[0].image_label.name, afs.asset_customization_rules[1].image_label.name, afs.asset_customization_rules[1].customization_spec], [["story", "facebook_reels"], ["story", "reels"], "story", "square", { age_min: 13, age_max: 65 }], "the 9:16 on Stories and Reels, the 1:1 everywhere else");
     assert.deepEqual([afs.call_to_action_types, afs.call_to_actions, afs.link_urls, afs.ad_formats, afs.optimization_type], [["SIGN_UP"], [{ type: "SIGN_UP", value: { lead_gen_form_id: "4001" } }], [{ website_url: "https://sculptsociety.com.sg" }], ["SINGLE_IMAGE"], "PLACEMENT"]);
     assert.deepEqual(withStory.creative.object_story_spec, { page_id: "77", instagram_user_id: "88" });
+    assert.deepEqual([withStory.creative.contextual_multi_ads, without.creative.contextual_multi_ads], [{ enroll_status: "OPT_OUT" }, { enroll_status: "OPT_OUT" }], "multi-advertiser ads never, on both creative shapes");
     assert.ok(Object.keys(withStory.creative.degrees_of_freedom_spec.creative_features_spec).length >= 12);
     assert.equal(without.creative.asset_feed_spec, undefined); assert.deepEqual([without.creative.object_story_spec.link_data.image_hash, without.creative.object_story_spec.link_data.call_to_action], ["(1:1 hash)", { type: "SIGN_UP", value: { lead_gen_form_id: "4001" } }]);
     assert.match(afs.bodies[0].text, /^\[PLACEHOLDER primary text\]/); assert.deepEqual(p.words.placeholders, ["primary text", "headline", "description"]);
@@ -404,4 +406,84 @@ test("M6 the publish plan for a batch: the kept ads only (excluded ads and photo
     assert.ok(Object.keys(CTA_TYPES).includes("SIGN_UP") && campaignWords(profile, { offer: "X" }, { cta: "NOPE" }).cta === "SIGN_UP");
     assert.equal(creativeFor({ name: "n", page_id: "77", website: "https://x.sg", form_id: "1", words: { message: "m", headline: "h", description: "d", cta: "SIGN_UP" }, story: false }).object_story_spec.instagram_user_id, undefined);
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("M7 createPlan: images once per file by content, the campaign, the ad sets a run needs, then each ad's creative and ad — every id recorded as it lands; a re-run reuses everything and makes nothing; changed words make a new creative and ad with the old ones kept as superseded; a changed ad set is updated in place; `first` limits a run and the next continues; a refusal stops with its step recorded; a plan with problems is refused before any call", async () => {
+  const { buildPlan, createPlan, freshRecord } = await import("./meta-publish.mjs");
+  const d = mkdtempSync(join(tmpdir(), "meta-create-"));
+  try {
+    const png = (n) => Buffer.from([0x89, 0x50, 0x4e, 0x47, n]);
+    const ads = [];
+    for (const [n, loc] of [["101", "BISHAN"], ["102", "BISHAN"], ["103", "ANG MO KIO"]]) {
+      mkdirSync(join(d, `${n}-x`, "1x1"), { recursive: true }); mkdirSync(join(d, `${n}-x`, "9x16"), { recursive: true });
+      writeFileSync(join(d, `${n}-x`, "1x1", "a.png"), png(+n)); if (n !== "103") writeFileSync(join(d, `${n}-x`, "9x16", "s.png"), png(+n + 50));
+      ads.push({ folder: `${n}-c-${loc.toLowerCase().replace(/ /g, "-")}`, file: `${n}-x/1x1/a.png`, location: loc, words: { location: loc, audience: "MEN WANTED", offer: "12 Week Total Body Reset" }, story: n !== "103" ? `${n}-x/9x16/s.png` : null });
+    }
+    // The same 1:1 twice (two ads sharing a photo): uploaded once.
+    writeFileSync(join(d, "102-x", "1x1", "a.png"), png(101));
+    const profile = { display_name: "Sculpt Society", gym_abbr: "SCS", website: "https://sculptsociety.com.sg", locale: { country: "SG", currency: "SGD" },
+      meta_assets: { ad_account_id: "act_111", page_id: "77", instagram_user_id: "88", lead_form_id: "4001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+      campaign_defaults: { budget: { level: "adset", amount: 50, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", radius_km: 5 }] }, demographics: { age_min: 25, age_max: 60 } } };
+    const batch = { batch_id: "2026-09-13-men" };
+    let n = 0; const calls = [];
+    const refuse = { creative: null };
+    Object.assign(answers, {
+      "act_111/adimages": (q) => { calls.push(["adimages", q.get("name")]); return { images: { [q.get("name")]: { hash: "h" + q.get("name").slice(-9, -4) } } }; },
+      "act_111/campaigns": (q) => { calls.push(["campaigns", q.get("name")]); return { id: "c" + ++n }; },
+      "act_111/adsets": (q) => { calls.push(["adsets", q.get("name")]); return { id: "s" + ++n }; },
+      "act_111/adcreatives": (q) => { calls.push(["adcreatives", JSON.parse(q.get("asset_feed_spec") || "null")?.images?.map((i) => i.hash) || JSON.parse(q.get("object_story_spec")).link_data.image_hash]); return { id: "cr" + ++n }; },
+      "act_111/ads": (q) => { calls.push(["ads", q.get("adset_id"), JSON.parse(q.get("creative")).creative_id]); return { id: "ad" + ++n }; },
+      "c1": (q) => { calls.push(["update c1", [...q.keys()].filter((k) => !/access_token|appsecret_proof/.test(k)).join(",")]); return { success: true }; },
+      "s2": (q) => { calls.push(["update s2", [...q.keys()].filter((k) => !/access_token|appsecret_proof/.test(k)).join(",")]); return { success: true }; },
+    });
+    errorHook = (path) => (path === "act_111/adcreatives" && refuse.creative ? { error: { message: refuse.creative, code: 100 } } : null);
+    const path = join(d, "publish.json");
+    const log = [];
+    const plan = buildPlan({ profile, batch, kept: ads, presets: { presets: [] } });
+    // 1. The first two ads only: their images (three files, one shared), the campaign, BISHAN's ad set alone, two creatives and ads.
+    const rec = freshRecord(path, { batch_id: batch.batch_id, account: "act_111" });
+    const r1 = await createPlan(plan, { client: client(), batchDir: d, record: rec, first: 2, log: (m) => log.push(m) });
+    assert.deepEqual(calls.map((c) => c[0]), ["campaigns", "adsets", "adimages", "adimages", "adcreatives", "ads", "adimages", "adcreatives", "ads"], "images on demand, once per content; only the ad set the run needs");
+    assert.deepEqual([r1.run.made, r1.run.reused, r1.ads, r1.of, r1.url], [{ images: 3, campaign: 1, adsets: 1, creatives: 2, ads: 2 }, { images: 1, campaign: 0, adsets: 0, ads: 0 }, 2, 3, "https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=111&selected_campaign_ids=c1"]);
+    const onDisk = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([onDisk.campaign.id, Object.keys(onDisk.adsets), Object.keys(onDisk.ads), onDisk.done, onDisk.error, onDisk.runs.length, Object.keys(onDisk.images).length], ["c1", ["BISHAN"], [ads[0].folder, ads[1].folder], null, null, 1, 3]);
+    assert.equal(calls.filter((c) => c[0] === "adcreatives")[0][1].length, 2, "the first creative carries the 1:1 and the 9:16");
+    assert.equal(calls.filter((c) => c[0] === "ads")[0][1], "s2", "the ad sits in BISHAN's ad set");
+    // 2. Continue: the third ad only (its 1:1 alone), ANG MO KIO's ad set made now; everything else reused; the record complete.
+    calls.length = 0;
+    const r2 = await createPlan(plan, { client: client(), batchDir: d, record: { ...JSON.parse(readFileSync(path, "utf-8")), path }, log: (m) => log.push(m) });
+    assert.deepEqual(calls.map((c) => c[0]), ["adsets", "adimages", "adcreatives", "ads"]);
+    assert.equal(typeof calls[2][1], "string", "the third ad's creative is the 1:1 alone");
+    assert.deepEqual([r2.run.made, r2.run.reused.ads, r2.run.reused.images, r2.ads, JSON.parse(readFileSync(path, "utf-8")).done != null], [{ images: 1, campaign: 0, adsets: 1, creatives: 1, ads: 1 }, 2, 4, 3, true], "the two done ads' four images are looked up and found, the third's uploaded");
+    // 3. A re-run makes nothing at all.
+    calls.length = 0;
+    const r3 = await createPlan(plan, { client: client(), batchDir: d, record: { ...JSON.parse(readFileSync(path, "utf-8")), path }, log: () => {} });
+    assert.deepEqual([calls, r3.run.made.ads, r3.run.reused.ads, r3.run.reused.campaign, r3.run.reused.adsets], [[], 0, 3, 1, 2]);
+    // 4. New words: every ad gets a new creative and ad, the old kept as superseded; a changed ad set is updated in place; the campaign's new name too.
+    calls.length = 0;
+    const plan2 = buildPlan({ profile, batch, kept: ads, presets: { presets: [] }, settings: { campaign: { name: "Men Sept" }, adsets: { BISHAN: { age_max: 55 } }, words: { message: "Real words now.", headline: "Twelve weeks", description: "Sin Ming" } } });
+    const r4 = await createPlan(plan2, { client: client(), batchDir: d, record: { ...JSON.parse(readFileSync(path, "utf-8")), path }, log: () => {} });
+    assert.deepEqual(calls.map((c) => c[0]), ["update c1", "update s2", "adcreatives", "ads", "adcreatives", "ads", "adcreatives", "ads"], "no image uploaded again; the campaign and the changed ad set updated; three new creatives and ads");
+    assert.deepEqual([calls[0][1], calls[1][1].split(",").sort()], ["name", ["daily_budget", "bid_strategy", "name", "targeting"].sort()]);
+    const after = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([r4.run.superseded, after.superseded.length, after.superseded.map((x) => x.folder).sort(), Object.keys(after.ads).length, after.campaign.name, after.adsets.BISHAN.updated != null, after.adsets["ANG MO KIO"].updated], [3, 3, ads.map((a) => a.folder).sort(), 3, "Men Sept", true, undefined]);
+    assert.ok(after.superseded.every((x) => x.id && x.why));
+    // 5. A refusal at the creative: the run stops there, the step and the ad recorded, everything before it kept.
+    calls.length = 0; refuse.creative = "Invalid parameter — the form is not one of this Page's";
+    const plan3 = buildPlan({ profile, batch, kept: ads, presets: { presets: [] }, settings: { words: { message: "Third words." } } });
+    const rec5 = { ...JSON.parse(readFileSync(path, "utf-8")), path };
+    await assert.rejects(createPlan(plan3, { client: client(), batchDir: d, record: rec5, log: () => {} }), /form is not one of this Page's/);
+    const stopped = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([stopped.error.step, stopped.error.what, Object.keys(stopped.ads).length, stopped.superseded.length, stopped.done], ["creative", ads[0].folder, 2, 4, null], "the first ad was superseded and its new creative refused; the other two untouched");
+    refuse.creative = null;
+    // 6. A plan with problems is refused before any call; a record for another account is refused by the CLI (tested by shape here).
+    calls.length = 0;
+    await assert.rejects(createPlan({ ...plan, ready: false, problems: ["no ads kept"] }, { client: client(), batchDir: d, record: freshRecord(join(d, "x.json"), { batch_id: "b", account: "act_111" }) }), /the plan has problems: no ads kept/);
+    assert.deepEqual(calls, []);
+    assert.ok(!readFileSync(path, "utf-8").includes(TOKEN));
+  } finally {
+    errorHook = errorFor;
+    for (const k of ["act_111/adimages", "act_111/campaigns", "act_111/adsets", "act_111/adcreatives", "act_111/ads", "c1", "s2"]) delete answers[k];
+    rmSync(d, { recursive: true, force: true });
+  }
 });

@@ -20,6 +20,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
+import { createHash } from "crypto";
 import { join, resolve, basename } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
@@ -156,12 +157,14 @@ export const PLACEMENT_RULES = (squareLabel, storyLabel) => [
   { customization_spec: { age_min: 13, age_max: 65 }, image_label: { name: squareLabel }, priority: 2 },
 ];
 /** One ad's creative: two images by placement when the ad has a Stories version, else the 1:1 alone. Hashes are filled in when the images are uploaded. */
+/** Multi-advertiser ads (the ad shown beside other advertisers' ads): never — the owner's rule (2026-09-18). */
+export const NO_MULTI_ADVERTISER = Object.freeze({ enroll_status: "OPT_OUT" });
 export function creativeFor({ name, page_id, instagram_user_id, website, form_id, words, story }) {
   const identity = { page_id, ...(instagram_user_id ? { instagram_user_id } : {}) };
   const cta = words.cta || CTA;
   if (story) {
     return {
-      name, object_story_spec: identity,
+      name, object_story_spec: identity, contextual_multi_ads: { ...NO_MULTI_ADVERTISER },
       asset_feed_spec: {
         images: [{ hash: "(1:1 hash)", adlabels: [{ name: "square" }] }, { hash: "(9:16 hash)", adlabels: [{ name: "story" }] }],
         bodies: [{ text: words.message }], titles: [{ text: words.headline }], descriptions: [{ text: words.description }],
@@ -173,7 +176,7 @@ export function creativeFor({ name, page_id, instagram_user_id, website, form_id
   }
   return {
     name, object_story_spec: { ...identity, link_data: { image_hash: "(1:1 hash)", link: website, message: words.message, name: words.headline, description: words.description, call_to_action: { type: cta, value: { lead_gen_form_id: form_id } } } },
-    degrees_of_freedom_spec: optOut(),
+    contextual_multi_ads: { ...NO_MULTI_ADVERTISER }, degrees_of_freedom_spec: optOut(),
   };
 }
 /**
@@ -210,7 +213,8 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   const campaign = {
     name: clean1(sc.name, 120) || `${date} ${offer} | ${abbr} | ${kept[0]?.words?.audience ? titleCase(kept[0].words.audience) : "Leads"}`,
     objective: cd.objective || "OUTCOME_LEADS", status: AD_STATUS, special_ad_categories: cd.special_ad_categories || [], buying_type: cd.buying_type || "AUCTION",
-    ...(level === "campaign" ? { daily_budget: Math.round(daily * 100), bid_strategy: strategy } : {}),
+    // Meta (2026-09-18): a campaign whose ad sets carry their own budgets must say whether they may share it; never (their house style).
+    ...(level === "campaign" ? { daily_budget: Math.round(daily * 100), bid_strategy: strategy } : { is_adset_budget_sharing_enabled: false }),
   };
   if (!kept.length) problems.push("no ads kept: keep at least one on the Review screen");
   // One ad set per location callout, in the order the callouts appear.
@@ -288,6 +292,115 @@ export function keptAds(batchDir) {
     .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || null }));
 }
 
+/** POST a creative; a feature Meta refuses by name is dropped and the post retried; the opt-out as a whole refused → made without it, said so. */
+export async function postCreative(client, account, spec, log = console.log) {
+  const dropped = [];
+  for (;;) {
+    try {
+      const r = await client.post(`${account}/adcreatives`, spec);
+      const kept = Object.keys(spec.degrees_of_freedom_spec?.creative_features_spec || {});
+      return { ...r, enhancements: kept.length ? "opted out" : "not opted out — switch Advantage+ creative enhancements off in Ads Manager", opted_out: kept, ...(dropped.length ? { opt_out_refused: dropped } : {}) };
+    } catch (e) {
+      if (!(e instanceof MetaError) || e.code !== 100 || !spec.degrees_of_freedom_spec) throw e;
+      const named = Object.keys(spec.degrees_of_freedom_spec.creative_features_spec).find((k) => e.message.includes(k));
+      if (named) { log(`  note: Meta refused the "${named}" opt-out (${e.message}); retrying without it`); dropped.push(named); delete spec.degrees_of_freedom_spec.creative_features_spec[named]; continue; }
+      if (!/degrees_of_freedom|creative_features|enhancement/i.test(e.message)) throw e;
+      log(`  note: Meta did not accept the enhancements opt-out (${e.message}); creating the creative without it`);
+      dropped.push(...Object.keys(spec.degrees_of_freedom_spec.creative_features_spec)); delete spec.degrees_of_freedom_spec;
+    }
+  }
+}
+
+/** A fresh record for a batch's publishing: every Meta id lands here as it is made. */
+export const freshRecord = (path, { batch_id, account }) => ({ path, batch_id, account, started: new Date().toISOString(), images: {}, campaign: null, adsets: {}, ads: {}, superseded: [], error: null, done: null, runs: [] });
+const sha16 = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);
+/** What makes a creative the creative it is: its images, words, form, identity and link. A change → a new creative and ad. */
+export const creativeKey = (creative, hashes) => sha16(JSON.stringify({ hashes, afs: creative.asset_feed_spec ? { b: creative.asset_feed_spec.bodies, t: creative.asset_feed_spec.titles, d: creative.asset_feed_spec.descriptions, l: creative.asset_feed_spec.link_urls, c: creative.asset_feed_spec.call_to_actions, r: creative.asset_feed_spec.asset_customization_rules } : creative.object_story_spec.link_data, oss: { page_id: creative.object_story_spec.page_id, instagram_user_id: creative.object_story_spec.instagram_user_id || null }, multi: creative.contextual_multi_ads || null }));
+const adsetKey = (payload) => sha16(JSON.stringify({ t: payload.targeting, b: payload.daily_budget ?? null, s: payload.bid_strategy ?? null, a: payload.bid_amount ?? null, n: payload.name }));
+/**
+ * Create what the plan says, in order — images (once per file, by content), the campaign, the ad sets, then
+ * each ad's creative and ad — recording every id in `record` as it lands (`outputs/{batch}/publish.json`).
+ * A re-run continues: what exists is reused, never made twice; an ad set whose targeting or budget changed
+ * is updated in place; an ad whose creative changed (new words, images, form, identity) gets a new creative
+ * and a new ad, the old ones kept under `superseded` (still PAUSED on Meta, never deleted here).
+ * `first` limits this run to the first N ads of the plan (the live proof), the rest another run.
+ */
+export async function createPlan(plan, { client, batchDir, record, log = console.log, first = null }) {
+  if (!plan.ready) throw new Error(`the plan has problems: ${plan.problems.join("; ")}`);
+  const rec = record, account = plan.account;
+  const save = () => writeWhole(rec.path, JSON.stringify({ ...rec, path: undefined }, null, 2) + "\n");
+  const run = { started: new Date().toISOString(), made: { images: 0, campaign: 0, adsets: 0, creatives: 0, ads: 0 }, reused: { images: 0, campaign: 0, adsets: 0, ads: 0 }, updated: { campaign: 0, adsets: 0 }, superseded: 0, first: first ?? null };
+  rec.runs.push(run); rec.error = null; rec.done = null; save();
+  const fail = (step, what, e) => { rec.error = { step, what, message: scrubTokens(e.message), code: e.code ?? null, trace: e.trace ?? null, at: new Date().toISOString() }; save(); throw e; };
+  const image = async (img) => {
+    const bytes = readFileSync(join(batchDir, img.file));
+    const key = sha16(bytes);
+    if (rec.images[key]?.hash) { run.reused.images++; return rec.images[key].hash; }
+    try {
+      const r = await client.post(`${account}/adimages`, { bytes: bytes.toString("base64"), name: img.name });
+      const first = Object.values(r.images || {})[0];
+      if (!first?.hash) throw new Error(`the image upload answered without a hash: ${JSON.stringify(r).slice(0, 200)}`);
+      rec.images[key] = { hash: first.hash, file: img.file, name: img.name, at: new Date().toISOString() }; run.made.images++; save();
+      log(`· image ${img.file}: ${first.hash}`);
+      return first.hash;
+    } catch (e) { fail("image", img.file, e); }
+  };
+  // The campaign: made once; a changed name or budget is updated in place.
+  try {
+    if (rec.campaign?.id) {
+      const want = { name: plan.campaign.name, ...(plan.campaign.daily_budget != null ? { daily_budget: plan.campaign.daily_budget, bid_strategy: plan.campaign.bid_strategy } : {}) };
+      const changed = Object.entries(want).filter(([k, v]) => rec.campaign[k] !== v);
+      if (changed.length) { await client.post(rec.campaign.id, Object.fromEntries(changed)); Object.assign(rec.campaign, Object.fromEntries(changed), { updated: new Date().toISOString() }); run.updated.campaign++; save(); log(`· campaign ${rec.campaign.id}: updated ${changed.map(([k]) => k).join(", ")}`); }
+      else { run.reused.campaign++; log(`· campaign: already made (${rec.campaign.id}) — reused`); }
+    } else {
+      const r = await client.post(`${account}/campaigns`, plan.campaign);
+      rec.campaign = { id: r.id, name: plan.campaign.name, daily_budget: plan.campaign.daily_budget ?? null, bid_strategy: plan.campaign.bid_strategy ?? null, at: new Date().toISOString() }; run.made.campaign++; save();
+      log(`· campaign: ${r.id} "${plan.campaign.name}"`);
+    }
+  } catch (e) { fail("campaign", plan.campaign.name, e); }
+  // The ad sets this run needs (those with an ad to make): made once per callout; changed targeting or budget updated.
+  const adsToMake = first ? plan.ads.slice(0, first) : plan.ads;
+  const callouts = [...new Set(adsToMake.map((a) => a.adset))];
+  for (const callout of callouts) {
+    const set = plan.adsets.find((x) => x.callout === callout);
+    const key = adsetKey(set.payload), had = rec.adsets[callout];
+    try {
+      if (had?.id) {
+        if (had.key === key) { run.reused.adsets++; log(`· ad set ${callout}: already made (${had.id}) — reused`); continue; }
+        const { name, targeting, daily_budget, bid_strategy, bid_amount } = set.payload;
+        await client.post(had.id, { name, targeting, ...(daily_budget != null ? { daily_budget, bid_strategy } : {}), ...(bid_amount != null ? { bid_amount } : {}) });
+        Object.assign(had, { key, name, updated: new Date().toISOString() }); run.updated.adsets++; save(); log(`· ad set ${callout}: ${had.id} updated (targeting or budget changed)`);
+      } else {
+        const r = await client.post(`${account}/adsets`, { ...set.payload, campaign_id: rec.campaign.id });
+        rec.adsets[callout] = { id: r.id, key, name: set.payload.name, at: new Date().toISOString() }; run.made.adsets++; save();
+        log(`· ad set ${callout}: ${r.id}`);
+      }
+    } catch (e) { fail("adset", callout, e); }
+  }
+  // Each ad: its images, its creative, the ad. A creative that changed means a new creative and ad.
+  for (const ad of adsToMake) {
+    const hashes = { square: await image(ad.image), story: ad.story ? await image(ad.story) : null };
+    const key = creativeKey(ad.creative, hashes), had = rec.ads[ad.folder];
+    if (had?.id && had.key === key) { run.reused.ads++; continue; }
+    if (had?.id) { rec.superseded.push({ folder: ad.folder, ...had, why: "the creative changed (words, images, form or identity)", at: new Date().toISOString() }); delete rec.ads[ad.folder]; run.superseded++; save(); log(`· ad ${ad.folder}: ${had.id} no longer matches the plan — making a new creative and ad`); }
+    const spec = structuredClone(ad.creative);
+    if (spec.asset_feed_spec) { spec.asset_feed_spec.images[0].hash = hashes.square; spec.asset_feed_spec.images[1].hash = hashes.story; }
+    else spec.object_story_spec.link_data.image_hash = hashes.square;
+    let creative;
+    try { creative = await postCreative(client, account, spec, log); run.made.creatives++; } catch (e) { fail("creative", ad.folder, e); }
+    try {
+      const r = await client.post(`${account}/ads`, { ...ad.payload, adset_id: rec.adsets[ad.adset].id, creative: { creative_id: creative.id } });
+      rec.ads[ad.folder] = { id: r.id, creative_id: creative.id, adset: ad.adset, key, hashes, enhancements: creative.enhancements, ...(creative.opt_out_refused ? { opt_out_refused: creative.opt_out_refused } : {}), at: new Date().toISOString() };
+      run.made.ads++; save();
+      log(`· ad ${ad.folder}: ${r.id} (creative ${creative.id}, ${creative.enhancements})`);
+    } catch (e) { rec.orphan_creatives = [...(rec.orphan_creatives || []), { folder: ad.folder, creative_id: creative.id }]; fail("ad", ad.folder, e); }
+  }
+  run.finished = new Date().toISOString();
+  rec.done = Object.keys(rec.ads).length >= plan.ads.length ? run.finished : null;
+  save();
+  return { run, campaign: rec.campaign, adsets: rec.adsets, ads: Object.keys(rec.ads).length, of: plan.ads.length, url: adsManagerUrl(account, rec.campaign.id) };
+}
+
 /** Make them, one after another, recording each answer as it lands. `client` is a graphClient. */
 export async function createTestOne(plan, { client, brandDir, record, log = console.log }) {
   const rec = record;
@@ -316,24 +429,7 @@ export async function createTestOne(plan, { client, brandDir, record, log = cons
   const creative = await step("creative", async () => {
     const spec = structuredClone(plan.creative);
     spec.object_story_spec.link_data.image_hash = img.hash;
-    const dropped = [];
-    for (;;) {
-      try {
-        const r = await client.post(`${plan.account}/adcreatives`, spec);
-        const kept = Object.keys(spec.degrees_of_freedom_spec?.creative_features_spec || {});
-        return { ...r, link, instagram: plan.instagram_user_id || null, enhancements: kept.length ? "opted out" : "not opted out — switch Advantage+ creative enhancements off in Ads Manager", opted_out: kept, ...(dropped.length ? { opt_out_refused: dropped } : {}) };
-      } catch (e) {
-        if (!(e instanceof MetaError) || e.code !== 100 || !spec.degrees_of_freedom_spec) throw e;
-        // A feature this version does not know for this ad shape is named in the error: drop that one and retry.
-        const named = Object.keys(spec.degrees_of_freedom_spec.creative_features_spec).find((k) => e.message.includes(k));
-        if (named) { log(`  note: Meta refused the "${named}" opt-out (${e.message}); retrying without it`); dropped.push(named); delete spec.degrees_of_freedom_spec.creative_features_spec[named]; continue; }
-        if (!/degrees_of_freedom|creative_features|enhancement/i.test(e.message)) throw e;
-        // The opt-out as a whole is refused: make the creative without it and say so,
-        // so the owner knows to switch the enhancements off in Ads Manager.
-        log(`  note: Meta did not accept the enhancements opt-out (${e.message}); creating the creative without it`);
-        dropped.push(...Object.keys(spec.degrees_of_freedom_spec.creative_features_spec)); delete spec.degrees_of_freedom_spec;
-      }
-    }
+    return { ...(await postCreative(client, plan.account, spec, log)), link, instagram: plan.instagram_user_id || null };
   }, (had) => (had.link !== link ? `its link was ${had.link || "the Page"}, the plan's is ${link}` : had.enhancements !== "opted out" ? "its enhancements were not opted out" : (had.instagram || null) !== (plan.instagram_user_id || null) ? `its Instagram identity was ${had.instagram || "the Page's"}, the plan's is ${plan.instagram_user_id || "the Page's"}` : false));
   // An ad carries its creative: a remade creative means a remade ad (the old one stays PAUSED in the account, recorded as superseded).
   const ad = await step("ad", async () => ({ ...(await client.post(`${plan.account}/ads`, { ...plan.ad, adset_id: adset.id, creative: { creative_id: creative.id } })), creative_id: creative.id }),
@@ -347,10 +443,37 @@ export const adsManagerUrl = (account, campaignId) => `https://adsmanager.facebo
 // ── CLI ──────────────────────────────────────────────────────────────────────
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
-  const { values: v } = parseArgs({ options: { gym: { type: "string" }, batch: { type: "string" }, ad: { type: "string" }, "test-one": { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false } } });
-  if (!v.gym || !v.batch || !v.ad || !v["test-one"]) { console.error("Usage: meta-publish.mjs --gym <slug> --batch <id> --ad <folder> --test-one [--dry-run]"); process.exit(1); }
+  const { values: v } = parseArgs({ options: { gym: { type: "string" }, "brand-dir": { type: "string" }, batch: { type: "string" }, ad: { type: "string" }, "test-one": { type: "boolean", default: false }, create: { type: "boolean", default: false }, first: { type: "string" }, "dry-run": { type: "boolean", default: false } } });
+  if (!v.gym || !v.batch || !(v["test-one"] ? v.ad : v.create)) { console.error("Usage: meta-publish.mjs --gym <slug> --batch <id> (--create [--first N] | --ad <folder> --test-one) [--dry-run] [--brand-dir <dir>]"); process.exit(1); }
+  if (v.create) {
+    try {
+      const brandDir = v["brand-dir"] ? resolve(v["brand-dir"]) : join(REPO_ROOT, "brands", v.gym), out = join(brandDir, "outputs", v.batch);
+      const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
+      const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
+      const { readPresets } = await import("./meta-targeting.mjs");
+      const settings = existsSync(join(out, "publish-settings.json")) ? JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")) : {};
+      const plan = buildPlan({ profile, batch, kept: keptAds(out), presets: readPresets(brandDir), settings });
+      const first = v.first ? parseInt(v.first, 10) : null;
+      if (v.first && !(Number.isInteger(first) && first >= 1)) throw new Error("--first takes a whole number of ads");
+      console.log(`plan: ${plan.campaign.name} · ${plan.counts.adsets} ad set(s) · ${plan.counts.ads} ad(s), ${plan.counts.with_story} with a Stories version · ${plan.budget.per_day_total} ${plan.currency}/day in all · every object ${AD_STATUS}${first ? ` · this run: the first ${first} ad(s)` : ""}`);
+      for (const w of plan.warnings) console.log(`  warning: ${w}`);
+      for (const x of plan.problems) console.log(`  problem: ${x}`);
+      if (!plan.ready) throw new Error("the plan has problems — fix them on the Publish screen first");
+      if (v["dry-run"]) { console.log(JSON.stringify({ campaign: plan.campaign, adsets: plan.adsets.map((s) => ({ callout: s.callout, payload: s.payload })), ads: plan.ads.slice(0, first || 3).map((a) => ({ folder: a.folder, creative: a.creative, payload: a.payload })) }, null, 2)); process.exit(0); }
+      const config = metaConfig({ gym: v.gym });
+      if (!config.token) throw new Error(`no ${config.names.META_ACCESS_TOKEN} in .env`);
+      const client = graphClient({ config });
+      const path = join(out, "publish.json");
+      const record = existsSync(path) ? { ...JSON.parse(readFileSync(path, "utf-8")), path } : freshRecord(path, { batch_id: v.batch, account: plan.account });
+      if (record.account !== plan.account) throw new Error(`this batch was published to ${record.account}; the profile now says ${plan.account}`);
+      const r = await createPlan(plan, { client, batchDir: out, record, first });
+      const m = r.run.made, u = r.run.reused;
+      console.log(`\ndone: ${r.ads} of ${r.of} ads on Meta (this run made ${m.ads} ad(s), ${m.creatives} creative(s), ${m.adsets} ad set(s), ${m.campaign} campaign, ${m.images} image(s); reused ${u.ads} ad(s), ${u.images} image(s)${r.run.superseded ? `; ${r.run.superseded} remade` : ""}) — all ${AD_STATUS}\n${r.url}\nrecord: ${path}`);
+      process.exit(0);
+    } catch (e) { console.error(scrubTokens(e.message)); process.exit(1); }
+  }
   try {
-    const brandDir = join(REPO_ROOT, "brands", v.gym), out = join(brandDir, "outputs", v.batch);
+    const brandDir = v["brand-dir"] ? resolve(v["brand-dir"]) : join(REPO_ROOT, "brands", v.gym), out = join(brandDir, "outputs", v.batch);
     const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
     const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
     const ad = batch.ads.find((a) => a.folder === v.ad);

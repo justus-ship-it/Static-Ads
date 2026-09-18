@@ -940,11 +940,16 @@ const META_TOKEN = "EAA" + "p".repeat(60);
 /** A fake Graph API for the panel: the token must be ours; a few assets; a Page token for the forms. */
 function fakeGraph() {
   const calls = [];
-  const server = http.createServer((req, res) => {
-    const u = new URL(req.url, "http://x"), path = u.pathname.split("/").slice(2).join("/"), tok = u.searchParams.get("access_token");
+  let n = 0;
+  const server = http.createServer(async (req, res) => {
+    const u = new URL(req.url, "http://x"), path = u.pathname.split("/").slice(2).join("/");
+    if (req.method === "POST") { let body = ""; for await (const c of req) body += c; for (const [k, v] of new URLSearchParams(body)) u.searchParams.set(k, v); }
+    const tok = u.searchParams.get("access_token");
     calls.push(path);
     const ok = (body) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     if (tok !== META_TOKEN && tok !== "PAGE-TOKEN") { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: "Invalid OAuth access token", code: 190 } })); }
+    if (req.method === "POST" && path === "act_111000000001/adimages") return ok({ images: { [u.searchParams.get("name")]: { hash: "hash" + (++n) } } });
+    if (req.method === "POST" && ["act_111000000001/campaigns", "act_111000000001/adsets", "act_111000000001/adcreatives", "act_111000000001/ads"].includes(path)) return ok({ id: path.split("/")[1].slice(0, 2) + (++n) });
     if (path === "me") return ok({ id: "1", name: "strategym-panel" });
     if (path === "me/adaccounts") return ok({ data: [{ id: "act_111000000001", account_id: "111000000001", name: "Test Gym Ads", currency: "SGD", account_status: 1, timezone_name: "Asia/Singapore" }, { id: "act_222000000002", account_id: "222000000002", name: "Other Ads", currency: "USD", account_status: 1 }] });
     if (path === "me/accounts") return ok({ data: [{ id: "770000000007", name: "Test Gym", instagram_business_account: { id: "880000000008", username: "testgym" } }] });
@@ -1222,6 +1227,19 @@ test("U19 the targeting library in the panel: presets imported from the account'
   } finally { await panel.stop(); panel = main; graph.server.close(); }
 });
 
+
+/** The test gym linked to Meta with pins, ages, a budget and two presets — what the Publish screen needs. */
+async function linkTestGym() {
+  const g = join(brands, GYM);
+  const cur = JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8"));
+  const profile = { ...cur, gym_abbr: "TG", website: "https://testgym.sg", locale: { country: "SG", currency: "SGD" },
+    meta_assets: { ...(cur.meta_assets || {}), ad_account_id: "act_111000000001", page_id: "770000000007", instagram_user_id: "880000000008", lead_form_id: "400100000001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+    campaign_defaults: { ...(cur.campaign_defaults || {}), budget: { level: "adset", amount: 50, currency: "SGD", bid_strategy: "LOWEST_COST_WITHOUT_CAP" } },
+    targeting_defaults: { ...(cur.targeting_defaults || {}), geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", place_name: "6 Sin Ming Road, Tower 2", radius_km: 5, callouts: [] }, { label: "Bishan", lat: 1.35, lng: 103.85, radius_km: 3, callouts: ["BISHAN"] }] }, demographics: { age_min: 25, age_max: 60 } } };
+  assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: profile })).status, 200);
+  writeFileSync(join(g, "targeting-presets.json"), JSON.stringify({ schema: 1, presets: [{ id: "broad", name: "Broad", spec: {}, summary: ["Broad — no detailed targeting"], stats: null }, { id: "a97f701a193c", name: "Fitness", spec: { flexible_spec: [{ interests: [{ id: "6003277229371", name: "Physical fitness" }] }] }, summary: ["Physical fitness (interests)"], stats: { adsets: 2, leads: 40, cost_per_lead: 12.5, genders: { men: 0, women: 2, all: 0 } } }] }));
+}
+
 test("U20 the Publish screen: the plan for a batch's kept ads from the API (nothing created), the owner's settings saved per batch and the plan rebuilt from them, bad settings refused; the page shows the campaign, one ad set card per callout with its pin, ages, gender, preset and budget, the ads with their Stories versions, the words and the destination; a change saves and repaints; Review links to it", async () => {
   const { cdp, sessionId } = browser;
   const ev = async (expression) => {
@@ -1236,14 +1254,8 @@ test("U20 the Publish screen: the plan for a batch's kept ads from the API (noth
   };
   const open = async (url) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url }, sessionId); await loaded; };
   const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
-  // The gym is linked and has pins, ages and a budget; one preset in its library.
+  await linkTestGym();
   const cur = JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8"));
-  const profile = { ...cur, gym_abbr: "TG", website: "https://testgym.sg", locale: { country: "SG", currency: "SGD" },
-    meta_assets: { ...(cur.meta_assets || {}), ad_account_id: "act_111000000001", page_id: "770000000007", instagram_user_id: "880000000008", lead_form_id: "400100000001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
-    campaign_defaults: { ...(cur.campaign_defaults || {}), budget: { level: "adset", amount: 50, currency: "SGD", bid_strategy: "LOWEST_COST_WITHOUT_CAP" } },
-    targeting_defaults: { ...(cur.targeting_defaults || {}), geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", place_name: "6 Sin Ming Road, Tower 2", radius_km: 5, callouts: [] }, { label: "Bishan", lat: 1.35, lng: 103.85, radius_km: 3, callouts: ["BISHAN"] }] }, demographics: { age_min: 25, age_max: 60 } } };
-  assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: profile })).status, 200);
-  writeFileSync(join(g, "targeting-presets.json"), JSON.stringify({ schema: 1, presets: [{ id: "broad", name: "Broad", spec: {}, summary: ["Broad — no detailed targeting"], stats: null }, { id: "a97f701a193c", name: "Fitness", spec: { flexible_spec: [{ interests: [{ id: "6003277229371", name: "Physical fitness" }] }] }, summary: ["Physical fitness (interests)"], stats: { adsets: 2, leads: 40, cost_per_lead: 12.5, genders: { men: 0, women: 2, all: 0 } } }] }));
   rmSync(join(out, "publish-settings.json"), { force: true });
   // The plan, from the API: the reference batch's kept ads (the review tests left some excluded), by callout.
   let r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
@@ -1272,7 +1284,7 @@ test("U20 the Publish screen: the plan for a batch's kept ads from the API (noth
   assert.match(text, /Publish Test campaign/); assert.match(text, /Ad sets · one per location callout/); assert.match(text, /Campaign words/); assert.match(text, /Destination and identity/); assert.match(text, /Come and train\./);
   assert.equal(await ev("document.querySelectorAll('#view img').length"), r.plan.ads.length, "every kept ad shown");
   assert.equal(await ev("[...document.querySelectorAll('#view h3')].filter(h=>h.textContent.trim()==='" + first + "').length"), 1, "an ad set card per callout");
-  assert.ok(await ev("document.querySelector('#view button.primary[disabled]') !== null"), "creating waits for the next step");
+  assert.ok(await ev("[...document.querySelectorAll('#view button.primary')].some(b=>/Create on Facebook, paused/.test(b.textContent) && !b.disabled)"), "a ready plan can be created (U21 does)");
   // A change on the page saves the settings and repaints with the new plan.
   await ev("pbSet('campaign.level','adset'); pbSetAdset('" + first + "','daily',70); true");
   await until("PB.data && PB.data.plan.budget.level==='adset' && !PB.busy", "the saved plan");
@@ -1284,4 +1296,55 @@ test("U20 the Publish screen: the plan for a batch's kept ads from the API (noth
   await until("R.data && [...document.querySelectorAll('#rvFoot button')].some(b=>/Publish to Meta/.test(b.textContent))", "the Publish button on Review");
   await ev("[...document.querySelectorAll('#rvFoot button')].find(b=>/Publish to Meta/.test(b.textContent)).click(); true");
   await until("location.hash==='#/" + GYM + "/publish/" + BRIEF.batch_id + "'", "the Publish route");
+});
+
+test("U21 creating on Facebook from the panel: refused without the Meta link, without a confirmation, or with one that no longer matches the plan; with them the publish run is built from the gym and batch alone (plus 'first'), creates the plan against the Graph — every object paused — and records it; the Publish screen shows what is on Facebook and offers to continue", async () => {
+  const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
+  await linkTestGym();
+  rmSync(join(out, "publish.json"), { force: true }); rmSync(join(out, "publish-settings.json"), { force: true });
+  let plan = (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json()).plan;
+  const confirm = { ads: plan.counts.ads, adsets: plan.counts.adsets, per_day: plan.budget.per_day_total };
+  assert.equal(plan.ready, true, plan.problems.join("; "));
+  // No Meta link on the default panel: refused before anything.
+  let r = await call("/api/run", { method: "POST", body: { kind: "batch-publish", gym: GYM, batch: BRIEF.batch_id, confirm } });
+  assert.equal(r.status, 409); assert.match((await r.json()).error, /Meta link is not set up/);
+  const graph = await fakeGraph();
+  const main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  try {
+    r = await call("/api/run", { method: "POST", body: { kind: "batch-publish", gym: GYM, batch: BRIEF.batch_id } });
+    assert.equal(r.status, 409, "no confirmation");
+    r = await call("/api/run", { method: "POST", body: { kind: "batch-publish", gym: GYM, batch: BRIEF.batch_id, confirm: { ...confirm, ads: confirm.ads + 1 } } });
+    assert.equal(r.status, 409, "a confirmation that no longer matches the plan");
+    r = await call("/api/run", { method: "POST", body: { kind: "batch-publish", gym: GYM, batch: BRIEF.batch_id, confirm: { ...confirm, first: 0 } } });
+    assert.equal(r.status, 400, "first must be a whole number of ads");
+    // The first ad only: the campaign, one ad set, one creative and ad; the record says so.
+    const one = await runAndWait({ kind: "batch-publish", gym: GYM, batch: BRIEF.batch_id, confirm: { ...confirm, first: 1 } });
+    assert.equal(one.code, 0, one.lines.join("\n"));
+    assert.match(one.lines[0], /meta-publish\.mjs --gym testgym --brand-dir \S+ --batch ref-batch --create --first 1$/);
+    assert.ok(one.lines.some((l) => new RegExp(`done: 1 of ${plan.counts.ads} ads on Meta`).test(l)), one.lines.join("\n"));
+    let rec = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8"));
+    assert.deepEqual([rec.account, !!rec.campaign?.id, Object.keys(rec.adsets).length, Object.keys(rec.ads).length, rec.done, rec.error], ["act_111000000001", true, 1, 1, null, null]);
+    const posted = graph.calls.filter((c) => /campaigns|adsets|adcreatives|^act_111000000001\/ads$/.test(c));
+    assert.deepEqual(posted, ["act_111000000001/campaigns", "act_111000000001/adsets", "act_111000000001/adcreatives", "act_111000000001/ads"]);
+    r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+    assert.deepEqual([r.published.campaign.id, Object.keys(r.published.ads).length], [rec.campaign.id, 1], "the screen's data carries the record");
+    // The rest: continues, nothing made twice.
+    const before = graph.calls.length;
+    const rest = await runAndWait({ kind: "batch-publish", gym: GYM, batch: BRIEF.batch_id, confirm });
+    assert.equal(rest.code, 0, rest.lines.join("\n"));
+    rec = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8"));
+    assert.deepEqual([Object.keys(rec.ads).length, rec.done != null, graph.calls.slice(before).filter((c) => c.endsWith("/campaigns")).length], [plan.counts.ads, true, 0]);
+    assert.ok(!readFileSync(join(out, "publish.json"), "utf-8").includes(META_TOKEN));
+    // The page: the record card and the Continue wording.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u21#/${GYM}/publish/${BRIEF.batch_id}` }, sessionId); await loaded;
+    const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!PB.data && /On Facebook/.test(document.querySelector('#view')?.textContent||'')"))) await new Promise((x) => setTimeout(x, 120));
+    const text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /On Facebook\s*complete/); assert.match(text, /open in Ads Manager/); assert.match(text, new RegExp(`${plan.counts.ads} made, all paused`));
+    assert.ok(await ev("[...document.querySelectorAll('#view button.primary')].some(b=>/Continue creating on Facebook/.test(b.textContent) && !b.disabled)"));
+    await ev("pbCreateConfirm(); true");
+    assert.match(await ev("document.querySelector('#bModal').textContent"), /every object paused/);
+  } finally { await panel.stop(); panel = main; graph.server.close(); }
 });

@@ -52,6 +52,7 @@ const BATCH_SCRIPT = join(REPO_ROOT, "skills", "references", "plan-offer-batch.m
 const STORIES_SCRIPT = join(REPO_ROOT, "skills", "references", "make-stories.mjs");
 const REFRESH_SCRIPT = join(REPO_ROOT, "skills", "references", "refresh-scenes.mjs");
 const CLEAN_SCRIPT = join(REPO_ROOT, "skills", "references", "clean-photo.mjs");
+const PUBLISH_SCRIPT = join(REPO_ROOT, "skills", "references", "meta-publish.mjs");
 /** A reference image's file name: a slug and an image extension — it becomes a path segment. */
 const REFERENCE_NAME = /^[a-z0-9][a-z0-9-]{0,63}\.(png|jpe?g|webp)$/;
 const MAX_REFERENCE_BYTES = 10 * 1024 * 1024;
@@ -125,6 +126,9 @@ const RUNNABLE = {
   "batch-rerender": { label: "Re-render batch with its words (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--render-only"] },
   // Stories/Reels (9:16) versions of the selected ads (Step 8): the batch id and the confirmed call cap only.
   "batch-stories": { label: "Make Stories versions", needsBrief: true, spends: "stories", argv: ({ gym, batch, confirm }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--max-calls", String(confirm.max_calls)] },
+  // Publishing (E3): the plan on disk is created on Meta, every object paused. The confirmation names what
+  // the plan holds now (ad sets, ads, the day's budget) so what is created is what was read; `first` limits a run.
+  "batch-publish": { label: "Create on Facebook (paused)", needsBrief: true, spends: "publish", argv: ({ gym, batch, confirm }) => [PUBLISH_SCRIPT, "--gym", gym, "--brand-dir", brandDir(gym), "--batch", batch, "--create", ...(confirm.first ? ["--first", String(confirm.first)] : [])] },
   "batch-stories-rerender": { label: "Re-render Stories versions (free)", needsBrief: true, argv: ({ gym, batch }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--render-only"] },
   // A scene refresh (text calls only): the audience, the count and the direction — words and/or an
   // uploaded reference image — each checked for shape before it becomes an argument.
@@ -1079,6 +1083,19 @@ const server = createServer(async (req, res) => {
           const cap = body.confirm?.max_calls;
           if (!Number.isInteger(cap) || cap < 0 || cap > MAX_CALLS_CAP) return json(res, 400, { error: `confirm the call cap for the Stories versions (0–${MAX_CALLS_CAP})` });
           if (!existsSync(join(brandDir(body.gym), "outputs", body.batch, "selections.json"))) return json(res, 409, { error: "no picks yet: review the batch and keep or exclude its ads first" });
+        } else if (spec.spends === "publish") {
+          const c = body.confirm || {}, out = join(brandDir(body.gym), "outputs", body.batch);
+          if (!existsSync(join(out, "batch.json"))) return json(res, 409, { error: "the batch has no ads yet" });
+          const cfg = metaConfig({ gym: body.gym });
+          if (!cfg.token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+          let plan;
+          try { plan = buildPlan({ profile: readJsonFile(join(brandDir(body.gym), "gym-profile.json")) || {}, batch: readJsonFile(join(out, "batch.json")), kept: keptAds(out), presets: readPresets(brandDir(body.gym)), settings: readJsonFile(join(out, "publish-settings.json")) || {} }); }
+          catch (e) { return json(res, 400, { error: e.message }); }
+          if (!plan.ready) return json(res, 409, { error: `the plan has problems: ${plan.problems.join("; ")}` });
+          const agreed = c.ads === plan.counts.ads && c.adsets === plan.counts.adsets && c.per_day === plan.budget.per_day_total;
+          if (!agreed) return json(res, 409, { error: "the plan differs from what was confirmed (ads, ad sets or the day's budget) — read the Publish screen again and confirm" });
+          if (c.first != null && !(Number.isInteger(c.first) && c.first >= 1 && c.first <= plan.counts.ads)) return json(res, 400, { error: `"first" is a whole number of ads, 1 to ${plan.counts.ads}` });
+          body.confirm = { first: c.first ?? null };
         } else if (spec.spends) {
           const c = body.confirm || {};
           const agreed = c.offer === brief.offer && JSON.stringify(c.locations) === JSON.stringify(brief.locations) && (c.audience ?? null) === (brief.audience ?? null) && c.max_calls === (brief.max_calls ?? brief.generated ?? 0);
