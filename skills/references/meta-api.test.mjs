@@ -335,3 +335,73 @@ test("M5 createTestOne: the five objects are made in order and recorded as they 
     rmSync(d, { recursive: true, force: true });
   }
 });
+
+test("M6 the publish plan for a batch: the kept ads only (excluded ads and photos out; a Stories version only while its file exists); one campaign; one ad set per location callout with its pin (the owner's pick, the one naming the callout, else the first — said so), ages, gender, preset (the owner's pick, the profile's, else the suggestion) and budget; one ad per kept ad with two images by placement when it has a 9:16, the 1:1 alone when not; placeholders that say so; the owner's settings over the defaults; problems stop it, warnings are said; nothing calls Meta", async () => {
+  const { buildPlan, keptAds, creativeFor, campaignWords, PLACEMENT_RULES, ADS_PER_ADSET_CAP, CTA_TYPES } = await import("./meta-publish.mjs");
+  const d = mkdtempSync(join(tmpdir(), "meta-plan-"));
+  try {
+    const ad = (n, loc, photo) => ({ folder: `${n}-c0${n.slice(-1)}-${loc.toLowerCase().replace(/ /g, "-")}-t3-green-white`, file: `${n}-x/1x1/a.png`, location: loc, photos: [photo], words: { location: loc, audience: "MEN WANTED", offer: "12 Week Total Body Reset", free: false } });
+    const ads = [ad("101", "BISHAN", "g01"), ad("102", "BISHAN", "g02"), ad("103", "ANG MO KIO", "g01"), ad("104", "ANG MO KIO", "g02"), ad("105", "BISHAN", "g03")];
+    writeFileSync(join(d, "batch.json"), JSON.stringify({ batch_id: "2026-09-13-men", ads }));
+    writeFileSync(join(d, "review.json"), JSON.stringify({ ads: { [ads[1].folder]: "exclude" }, photos: { g03: "exclude" } }));
+    mkdirSync(join(d, "101-x", "9x16"), { recursive: true }); writeFileSync(join(d, "101-x", "9x16", "s.png"), "x");
+    writeFileSync(join(d, "stories.json"), JSON.stringify({ ads: [{ folder: ads[0].folder, file: "101-x/9x16/s.png" }, { folder: ads[2].folder, file: "103-x/9x16/missing.png" }] }));
+    const kept = keptAds(d);
+    assert.deepEqual(kept.map((a) => [a.folder.slice(0, 3), a.location, a.story]), [["101", "BISHAN", "101-x/9x16/s.png"], ["103", "ANG MO KIO", null], ["104", "ANG MO KIO", null]], "the excluded ad and the excluded photo's ad are out; a Stories version counts only while its file exists");
+    const profile = { display_name: "Sculpt Society", gym_abbr: "SCS", website: "https://sculptsociety.com.sg", locale: { country: "SG", currency: "SGD" },
+      meta_assets: { ad_account_id: "act_111", page_id: "77", instagram_user_id: "88", lead_form_id: "4001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+      campaign_defaults: { budget: { level: "adset", amount: 50, currency: "SGD", bid_strategy: "LOWEST_COST_WITHOUT_CAP" } },
+      targeting_defaults: { geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", place_name: "6 Sin Ming Road, Tower 2", radius_km: 5 }, { label: "Bishan", lat: 1.35, lng: 103.85, radius_km: 3, callouts: ["BISHAN"] }] }, demographics: { age_min: 25, age_max: 60 }, detailed_targeting: { callout_presets: {} } } };
+    const presets = { presets: [{ id: "broad", name: "Broad", spec: {}, summary: ["Broad — no detailed targeting"], stats: { adsets: 14, leads: 1021, cost_per_lead: 5.43, genders: { men: 14, women: 0, all: 0 } } }, { id: "a97f701a193c", name: "Fitness+Fatherhood", spec: { flexible_spec: [{ interests: [{ id: "6003101323797", name: "Fatherhood" }] }] }, summary: ["Fatherhood (interests)"], stats: { adsets: 1, leads: 45, cost_per_lead: 56.24, genders: { men: 1, women: 0, all: 0 } } }] };
+    const batch = { batch_id: "2026-09-13-men" };
+    const p = buildPlan({ profile, batch, kept, presets });
+    assert.deepEqual([p.ready, p.problems, p.counts], [true, [], { adsets: 2, ads: 3, with_story: 1 }]);
+    assert.deepEqual([p.account, p.page_id, p.instagram_user_id, p.lead_form_id, p.website], ["act_111", "77", "88", "4001", "https://sculptsociety.com.sg"]);
+    assert.deepEqual(p.campaign, { name: "0913 12 Week Total Body Reset | SCS | Men Wanted", objective: "OUTCOME_LEADS", status: "PAUSED", special_ad_categories: [], buying_type: "AUCTION" }, "an ad-set budget: none on the campaign");
+    assert.deepEqual(p.budget, { level: "adset", daily: 50, bid_strategy: "LOWEST_COST_WITHOUT_CAP", bid_cap: null, per_day_total: 100 });
+    const [bishan, amk] = p.adsets;
+    assert.deepEqual([bishan.callout, bishan.ads, bishan.pin.label, bishan.pin.fallback, bishan.pin.radius_km, bishan.age_min, bishan.age_max, bishan.gender, bishan.preset.id, bishan.preset.how.startsWith("suggested: ran for men 14 times")], ["BISHAN", [ads[0].folder], "Bishan", false, 3, 25, 60, "men", "broad", true]);
+    assert.deepEqual([amk.callout, amk.ads.length, amk.pin.label, amk.pin.fallback], ["ANG MO KIO", 2, "Sin Ming", true]);
+    assert.ok(p.warnings.some((w) => /ANG MO KIO: no pin names this callout, so the first pin \(Sin Ming\) is used/.test(w)), p.warnings.join("\n"));
+    assert.ok(p.warnings.some((w) => /2 of 3 ads have no Stories version/.test(w)));
+    assert.ok(p.warnings.some((w) => /placeholder words for the primary text, headline, description/.test(w)));
+    assert.equal(bishan.name, "0913 Bishan | 12 Week Total Body Reset | Audience: Bishan + 3KM, Male, Broad, 25-60", "the house naming: the audience in the name, for the reports");
+    assert.deepEqual(bishan.payload.targeting, { geo_locations: { custom_locations: [{ latitude: 1.35, longitude: 103.85, radius: 3, distance_unit: "kilometer" }], location_types: ["home", "recent"] }, age_min: 25, age_max: 60, genders: [1], targeting_automation: { advantage_audience: 0 } });
+    assert.deepEqual(amk.payload.targeting.geo_locations, { places: [{ key: "107327800879305", radius: 5, distance_unit: "kilometer" }], location_types: ["home", "recent"] });
+    assert.deepEqual([bishan.payload.daily_budget, bishan.payload.bid_strategy, bishan.payload.optimization_goal, bishan.payload.status, bishan.payload.regional_regulated_categories, bishan.payload.attribution_spec], [5000, "LOWEST_COST_WITHOUT_CAP", "LEAD_GENERATION", "PAUSED", ["SINGAPORE_UNIVERSAL"], [{ event_type: "CLICK_THROUGH", window_days: 1 }]]);
+    // The ads: two images by placement with a Stories version, the 1:1 alone without; the form on the button; the identity; every enhancement opted out.
+    const withStory = p.ads[0], without = p.ads[1];
+    assert.deepEqual([withStory.adset, withStory.story.file, withStory.name], ["BISHAN", "101-x/9x16/s.png", `0913 Bishan | 12 Week Total Body Reset | Image: ${ads[0].folder}`]);
+    const afs = withStory.creative.asset_feed_spec;
+    assert.deepEqual(afs.images, [{ hash: "(1:1 hash)", adlabels: [{ name: "square" }] }, { hash: "(9:16 hash)", adlabels: [{ name: "story" }] }]);
+    assert.deepEqual(afs.asset_customization_rules, PLACEMENT_RULES("square", "story"));
+    assert.deepEqual([afs.asset_customization_rules[0].customization_spec.facebook_positions, afs.asset_customization_rules[0].customization_spec.instagram_positions, afs.asset_customization_rules[0].image_label.name, afs.asset_customization_rules[1].image_label.name, afs.asset_customization_rules[1].customization_spec], [["story", "facebook_reels"], ["story", "reels"], "story", "square", { age_min: 13, age_max: 65 }], "the 9:16 on Stories and Reels, the 1:1 everywhere else");
+    assert.deepEqual([afs.call_to_action_types, afs.call_to_actions, afs.link_urls, afs.ad_formats, afs.optimization_type], [["SIGN_UP"], [{ type: "SIGN_UP", value: { lead_gen_form_id: "4001" } }], [{ website_url: "https://sculptsociety.com.sg" }], ["SINGLE_IMAGE"], "PLACEMENT"]);
+    assert.deepEqual(withStory.creative.object_story_spec, { page_id: "77", instagram_user_id: "88" });
+    assert.ok(Object.keys(withStory.creative.degrees_of_freedom_spec.creative_features_spec).length >= 12);
+    assert.equal(without.creative.asset_feed_spec, undefined); assert.deepEqual([without.creative.object_story_spec.link_data.image_hash, without.creative.object_story_spec.link_data.call_to_action], ["(1:1 hash)", { type: "SIGN_UP", value: { lead_gen_form_id: "4001" } }]);
+    assert.match(afs.bodies[0].text, /^\[PLACEHOLDER primary text\]/); assert.deepEqual(p.words.placeholders, ["primary text", "headline", "description"]);
+    // The owner's settings for this campaign win: a campaign budget with a cost cap, a name, a pin and preset per ad set, real words, another form and no Instagram.
+    const s = buildPlan({ profile, batch, kept, presets, settings: {
+      campaign: { name: "Men Sept", level: "campaign", daily: 80, bid_strategy: "COST_CAP", bid_cap: 15 },
+      adsets: { "ANG MO KIO": { pin: 1, radius_km: 7, age_min: 30, age_max: 50, gender: "all", preset: "a97f701a193c", daily: 999 } },
+      words: { message: "Join the reset.", headline: "12 weeks", description: "Bishan and AMK", cta: "APPLY_NOW" },
+      destination: { lead_form_id: "4002", instagram_user_id: "" } } });
+    assert.deepEqual([s.campaign.name, s.campaign.daily_budget, s.campaign.bid_strategy, s.budget.per_day_total, s.adsets[0].budget, s.adsets[0].payload.daily_budget, s.adsets[0].payload.bid_amount], ["Men Sept", 8000, "COST_CAP", 80, null, undefined, 1500], "a campaign budget: on the campaign, the cap as bid_amount on the ad sets");
+    const a2 = s.adsets[1];
+    assert.deepEqual([a2.pin.label, a2.pin.radius_km, a2.age_min, a2.age_max, a2.gender, a2.preset.id, a2.preset.how, a2.payload.targeting.genders, a2.payload.targeting.flexible_spec], ["Bishan", 7, 30, 50, "all", "a97f701a193c", "chosen for this ad set", undefined, [{ interests: [{ id: "6003101323797", name: "Fatherhood" }] }]]);
+    assert.deepEqual([s.words.message, s.words.cta, s.words.placeholders, s.lead_form_id, s.instagram_user_id], ["Join the reset.", "APPLY_NOW", [], "4002", null]);
+    assert.deepEqual(s.ads[0].creative.asset_feed_spec.call_to_actions, [{ type: "APPLY_NOW", value: { lead_gen_form_id: "4002" } }]); assert.deepEqual(s.ads[0].creative.object_story_spec, { page_id: "77" });
+    assert.ok(s.warnings.some((w) => /no Instagram account chosen/.test(w)) && !s.warnings.some((w) => /placeholder/.test(w)));
+    // Problems stop it: no kept ads, no form, no website, a cap without an amount, too many ads in one ad set, an unusable pin.
+    const bad = buildPlan({ profile: { ...profile, website: "", meta_assets: { ...profile.meta_assets, lead_form_id: "" }, targeting_defaults: { geo: { radius_pins: [{ label: "code only", postal_code: "575583" }] } } }, batch, kept: [], presets, settings: { campaign: { bid_strategy: "COST_CAP" } } });
+    assert.equal(bad.ready, false);
+    for (const re of [/no lead form chosen/, /external website/, /Cost per result goal needs an amount/, /no ads kept/]) assert.ok(bad.problems.some((x) => re.test(x)), `${re} in ${bad.problems.join(" | ")}`);
+    const many = buildPlan({ profile, batch, kept: Array.from({ length: ADS_PER_ADSET_CAP + 1 }, (_, i) => ({ folder: `f${i}`, file: `f${i}/1x1/a.png`, location: "BISHAN", words: ads[0].words, story: null })), presets });
+    assert.ok(many.problems.some((x) => /51 ads in one ad set; Meta allows 50/.test(x)));
+    const pinless = buildPlan({ profile: { ...profile, targeting_defaults: { geo: { radius_pins: [{ label: "code only", postal_code: "575583" }] } } }, batch, kept, presets });
+    assert.ok(pinless.problems.some((x) => /BISHAN: no usable pin/.test(x)));
+    assert.ok(Object.keys(CTA_TYPES).includes("SIGN_UP") && campaignWords(profile, { offer: "X" }, { cta: "NOPE" }).cta === "SIGN_UP");
+    assert.equal(creativeFor({ name: "n", page_id: "77", website: "https://x.sg", form_id: "1", words: { message: "m", headline: "h", description: "d", cta: "SIGN_UP" }, story: false }).object_story_spec.instagram_user_id, undefined);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

@@ -37,6 +37,7 @@ import {
 import { imageSize } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
+import { buildPlan, keptAds, CTA_TYPES } from "../skills/references/meta-publish.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
@@ -507,6 +508,25 @@ function reviewState(gym, id) {
   };
 }
 
+/** The publish settings a screen may save: shapes only; the plan builder applies its own rules on the values. */
+function settingsProblem(b) {
+  if (!isPlainObject(b)) return "settings must be an object";
+  for (const k of Object.keys(b)) if (!["campaign", "adsets", "words", "destination", "updated"].includes(k)) return `unknown setting "${k}"`;
+  const str = (v, max) => v == null || (typeof v === "string" && v.length <= max && !/[\r\n]/.test(v));
+  const numOr = (v) => v == null || (typeof v === "number" && Number.isFinite(v));
+  const c = b.campaign || {};
+  if (!isPlainObject(c) || !str(c.name, 160) || !numOr(c.daily) || !numOr(c.bid_cap) || (c.level != null && !["adset", "campaign"].includes(c.level)) || (c.bid_strategy != null && typeof c.bid_strategy !== "string")) return "campaign settings: a one-line name, a level of adset or campaign, numbers for the budget";
+  if (b.adsets != null && !isPlainObject(b.adsets)) return "adsets must map callouts to settings";
+  for (const [k, v] of Object.entries(b.adsets || {})) {
+    if (!isPlainObject(v) || !numOr(v.pin) || !numOr(v.radius_km) || !numOr(v.age_min) || !numOr(v.age_max) || !numOr(v.daily) || !str(v.gender, 8) || !str(v.preset, 40)) return `ad set ${k}: numbers for pin, radius, ages and budget; a gender and a preset id`;
+  }
+  const w = b.words || {};
+  if (!isPlainObject(w) || (w.message != null && (typeof w.message !== "string" || w.message.length > 2000)) || !str(w.headline, 255) || !str(w.description, 255) || !str(w.cta, 20)) return "words: primary text up to 2000 characters, a one-line headline and description, a call-to-action type";
+  if (/[\u2013\u2014]/.test(`${w.message || ""}${w.headline || ""}${w.description || ""}`)) return "words: no em or en dashes (they break the Ads Uploader import); use a plain hyphen";
+  const d = b.destination || {};
+  if (!isPlainObject(d) || (d.lead_form_id != null && !/^\d{5,20}$/.test(String(d.lead_form_id))) || (d.instagram_user_id != null && d.instagram_user_id !== "" && !/^\d{5,20}$/.test(String(d.instagram_user_id)))) return "destination: the lead form and Instagram account are ids";
+  return null;
+}
 const DECISIONS = new Set(["keep", "exclude", null]);
 /** Replace a file whole: another process (the Stories step) reading it never sees half of one. */
 const writeWhole = (p, text) => { writeFileSync(p + ".tmp", text); renameSync(p + ".tmp", p); };
@@ -870,18 +890,39 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // /api/client/{gym}/batch/{id}/progress · /review · /picks
-    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks)$/);
+    // /api/client/{gym}/batch/{id}/progress · /review · /picks · /publish
+    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish)$/);
     if (rv) {
       const [, gym, id, what] = rv;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
       if (!okSlug(id) || !existsSync(briefPath(gym, id))) return json(res, 404, { error: "no such batch" });
-      const out = outDirOf(gym, id);
+      const out = outDirOf(gym, id), dir = brandDir(gym);
       if (what === "progress" && req.method === "GET") {
         const prog = readJsonFile(join(out, "progress.json"));
         if (prog) for (const x of Object.values(prog.photos || {})) x.url = x.file ? fileUrl(gym, resolve(out, x.file)) : null;
         const brief = readJsonFile(briefPath(gym, id));
         return json(res, 200, { progress: prog, run: activeRun(gym, id), words: { offer: brief.offer, locations: brief.locations, audience: brief.audience ?? null }, made: existsSync(join(out, "batch.json")) });
+      }
+      // /publish — the plan for the kept ads (nothing created), the owner's settings for this batch, and what the
+      // screen needs to change them: the profile's pins, the presets, the words. PUT saves settings, answers the new plan.
+      if (what === "publish" && (req.method === "GET" || req.method === "PUT")) {
+        if (!existsSync(join(out, "batch.json"))) return json(res, 409, { error: "the batch has no ads yet" });
+        const settingsPath = join(out, "publish-settings.json");
+        let settings = readJsonFile(settingsPath) || {};
+        if (req.method === "PUT") {
+          const body = await readBody(req);
+          const err = settingsProblem(body);
+          if (err) return json(res, 400, { error: err });
+          settings = { ...body, updated: new Date().toISOString() };
+          writeWhole(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+        }
+        const profile = readJsonFile(join(dir, "gym-profile.json")) || {};
+        const batch = readJsonFile(join(out, "batch.json")), presets = readPresets(dir);
+        const kept = keptAds(out);
+        let plan;
+        try { plan = buildPlan({ profile, batch, kept, presets, settings }); } catch (e) { return json(res, 400, { error: e.message }); }
+        const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
+        return json(res, 200, { plan, settings, thumbs, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: CTA_TYPES, words: { offer: batch.ads?.[0]?.words?.offer || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, published: readJsonFile(join(out, "publish.json")) });
       }
       if (what === "review" && req.method === "GET") return json(res, 200, { ...reviewState(gym, id), words: (({ offer, locations, audience }) => ({ offer, locations, audience: audience ?? null }))(readJsonFile(briefPath(gym, id))), run: activeRun(gym, id) });
       if (what === "picks" && req.method === "PUT") {

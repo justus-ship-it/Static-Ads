@@ -24,7 +24,8 @@ import { join, resolve, basename } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { metaConfig, graphClient, actId, scrubTokens, MetaError } from "./meta-api.mjs";
-import { calloutGender, pinFor, pinUsable, BID_STRATEGIES } from "./client-config.mjs";
+import { calloutGender, pinFor, pinUsable, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
+import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 export const AD_STATUS = "PAUSED";
@@ -128,6 +129,163 @@ export function buildTestOne({ profile, batch, ad, words = null, storyFile = nul
     ad: { name: `${abbr}_TEST_${ad.folder}`, status: AD_STATUS },
     words: text,
   };
+}
+
+
+// ── E2: the publish plan for a whole batch ───────────────────────────────────
+/** Meta's cap on ads in one ad set, and the point past which spreading budget gets thin. */
+export const ADS_PER_ADSET_CAP = 50, ADS_PER_ADSET_MANY = 6;
+export const CTA_TYPES = { SIGN_UP: "Sign up", APPLY_NOW: "Apply now", LEARN_MORE: "Learn more", GET_OFFER: "Get offer", BOOK_NOW: "Book now", CONTACT_US: "Contact us" };
+const clean1 = (v, max) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
+const num = (v, lo, hi) => (Number.isFinite(v) && v >= lo && v <= hi ? v : null);
+const mmdd = (id) => { const m = String(id || "").match(/^\d{4}-(\d{2})-(\d{2})/); return m ? m[1] + m[2] : today().slice(5).replace("-", ""); };
+const titleCase = (s) => String(s || "").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+/** The words on the ad and beside it, for the whole campaign: the owner's, or placeholders that say so. */
+export function campaignWords(profile, batch, words = {}) {
+  const w = { message: clean1(words.message, 2000), headline: clean1(words.headline, 255), description: clean1(words.description, 255), cta: CTA_TYPES[words.cta] ? words.cta : CTA };
+  const ph = placeholderWords(profile, { words: { offer: batch.offer || batch.ads?.[0]?.words?.offer || "" } });
+  const placeholders = [];
+  if (!w.message) { w.message = ph.message; placeholders.push("primary text"); }
+  if (!w.headline) { w.headline = ph.headline; placeholders.push("headline"); }
+  if (!w.description) { w.description = ph.description; placeholders.push("description"); }
+  return { ...w, placeholders };
+}
+/** The placement rules for one creative: the 9:16 on Stories and Reels, the 1:1 everywhere else (their own ads' shape). */
+export const PLACEMENT_RULES = (squareLabel, storyLabel) => [
+  { customization_spec: { publisher_platforms: ["facebook", "instagram"], facebook_positions: ["story", "facebook_reels"], instagram_positions: ["story", "reels"] }, image_label: { name: storyLabel }, priority: 1 },
+  { customization_spec: { age_min: 13, age_max: 65 }, image_label: { name: squareLabel }, priority: 2 },
+];
+/** One ad's creative: two images by placement when the ad has a Stories version, else the 1:1 alone. Hashes are filled in when the images are uploaded. */
+export function creativeFor({ name, page_id, instagram_user_id, website, form_id, words, story }) {
+  const identity = { page_id, ...(instagram_user_id ? { instagram_user_id } : {}) };
+  const cta = words.cta || CTA;
+  if (story) {
+    return {
+      name, object_story_spec: identity,
+      asset_feed_spec: {
+        images: [{ hash: "(1:1 hash)", adlabels: [{ name: "square" }] }, { hash: "(9:16 hash)", adlabels: [{ name: "story" }] }],
+        bodies: [{ text: words.message }], titles: [{ text: words.headline }], descriptions: [{ text: words.description }],
+        link_urls: [{ website_url: website }], call_to_action_types: [cta], call_to_actions: [{ type: cta, value: { lead_gen_form_id: form_id } }],
+        ad_formats: ["SINGLE_IMAGE"], optimization_type: "PLACEMENT", asset_customization_rules: PLACEMENT_RULES("square", "story"),
+      },
+      degrees_of_freedom_spec: optOut(),
+    };
+  }
+  return {
+    name, object_story_spec: { ...identity, link_data: { image_hash: "(1:1 hash)", link: website, message: words.message, name: words.headline, description: words.description, call_to_action: { type: cta, value: { lead_gen_form_id: form_id } } } },
+    degrees_of_freedom_spec: optOut(),
+  };
+}
+/**
+ * The whole plan for a batch, before anything is created: one campaign; one ad set per location callout
+ * among the kept ads (its pin, ages, gender, detailed-targeting preset and budget — the profile's defaults
+ * under the owner's `settings` for this batch); one ad per kept ad with its 1:1 for feed and its 9:16 for
+ * Stories and Reels. Problems stop it; warnings are said. Nothing here calls Meta.
+ *   kept:    [{ folder, file, location, words, story: file|null }]
+ *   settings: { campaign: { name, level, daily, bid_strategy, bid_cap }, adsets: { [CALLOUT]: { pin, radius_km, age_min, age_max, gender, preset, daily } }, words: { message, headline, description, cta }, destination: { lead_form_id, instagram_user_id } }
+ */
+export function buildPlan({ profile, batch, kept, presets = { presets: [] }, settings = {}, tag = today() }) {
+  const problems = [], warnings = [];
+  const m = profile.meta_assets || {}, dest = settings.destination || {};
+  const singapore = (profile.locale?.country || "SG") === "SG";
+  const account = m.ad_account_id ? actId(m.ad_account_id) : null;
+  // An empty Instagram id in the settings is a choice (none); an absent one takes the profile's.
+  const page_id = m.page_id || null, instagram_user_id = dest.instagram_user_id != null ? (dest.instagram_user_id || null) : (m.instagram_user_id || null), lead_form_id = dest.lead_form_id || m.lead_form_id || null;
+  for (const [k, v] of [["ad account", account], ["Page", page_id], ["lead form", lead_form_id]]) if (!v) problems.push(`no ${k} chosen (Meta link page)`);
+  if (singapore && (!m.singapore_beneficiary_id || !m.singapore_payer_id)) problems.push("no verified Singapore advertiser identity in the profile (read from the account's existing ad sets on the first publish test)");
+  if (!/^https?:\/\/\S+\.\S+$/.test(profile.website || "")) problems.push("a lead ad must link to an external website and the profile has none (Identity & locations)");
+  if (!instagram_user_id) warnings.push("no Instagram account chosen: Meta will run the ads under a Page-backed Instagram identity (Meta link page)");
+  const abbr = profile.gym_abbr || "GYM", currency = profile.locale?.currency || "SGD";
+  const cd = profile.campaign_defaults || {}, bd = cd.budget || {}, sc = settings.campaign || {};
+  if (bd.currency && bd.currency !== currency) problems.push(`the budget is in ${bd.currency} but the profile's currency is ${currency}`);
+  const level = BUDGET_LEVELS[sc.level] ? sc.level : bd.level === "campaign" ? "campaign" : "adset";
+  const strategy = BID_STRATEGIES[sc.bid_strategy] ? sc.bid_strategy : BID_STRATEGIES[bd.bid_strategy] ? bd.bid_strategy : "LOWEST_COST_WITHOUT_CAP";
+  const daily = num(sc.daily, 1, 100000) ?? num(bd.amount, 1, 100000) ?? 50;
+  const cap = strategy === "LOWEST_COST_WITHOUT_CAP" ? null : num(sc.bid_cap, 0.01, 100000) ?? num(bd.bid_cap, 0.01, 100000);
+  if (strategy !== "LOWEST_COST_WITHOUT_CAP" && !cap) problems.push(`${BID_STRATEGIES[strategy]} needs an amount`);
+  const offer = kept[0]?.words?.offer || batch.offer || batch.batch_id;
+  const words = campaignWords(profile, { offer, batch_id: batch.batch_id }, settings.words || {});
+  if (words.placeholders.length) warnings.push(`placeholder words for the ${words.placeholders.join(", ")}: type the campaign's words before the ads go live`);
+  const date = mmdd(batch.batch_id);
+  const campaign = {
+    name: clean1(sc.name, 120) || `${date} ${offer} | ${abbr} | ${kept[0]?.words?.audience ? titleCase(kept[0].words.audience) : "Leads"}`,
+    objective: cd.objective || "OUTCOME_LEADS", status: AD_STATUS, special_ad_categories: cd.special_ad_categories || [], buying_type: cd.buying_type || "AUCTION",
+    ...(level === "campaign" ? { daily_budget: Math.round(daily * 100), bid_strategy: strategy } : {}),
+  };
+  if (!kept.length) problems.push("no ads kept: keep at least one on the Review screen");
+  // One ad set per location callout, in the order the callouts appear.
+  const tg = profile.targeting_defaults || {}, dem = tg.demographics || {}, pins = tg.geo?.radius_pins || [];
+  const callouts = [...new Set(kept.map((a) => String(a.location || a.words?.location || "ALL").toUpperCase()))];
+  const adsets = callouts.map((callout) => {
+    const own = (settings.adsets || {})[callout] || {};
+    const ads = kept.filter((a) => String(a.location || a.words?.location || "ALL").toUpperCase() === callout);
+    const audience = ads[0]?.words?.audience || null;
+    // The pin: the owner's pick for this ad set, else the pin naming the callout, else the gym's first.
+    let pin, fallback = false;
+    const pickedPin = own.pin != null ? pins[own.pin] : null;
+    if (pickedPin) pin = pickedPin; else ({ pin, fallback } = pinFor(profile, callout));
+    if (!pinUsable(pin)) problems.push(`${callout}: no usable pin — a Meta place, or a point on the map (Targeting & budget)`);
+    else if (fallback && pins.length > 1) warnings.push(`${callout}: no pin names this callout, so the first pin (${pin.label || pin.place_name || "unnamed"}) is used`);
+    const radius_km = num(own.radius_km, 1, 80) ?? pin?.radius_km ?? DEFAULT_RADIUS_KM;
+    const age_min = num(own.age_min, 18, 65) ?? dem.age_min ?? 25, age_max = num(own.age_max, 18, 65) ?? dem.age_max ?? 60;
+    if (age_min > age_max) problems.push(`${callout}: age ${age_min} is above ${age_max}`);
+    const gender = GENDER_CHOICES.includes(own.gender) ? own.gender : calloutGender(audience, profile);
+    const genders = gender === "men" ? [1] : gender === "women" ? [2] : null;
+    // Detailed targeting: the owner's pick for this ad set, else the profile's per-callout choice, else the suggestion.
+    let preset, how;
+    const live = livePresets(presets);
+    if (own.preset && (own.preset === BROAD || live.some((p) => p.id === own.preset))) { preset = live.find((p) => p.id === own.preset) || { id: BROAD, name: "Broad", spec: {}, summary: summarise({}) }; how = "chosen for this ad set"; }
+    else ({ preset, how } = presetFor(presets, profile, { audience, offer }));
+    const spec = specForAdset(preset);
+    const setDaily = num(own.daily, 1, 100000) ?? daily;
+    if (ads.length > ADS_PER_ADSET_CAP) problems.push(`${callout}: ${ads.length} ads in one ad set; Meta allows ${ADS_PER_ADSET_CAP} — exclude some, or split the callout`);
+    else if (ads.length > ADS_PER_ADSET_MANY) warnings.push(`${callout}: ${ads.length} ads share one budget; past ${ADS_PER_ADSET_MANY} each gets little`);
+    const pinName = pin?.label || pin?.place_name || pin?.postal_code || "pin";
+    const name = `${date} ${titleCase(callout)} | ${offer} | Audience: ${pinName} + ${radius_km}KM, ${gender === "men" ? "Male" : gender === "women" ? "Female" : "All"}, ${preset.name}, ${age_min}-${age_max}`;
+    return {
+      callout, name, audience, ads: ads.map((a) => a.folder),
+      pin: pin ? { ...pin, index: pins.indexOf(pin), radius_km, fallback, words: pinWords({ ...pin, radius_km }, fallback) } : null,
+      age_min, age_max, gender, preset: { id: preset.id, name: preset.name, how, summary: preset.summary || summarise(preset.spec || {}) }, spec,
+      budget: level === "adset" ? { daily: setDaily, currency, bid_strategy: strategy, bid_cap: cap } : null,
+      payload: {
+        name: name.slice(0, 400), status: AD_STATUS, optimization_goal: "LEAD_GENERATION", billing_event: "IMPRESSIONS", destination_type: "ON_AD",
+        ...(level === "adset" ? { daily_budget: Math.round(setDaily * 100), bid_strategy: strategy } : {}), ...(cap ? { bid_amount: Math.round(cap * 100) } : {}),
+        promoted_object: { page_id },
+        ...(singapore ? { regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: m.singapore_beneficiary_id, singapore_universal_payer: m.singapore_payer_id } } : {}),
+        targeting: { ...(pin && pinUsable(pin) ? { geo_locations: geoFor({ ...pin, radius_km }) } : {}), age_min, age_max, ...(genders ? { genders } : {}), ...spec, targeting_automation: { ...NEVER_ADVANTAGE } },
+        attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
+      },
+    };
+  });
+  const noStory = kept.filter((a) => !a.story);
+  if (noStory.length) warnings.push(`${noStory.length} of ${kept.length} ads have no Stories version: on Stories and Reels Meta will show the 1:1 (Make Stories versions on the Review screen first)`);
+  const ads = kept.map((a) => {
+    const callout = String(a.location || a.words?.location || "ALL").toUpperCase();
+    const name = `${date} ${titleCase(callout)} | ${offer} | Image: ${a.folder}`;
+    return {
+      folder: a.folder, adset: callout, name,
+      image: { file: a.file, name: `${batch.batch_id}__${basename(a.file)}` },
+      story: a.story ? { file: a.story, name: `${batch.batch_id}__${basename(a.story)}` } : null,
+      creative: creativeFor({ name: name.slice(0, 400), page_id, instagram_user_id, website: profile.website, form_id: lead_form_id, words, story: !!a.story }),
+      payload: { name: name.slice(0, 400), status: AD_STATUS },
+    };
+  });
+  return {
+    account, page_id, instagram_user_id, lead_form_id, website: profile.website || null, currency,
+    budget: { level, daily, bid_strategy: strategy, bid_cap: cap, per_day_total: level === "campaign" ? daily : adsets.reduce((t, s) => t + (s.budget?.daily || 0), 0) },
+    campaign, adsets, ads, words, counts: { adsets: adsets.length, ads: ads.length, with_story: kept.length - noStory.length },
+    problems, warnings, ready: problems.length === 0,
+  };
+}
+/** The kept ads of a batch from its folder: batch.json, the picks, the Stories versions on disk. */
+export function keptAds(batchDir) {
+  const batch = JSON.parse(readFileSync(join(batchDir, "batch.json"), "utf-8"));
+  const review = existsSync(join(batchDir, "review.json")) ? JSON.parse(readFileSync(join(batchDir, "review.json"), "utf-8")) : { ads: {}, photos: {} };
+  const stories = existsSync(join(batchDir, "stories.json")) ? JSON.parse(readFileSync(join(batchDir, "stories.json"), "utf-8")) : null;
+  const storyOf = new Map((stories?.ads || []).filter((s) => existsSync(join(batchDir, s.file))).map((s) => [s.folder, s.file]));
+  const excludedPhotos = new Set(Object.entries(review.photos || {}).filter(([, v]) => v === "exclude").map(([k]) => k));
+  return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)))
+    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || null }));
 }
 
 /** Make them, one after another, recording each answer as it lands. `client` is a graphClient. */

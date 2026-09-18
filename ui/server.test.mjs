@@ -1221,3 +1221,67 @@ test("U19 the targeting library in the panel: presets imported from the account'
     assert.match(await ev("document.querySelector('#gModal').textContent"), /Reach about 12,000–14,100 people a month/);
   } finally { await panel.stop(); panel = main; graph.server.close(); }
 });
+
+test("U20 the Publish screen: the plan for a batch's kept ads from the API (nothing created), the owner's settings saved per batch and the plan rebuilt from them, bad settings refused; the page shows the campaign, one ad set card per callout with its pin, ages, gender, preset and budget, the ads with their Stories versions, the words and the destination; a change saves and repaints; Review links to it", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+    return result.value;
+  };
+  const until = async (expression, what, ms = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await ev(expression)) return; await new Promise((r) => setTimeout(r, 120)); }
+    throw new Error(`timed out waiting for ${what}: ${await ev("location.hash + ' ' + (document.querySelector('#view')?.textContent||'').slice(0,300)")}`);
+  };
+  const open = async (url) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url }, sessionId); await loaded; };
+  const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
+  // The gym is linked and has pins, ages and a budget; one preset in its library.
+  const cur = JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8"));
+  const profile = { ...cur, gym_abbr: "TG", website: "https://testgym.sg", locale: { country: "SG", currency: "SGD" },
+    meta_assets: { ...(cur.meta_assets || {}), ad_account_id: "act_111000000001", page_id: "770000000007", instagram_user_id: "880000000008", lead_form_id: "400100000001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+    campaign_defaults: { ...(cur.campaign_defaults || {}), budget: { level: "adset", amount: 50, currency: "SGD", bid_strategy: "LOWEST_COST_WITHOUT_CAP" } },
+    targeting_defaults: { ...(cur.targeting_defaults || {}), geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", place_name: "6 Sin Ming Road, Tower 2", radius_km: 5, callouts: [] }, { label: "Bishan", lat: 1.35, lng: 103.85, radius_km: 3, callouts: ["BISHAN"] }] }, demographics: { age_min: 25, age_max: 60 } } };
+  assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: profile })).status, 200);
+  writeFileSync(join(g, "targeting-presets.json"), JSON.stringify({ schema: 1, presets: [{ id: "broad", name: "Broad", spec: {}, summary: ["Broad — no detailed targeting"], stats: null }, { id: "a97f701a193c", name: "Fitness", spec: { flexible_spec: [{ interests: [{ id: "6003277229371", name: "Physical fitness" }] }] }, summary: ["Physical fitness (interests)"], stats: { adsets: 2, leads: 40, cost_per_lead: 12.5, genders: { men: 0, women: 2, all: 0 } } }] }));
+  rmSync(join(out, "publish-settings.json"), { force: true });
+  // The plan, from the API: the reference batch's kept ads (the review tests left some excluded), by callout.
+  let r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+  const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")), review = existsSync(join(out, "review.json")) ? JSON.parse(readFileSync(join(out, "review.json"), "utf-8")) : { ads: {}, photos: {} };
+  const keptFolders = batch.ads.filter((a) => review.ads[a.folder] !== "exclude" && !a.photos.some((p) => review.photos[p] === "exclude")).map((a) => a.folder);
+  assert.deepEqual(r.plan.ads.map((a) => a.folder).sort(), keptFolders.sort(), "the kept ads, and only those");
+  assert.deepEqual(r.plan.adsets.map((a) => a.callout).sort(), [...new Set(batch.ads.filter((a) => keptFolders.includes(a.folder)).map((a) => a.location.toUpperCase()))].sort());
+  assert.deepEqual([r.plan.ready, r.plan.problems, r.plan.budget.level, r.plan.campaign.status, r.pins.length, r.presets.map((p) => p.id), Object.keys(r.cta).includes("SIGN_UP"), r.published], [true, [], "adset", "PAUSED", 2, ["broad", "a97f701a193c"], true, null]);
+  assert.ok(r.plan.ads.every((a) => r.thumbs[a.folder]?.url?.startsWith("/files/")), "a thumbnail per kept ad");
+  assert.ok(!JSON.stringify(r).includes(META_TOKEN));
+  // Settings: saved per batch, the plan rebuilt from them; bad shapes refused and nothing written.
+  const first = r.plan.adsets[0].callout;
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { campaign: { name: "Test campaign", level: "campaign", daily: 80 }, adsets: { [first]: { pin: 1, age_min: 30, gender: "women", preset: "a97f701a193c" } }, words: { message: "Come and train.", headline: "Six weeks", description: "", cta: "APPLY_NOW" }, destination: {} } })).json();
+  assert.deepEqual([r.plan.campaign.name, r.plan.campaign.daily_budget, r.plan.budget.level, r.plan.adsets[0].pin.label, r.plan.adsets[0].age_min, r.plan.adsets[0].gender, r.plan.adsets[0].preset.name, r.plan.adsets[0].preset.how, r.plan.words.message, r.plan.words.cta, r.plan.words.placeholders], ["Test campaign", 8000, "campaign", "Bishan", 30, "women", "Fitness", "chosen for this ad set", "Come and train.", "APPLY_NOW", ["description"]]);
+  assert.ok(existsSync(join(out, "publish-settings.json")) && r.settings.updated);
+  for (const body of [{ campaign: { level: "ad" } }, { words: { headline: "one — dash" } }, { adsets: { X: { pin: "a" } } }, { destination: { lead_form_id: "abc" } }, { extra: 1 }]) {
+    const bad = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body });
+    assert.equal(bad.status, 400, JSON.stringify(body));
+  }
+  assert.equal(JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")).campaign.name, "Test campaign", "a refused save writes nothing");
+  assert.equal((await call(`/api/client/${GYM}/batch/no-such/publish`)).status, 404);
+  // The page.
+  await open(`${panel.url}/?u20#/${GYM}/publish/${BRIEF.batch_id}`);
+  await until("PB.data && /Create on Facebook/.test(document.querySelector('#view')?.textContent||'')", "the Publish screen");
+  let text = await ev("document.querySelector('#view').textContent");
+  assert.match(text, /Publish Test campaign/); assert.match(text, /Ad sets · one per location callout/); assert.match(text, /Campaign words/); assert.match(text, /Destination and identity/); assert.match(text, /Come and train\./);
+  assert.equal(await ev("document.querySelectorAll('#view img').length"), r.plan.ads.length, "every kept ad shown");
+  assert.equal(await ev("[...document.querySelectorAll('#view h3')].filter(h=>h.textContent.trim()==='" + first + "').length"), 1, "an ad set card per callout");
+  assert.ok(await ev("document.querySelector('#view button.primary[disabled]') !== null"), "creating waits for the next step");
+  // A change on the page saves the settings and repaints with the new plan.
+  await ev("pbSet('campaign.level','adset'); pbSetAdset('" + first + "','daily',70); true");
+  await until("PB.data && PB.data.plan.budget.level==='adset' && !PB.busy", "the saved plan");
+  const saved = JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8"));
+  assert.deepEqual([saved.campaign.level, saved.adsets[first].daily, saved.words.message], ["adset", 70, "Come and train."]);
+  assert.match(await ev("document.querySelector('#view').textContent"), /a day in all/);
+  // Review's foot leads here.
+  await open(`${panel.url}/?u20b#/${GYM}/review/${BRIEF.batch_id}`);
+  await until("R.data && [...document.querySelectorAll('#rvFoot button')].some(b=>/Publish to Meta/.test(b.textContent))", "the Publish button on Review");
+  await ev("[...document.querySelectorAll('#rvFoot button')].find(b=>/Publish to Meta/.test(b.textContent)).click(); true");
+  await until("location.hash==='#/" + GYM + "/publish/" + BRIEF.batch_id + "'", "the Publish route");
+});
