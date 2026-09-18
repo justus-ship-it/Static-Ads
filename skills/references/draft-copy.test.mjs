@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { copyRules, copyProblems, referencesFor, addCopyRef, editCopyRef, buildCopyPrompt, draftCopy, readCopy, keptCopies, addCopy, decideCopy, textOptionsFor, ALWAYS_NEVER, MAX_OPTIONS, offerDocFor, analyseCopy, ANGLES } from "./draft-copy.mjs";
+import { buttonPlaceholder, fillButton, copyRules, copyProblems, referencesFor, addCopyRef, editCopyRef, buildCopyPrompt, draftCopy, readCopy, keptCopies, addCopy, decideCopy, textOptionsFor, ALWAYS_NEVER, MAX_OPTIONS, offerDocFor, analyseCopy, ANGLES } from "./draft-copy.mjs";
 
 const OFFER = "12 Week Total Body Reset";
 const profile = { display_name: "Sculpt Society", brand_lock: { voice: { adjectives: ["direct", "coach-led"], never: ["hype", "fitspo language", "complimentary session"] } } };
@@ -92,7 +92,7 @@ test("C3 drafting: one text call (a second for a shortfall); drafts that break a
     assert.throws(() => decideCopy(out, "nope", { status: "keep" }), /no copy nope/);
     assert.throws(() => decideCopy(out, a.id, { status: "maybe" }), /keep, exclude or draft/);
     const own = addCopy(out, { message: `Typed by hand — the ${OFFER}. Tap Sign up.`, headline: "Own words – yours" }, { offer: OFFER, profile });
-    assert.deepEqual([own.message, own.headline], [`Typed by hand - the ${OFFER}. Tap Sign up.`, "Own words - yours"], "the owner's dashes become hyphens, never a refusal");
+    assert.deepEqual([own.message, own.headline], [`Typed by hand - the ${OFFER}. Tap {BUTTON}.`, "Own words - yours"], "the owner's dashes become hyphens, never a refusal; the button named becomes {BUTTON}");
     assert.deepEqual([own.source, own.status, keptCopies(out).length], ["owner", "keep", 3]);
     assert.throws(() => addCopy(out, { message: "no offer here", headline: "h" }, { offer: OFFER, profile }), /not named exactly/);
     await assert.rejects(draftCopy({ brandDir: d, batchDir: out, offer: "", count: 3, ask }), /offer's exact words/);
@@ -119,4 +119,15 @@ test("C5 a pasted reference is read by the model: its angle from the fixed list 
   assert.equal(asked[0].img, null, "a text call"); assert.match(asked[0].prompt, /If nothing stuck/); assert.deepEqual(asked[0].schema.properties.angle.enum, ANGLES);
   assert.equal((await analyseCopy({ message: "x", ask: async () => ({ angle: "hype", note: "n" }) })).angle, null);
   await assert.rejects(analyseCopy({ ask }), /nothing to analyse/);
+});
+
+test("C6 the button in the copy is a placeholder: every way of naming it (tap Learn More, click the \"Sign Up\" button, a quoted name) becomes {BUTTON}; the plan fills it with the chosen call to action's name; what a draft wrote before the rule reads as {BUTTON} too", () => {
+  assert.equal(buttonPlaceholder("Tap Learn More to start. Click the \"Sign Up\" button. Hit “Apply Now” now. Press the Book now button today."), "Tap {BUTTON} to start. Click the {BUTTON}. Hit {BUTTON} now. Press the {BUTTON} today.");
+  assert.equal(buttonPlaceholder("Learn more about us in the studio"), "Learn more about us in the studio", "the words alone, not a button, stay");
+  assert.equal(buttonPlaceholder("tap {BUTTON} to start"), "tap {BUTTON} to start");
+  assert.equal(fillButton("Tap {BUTTON} now, then {BUTTON} again in {AREA}", "Apply now"), "Tap Apply now now, then Apply now again in {AREA}", "only the button is filled here");
+  const d = gym(), out = join(d, "outputs", "b1");
+  writeFileSync(join(out, "copy.json"), JSON.stringify({ drafts: [{ id: "c-old", message: "Old draft. Tap Learn More to begin.", headline: "H", description: "", status: "keep" }] }));
+  assert.equal(readCopy(out).drafts[0].message, "Old draft. Tap {BUTTON} to begin.");
+  assert.match(readFileSync(join(out, "copy.json"), "utf8"), /Tap Learn More/, "the file itself is untouched");
 });

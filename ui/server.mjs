@@ -40,6 +40,7 @@ import { readWordings, addWording, editWording, deleteWording, recordUse, wordin
 import { buildPlan, keptAds, CTA_TYPES } from "../skills/references/meta-publish.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
 import { draftCopy, readCopy, keptCopies, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, analyseCopy } from "../skills/references/draft-copy.mjs";
+import { sendToLibrary } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
@@ -961,12 +962,20 @@ const server = createServer(async (req, res) => {
       try {
         if (!rid && req.method === "GET") return view();
         if (!rid && req.method === "POST") {
-          // The note is the model's reading of the pasted copy (its angle and why it works), the owner's to edit; a
-          // model that cannot be reached leaves the note empty and says so, the reference is kept either way.
+          // A pasted copy is a reference for this gym AND goes to the central library as skeletons (its primary text
+          // and its headline, the parts that change swapped for placeholders, verified in code) in the same step —
+          // the owner's rule (2026-09-18): every upload is reusable at once. The reference's angle and note come
+          // from that reading (or from a plain reading when no skeleton could be made); a model that cannot be
+          // reached leaves the note empty and says so, the reference is kept either way.
           const { message, headline, description } = await readBody(req);
-          const ref = addCopyRef(dir, { message, headline, description });
-          try { const read = await analyseCopy({ message: ref.message, headline: ref.headline }); return view({ ref: editCopyRef(dir, ref.id, { note: read.note, angle: read.angle }) }); }
-          catch (e) { return view({ ref, analysis_error: String(e.message || e).replace(/key=[^&\s]+/g, "key=…").slice(0, 200) }); }
+          let ref = addCopyRef(dir, { message, headline, description });
+          const scrub = (e) => String(e?.message || e).replace(/key=[^&\s]+/g, "key=…").slice(0, 200);
+          let library = { entries: [], skipped: [] };
+          try { library = await sendToLibrary(dir, ref.id, { gym }); } catch (e) { library.skipped.push({ kind: "copy", why: scrub(e) }); }
+          const read = library.entries.find((e) => e.kind === "copy") || library.entries[0];
+          if (read) return view({ ref: editCopyRef(dir, ref.id, { note: read.note, angle: read.angle }), library });
+          try { const a = await analyseCopy({ message: ref.message, headline: ref.headline }); return view({ ref: editCopyRef(dir, ref.id, { note: a.note, angle: a.angle }), library }); }
+          catch (e) { return view({ ref, library, analysis_error: scrub(e) }); }
         }
         if (rid && req.method === "PUT") { const { note, retired } = await readBody(req); return view({ ref: editCopyRef(dir, decodeURIComponent(rid), { note, retired }) }); }
       } catch (e) { return json(res, 400, { error: e.message }); }

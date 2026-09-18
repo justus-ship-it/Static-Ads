@@ -34,7 +34,7 @@ function startPanel(env = {}) {
   return new Promise((res, rej) => {
     const child = spawn(process.execPath, [join(ROOT, "ui", "server.mjs"), "--port", "0"], {
       // No Meta keys unless a test gives them: whatever this machine's .env holds, the panel under test has none.
-      cwd: ROOT, env: { ...process.env, PANEL_BRANDS_DIR: brands, NODE_OPTIONS: `--import=${stub}`, META_ACCESS_TOKEN: "", META_APP_ID: "", META_APP_SECRET: "", META_GRAPH_URL: "", ...env },
+      cwd: ROOT, env: { ...process.env, PANEL_BRANDS_DIR: brands, COPY_LIBRARY_DIR: join(dirname(brands), "library"), NODE_OPTIONS: `--import=${stub}`, META_ACCESS_TOKEN: "", META_APP_ID: "", META_APP_SECRET: "", META_GRAPH_URL: "", ...env },
     });
     let out = "", err = "";
     child.stdout.on("data", async (d) => {
@@ -1481,6 +1481,8 @@ test("U24 copy in the panel: the gym's copy references (list, add, note, retire)
   r = await (await call(`/api/client/${GYM}/copy-refs`, { method: "POST", body: { message: "Ladies in Bishan, if nothing stuck it was the plan. Tap Sign up.", headline: "A reset that sticks", note: "pain hook" } })).json();
   assert.deepEqual([r.refs.length, r.ref.source, r.shown, r.ref.note], [1, "owner", [r.ref.id], ""], "kept even though the model cannot be reached in tests; the note stays empty");
   assert.match(r.analysis_error, /network blocked|GEMINI_KEY/, "and the page is told why the note is empty");
+  assert.deepEqual([r.library.entries, r.library.skipped.map((s) => s.kind)], [[], ["copy", "headline"]], "the library step ran for both parts and said why nothing landed");
+  assert.ok(!existsSync(join(dirname(brands), "library", "copy-library.json")), "nothing written to the library");
   const r2 = await (await call(`/api/client/${GYM}/copy-refs`, { method: "POST", body: { message: "Pasted — as written", headline: "h" } })).json(); assert.equal(r2.ref.message, "Pasted — as written", "a pasted reference keeps its dashes");
   await call(`/api/client/${GYM}/copy-refs/${r2.ref.id}`, { method: "PUT", body: { retired: true } });
   r = await (await call(`/api/client/${GYM}/copy-refs/${r.ref.id}`, { method: "PUT", body: { note: "the opener" } })).json(); assert.equal(r.refs[0].note, "the opener");

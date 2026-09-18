@@ -27,7 +27,7 @@ import { parseArgs } from "util";
 import { metaConfig, graphClient, actId, scrubTokens, MetaError } from "./meta-api.mjs";
 import { calloutGender, pinFor, pinUsable, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
 import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
-import { textOptionsFor, MAX_OPTIONS } from "./draft-copy.mjs";
+import { textOptionsFor, MAX_OPTIONS, fillButton } from "./draft-copy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 export const AD_STATUS = "PAUSED";
@@ -174,7 +174,8 @@ export function creativeFor({ name, page_id, instagram_user_id, website, form_id
       name, object_story_spec: identity, contextual_multi_ads: { ...NO_MULTI_ADVERTISER },
       asset_feed_spec: {
         images: story ? [{ hash: "(1:1 hash)", adlabels: [{ name: "square" }] }, { hash: "(9:16 hash)", adlabels: [{ name: "story" }] }] : [{ hash: "(1:1 hash)", adlabels: [{ name: "square" }, { name: "story" }] }],
-        bodies: uniq(options.map((o) => o.message)).slice(0, MAX_OPTIONS).map(tag), titles: uniq(options.map((o) => o.headline)).slice(0, MAX_OPTIONS).map(tag), descriptions: (uniq(options.map((o) => o.description)).slice(0, MAX_OPTIONS).map(tag).length ? uniq(options.map((o) => o.description)).slice(0, MAX_OPTIONS).map(tag) : [{ text: " " }]),
+        bodies: uniq(options.map((o) => o.message)).slice(0, MAX_OPTIONS).map(tag), titles: uniq(options.map((o) => o.headline)).slice(0, MAX_OPTIONS).map(tag), // Meta (2026-09-18): up to five bodies and titles per placement rule, but ONE description — the first kept copy's, the rest left off.
+        descriptions: uniq(options.map((o) => o.description)).slice(0, 1).map(tag).length ? uniq(options.map((o) => o.description)).slice(0, 1).map(tag) : [{ text: " " }],
         link_urls: [{ website_url: website }], call_to_action_types: [cta], call_to_actions: [{ type: cta, value: { lead_gen_form_id: form_id } }],
         ad_formats: ["SINGLE_IMAGE"], optimization_type: "PLACEMENT", asset_customization_rules: PLACEMENT_RULES("square", "story", label),
       },
@@ -218,7 +219,9 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   // The copy: the kept copies (the owner's picks) as text options, `max_options` per ad (five by default); with none kept,
   // the settings' single words, else placeholders that say so.
   const maxOptions = Math.max(1, Math.min(MAX_OPTIONS, Number.isInteger(settings.copy?.max_options) ? settings.copy.max_options : MAX_OPTIONS));
-  const keptCopy = (copies || []).filter((c) => c && c.message && c.headline).map((c) => ({ id: c.id, message: c.message, headline: c.headline, description: c.description || "", cta: settings.words?.cta && CTA_TYPES[settings.words.cta] ? settings.words.cta : CTA }));
+  // The copy names the button as {BUTTON}; here it becomes the chosen call to action's name, so the words and the button never disagree.
+  const ctaKey = settings.words?.cta && CTA_TYPES[settings.words.cta] ? settings.words.cta : CTA, ctaLabel = CTA_TYPES[ctaKey];
+  const keptCopy = (copies || []).filter((c) => c && c.message && c.headline).map((c) => ({ id: c.id, message: fillButton(c.message, ctaLabel), headline: fillButton(c.headline, ctaLabel), description: fillButton(c.description || "", ctaLabel), cta: ctaKey }));
   const words = keptCopy.length ? { ...keptCopy[0], placeholders: [] } : campaignWords(profile, { offer, batch_id: batch.batch_id }, settings.words || {});
   if (words.placeholders.length) warnings.push(`placeholder words for the ${words.placeholders.join(", ")}: draft and keep copy, or type the campaign's words, before the ads go live`);
   if (keptCopy.length > maxOptions) warnings.push(`${keptCopy.length} copies kept, ${maxOptions} per ad: they rotate across the ads so every copy runs`);
@@ -274,6 +277,8 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
       },
     };
   });
+  const withDesc = keptCopy.filter((c) => c.description).length;
+  if (withDesc > 1 && maxOptions > 1) warnings.push(`${withDesc} kept copies have a description; Meta takes one description per placement rule, so each ad carries only the first of its options' descriptions`);
   const noStory = kept.filter((a) => !a.story);
   if (noStory.length) warnings.push(`${noStory.length} of ${kept.length} ads have no Stories version: on Stories and Reels Meta will show the 1:1 (Make Stories versions on the Review screen first)`);
   const ads = kept.map((a, i) => {
@@ -291,7 +296,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   return {
     account, page_id, instagram_user_id, lead_form_id, website: profile.website || null, currency,
     budget: { level, daily, bid_strategy: strategy, bid_cap: cap, per_day_total: level === "campaign" ? daily : adsets.reduce((t, s) => t + (s.budget?.daily || 0), 0) },
-    campaign, adsets, ads, words, copy: { kept: keptCopy.length, max_options: maxOptions, per_ad: Math.min(maxOptions, keptCopy.length) || 0, rotating: keptCopy.length > maxOptions }, counts: { adsets: adsets.length, ads: ads.length, with_story: kept.length - noStory.length },
+    campaign, adsets, ads, words, copy: { kept: keptCopy.length, max_options: maxOptions, per_ad: Math.min(maxOptions, keptCopy.length) || 0, rotating: keptCopy.length > maxOptions, descriptions: keptCopy.filter((c) => c.description).length }, counts: { adsets: adsets.length, ads: ads.length, with_story: kept.length - noStory.length },
     problems, warnings, ready: problems.length === 0,
   };
 }

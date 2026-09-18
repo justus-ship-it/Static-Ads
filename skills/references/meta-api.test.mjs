@@ -628,15 +628,16 @@ test("M11 copy on the plan: the kept copies ride as Meta text options — up to 
     campaign_defaults: { budget: { amount: 50, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", radius_km: 5 }] } } };
   const words = { location: "BISHAN", audience: "MEN WANTED", offer: "12 Week Total Body Reset" };
   const kept = Array.from({ length: 3 }, (_, i) => ({ folder: `10${i + 1}-c0${i + 1}-bishan-t3-green-white`, file: `10${i + 1}-x/1x1/a.png`, location: "BISHAN", words, story: i === 0 ? "101-x/9x16/s.png" : null }));
-  const copies = Array.from({ length: 7 }, (_, i) => ({ id: `c${i}`, message: `Text ${i} about the 12 Week Total Body Reset. Tap Sign up.`, headline: `Headline ${i}`, description: i % 2 ? `Desc ${i}` : "" }));
+  const copies = Array.from({ length: 7 }, (_, i) => ({ id: `c${i}`, message: `Text ${i} about the 12 Week Total Body Reset. Tap {BUTTON}.`, headline: `Headline ${i}`, description: i % 2 ? `Desc ${i}` : "" }));
   const batch = { batch_id: "2026-09-13-men" };
   // Five per ad (the default), seven kept: the options rotate; every text is labelled for the placement rules.
   const p = buildPlan({ profile, batch, kept, presets: { presets: [] }, copies });
-  assert.deepEqual([p.copy, p.words.placeholders, p.words.headline], [{ kept: 7, max_options: 5, per_ad: 5, rotating: true }, [], "Headline 0"]);
+  assert.deepEqual([p.copy, p.words.placeholders, p.words.headline], [{ kept: 7, max_options: 5, per_ad: 5, rotating: true, descriptions: 3 }, [], "Headline 0"]);
   assert.ok(p.warnings.some((w) => /7 copies kept, 5 per ad: they rotate/.test(w)) && !p.warnings.some((w) => /placeholder/.test(w)));
+  assert.ok(p.warnings.some((w) => /3 kept copies have a description; Meta takes one description per placement rule/.test(w)), "one description per rule (Meta refused several, 2026-09-18)"); assert.equal(p.copy.descriptions, 3);
   assert.deepEqual(p.ads.map((a) => a.copies.join("")), ["c0c1c2c3c4", "c5c6c0c1c2", "c3c4c5c6c0"]);
   const afs = p.ads[0].creative.asset_feed_spec;
-  assert.deepEqual([afs.bodies.length, afs.titles.length, afs.descriptions.length, afs.bodies[0], afs.titles[4], afs.images.length], [5, 5, 2, { text: "Text 0 about the 12 Week Total Body Reset. Tap Sign up.", adlabels: [{ name: "copy" }] }, { text: "Headline 4", adlabels: [{ name: "copy" }] }, 2]);
+  assert.deepEqual([afs.bodies.length, afs.titles.length, afs.descriptions, afs.bodies[0], afs.titles[4], afs.images.length], [5, 5, [{ text: "Desc 1", adlabels: [{ name: "copy" }] }], { text: "Text 0 about the 12 Week Total Body Reset. Tap Sign up.", adlabels: [{ name: "copy" }] }, { text: "Headline 4", adlabels: [{ name: "copy" }] }, 2]);
   assert.deepEqual(afs.asset_customization_rules.map((r) => [r.image_label.name, r.body_label.name, r.title_label.name, r.description_label.name]), [["story", "copy", "copy", "copy"], ["square", "copy", "copy", "copy"]]);
   // Several texts, no Stories version: one image carrying both placement labels, so Meta's two rules still hold.
   const afs2 = p.ads[1].creative.asset_feed_spec;
@@ -651,9 +652,10 @@ test("M11 copy on the plan: the kept copies ride as Meta text options — up to 
   // The setting holds 1 to 5; nothing kept → placeholders and the plain words.
   assert.equal(buildPlan({ profile, batch, kept, presets: { presets: [] }, copies, settings: { copy: { max_options: 9 } } }).copy.max_options, 5);
   const none = buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: [] });
-  assert.deepEqual([none.copy, none.words.placeholders.length, none.ads[0].copies], [{ kept: 0, max_options: 5, per_ad: 0, rotating: false }, 3, []]);
+  assert.deepEqual([none.copy, none.words.placeholders.length, none.ads[0].copies], [{ kept: 0, max_options: 5, per_ad: 0, rotating: false, descriptions: 0 }, 3, []]);
   assert.ok(none.warnings.some((w) => /draft and keep copy/.test(w)));
   // The button chosen in the settings applies to every kept copy.
   const cta = buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: copies.slice(0, 1), settings: { words: { cta: "APPLY_NOW" } } });
   assert.deepEqual(cta.ads[0].creative.asset_feed_spec.call_to_actions, [{ type: "APPLY_NOW", value: { lead_gen_form_id: "4001" } }]);
+  assert.equal(cta.ads[0].creative.asset_feed_spec.bodies[0].text, "Text 0 about the 12 Week Total Body Reset. Tap Apply now.", "the copy's {BUTTON} is the chosen button's name, so the words and the button never disagree");
 });

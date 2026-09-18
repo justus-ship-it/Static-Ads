@@ -31,6 +31,17 @@ const today = () => new Date().toISOString().slice(0, 10);
 const clean = (v, max) => (typeof v === "string" ? v.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim().slice(0, max) : "");
 /** An em or en dash pasted or written by the model becomes a plain hyphen (the ads' rule), never a refusal. */
 export const plainDashes = (v) => (typeof v === "string" ? v.replace(/\s*—\s*/g, " - ").replace(/–/g, "-").replace(/[ \t]{2,}/g, " ") : v);
+/**
+ * Every way a copy names the button, made one placeholder — the owner's rule (2026-09-18): the words must match
+ * the call to action chosen for the ad, so the copy says {BUTTON} and the plan fills it from that choice.
+ */
+const BUTTON_NAMES = ["learn more", "sign up", "signup", "apply now", "apply", "book now", "get offer", "contact us", "send message", "get started", "get quote", "subscribe"];
+const NAME_RE = BUTTON_NAMES.map((n) => n.replace(/ /g, "\\s+")).join("|");
+const BUTTON_RE = new RegExp(`(\\b(?:tap|click|hit|press|smash)\\s+(?:on\\s+)?(?:the\\s+)?)(?:["“”'‘’]\\s*)?(?:${NAME_RE})(?:\\s*["“”'‘’])?(\\s+button)?`, "gi");
+const QUOTED_RE = new RegExp(`["“”]\\s*(?:${NAME_RE})\\s*["“”](\\s+button)?`, "gi");
+export const buttonPlaceholder = (v) => (typeof v === "string" ? v.replace(/\{BUTTON\}/g, "{BUTTON}").replace(BUTTON_RE, (m, lead) => `${lead}{BUTTON}`).replace(QUOTED_RE, "{BUTTON}") : v);
+/** {BUTTON} as the chosen call to action's name; any other placeholder stays as it is. */
+export const fillButton = (v, label) => (typeof v === "string" && label ? v.replace(/\{BUTTON\}/g, label) : v);
 const idOf = (d) => createHash("sha256").update(`${d.message}\n${d.headline}\n${d.description}`).digest("hex").slice(0, 10);
 
 // ── the rules ────────────────────────────────────────────────────────────────
@@ -85,11 +96,12 @@ export function addCopyRef(gymDir, { message, headline, description = "", note =
   if (data.refs.some((r) => r.id === ref.id)) throw new Error("that reference is already here");
   data.refs.push(ref); writeWhole(join(gymDir, REFS_FILE), JSON.stringify(data, null, 2) + "\n"); return ref;
 }
-export function editCopyRef(gymDir, id, { note, retired, angle }) {
+export function editCopyRef(gymDir, id, { note, retired, angle, in_library }) {
   const data = readCopyRefs(gymDir), r = data.refs.find((x) => x.id === id);
   if (!r) throw new Error(`no reference ${id}`);
   if (note != null) r.note = clean(note, 300);
   if (angle !== undefined) r.angle = ANGLES.includes(angle) ? angle : null;
+  if (Array.isArray(in_library)) r.in_library = in_library.map(String);
   if (retired != null) r.retired = retired ? { on: today() } : null;
   writeWhole(join(gymDir, REFS_FILE), JSON.stringify(data, null, 2) + "\n"); return r;
 }
@@ -130,11 +142,12 @@ export function buildCopyPrompt({ profile, offer, audience, locations, rules, re
     rules.must_say.length ? `ALWAYS work in: ${rules.must_say.join("; ")}.` : "",
     refs.length ? `REFERENCES - copy that worked for this gym before (its structure, rhythm and angles are the model; do not copy sentences):\n${refs.map((r, i) => `${i + 1}. HEADLINE: ${r.headline || "(none)"}\n   PRIMARY TEXT: ${(r.message || "(none)").replace(/\n+/g, " / ").slice(0, 700)}${r.results?.cost_per_lead != null ? `\n   (${r.results.leads} leads at ${r.results.cost_per_lead} each)` : ""}${r.note ? `\n   NOTE: ${r.note}` : ""}`).join("\n")}` : "",
     avoid.length ? `ALREADY WRITTEN (do not repeat these angles): ${avoid.map((a) => a.headline).join(" | ")}` : "",
-    `SHAPE: primary text 60-160 words, opening with a hook (a question, a pain, an identity call-out) before the offer; a call to action that says to tap the "${button}" button (that is the button's name; never another). Headline under ${LIMITS.headline_ideal} characters, the offer or the promise. Description under ${LIMITS.description_ideal} characters, or empty. Vary the angle across the ${count} sets (pain, curiosity, identity, structure, coach-led, community, time-poor, beginner) and say the angle in one word.`,
+    `SHAPE: primary text 60-160 words, opening with a hook (a question, a pain, an identity call-out) before the offer; a call to action that tells the reader to tap the button, written as the placeholder {BUTTON} (the ad's button is "${button}": phrase the call to action to fit it, never write another button's name). Headline under ${LIMITS.headline_ideal} characters, the offer or the promise. Description under ${LIMITS.description_ideal} characters, or empty. Vary the angle across the ${count} sets (pain, curiosity, identity, structure, coach-led, community, time-poor, beginner) and say the angle in one word.`,
   ].filter(Boolean);
   return { prompt: lines.join("\n\n"), schema: SCHEMA };
 }
-export const readCopy = (batchDir) => { const j = readJson(join(batchDir, COPY_FILE)); return { drafted: null, drafts: [], ...(j || {}), drafts: Array.isArray(j?.drafts) ? j.drafts : [] }; };
+// Drafts written before the placeholder rule name a button literally: read as {BUTTON} (ids unchanged, the file untouched).
+export const readCopy = (batchDir) => { const j = readJson(join(batchDir, COPY_FILE)); return { drafted: null, drafts: [], ...(j || {}), drafts: (Array.isArray(j?.drafts) ? j.drafts : []).map((d) => ({ ...d, message: buttonPlaceholder(d.message), headline: buttonPlaceholder(d.headline), description: buttonPlaceholder(d.description) })) }; };
 const writeCopy = (batchDir, data) => writeWhole(join(batchDir, COPY_FILE), JSON.stringify(data, null, 2) + "\n");
 /** The kept copies, in the order they were kept (the owner's order of choice). */
 export const keptCopies = (batchDir) => readCopy(batchDir).drafts.filter((d) => d.status === "keep").sort((a, b) => (a.kept_at || "").localeCompare(b.kept_at || ""));
@@ -157,7 +170,7 @@ export async function draftCopy({ brandDir, batchDir, offer, audience = null, lo
     const { prompt, schema } = buildCopyPrompt({ profile, offer, audience, locations, rules, refs, count: want, avoid: [...data.drafts, ...added], button });
     const answer = await ask(null, prompt, schema, { model }); calls++;
     for (const raw of answer?.drafts || []) {
-      const d = { message: clean(plainDashes(raw.message), LIMITS.message + 200), headline: clean(plainDashes(raw.headline), LIMITS.headline + 50), description: clean(plainDashes(raw.description), LIMITS.description + 50) };
+      const d = { message: clean(buttonPlaceholder(plainDashes(raw.message)), LIMITS.message + 200), headline: clean(buttonPlaceholder(plainDashes(raw.headline)), LIMITS.headline + 50), description: clean(buttonPlaceholder(plainDashes(raw.description)), LIMITS.description + 50) };
       const problems = copyProblems(d, { offer, rules });
       if (problems.length) { dropped.push({ headline: d.headline.slice(0, 60), why: problems.join("; ") }); continue; }
       const k = shape(d); if (have.has(k)) { dropped.push({ headline: d.headline.slice(0, 60), why: "reads like one already here" }); continue; }
@@ -180,7 +193,7 @@ export function offerDocFor(brandDir, offer) {
 }
 /** The owner's own copy for a batch: checked by the same rules (the offer named exactly), kept at once. */
 export function addCopy(batchDir, { message, headline, description = "" }, { offer, profile = {}, offerDoc = null } = {}) {
-  const d = { message: clean(plainDashes(message), LIMITS.message), headline: clean(plainDashes(headline), LIMITS.headline), description: clean(plainDashes(description), LIMITS.description) };
+  const d = { message: clean(buttonPlaceholder(plainDashes(message)), LIMITS.message), headline: clean(buttonPlaceholder(plainDashes(headline)), LIMITS.headline), description: clean(buttonPlaceholder(plainDashes(description)), LIMITS.description) };
   const problems = copyProblems(d, { offer, rules: copyRules(profile, offerDoc) });
   if (problems.length) throw new Error(problems.join("; "));
   const data = readCopy(batchDir);
@@ -193,7 +206,7 @@ export function decideCopy(batchDir, id, { status, message, headline, descriptio
   const data = readCopy(batchDir), d = data.drafts.find((x) => x.id === id);
   if (!d) throw new Error(`no copy ${id}`);
   if (message != null || headline != null || description != null) {
-    const next = { message: message != null ? clean(plainDashes(message), LIMITS.message) : d.message, headline: headline != null ? clean(plainDashes(headline), LIMITS.headline) : d.headline, description: description != null ? clean(plainDashes(description), LIMITS.description) : d.description };
+    const next = { message: message != null ? clean(buttonPlaceholder(plainDashes(message)), LIMITS.message) : d.message, headline: headline != null ? clean(buttonPlaceholder(plainDashes(headline)), LIMITS.headline) : d.headline, description: description != null ? clean(buttonPlaceholder(plainDashes(description)), LIMITS.description) : d.description };
     const problems = copyProblems(next, { offer, rules: copyRules(profile, offerDoc) });
     if (problems.length) throw new Error(problems.join("; "));
     Object.assign(d, next, { edited: new Date().toISOString() });
