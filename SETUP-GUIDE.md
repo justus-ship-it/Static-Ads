@@ -104,8 +104,11 @@ Firecrawl is used in Phase 1 to scrape brand websites and take full-page screens
 
 ```bash
 npm install -g firecrawl-cli
-firecrawl auth
-# Paste your Firecrawl API key when prompted
+firecrawl login
+# Opens a browser to authenticate. There is no `firecrawl auth` command.
+
+# Verify it worked — should report authenticated, not red:
+firecrawl --status
 ```
 
 Get your API key at [firecrawl.dev](https://firecrawl.dev) — the free account is enough to get started. If this becomes your daily driver, you'll want a paid plan for higher rate limits or to integrate another scraping service.

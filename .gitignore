@@ -1,3 +1,7 @@
 node_modules/
 .env
 brands/
+swipe/
+.DS_Store
+Reference-Sep-10/
+library/
