@@ -46,7 +46,7 @@
   .crumb b{color:var(--text);font-weight:600} .crumb .sep{color:var(--faint)}
   .switch{margin-left:auto;display:flex;align-items:center;gap:8px}
   .switch select{width:auto;min-width:190px;padding:7px 32px 7px 30px;font-weight:600;background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235f6b84'/%3E%3C/svg%3E") no-repeat right 12px center;appearance:none}
-  .switch .dot{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .switch .dot{position:absolute;left:12px;top:50%;transform:translateY(-50%);margin:0;width:8px;height:8px;border-radius:50%;background:var(--ok)}
   .switch .wrap{position:relative}
   .rail{background:var(--surface);border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:2px;position:sticky;top:58px;height:calc(100vh - 58px);overflow:auto}
   .rail .sec{color:var(--faint);font-size:11px;letter-spacing:.8px;text-transform:uppercase;padding:14px 12px 5px;font-weight:700}
@@ -100,7 +100,7 @@
   .pv figcaption{font-size:11px;color:var(--dim);margin-top:3px}
   .pv .bad{color:var(--err)} .pv .good{color:var(--ok)}
   .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
-  table.tbl{border-collapse:collapse;width:100%;font-size:13px} table.tbl th{text-align:left;font-size:11.5px;color:var(--dim);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)} table.tbl td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.tbl{border-collapse:collapse;width:100%;font-size:13px} table.tbl tr.dim td{color:var(--faint)} table.tbl tr.sel td{background:var(--accent-soft)} table.tbl th{text-align:left;font-size:11.5px;color:var(--dim);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)} table.tbl td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
   .chip{padding:5px 12px;border-radius:99px;border:1px solid var(--line-2);font-size:13px;cursor:pointer;color:var(--dim);background:var(--surface);font-weight:500}
   .chip:hover{border-color:var(--navy);color:var(--text)}
   .chip.sel{border-color:var(--navy);background:var(--accent-soft);color:var(--navy);font-weight:600}
@@ -258,12 +258,12 @@ let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'
 
 // The rail: the daily path first (Create, Review, Exports), the library next, the client's setup last.
 const NAV = [
-  ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'],
+  ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'], ['results','Results','▤'],
   ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'],
   ['sec','Profile'], ['overview','Overview','◎'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'], ['generate','Templates (old)','·'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -367,6 +367,7 @@ function render(){
   if (STATE.tab==='generating') return viewGenerating(v, seq);
   if (STATE.tab==='exports') return viewExports(v, seq);
   if (STATE.tab==='publish') return STATE.batch ? viewPublish(v, seq) : viewExports(v, seq);
+  if (STATE.tab==='results') return viewResults(v, seq);
   if (STATE.tab==='scenes') return viewScenes(v, seq);
   if (STATE.tab==='photos') return viewPhotos(v, seq);
   if (STATE.tab==='references') return viewReferences(v, seq);
@@ -1109,7 +1110,7 @@ function paintList(){
   const bs = B.setup.batches, box = $('#bList'); if (!box) return;
   box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>{ const r = b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
-      <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}</div>
+      <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}${b.published?` · <span class="pill ${b.published.status==='live'?'on':''}">on Facebook · ${esc(b.published.status)}${b.published.leads!=null?` · ${b.published.leads} leads${b.published.cost_per_lead!=null?` at ${b.published.cost_per_lead}`:''}`:''}</span>`:''}</div>
       <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm" onclick="bWords('${esc(b.id)}')">Change words</button>`:`<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
     </div></div>`; }).join('')}</div>` : '<div class="hint">No campaigns yet. Fill in the brief above and press Generate.</div>';
 }
@@ -1571,13 +1572,72 @@ async function viewExports(v, seq=VIEW_SEQ){
       <button class="sm" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm primary" onclick="openPublish('${esc(b.id)}')">Publish…</button></div></div>`; }).join('') : '<div class="empty">No campaign has ads yet. Create one first.</div>'}`;
 }
 
+// ── Results ─────────────────────────────────────────────────────────────────
+// Three levels, one at a time, as Ads Manager shows them: campaigns → the ad sets of one campaign → the ads of one ad set.
+const RS = { gym:null, data:null, level:'campaigns', campaign:null, adset:null, sort:{ campaigns:'cost_per_lead', adsets:'cost_per_lead', ads:'cost_per_lead' }, source:'all', busy:false, error:null, hsel:new Set(), msg:null };
+function openResults(){ go('results'); }
+async function viewResults(v, seq=VIEW_SEQ){
+  if (RS.gym !== STATE.sel || !RS.data){ v.innerHTML = '<h1>Results</h1><p class="sub">Loading…</p>'; RS.gym = STATE.sel; RS.data = null; RS.level = 'campaigns'; RS.campaign = null; RS.adset = null; try { RS.data = await api(`/api/client/${STATE.sel}/results`); } catch(e){ RS.error = e.message; RS.data = { rows:[], batches:[], adsets:[], campaigns:[], history:null }; } if (seq !== VIEW_SEQ) return; }
+  paintResults(v);
+}
+const RCOLS = {
+  campaigns: [['name','Campaign'],['source','Source'],['status','Status'],['adsets','Ad sets'],['ads','Ads'],['spend','Spent'],['impressions','Impr.'],['clicks','Clicks'],['leads','Leads'],['cost_per_lead','Per lead'],['ctr','CTR %'],['created','Made'],['pulled','Pulled']],
+  adsets: [['name','Ad set'],['source','Source'],['status','Status'],['ads','Ads'],['spend','Spent'],['impressions','Impr.'],['clicks','Clicks'],['leads','Leads'],['cost_per_lead','Per lead'],['ctr','CTR %'],['gender','Gender'],['age_min','Ages'],['pin','Pin'],['countries','Where'],['targeting','Targeting'],['daily_budget','Budget/day']],
+  ads: [['pick',''],['thumbnail',''],['name','Ad'],['source','Source'],['status','Status'],['spend','Spent'],['impressions','Impr.'],['clicks','Clicks'],['leads','Leads'],['cost_per_lead','Per lead'],['ctr','CTR %'],['media','Media'],['scenes','Scene'],['layout','Layout'],['style','Style'],['palette','Palette'],['headline','Headline'],['in_library','Library']],
+};
+const NUMERIC = new Set(['adsets','ads','spend','impressions','clicks','leads','cost_per_lead','ctr','age_min','daily_budget']);
+/** The rows of the current level, filtered by what was clicked above and by source, sorted by the level's column. */
+function rsRows(){
+  const D = RS.data, all = [...(D.rows||[]), ...(D.history?.rows||[])];
+  let rows = RS.level==='campaigns' ? (D.campaigns||[]) : RS.level==='adsets' ? (D.adsets||[]).filter(s=>!RS.campaign || s.campaign_id===RS.campaign) : all.filter(r=>r.adset_id===RS.adset).map(r=>({ ...r, name: r.source==='app' ? r.folder.replace(/^\d+-/,'') : (r.ad_name||r.ad_id), media: r.source==='app' ? 'image' : (r.media||null), in_library: r.source==='app' ? null : !!r.in_library }));
+  if (RS.level!=='ads') rows = rows.filter(r => RS.source==='all' || r.source===RS.source);
+  const k = RS.sort[RS.level];
+  return [...rows].sort((a,b)=> NUMERIC.has(k) ? ((a[k]??Infinity)-(b[k]??Infinity)) * (k==='cost_per_lead'?1:-1) : String(a[k]??'').localeCompare(String(b[k]??'')));
+}
+function paintResults(v){
+  const D = RS.data, cur = STATE.profile?.locale?.currency || 'SGD', H = D.history;
+  const camp = RS.campaign ? (D.campaigns||[]).find(c=>c.campaign_id===RS.campaign) : null, set = RS.adset ? (D.adsets||[]).find(s=>s.adset_id===RS.adset) : null;
+  const rows = rsRows(), cols = RCOLS[RS.level], k = RS.sort[RS.level];
+  const fmt = (r,c) => c==='spend'||c==='cost_per_lead'||c==='daily_budget' ? (r[c]!=null?money(r[c],cur):'—') : c==='age_min' ? (r.age_min!=null?`${r.age_min}–${r.age_max}`:'—') : c==='source' ? (r.source==='app'?'this app':'account') : c==='ads' ? `${r.ads}${r.superseded?` (+${r.superseded} remade)`:''}` : c==='pulled'||c==='created' ? String(r[c]||'—').slice(0,10) : c==='in_library' ? (r.in_library===true?'yes':'') : ['name','campaign','targeting','pin','headline'].includes(c) ? String(r[c]??'—').slice(0,70) : (r[c]==null?'—':String(r[c]));
+  const crumb = [`<a href="#" onclick="rsGo('campaigns');return false">Campaigns</a>`, ...(RS.level!=='campaigns' ? [camp ? `<a href="#" onclick="rsGo('adsets');return false">${esc(camp.name.slice(0,50))}</a>` : `<a href="#" onclick="rsGo('adsets');return false">All ad sets</a>`] : []), ...(RS.level==='ads' && set ? [`<span>${esc(set.name.slice(0,50))}</span>`] : [])].join(' <span class="hint">›</span> ');
+  const title = RS.level==='campaigns' ? `Campaigns · ${rows.length}` : RS.level==='adsets' ? `Ad sets${camp?` of ${esc(camp.name.slice(0,60))}`:''} · ${rows.length}` : `Ads in ${esc(set?.name.slice(0,60)||'')} · ${rows.length}`;
+  const tot = rows.reduce((t,r)=>({ spend:t.spend+(r.spend||0), leads:t.leads+(r.leads||0) }), { spend:0, leads:0 });
+  const cell = (r,c) => {
+    if (c==='pick') return `<td>${r.source==='account'?`<input type="checkbox" ${RS.hsel.has(r.ad_id)?'checked':''} ${r.importable?'':'disabled title="no picture to bring"'} onchange="if(this.checked)RS.hsel.add('${esc(r.ad_id)}');else RS.hsel.delete('${esc(r.ad_id)}');paintResults($('#view'))">`:''}</td>`;
+    if (c==='thumbnail') return `<td>${r.thumbnail?`<img src="${esc(r.thumbnail)}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:6px">`:''}</td>`;
+    return `<td style="white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" title="${esc(String(r[c]??''))}">${esc(fmt(r,c))}${c==='name'&&r.superseded?' <span class="pill">superseded</span>':''}</td>`;
+  };
+  const clickable = RS.level!=='ads';
+  const onRow = (r) => RS.level==='campaigns' ? `onclick="rsOpenCampaign('${esc(r.campaign_id)}')"` : RS.level==='adsets' ? `onclick="rsOpenAdset('${esc(r.adset_id)}')"` : '';
+  v.innerHTML = `<h1>Results</h1><p class="sub">Every campaign in this gym's ad account, the ones this app made and the ones before it, with Meta's numbers from the last pull. Click a campaign for its ad sets, an ad set for its ads. Every parameter, as a spreadsheet: <a href="/api/client/${esc(STATE.sel)}/results.csv">download results.csv</a>.</p>
+  ${RS.error?`<div class="msg err">${esc(RS.error)}</div>`:''}
+  <div class="row" style="margin-bottom:10px"><div style="font-size:13.5px">${crumb}</div><div class="spacer"></div>
+    <select onchange="RS.source=this.value;paintResults($('#view'))"><option value="all" ${RS.source==='all'?'selected':''}>both sources</option><option value="app" ${RS.source==='app'?'selected':''}>this app</option><option value="account" ${RS.source==='account'?'selected':''}>the account before</option></select>
+    <button class="${H?'sm':'primary'}" onclick="rsPullHistory()" ${RS.busy?'disabled':''}>${RS.busy?'Working…':H?'Pull the account again':"Pull the account's history from Meta"}</button></div>
+  ${RS.msg?`<div class="msg ${/failed|could not|not set/i.test(RS.msg)?'err':'ok'}">${esc(RS.msg)}</div>`:''}
+  <div class="card"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?` · account pulled ${esc(H.pulled.slice(0,10))}`:''}</span><div class="spacer"></div>
+      ${RS.level==='ads'?`<button class="sm" onclick="rsPickTop(10)">Pick the top 10 by leads</button><button class="sm primary" onclick="rsImport()" ${RS.hsel.size&&!RS.busy?'':'disabled'}>Bring ${RS.hsel.size||''} into the library</button>`:`<span class="hint">${clickable?'click a row to open it · ':''}click a column to sort</span>`}</div>
+    ${RS.level==='ads'?"<p class=\"hint\">Ads from the account before this app can be brought into the library: the picture joins Reference images (a video's poster frame counts), the primary text and headline join the copy references with their results. Rows from outside the gym's country are greyed and left out of the top picks.</p>":''}
+    ${rows.length?`<div style="overflow:auto;margin-top:8px"><table class="tbl"><thead><tr>${cols.map(([c,l])=>`<th style="${c==='pick'||c==='thumbnail'?'':'cursor:pointer;'}white-space:nowrap" onclick="if('${c}'!=='pick'&&'${c}'!=='thumbnail'){RS.sort['${RS.level}']='${c}';paintResults($('#view'))}">${l}${k===c?' ▾':''}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr class="${r.abroad?'dim':''} ${r.superseded?'dim':''}" ${clickable?`style="cursor:pointer" ${onRow(r)}`:''}>${cols.map(([c])=>cell(r,c)).join('')}</tr>`).join('')}</tbody></table></div>`:`<div class="empty">${RS.level==='campaigns'?(H?'No campaigns for this source.':"Nothing on Meta yet from this app. Pull the account's history to see what ran before, or publish a campaign."):'Nothing here.'}</div>`}
+    ${rows.some(r=>r.abroad||r.superseded)?`<div class="hint" style="margin-top:8px">Greyed rows: ${rows.some(r=>r.abroad)?"targeting reaches outside the gym's country, so the leads say nothing about people near the gym":""}${rows.some(r=>r.abroad)&&rows.some(r=>r.superseded)?"; ":""}${rows.some(r=>r.superseded)?"an ad remade since (its old version, still paused on Meta)":""}.</div>`:''}
+    ${RS.level==='campaigns'&&(D.batches||[]).length?`<div class="hint" style="margin-top:10px">This app's campaigns: ${D.batches.map(b=>`<a href="#" onclick="openPublish('${esc(b.id)}');return false">${esc(b.id)}</a> (${b.results?'pull results again on its Publish screen':'not pulled yet — pull on its Publish screen'})`).join(' · ')}</div>`:''}
+  </div>`;
+}
+function rsGo(level){ RS.level = level; if (level==='campaigns'){ RS.campaign = null; RS.adset = null; } if (level==='adsets') RS.adset = null; paintResults($('#view')); }
+function rsBack(){ rsGo(RS.level==='ads' ? 'adsets' : 'campaigns'); }
+function rsOpenCampaign(id){ RS.campaign = id; RS.adset = null; RS.level = 'adsets'; paintResults($('#view')); window.scrollTo(0,0); }
+function rsOpenAdset(id){ RS.adset = id; RS.level = 'ads'; const set = (RS.data.adsets||[]).find(s=>s.adset_id===id); if (set && !RS.campaign) RS.campaign = set.campaign_id || null; paintResults($('#view')); window.scrollTo(0,0); }
+async function rsPullHistory(){ RS.busy = true; RS.msg = null; paintResults($('#view')); try { const r = await api(`/api/client/${STATE.sel}/history/pull`, { method:'POST', body:{} }); RS.data.history = r; if (r.adsets_rows) RS.data.adsets = r.adsets_rows; if (r.campaign_rows) RS.data.campaigns = r.campaign_rows; RS.msg = `Pulled ${r.campaigns} campaigns, ${r.adsets} ad sets, ${r.ads} ads from the account.`; } catch(e){ RS.msg = 'The pull failed: ' + e.message; } RS.busy = false; paintResults($('#view')); }
+function rsPickTop(n){ const rows = rsRows().filter(r=>r.source==='account'&&r.importable&&r.leads>0&&!r.abroad).sort((a,b)=>b.leads-a.leads).slice(0,n); RS.hsel = new Set(rows.map(r=>r.ad_id)); paintResults($('#view')); }
+async function rsImport(){ RS.busy = true; RS.msg = null; paintResults($('#view')); try { const r = await api(`/api/client/${STATE.sel}/history/import`, { method:'POST', body:{ ads:[...RS.hsel] } }); if (RS.data.history) RS.data.history.rows = r.rows; RS.data.copy_refs = r.copy_refs; RS.hsel.clear(); RS.msg = `Brought in ${r.images} image${r.images===1?'':'s'} (${r.images_kept} already there) and ${r.copy} copy reference${r.copy===1?'':'s'} (${r.copy_kept} updated).${r.skipped.length?' Skipped: '+r.skipped.join('; '):''} Images: Library → Reference images.`; } catch(e){ RS.msg = 'The import failed: ' + e.message; } RS.busy = false; paintResults($('#view')); }
+
 // ── Publish ─────────────────────────────────────────────────────────────────
 const PB = { gym:null, id:null, data:null, settings:{}, busy:false, error:null, link:null, estimates:{}, saveT:null };
 async function viewPublish(v, seq=VIEW_SEQ){
   if (PB.id !== STATE.batch || PB.gym !== STATE.sel || !PB.data){
     v.innerHTML = `<h1>Publish</h1><p class="sub">Loading ${esc(STATE.batch)}…</p>`;
     PB.gym = STATE.sel; PB.id = STATE.batch; PB.data = null; PB.error = null; PB.link = null; PB.estimates = {};
-    try { PB.data = await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/publish`); PB.settings = PB.data.settings || {}; }
+    try { PB.data = await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/publish`); PB.settings = PB.data.settings || {}; PB.results = PB.data.published?.campaign?.id ? (await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/results`).catch(()=>({}))).results || null : null; }
     catch(e){ if (seq !== VIEW_SEQ) return; v.innerHTML = `<h1>Publish</h1><div class="msg err">${esc(e.message)}</div><p><button onclick="go('exports')">Back</button></p>`; return; }
     if (seq !== VIEW_SEQ) return;
   }
@@ -1641,15 +1701,21 @@ function paintPublish(v){
 function publishedCard(rec, P){
   if (!rec) return '';
   const made = Object.keys(rec.ads||{}).length, sets = Object.values(rec.adsets||{});
+  const X = PB.results, cA = X?.campaign?.all_time, c7 = X?.campaign?.last_7d;
+  const numbers = X ? `<div class="kv" style="margin-top:8px"><span>Status</span><div>campaign ${esc(X.campaign.words)}${Object.values(X.adsets).length?` · ad sets ${[...new Set(Object.values(X.adsets).map(x=>x.words))].map(esc).join(', ')}`:''}${Object.values(X.ads).length?` · ads ${[...new Set(Object.values(X.ads).map(x=>x.words))].map(esc).join(', ')}`:''}</div>
+      <span>All time</span><div>${money(cA.spend,P.currency)} spent · ${cA.leads} lead${cA.leads===1?'':'s'}${cA.cost_per_lead!=null?` at ${money(cA.cost_per_lead,P.currency)} each`:''} · ${cA.impressions.toLocaleString()} impressions${cA.ctr!=null?` · ${cA.ctr}% click rate`:''}</div>
+      <span>Last 7 days</span><div>${money(c7.spend,P.currency)} spent · ${c7.leads} lead${c7.leads===1?'':'s'}${c7.cost_per_lead!=null?` at ${money(c7.cost_per_lead,P.currency)} each`:''}</div>
+      <span>Pulled</span><div>${esc(X.pulled.slice(0,16).replace('T',' '))} · <a href="#" onclick="openResults();return false">every ad in Results</a></div></div>` : '';
   const url = rec.campaign?.id ? `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${esc((rec.account||'').replace(/^act_/,''))}&selected_campaign_ids=${esc(rec.campaign.id)}` : null;
   const stale = Object.keys(rec.ads||{}).filter(f=>!P.ads.some(a=>a.folder===f));
-  return `<div class="card"><h3>On Facebook ${rec.done?'<span class="pill on">complete</span>':`<span class="pill warn">${made} of ${P.counts.ads} ads</span>`}</h3>
+  return `<div class="card"><div class="row"><h3 style="margin:0">On Facebook ${rec.done?'<span class="pill on">complete</span>':`<span class="pill warn">${made} of ${P.counts.ads} ads</span>`}</h3><div class="spacer"></div><button class="sm" onclick="pbPull()" ${PB.busy?'disabled':''}>${X?'Pull results again':'Pull results from Meta'}</button></div>
     <div class="kv"><span>Campaign</span><div>${rec.campaign?`${esc(rec.campaign.name)} · ${esc(rec.campaign.id)}${url?` · <a href="${url}" target="_blank" rel="noopener">open in Ads Manager</a>`:''}`:'not yet'}</div>
       <span>Ad sets</span><div>${sets.length?sets.map(x=>`${esc(x.name)} · ${esc(x.id)}`).join('<br>'):'not yet'}</div>
       <span>Ads</span><div>${made} made, all paused${rec.superseded?.length?` · ${rec.superseded.length} remade (the old ones stay paused)`:''}${stale.length?` · <span style="color:var(--warn)">${stale.length} on Meta but no longer kept here (paused; pause or delete them in Ads Manager)</span>`:''}</div>
       ${rec.error?`<span>Stopped</span><div style="color:var(--err)">${esc(rec.error.step)} ${esc(rec.error.what||'')}: ${esc(rec.error.message)}</div>`:''}
-      <span>Last run</span><div>${rec.runs?.length?esc((rec.runs.at(-1).finished||rec.runs.at(-1).started).slice(0,16).replace('T',' ')):'—'}</div></div></div>`;
+      <span>Last run</span><div>${rec.runs?.length?esc((rec.runs.at(-1).finished||rec.runs.at(-1).started).slice(0,16).replace('T',' ')):'—'}</div></div>${numbers}</div>`;
 }
+async function pbPull(){ PB.busy = true; PB.error = null; paintPublish($('#view')); try { PB.results = (await api(`/api/client/${PB.gym}/batch/${PB.id}/results/pull`, { method:'POST', body:{} })).results; } catch(e){ PB.error = e.message; } PB.busy = false; paintPublish($('#view')); }
 function pbCreateConfirm(){
   const P = PB.data.plan, cur = P.currency, made = Object.keys(PB.data.published?.ads||{}).length;
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">

@@ -38,6 +38,7 @@ import { imageSize } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
 import { buildPlan, keptAds, CTA_TYPES } from "../skills/references/meta-publish.mjs";
+import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
@@ -415,6 +416,7 @@ function listBatches(gym) {
       selected: existsSync(join(out, "selections.json")),
       stories: (() => { const s = readJsonFile(join(out, "stories.json")); return s ? s.ads.length : 0; })(),
       directed: !!brief.direction,
+      published: (() => { const r = readJsonFile(join(out, "publish.json")), x = readJsonFile(join(out, "results.json")); return r?.campaign?.id ? { ads: Object.keys(r.ads || {}).length, done: !!r.done, status: x?.campaign?.words || "paused", leads: x?.campaign?.all_time?.leads ?? null, spend: x?.campaign?.all_time?.spend ?? null, cost_per_lead: x?.campaign?.all_time?.cost_per_lead ?? null, pulled: x?.pulled || null } : null; })(),
       review: batch ? (() => { const c = reviewState(gym, id).counts; return { kept: c.kept, excluded: c.excluded, unreviewed: c.unreviewed }; })() : null,
       running: activeRun(gym, id),
     };
@@ -778,6 +780,35 @@ const server = createServer(async (req, res) => {
         if (id && req.method === "DELETE") { const { reason } = await readBody(req); return json(res, 200, view({ preset: retirePreset(dir, id, reason) })); }
       } catch (e) { return json(res, e.code === 190 || e.trace ? 502 : 400, { error: scrubTokens(e.message) }); }
     }
+    // /api/client/{gym}/results[.csv] — every published ad of every batch, with what it was and what it did.
+    const rs = p.match(/^\/api\/client\/([^/]+)\/results(\.csv)?$/);
+    if (rs && req.method === "GET") {
+      const gym = rs[1];
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      const rows = gymRows(brandDir(gym));
+      if (rs[2]) { res.writeHead(200, { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="${gym}-results.csv"` }); return res.end(resultsCsv(allRows(brandDir(gym)))); }
+      const batches = [...new Set(rows.map((r) => r.batch))].map((id) => ({ id, results: readJsonFile(join(brandDir(gym), "outputs", id, "results.json")), record: (({ campaign, adsets, ads, done }) => ({ campaign, adsets: Object.keys(adsets || {}).length, ads: Object.keys(ads || {}).length, done }))(readJsonFile(join(brandDir(gym), "outputs", id, "publish.json")) || {}) }));
+      const h = readHistory(brandDir(gym));
+      const hrows = h ? historyRows(brandDir(gym)) : [];
+      return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length });
+    }
+    // The account's history: pulled from Meta (read-only), and chosen ads brought into the library.
+    const hs = p.match(/^\/api\/client\/([^/]+)\/history\/(pull|import)$/);
+    if (hs && req.method === "POST") {
+      const gym = hs[1];
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      const profile = readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}, c = metaConfig({ gym });
+      if (!c.token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+      if (!profile.meta_assets?.ad_account_id) return json(res, 409, { error: "pick the gym's ad account on the Meta link page first" });
+      const client = graphClient({ config: c }), accountId = profile.meta_assets.ad_account_id;
+      try {
+        if (hs[2] === "pull") { const h = await pullAccountHistory({ client, accountId, gymDir: brandDir(gym) }); const hrows = historyRows(brandDir(gym)); return json(res, 200, { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, adsets_rows: adsetRows([...gymRows(brandDir(gym)), ...hrows]), campaign_rows: campaignRows([...gymRows(brandDir(gym)), ...hrows]) }); }
+        const { ads } = await readBody(req);
+        if (!Array.isArray(ads) || !ads.length || ads.length > 50 || ads.some((id) => !/^\d{5,20}$/.test(String(id)))) return json(res, 400, { error: "choose 1 to 50 ads by id" });
+        const done = await importFromAccount({ client, accountId, gymDir: brandDir(gym), adIds: ads.map(String) });
+        return json(res, 200, { ...done, rows: historyRows(brandDir(gym)), copy_refs: readCopyRefs(brandDir(gym)).refs.length });
+      } catch (e) { return json(res, e.code === 190 || e.trace ? 502 : 400, { error: scrubTokens(e.message) }); }
+    }
     // Meta place keys (pasted, or from the account's history) → their names and points.
     const mpl = p.match(/^\/api\/client\/([^/]+)\/meta-places$/);
     if (mpl && req.method === "GET") {
@@ -895,7 +926,7 @@ const server = createServer(async (req, res) => {
     }
 
     // /api/client/{gym}/batch/{id}/progress · /review · /picks · /publish
-    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish)$/);
+    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull)$/);
     if (rv) {
       const [, gym, id, what] = rv;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
@@ -927,6 +958,19 @@ const server = createServer(async (req, res) => {
         try { plan = buildPlan({ profile, batch, kept, presets, settings }); } catch (e) { return json(res, 400, { error: e.message }); }
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
         return json(res, 200, { plan, settings, thumbs, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: CTA_TYPES, words: { offer: batch.ads?.[0]?.words?.offer || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, published: readJsonFile(join(out, "publish.json")) });
+      }
+      if (what === "results" && req.method === "GET") return json(res, 200, { results: readJsonFile(join(out, "results.json")), rows: batchRows(dir, id), record: readJsonFile(join(out, "publish.json")) });
+      if (what === "results/pull" && req.method === "POST") {
+        const rec = readJsonFile(join(out, "publish.json"));
+        if (!rec?.campaign?.id) return json(res, 409, { error: "this batch has not been created on Meta yet" });
+        const c = metaConfig({ gym });
+        if (!c.token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+        try {
+          const r = await pullResults({ client: graphClient({ config: c }), record: rec, batchDir: out });
+          writeGymCsv(dir);
+          const every = allRows(dir);
+          return json(res, 200, { results: r, rows: batchRows(dir, id), record: rec, campaigns: campaignRows(every), adsets: adsetRows(every) });
+        } catch (e) { return json(res, 502, { error: scrubTokens(e.message) }); }
       }
       if (what === "review" && req.method === "GET") return json(res, 200, { ...reviewState(gym, id), words: (({ offer, locations, audience }) => ({ offer, locations, audience: audience ?? null }))(readJsonFile(briefPath(gym, id))), run: activeRun(gym, id) });
       if (what === "picks" && req.method === "PUT") {

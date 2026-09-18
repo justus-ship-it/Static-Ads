@@ -133,3 +133,24 @@ test("T4 the owner's own preset: built from search picks, checked before it is k
     assert.ok(!readFileSync(join(d, FILE), "utf-8").includes("advantage"));
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+test("T5 an ad set reaching outside the gym's country is counted apart: its leads never enter a preset's record or its cost per lead, the suggestion says what was left out, and a targeting that only ever ran abroad is not a preset (Sculpt Society's cheapest 'leads' were all from Bangladesh)", async () => {
+  const { isAbroad, adsetCountries } = await import("./meta-targeting.mjs");
+  const d = mkdtempSync(join(tmpdir(), "targeting-"));
+  try {
+    const bd = { genders: [1], geo_locations: { countries: ["BD"], custom_locations: [{ latitude: 1.3, longitude: 103.8, radius: 1, country: "SG" }] } };
+    assert.deepEqual([adsetCountries(bd), isAbroad(bd), isAbroad({ geo_locations: { places: [{ key: "1", country_code: "SG" }] } }), isAbroad({ geo_locations: { countries: ["sg"] } }), isAbroad({})], [["BD", "SG"], true, false, false, false]);
+    const adsets = [
+      adset("1", "SG broad men", { genders: [1], geo_locations: { custom_locations: [{ latitude: 1.35, longitude: 103.8, radius: 5, country: "SG" }] } }, "2026-04-23"),
+      adset("2", "BD broad men", bd, "2026-04-24"), adset("3", "BD broad men too", bd, "2026-04-25"),
+      adset("4", "BD only interests", { genders: [1], geo_locations: { countries: ["BD"] }, ...spec(FIT) }, "2026-04-26"),
+    ];
+    const insights = [{ adset_id: "1", spend: 300, leads: 10, impressions: 100 }, { adset_id: "2", spend: 2000, leads: 500, impressions: 100 }, { adset_id: "3", spend: 500, leads: 100, impressions: 100 }, { adset_id: "4", spend: 100, leads: 50, impressions: 100 }];
+    await importPresets({ client: fakeClient({ adsets, insights }), accountId: "111", gymDir: d, home: "SG" });
+    const data = readPresets(d), broad = data.presets.find((p) => p.id === BROAD);
+    assert.deepEqual([broad.stats.adsets, broad.stats.leads, broad.stats.cost_per_lead, broad.stats.abroad], [1, 10, 30, { adsets: 2, spend: 2500, leads: 600, countries: ["BD"] }], "the Bangladesh ad sets' 600 leads are set apart, not in the cost per lead");
+    assert.equal(data.presets.length, 1, "a targeting that only ran abroad is not offered as a preset");
+    const why = rankPresets(data, { gender: "men" })[0].why;
+    assert.match(why, /10 leads at 30.00 each over 1 ad set · \(2 ad sets reaching BD left out: 600 leads there\)/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

@@ -361,18 +361,21 @@ export async function createPlan(plan, { client, batchDir, record, log = console
   // The ad sets this run needs (those with an ad to make): made once per callout; changed targeting or budget updated.
   const adsToMake = first ? plan.ads.slice(0, first) : plan.ads;
   const callouts = [...new Set(adsToMake.map((a) => a.adset))];
+  const setFacts = (set) => ({ callout: set.callout, audience: set.audience, pin: set.pin?.label || set.pin?.place_name || null, place_key: set.pin?.place_key || null, radius_km: set.pin?.radius_km ?? null, age_min: set.age_min, age_max: set.age_max, gender: set.gender, preset: set.preset?.name || null, preset_id: set.preset?.id || null, level: plan.budget.level, daily: set.budget?.daily ?? plan.budget.daily, bid_strategy: plan.budget.bid_strategy });
+  const adFacts = (ad) => ({ has_story: !!ad.story, form_id: plan.lead_form_id, instagram_user_id: plan.instagram_user_id, cta: plan.words.cta, headline: plan.words.headline, message: plan.words.message, description: plan.words.description, placeholders: plan.words.placeholders.length > 0, name: ad.name });
   for (const callout of callouts) {
     const set = plan.adsets.find((x) => x.callout === callout);
     const key = adsetKey(set.payload), had = rec.adsets[callout];
     try {
       if (had?.id) {
-        if (had.key === key) { run.reused.adsets++; log(`· ad set ${callout}: already made (${had.id}) — reused`); continue; }
+        had.facts = setFacts(set);
+        if (had.key === key) { run.reused.adsets++; save(); log(`· ad set ${callout}: already made (${had.id}) — reused`); continue; }
         const { name, targeting, daily_budget, bid_strategy, bid_amount } = set.payload;
         await client.post(had.id, { name, targeting, ...(daily_budget != null ? { daily_budget, bid_strategy } : {}), ...(bid_amount != null ? { bid_amount } : {}) });
         Object.assign(had, { key, name, updated: new Date().toISOString() }); run.updated.adsets++; save(); log(`· ad set ${callout}: ${had.id} updated (targeting or budget changed)`);
       } else {
         const r = await client.post(`${account}/adsets`, { ...set.payload, campaign_id: rec.campaign.id });
-        rec.adsets[callout] = { id: r.id, key, name: set.payload.name, at: new Date().toISOString() }; run.made.adsets++; save();
+        rec.adsets[callout] = { id: r.id, key, name: set.payload.name, facts: setFacts(set), at: new Date().toISOString() }; run.made.adsets++; save();
         log(`· ad set ${callout}: ${r.id}`);
       }
     } catch (e) { fail("adset", callout, e); }
@@ -381,7 +384,7 @@ export async function createPlan(plan, { client, batchDir, record, log = console
   for (const ad of adsToMake) {
     const hashes = { square: await image(ad.image), story: ad.story ? await image(ad.story) : null };
     const key = creativeKey(ad.creative, hashes), had = rec.ads[ad.folder];
-    if (had?.id && had.key === key) { run.reused.ads++; continue; }
+    if (had?.id && had.key === key) { had.facts = adFacts(ad); run.reused.ads++; save(); continue; }
     if (had?.id) { rec.superseded.push({ folder: ad.folder, ...had, why: "the creative changed (words, images, form or identity)", at: new Date().toISOString() }); delete rec.ads[ad.folder]; run.superseded++; save(); log(`· ad ${ad.folder}: ${had.id} no longer matches the plan — making a new creative and ad`); }
     const spec = structuredClone(ad.creative);
     if (spec.asset_feed_spec) { spec.asset_feed_spec.images[0].hash = hashes.square; spec.asset_feed_spec.images[1].hash = hashes.story; }
@@ -390,7 +393,7 @@ export async function createPlan(plan, { client, batchDir, record, log = console
     try { creative = await postCreative(client, account, spec, log); run.made.creatives++; } catch (e) { fail("creative", ad.folder, e); }
     try {
       const r = await client.post(`${account}/ads`, { ...ad.payload, adset_id: rec.adsets[ad.adset].id, creative: { creative_id: creative.id } });
-      rec.ads[ad.folder] = { id: r.id, creative_id: creative.id, adset: ad.adset, key, hashes, enhancements: creative.enhancements, ...(creative.opt_out_refused ? { opt_out_refused: creative.opt_out_refused } : {}), at: new Date().toISOString() };
+      rec.ads[ad.folder] = { id: r.id, creative_id: creative.id, adset: ad.adset, key, hashes, facts: adFacts(ad), enhancements: creative.enhancements, ...(creative.opt_out_refused ? { opt_out_refused: creative.opt_out_refused } : {}), at: new Date().toISOString() };
       run.made.ads++; save();
       log(`· ad ${ad.folder}: ${r.id} (creative ${creative.id}, ${creative.enhancements})`);
     } catch (e) { rec.orphan_creatives = [...(rec.orphan_creatives || []), { folder: ad.folder, creative_id: creative.id }]; fail("ad", ad.folder, e); }

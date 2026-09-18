@@ -940,16 +940,28 @@ const META_TOKEN = "EAA" + "p".repeat(60);
 /** A fake Graph API for the panel: the token must be ours; a few assets; a Page token for the forms. */
 function fakeGraph() {
   const calls = [];
-  let n = 0;
+  let n = 0; const made = {};
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url, "http://x"), path = u.pathname.split("/").slice(2).join("/");
     if (req.method === "POST") { let body = ""; for await (const c of req) body += c; for (const [k, v] of new URLSearchParams(body)) u.searchParams.set(k, v); }
     const tok = u.searchParams.get("access_token");
     calls.push(path);
     const ok = (body) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
-    if (tok !== META_TOKEN && tok !== "PAGE-TOKEN") { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: "Invalid OAuth access token", code: 190 } })); }
+    if (!u.pathname.startsWith("/img/") && tok !== META_TOKEN && tok !== "PAGE-TOKEN") { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: "Invalid OAuth access token", code: 190 } })); }
     if (req.method === "POST" && path === "act_111000000001/adimages") return ok({ images: { [u.searchParams.get("name")]: { hash: "hash" + (++n) } } });
-    if (req.method === "POST" && ["act_111000000001/campaigns", "act_111000000001/adsets", "act_111000000001/adcreatives", "act_111000000001/ads"].includes(path)) return ok({ id: path.split("/")[1].slice(0, 2) + (++n) });
+    if (req.method === "POST" && ["act_111000000001/campaigns", "act_111000000001/adsets", "act_111000000001/adcreatives", "act_111000000001/ads"].includes(path)) { const id = path.split("/")[1].slice(0, 2) + (++n); made[path.split("/")[1]] = id; return ok({ id }); }
+    if (/^ca\d+$/.test(path)) return ok({ id: path, name: "Test campaign", status: "PAUSED", effective_status: "PAUSED" });
+    if (/^ca\d+\/adsets$/.test(path)) return ok({ data: [{ id: made.adsets, name: "set", status: "PAUSED", effective_status: "PAUSED", daily_budget: "5000" }] });
+    if (/^ca\d+\/ads$/.test(path)) return ok({ data: [{ id: made.ads, name: "one", status: "PAUSED", effective_status: "PAUSED", adset_id: made.adsets }] });
+    if (/^ca\d+\/insights$/.test(path)) return ok({ data: u.searchParams.get("level") === "ad" ? [{ ad_id: made.ads, adset_id: made.adsets, spend: "12.5", impressions: "800", inline_link_clicks: "20", clicks: "22", reach: "700", actions: [{ action_type: "lead", value: "2" }], date_start: "2026-09-17", date_stop: "2026-09-18" }] : [] });
+    if (path === "act_111000000001/campaigns" && req.method === "GET") return ok({ data: [{ id: "cx1", name: "0331 Their campaign", status: "ACTIVE", effective_status: "ACTIVE", objective: "OUTCOME_LEADS", created_time: "2026-03-31T10:00:00+0800" }] });
+    if (path === "act_111000000001/ads" && req.method === "GET") return ok({ data: [
+      { id: "900000000001", name: "0331 Their image ad", adset_id: "s1", campaign_id: "cx1", status: "ACTIVE", effective_status: "ACTIVE", created_time: "2026-03-31T11:00:00+0800", creative: { id: "tc1", thumbnail_url: `${u.origin}/thumb.jpg`, asset_feed_spec: { images: [{ hash: "th1" }], bodies: [{ text: "Their primary text" }], titles: [{ text: "Their headline" }] } } },
+      { id: "900000000002", name: "0331 Their video ad", adset_id: "s1", campaign_id: "cx1", status: "PAUSED", effective_status: "PAUSED", created_time: "2026-04-01T11:00:00+0800", creative: { id: "tc2", object_type: "VIDEO", object_story_spec: { page_id: "770000000007", video_data: { video_id: "v1", message: "Video words", title: "Video title", image_hash: "th2" } } } },
+    ] });
+    if (path === "act_111000000001/insights" && u.searchParams.get("level") === "ad") return ok({ data: u.searchParams.get("date_preset") === "maximum" ? [{ ad_id: "900000000001", spend: "300", impressions: "9000", inline_link_clicks: "90", actions: [{ action_type: "lead", value: "30" }] }, { ad_id: "900000000002", spend: "500", impressions: "20000", inline_link_clicks: "200", actions: [{ action_type: "lead", value: "100" }] }] : [] });
+    if (path === "act_111000000001/adimages" && u.searchParams.get("hashes")) return ok({ data: JSON.parse(u.searchParams.get("hashes")).map((h) => ({ hash: h, url: `http://127.0.0.1:${server.address().port}/img/${h}.png` })) });
+    if (u.pathname.startsWith("/img/")) { res.writeHead(200, { "content-type": "image/png" }); return res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7])); }
     if (path === "me") return ok({ id: "1", name: "strategym-panel" });
     if (path === "me/adaccounts") return ok({ data: [{ id: "act_111000000001", account_id: "111000000001", name: "Test Gym Ads", currency: "SGD", account_status: 1, timezone_name: "Asia/Singapore" }, { id: "act_222000000002", account_id: "222000000002", name: "Other Ads", currency: "USD", account_status: 1 }] });
     if (path === "me/accounts") return ok({ data: [{ id: "770000000007", name: "Test Gym", instagram_business_account: { id: "880000000008", username: "testgym" } }] });
@@ -1346,5 +1358,115 @@ test("U21 creating on Facebook from the panel: refused without the Meta link, wi
     assert.ok(await ev("[...document.querySelectorAll('#view button.primary')].some(b=>/Continue creating on Facebook/.test(b.textContent) && !b.disabled)"));
     await ev("pbCreateConfirm(); true");
     assert.match(await ev("document.querySelector('#bModal').textContent"), /every object paused/);
+  } finally { await panel.stop(); panel = main; graph.server.close(); }
+});
+
+test("U22 results: a batch on Meta can be pulled from the panel (statuses and numbers into results.json, the gym's CSV rebuilt), its rows tie each ad to what it was; a batch not on Meta says so; the gym's table and CSV list every published ad; the Results page shows the campaigns and the sortable table; the campaign cards say what is on Facebook", async () => {
+  const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
+  await linkTestGym();
+  rmSync(join(out, "publish.json"), { force: true }); rmSync(join(out, "results.json"), { force: true }); rmSync(join(g, "results.csv"), { force: true });
+  let r = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/results/pull`, { method: "POST", body: {} });
+  assert.equal(r.status, 409); assert.match((await r.json()).error, /not been created on Meta/);
+  r = await (await call(`/api/client/${GYM}/results`)).json();
+  assert.deepEqual([r.rows, r.batches], [[], []]);
+  const graph = await fakeGraph();
+  const main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  try {
+    const plan = (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json()).plan;
+    const made = await runAndWait({ kind: "batch-publish", gym: GYM, batch: BRIEF.batch_id, confirm: { ads: plan.counts.ads, adsets: plan.counts.adsets, per_day: plan.budget.per_day_total, first: 1 } });
+    assert.equal(made.code, 0, made.lines.join("\n"));
+    const rec = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8"));
+    const [folder, entry] = Object.entries(rec.ads)[0];
+    assert.deepEqual([entry.facts.has_story, entry.facts.form_id, entry.facts.cta, rec.adsets[entry.adset].facts.gender, rec.adsets[entry.adset].facts.daily], [false, "400100000001", "SIGN_UP", plan.adsets.find((s) => s.callout === entry.adset).gender, 50], "the plan's facts ride on the record");
+    r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/results`)).json();
+    assert.deepEqual([r.results, r.rows.length, r.rows[0].status, r.rows[0].folder, r.rows[0].layout], [null, 1, "not pulled yet", folder, plan.ads.find((a) => a.folder === folder) && JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).ads.find((a) => a.folder === folder).treatment]);
+    r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/results/pull`, { method: "POST", body: {} })).json();
+    assert.deepEqual([r.results.campaign.words, r.results.campaign.all_time.leads, r.results.campaign.all_time.cost_per_lead, r.rows[0].status, r.rows[0].leads, r.rows[0].spend, r.rows[0].ctr], ["paused", 2, 6.25, "paused", 2, 12.5, 2.5]);
+    assert.ok(existsSync(join(out, "results.json")) && existsSync(join(g, "results.csv")));
+    const csv = await call(`/api/client/${GYM}/results.csv`);
+    assert.equal(csv.headers.get("content-type"), "text/csv; charset=utf-8");
+    const lines = (await csv.text()).trim().split("\n");
+    assert.deepEqual([lines.length, lines[0].startsWith("source,gym,batch,"), lines[1].includes(folder)], [2, true, true]);
+    r = await (await call(`/api/client/${GYM}/results`)).json();
+    assert.deepEqual([r.rows.length, r.batches.length, r.batches[0].results.campaign.words, r.batches[0].record.ads], [1, 1, "paused", 1]);
+    assert.deepEqual([r.adsets.length, r.adsets[0].source, r.adsets[0].ads, r.adsets[0].leads, r.adsets[0].cost_per_lead, r.adsets[0].adset_id], [1, "app", 1, 2, 6.25, rec.adsets[Object.keys(rec.adsets)[0]].id], "the ad-set level, from the app's rows");
+    assert.deepEqual([r.campaigns.length, r.campaigns[0].source, r.campaigns[0].name, r.campaigns[0].adsets, r.campaigns[0].ads, r.campaigns[0].leads, r.campaigns[0].status, r.campaigns[0].campaign_id], [1, "app", "Test campaign", 1, 1, 2, "paused", rec.campaign.id], "the campaign level");
+    const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
+    const card = setup.batches.find((b) => b.id === BRIEF.batch_id).published;
+    assert.deepEqual([card.ads, card.done, card.status, card.leads, card.cost_per_lead], [1, false, "paused", 2, 6.25]);
+    // The Results page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u22#/${GYM}/results` }, sessionId); await loaded;
+    const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!RS.data && RS.level==='campaigns' && document.querySelectorAll('table.tbl tbody tr').length===1"))) await new Promise((x) => setTimeout(x, 120));
+    let text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /Campaigns · 1/); assert.match(text, /Test campaign/); assert.match(text, /2 leads at SGD 6.25/); assert.match(text, /download results.csv/);
+    assert.ok(await ev("[...document.querySelectorAll('table.tbl th')].some(th=>/Per lead/.test(th.textContent))"));
+    assert.ok(!/Ad sets ·|Ads in/.test(text), "one level at a time: campaigns only");
+    // Click the campaign → its ad sets; click the ad set → its ads; Back climbs one level each time.
+    await ev("rsOpenCampaign(RS.data.campaigns[0].campaign_id); true");
+    text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /Ad sets of Test campaign · 1/); assert.ok(!/Campaigns · 1/.test(text) && !/Ads in/.test(text));
+    assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/← Back/.test(b.textContent))"));
+    await ev("rsOpenAdset(RS.data.adsets[0].adset_id); true");
+    text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /Ads in .* · 1/); assert.ok(!/Ad sets of/.test(text), "the ads level alone");
+    assert.ok(await ev("[...document.querySelectorAll('table.tbl th')].some(th=>/Layout/.test(th.textContent))"), "the app's ads show their layout");
+    await ev("RS.sort.ads='layout'; paintResults(document.querySelector('#view')); true");
+    assert.ok(await ev("[...document.querySelectorAll('table.tbl th')].some(th=>/Layout ▾/.test(th.textContent))"), "sorting by a column");
+    await ev("rsBack(); true"); assert.equal(await ev("RS.level"), "adsets");
+    await ev("rsBack(); true"); assert.equal(await ev("RS.level"), "campaigns");
+    assert.match(await ev("document.querySelector('#view').textContent"), /Campaigns · 1/);
+  } finally { await panel.stop(); panel = main; graph.server.close(); }
+});
+
+test("U23 the account's history in the panel: pulled from Meta into the gym folder (their ads, not the app's), listed on Results with Meta's numbers, and chosen ads brought into the library — images into References (a video's poster frame too), words into the copy references; refused without the link or with bad ids; the CSV carries both sources", async () => {
+  const g = join(brands, GYM);
+  await linkTestGym();
+  rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "copy-references.json"), { force: true });
+  for (const f of ["meta-900000000001.png", "meta-900000000001.png.meta.json", "meta-900000000002.png", "meta-900000000002.png.meta.json"]) rmSync(join(g, "references", f), { force: true });
+  let r = await call(`/api/client/${GYM}/history/pull`, { method: "POST", body: {} });
+  assert.equal(r.status, 409); assert.match((await r.json()).error, /Meta link is not set up/);
+  assert.equal((await (await call(`/api/client/${GYM}/results`)).json()).history, null);
+  const graph = await fakeGraph();
+  const main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  try {
+    r = await (await call(`/api/client/${GYM}/history/pull`, { method: "POST", body: {} })).json();
+    assert.deepEqual([r.campaigns, r.ads, r.rows.map((x) => [x.ad_id, x.media, x.leads, x.cost_per_lead, x.importable, x.in_library])], [1, 2, [["900000000002", "video", 100, 5, true, false], ["900000000001", "image", 30, 10, true, false]]], "the cheapest lead first; a video ad's poster can be brought in");
+    assert.ok(existsSync(join(g, "account-history.json")));
+    r = await (await call(`/api/client/${GYM}/results`)).json();
+    assert.deepEqual([r.history.ads, r.history.rows.length, r.copy_refs], [2, 2, 0]);
+    assert.equal((await call(`/api/client/${GYM}/history/import`, { method: "POST", body: { ads: ["x"] } })).status, 400);
+    assert.equal((await call(`/api/client/${GYM}/history/import`, { method: "POST", body: { ads: [] } })).status, 400);
+    r = await (await call(`/api/client/${GYM}/history/import`, { method: "POST", body: { ads: ["900000000001", "900000000002"] } })).json();
+    assert.equal(r.error, undefined, JSON.stringify(r));
+    assert.deepEqual([r.images, r.copy, r.skipped, r.copy_refs, r.rows.every((x) => x.in_library)], [2, 2, [], 2, true]);
+    assert.ok(existsSync(join(g, "references", "meta-900000000001.png")) && existsSync(join(g, "references", "meta-900000000002.png")));
+    assert.deepEqual(JSON.parse(readFileSync(join(g, "copy-references.json"), "utf-8")).refs.map((x) => [x.id, x.headline, x.results.leads]), [["meta-900000000001", "Their headline", 30], ["meta-900000000002", "Video title", 100]]);
+    const refs = (await (await call(`/api/client/${GYM}/scenes`)).json()).references.map((x) => x.name);
+    assert.ok(refs.includes("meta-900000000001.png") && refs.includes("meta-900000000002.png"), "listed with the reference images the scene refresh can use");
+    const csv = await (await call(`/api/client/${GYM}/results.csv`)).text();
+    assert.ok(csv.split("\n").some((l) => l.startsWith("account,")), "the history in the CSV");
+    // The page: the history card with the table and the import.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u23#/${GYM}/results` }, sessionId); await loaded;
+    const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!RS.data && RS.level==='campaigns' && /Campaigns ·/.test(document.querySelector('#view').textContent)"))) await new Promise((x) => setTimeout(x, 120));
+    let text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /Their campaign/, "their campaign on the campaigns level: " + await ev("JSON.stringify(RS.data && {camps: (RS.data.campaigns||[]).length, hist: !!RS.data.history, err: RS.error})")); assert.match(text, /account pulled/);
+    await ev("RS.source='account'; paintResults(document.querySelector('#view')); true");
+    assert.match(await ev("document.querySelector('#view').textContent"), /130 leads/, "the account's campaigns alone");
+    await ev("rsOpenCampaign(RS.data.campaigns.find(c=>c.source==='account').campaign_id); true");
+    text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /Ad sets of 0331 Their campaign · 1/);
+    await ev("rsOpenAdset(rsRows()[0].adset_id); true");
+    text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /Ads in .* · 2/);
+    assert.equal(await ev("document.querySelectorAll('#view input[type=checkbox]').length"), 2, "their ads can be picked");
+    await ev("rsPickTop(1); true");
+    assert.deepEqual(await ev("[...RS.hsel]"), ["900000000002"], "the top by leads");
+    assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Bring 1 into the library/.test(b.textContent) && !b.disabled)"));
   } finally { await panel.stop(); panel = main; graph.server.close(); }
 });

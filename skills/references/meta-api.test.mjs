@@ -9,7 +9,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHmac } from "node:crypto";
@@ -50,10 +50,12 @@ before(async () => {
     calls.push({ path, q: u.searchParams, version: u.pathname.split("/")[1], method: req.method });
     const err = errorHook(path, u.searchParams);
     if (err) { res.writeHead(err.status || 400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: err.error })); }
-    if (u.searchParams.get("access_token") !== TOKEN && !(path.endsWith("/leadgen_forms") && u.searchParams.get("access_token") === "PAGE-TOKEN-77")) { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: "Invalid OAuth access token", code: 190, type: "OAuthException" } })); }
+    if (!path.startsWith("img-") && u.searchParams.get("access_token") !== TOKEN && !(path.endsWith("/leadgen_forms") && u.searchParams.get("access_token") === "PAGE-TOKEN-77")) { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: "Invalid OAuth access token", code: 190, type: "OAuthException" } })); }
     const a = answers[path];
     if (!a) { res.writeHead(404, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: `Unsupported get request. Object with ID '${path}' does not exist`, code: 803, type: "GraphMethodException" } })); }
-    res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(a(u.searchParams)));
+    const body = a(u.searchParams);
+    if (Buffer.isBuffer(body)) { res.writeHead(200, { "content-type": "image/png" }); return res.end(body); }
+    res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(body));
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   url = `http://127.0.0.1:${server.address().port}`;
@@ -486,4 +488,135 @@ test("M7 createPlan: images once per file by content, the campaign, the ad sets 
     for (const k of ["act_111/adimages", "act_111/campaigns", "act_111/adsets", "act_111/adcreatives", "act_111/ads", "c1", "s2"]) delete answers[k];
     rmSync(d, { recursive: true, force: true });
   }
+});
+
+test("M8 results: a pull reads the campaign's statuses and Meta's numbers per ad set and ad (all time and the last 7 days, plus the campaign's days) into results.json; the rows tie every published ad to what it was — photo, scene and tags, layout, style, palette, words, callout, pin, ages, gender, preset, budget, form, copy — and what it did; superseded ads are rows too; the gym's CSV carries every column; a batch not on Meta has no rows", async () => {
+  const { pullResults, batchRows, gymRows, resultsCsv, CSV_COLUMNS, metrics, statusWords } = await import("./meta-results.mjs");
+  const d = mkdtempSync(join(tmpdir(), "meta-results-"));
+  try {
+    const out = join(d, "outputs", "2026-09-13-men"); mkdirSync(out, { recursive: true }); mkdirSync(join(d, "outputs", "2026-09-14-women"), { recursive: true });
+    writeFileSync(join(out, "batch.json"), JSON.stringify({ photos: [{ id: "g01", kind: "generated", scene_id: "m-lunge" }, { id: "r01", kind: "real" }], ads: [
+      { folder: "101-c01-bishan-t3-green-white", photos: ["g01"], treatment: "t3-right-column", style: "s1-heavy-sans", palette: "green-white", words: { location: "BISHAN", audience: "MEN WANTED", offer: "12 Week Total Body Reset" } },
+      { folder: "102-c02-bishan-t8-blue-white", photos: ["g01", "r01"], treatment: "t8-panels-band", style: "s2", palette: "blue-white", words: { location: "BISHAN", audience: "MEN WANTED", offer: "12 Week Total Body Reset" } }] }));
+    writeFileSync(join(out, "visuals.json"), JSON.stringify({ visuals: [{ id: "g01", scene_id: "m-lunge", tags: { exercise: "lunge", age: "older", setting: "solo", equipment: "bodyweight" } }] }));
+    writeFileSync(join(out, "publish.json"), JSON.stringify({ batch_id: "2026-09-13-men", account: "act_111", campaign: { id: "c1", name: "0913 …" },
+      adsets: { BISHAN: { id: "s2", name: "0913 Bishan | …", facts: { pin: "Bishan", radius_km: 3, age_min: 25, age_max: 60, gender: "men", preset: "Broad", preset_id: "broad", level: "adset", daily: 50 } } },
+      ads: { "101-c01-bishan-t3-green-white": { id: "ad4", creative_id: "cr3", adset: "BISHAN", hashes: { square: "h1", story: "h2" }, facts: { has_story: true, form_id: "4001", cta: "SIGN_UP", headline: "[PLACEHOLDER headline] x", message: "m", placeholders: true }, at: "2026-09-17T08:00:00Z" },
+              "102-c02-bishan-t8-blue-white": { id: "ad6", creative_id: "cr5", adset: "BISHAN", hashes: { square: "h3", story: null }, facts: { has_story: false, form_id: "4001", cta: "SIGN_UP", headline: "Twelve weeks", message: "Real words.", placeholders: false }, at: "2026-09-17T08:01:00Z" } },
+      superseded: [{ folder: "101-c01-bishan-t3-green-white", id: "ad2", creative_id: "cr1", adset: "BISHAN", hashes: { square: "h1", story: "h2" }, why: "the creative changed" }], done: "2026-09-17T08:02:00Z" }));
+    writeFileSync(join(d, "outputs", "2026-09-14-women", "batch.json"), JSON.stringify({ photos: [], ads: [] }));
+    assert.deepEqual(batchRows(d, "2026-09-14-women"), [], "not on Meta: no rows");
+    assert.deepEqual(batchRows(d, "2026-09-13-men").map((r) => [r.folder, r.status, r.superseded]), [["101-c01-bishan-t3-green-white", "not pulled yet", false], ["102-c02-bishan-t8-blue-white", "not pulled yet", false], ["101-c01-bishan-t3-green-white", "superseded", true]], "rows before any pull, the superseded ad last");
+    // The pull: statuses and insights from the fake Graph.
+    const ins = (ad_id, spend, leads, imp, clicks) => ({ ad_id, adset_id: "s2", spend: String(spend), impressions: String(imp), clicks: String(clicks + 5), inline_link_clicks: String(clicks), reach: String(imp - 100), actions: [{ action_type: "link_click", value: String(clicks) }, ...(leads ? [{ action_type: "lead", value: String(leads) }] : [])], date_start: "2026-09-17", date_stop: "2026-09-18" });
+    Object.assign(answers, {
+      "c1": () => ({ id: "c1", name: "0913 …", status: "PAUSED", effective_status: "ACTIVE", updated_time: "x" }),
+      "c1/adsets": () => ({ data: [{ id: "s2", name: "0913 Bishan | …", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: "5000" }] }),
+      "c1/ads": () => ({ data: [{ id: "ad4", name: "a", status: "ACTIVE", effective_status: "ACTIVE", adset_id: "s2" }, { id: "ad6", name: "b", status: "ACTIVE", effective_status: "IN_PROCESS", adset_id: "s2" }, { id: "ad2", name: "old", status: "PAUSED", effective_status: "PAUSED", adset_id: "s2" }] }),
+      "c1/insights": (q) => (q.get("level") === "campaign" ? { data: [{ date_start: "2026-09-17", spend: "40", actions: [{ action_type: "lead", value: "2" }] }, { date_start: "2026-09-18", spend: "50", actions: [{ action_type: "lead", value: "3" }] }] }
+        : q.get("date_preset") === "maximum" ? { data: [ins("ad4", 60, 4, 2000, 40), ins("ad6", 30, 1, 1000, 10)] } : { data: [ins("ad4", 20, 1, 700, 12)] }),
+    });
+    const r = await pullResults({ client: client(), record: JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")), batchDir: out, now: "2026-09-18T09:00:00.000Z" });
+    assert.deepEqual([r.pulled, r.campaign.words, r.campaign.all_time, r.campaign.last_7d.leads, r.adsets.s2.ads, r.adsets.s2.all_time.cost_per_lead, r.ads.ad4.words, r.ads.ad6.words, r.ads.ad2.words, r.ads.ad4.all_time.ctr, r.ads.ad6.last_7d.leads, r.daily],
+      ["2026-09-18T09:00:00.000Z", "live", { spend: 90, impressions: 3000, reach: 2800, clicks: 50, leads: 5, cost_per_lead: 18, ctr: 1.67 }, 1, 3, 18, "live", "in Meta's review", "paused", 2, 0, [{ date: "2026-09-17", spend: 40, leads: 2 }, { date: "2026-09-18", spend: 50, leads: 3 }]]);
+    assert.ok(existsSync(join(out, "results.json")));
+    assert.deepEqual(metrics({ spend: "10.5", impressions: "1000", inline_link_clicks: "25", actions: [{ action_type: "lead", value: "3" }] }), { spend: 10.5, impressions: 1000, reach: 0, clicks: 25, leads: 3, cost_per_lead: 3.5, ctr: 2.5, cpm: 10.5, from: null, to: null });
+    assert.deepEqual([statusWords("CAMPAIGN_PAUSED"), statusWords("SOMETHING_NEW"), statusWords(null)], ["paused with its campaign", "something new", "unknown"]);
+    // The rows after the pull: what each ad was, and what it did.
+    const rows = batchRows(d, "2026-09-13-men");
+    const first = rows[0];
+    assert.deepEqual([first.ad_id, first.adset_id, first.campaign_id, first.status, first.adset_status, first.offer, first.location, first.audience, first.callout, first.photos, first.scenes, first.exercise, first.age_tag, first.layout, first.style, first.palette, first.has_story, first.pin, first.radius_km, first.age_min, first.age_max, first.gender, first.preset, first.daily_budget, first.form_id, first.cta, first.headline, first.placeholder_words, first.spend, first.leads, first.cost_per_lead, first.ctr, first.leads_7d, first.spend_7d, first.pulled],
+      ["ad4", "s2", "c1", "live", "live", "12 Week Total Body Reset", "BISHAN", "MEN WANTED", "BISHAN", "g01", "m-lunge", "lunge", "older", "t3-right-column", "s1-heavy-sans", "green-white", true, "Bishan", 3, 25, 60, "men", "Broad", 50, "4001", "SIGN_UP", "[PLACEHOLDER headline] x", true, 60, 4, 15, 2, 1, 20, "2026-09-18T09:00:00.000Z"]);
+    assert.deepEqual([rows[1].photos, rows[1].scenes, rows[1].has_story, rows[1].status, rows[1].leads, rows[1].leads_7d], ["g01+r01", "m-lunge+real photo", false, "in Meta's review", 1, 0]);
+    assert.deepEqual([rows[2].ad_id, rows[2].superseded, rows[2].status, rows[2].leads], ["ad2", true, "paused", 0]);
+    // The gym's table: the cheapest lead first; the CSV with every column, quoting what needs it.
+    const all = gymRows(d);
+    assert.deepEqual(all.map((r) => r.ad_id), ["ad4", "ad6", "ad2"]);
+    const csv = resultsCsv(all);
+    assert.equal(csv.split("\n")[0], CSV_COLUMNS.join(","));
+    assert.equal(csv.split("\n").length, 5, "a header, three rows, a final newline");
+    assert.ok(csv.includes('"[PLACEHOLDER headline] x"') === false && csv.includes("[PLACEHOLDER headline] x"), "no comma, no quotes needed");
+    assert.ok(resultsCsv([{ ...all[0], headline: 'Say "hi", now' }]).includes('"Say ""hi"", now"'));
+    assert.ok(!JSON.stringify(r).includes(TOKEN));
+  } finally { for (const k of ["c1", "c1/adsets", "c1/ads", "c1/insights"]) delete answers[k]; rmSync(d, { recursive: true, force: true }); }
+});
+
+test("M9 the account's history: every campaign, ad set and ad the account ran, with its creative's image, words and form, the ad set's gender, ages, place and targeting, and Meta's all-time numbers; rows leave out the ads this app made; the chosen ads' images land in references/ with their record beside them and their words become copy references with their results — nothing fetched twice, videos said so; the CSV carries both sources", async () => {
+  const { pullAccountHistory, historyRows, allRows, importFromAccount, readCopyRefs, readHistory, resultsCsv } = await import("./meta-results.mjs");
+  const d = mkdtempSync(join(tmpdir(), "meta-history-"));
+  try {
+    // One ad made by this app (a publish record names it), two of theirs (an image and a video), on two ad sets.
+    mkdirSync(join(d, "outputs", "b1"), { recursive: true });
+    writeFileSync(join(d, "outputs", "b1", "publish.json"), JSON.stringify({ campaign: { id: "c9" }, adsets: {}, ads: { f: { id: "ours1" } }, superseded: [] }));
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    Object.assign(answers, {
+      "act_111/campaigns": () => ({ data: [{ id: "c1", name: "0331 12 Week Challenge", status: "ACTIVE", effective_status: "ACTIVE", objective: "OUTCOME_LEADS", created_time: "2026-03-31T10:00:00+0800" }, { id: "c9", name: "ours", status: "PAUSED", effective_status: "PAUSED" }] }),
+      "act_111/adsets": () => ({ data: [{ id: "s1", campaign_id: "c1", name: "0331 Thomson | Abs | Audience: Thomson + 4KM, Female, Fitness, 25-55", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: "8000", created_time: "2026-03-31T10:00:00+0800", targeting: { genders: [2], age_min: 25, age_max: 55, geo_locations: { places: [{ key: "107327800879305", name: "6 Sin Ming Road, Tower 2", radius: 4 }] }, flexible_spec: [{ interests: [{ id: "6003277229371", name: "Physical fitness (fitness)" }] }] } }] }),
+      "act_111/ads": () => ({ data: [
+        { id: "a1", name: "0331 Thomson | Abs | Image: Gold", adset_id: "s1", campaign_id: "c1", status: "ACTIVE", effective_status: "ACTIVE", created_time: "2026-03-31T11:00:00+0800", creative: { id: "cr1", thumbnail_url: "https://x/t.jpg", asset_feed_spec: { images: [{ hash: "h1" }, { hash: "h1" }], bodies: [{ text: "If you've ever walked into a gym…" }], titles: [{ text: "Thomson Ladies — your reset" }], call_to_actions: [{ type: "APPLY_NOW", value: { lead_gen_form_id: "4001" } }] } } },
+        { id: "a2", name: "0331 Thomson | Abs | Video: V1", adset_id: "s1", campaign_id: "c1", status: "PAUSED", effective_status: "PAUSED", created_time: "2026-04-01T11:00:00+0800", creative: { id: "cr2", object_type: "VIDEO", thumbnail_url: "https://x/v.jpg", object_story_spec: { page_id: "77", video_data: { video_id: "v1", message: "Video words", title: "Video title", image_hash: "h2" } } } },
+        { id: "ours1", name: "made here", adset_id: "s9", campaign_id: "c9", status: "PAUSED", effective_status: "PAUSED", creative: { id: "cr9", image_hash: "h9" } },
+        { id: "a3", name: "a post", adset_id: "s1", campaign_id: "c1", status: "PAUSED", effective_status: "PAUSED", creative: { id: "cr3", object_type: "SHARE", body: "Post words" } },
+      ] }),
+      "act_111/insights": (q) => ({ data: q.get("date_preset") === "maximum" ? [{ ad_id: "a1", spend: "837.21", impressions: "26526", reach: "11781", clicks: "611", inline_link_clicks: "234", actions: [{ action_type: "lead", value: "30" }] }, { ad_id: "a2", spend: "100", impressions: "5000", inline_link_clicks: "40", actions: [] }] : [{ ad_id: "a1", spend: "100", impressions: "3000", inline_link_clicks: "30", actions: [{ action_type: "lead", value: "4" }] }] }),
+      "act_111/adimages": (q) => ({ data: JSON.parse(q.get("hashes")).map((h) => ({ hash: h, url: `${url}/${META_API_VERSION}/img-${h}` })) }),
+      "img-h1": () => png, "img-h2": () => Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2]),
+    });
+    const h = await pullAccountHistory({ client: client(), accountId: "111", gymDir: d, now: "2026-09-18T10:00:00.000Z" });
+    assert.deepEqual([h.account, h.campaigns.length, h.adsets.length, h.ads.length, readHistory(d).pulled], ["act_111", 2, 1, 4, "2026-09-18T10:00:00.000Z"]);
+    assert.deepEqual([h.ads.find((a) => a.id === "a3").media, h.ads.find((a) => a.id === "a3").importable], ["other", false]);
+    const a1 = h.ads.find((a) => a.id === "a1"), a2 = h.ads.find((a) => a.id === "a2"), s1 = h.adsets[0];
+    assert.deepEqual([a1.media, a1.hashes, a1.body, a1.title, a1.form_id, a1.campaign, a1.all_time.leads, a1.all_time.cost_per_lead, a1.last_30d.leads, a2.media, a2.hashes, a2.body], ["image", ["h1"], "If you've ever walked into a gym…", "Thomson Ladies — your reset", "4001", "0331 12 Week Challenge", 30, 27.91, 4, "video", [], "Video words"]);
+    assert.deepEqual([a2.poster, a2.importable, a2.title], ["h2", true, "Video title"], "a video ad's poster frame is its picture");
+    assert.deepEqual([s1.gender, s1.age_min, s1.age_max, s1.geo, s1.audience, s1.targeting, s1.daily_budget], ["women", 25, 55, "6 Sin Ming Road, Tower 2 +4km", "Fitness", "Physical fitness (fitness) (interests)", 80]);
+    // The rows: theirs only, the cheapest lead first, the parameters Meta knows.
+    const rows = historyRows(d);
+    assert.deepEqual(rows.map((r) => [r.ad_id, r.source, r.status, r.leads, r.cost_per_lead, r.gender, r.audience, r.preset, r.pin, r.headline, r.in_library, r.layout]), [["a1", "account", "live", 30, 27.91, "women", "Fitness", "Physical fitness (fitness) (interests)", "6 Sin Ming Road, Tower 2 +4km", "Thomson Ladies — your reset", false, null], ["a2", "account", "paused", 0, null, "women", "Fitness", "Physical fitness (fitness) (interests)", "6 Sin Ming Road, Tower 2 +4km", "Video title", false, null], ["a3", "account", "paused", 0, null, "women", "Fitness", "Physical fitness (fitness) (interests)", "6 Sin Ming Road, Tower 2 +4km", null, false, null]], "the ad made here is not a history row");
+    assert.deepEqual(allRows(d).map((r) => r.ad_id), ["a1", "a2", "a3"], "no batch rows in this gym; the history alone");
+    const csv = resultsCsv(rows); assert.ok(csv.startsWith("source,gym,batch,") && csv.includes("account,")); 
+    // Into the library: the image ad's picture and words; the video ad's words only, its image skipped and said so.
+    const fetched = [];
+    const fetchImpl = async (u) => { fetched.push(u); const res = await fetch(u); return res; };
+    const done = await importFromAccount({ client: client(), accountId: "111", gymDir: d, adIds: ["a1", "a2", "nope"], fetchImpl });
+    assert.deepEqual([done.images, done.images_kept, done.copy, done.copy_kept, done.skipped], [2, 0, 2, 0, []]);
+    assert.ok(existsSync(join(d, "references", "meta-a1.png")) && existsSync(join(d, "references", "meta-a2.jpg")), "the image (a PNG by its bytes) and the video's poster (a JPEG)");
+    assert.equal(JSON.parse(readFileSync(join(d, "references", "meta-a2.jpg.meta.json"), "utf-8")).kind, "the video's poster frame");
+    const meta = JSON.parse(readFileSync(join(d, "references", "meta-a1.png.meta.json"), "utf-8"));
+    assert.deepEqual([meta.ad_id, meta.leads, meta.cost_per_lead, meta.title], ["a1", 30, 27.91, "Thomson Ladies — your reset"]);
+    const refs = readCopyRefs(d).refs;
+    assert.deepEqual(refs.map((r) => [r.id, r.source, r.headline, r.results.leads, r.results.cost_per_lead]), [["meta-a1", "account", "Thomson Ladies — your reset", 30, 27.91], ["meta-a2", "account", "Video title", 0, null]]);
+    assert.ok(historyRows(d).find((r) => r.ad_id === "a1").in_library && historyRows(d).find((r) => r.ad_id === "a2").in_library, "both are in the library now (the words count)");
+    // Again: nothing fetched twice, the copy references updated in place, a note the owner wrote kept.
+    const c = readCopyRefs(d); c.refs[0].note = "our best"; writeFileSync(join(d, "copy-references.json"), JSON.stringify(c));
+    fetched.length = 0;
+    const again = await importFromAccount({ client: client(), accountId: "111", gymDir: d, adIds: ["a1"], fetchImpl });
+    assert.deepEqual([again.images, again.images_kept, again.copy, again.copy_kept, fetched], [0, 1, 0, 1, []]);
+    const none = await importFromAccount({ client: client(), accountId: "111", gymDir: d, adIds: ["a3"], fetchImpl });
+    assert.deepEqual([none.images, none.skipped], [0, ["a3: other ad with no picture to bring"]]);
+    assert.equal(readCopyRefs(d).refs[0].note, "our best");
+    await assert.rejects(importFromAccount({ client: client(), accountId: "111", gymDir: d, adIds: ["nope"], fetchImpl }), /none of those ads/);
+    assert.ok(!JSON.stringify(h).includes(TOKEN) && !readFileSync(join(d, "copy-references.json"), "utf-8").includes(TOKEN));
+  } finally { for (const k of ["act_111/campaigns", "act_111/adsets", "act_111/ads", "act_111/insights", "act_111/adimages", "img-h1"]) delete answers[k]; rmSync(d, { recursive: true, force: true }); }
+});
+
+test("M10 the ad-set level: rows from both sources grouped by ad set with the sum of their ads' numbers, the ad set's facts, remade ads counted apart, the cheapest lead first; rows without an ad set are left out", async () => {
+  const { adsetRows, campaignRows } = await import("./meta-results.mjs");
+  const rows = [
+    { source: "app", batch: "b1", callout: "BISHAN", adset_id: "s1", campaign_id: "c1", adset_status: "paused", gender: "men", age_min: 25, age_max: 60, pin: "Bishan", preset: "Broad", daily_budget: 50, spend: 20, impressions: 1000, reach: 900, clicks: 30, leads: 2, superseded: false, pulled: "p" },
+    { source: "app", batch: "b1", callout: "BISHAN", adset_id: "s1", campaign_id: "c1", adset_status: "paused", gender: "men", age_min: 25, age_max: 60, pin: "Bishan", preset: "Broad", daily_budget: 50, spend: 10, impressions: 500, reach: 400, clicks: 10, leads: 3, superseded: false },
+    { source: "app", batch: "b1", callout: "BISHAN", adset_id: "s1", campaign_id: "c1", spend: 5, impressions: 100, reach: 90, clicks: 1, leads: 0, superseded: true },
+    { source: "account", adset_id: "s9", adset_name: "0331 Katong | Abs", campaign: "0331 Challenge", campaign_id: "c9", adset_status: "live", gender: "women", age_min: 25, age_max: 55, pin: "Katong +4km", countries: "SG", abroad: false, preset: "Fitness", daily_budget: 80, audience: "Fitness", spend: 300, impressions: 9000, reach: 5000, clicks: 90, leads: 30, superseded: false, pulled: "p" },
+    { source: "account", adset_id: "s9", adset_name: "0331 Katong | Abs", campaign: "0331 Challenge", campaign_id: "c9", spend: 100, impressions: 1000, reach: 800, clicks: 10, leads: 0, superseded: false },
+    { source: "account", adset_id: "sBD", adset_name: "BD set", countries: "BD+SG", abroad: true, spend: 100, impressions: 1000, reach: 800, clicks: 100, leads: 50, superseded: false },
+    { source: "account", adset_id: null, spend: 999, leads: 999 },
+  ];
+  const sets = adsetRows(rows);
+  assert.deepEqual(sets.map((s) => [s.adset_id, s.source, s.name, s.ads, s.superseded, s.spend, s.impressions, s.clicks, s.leads, s.cost_per_lead, s.ctr, s.gender, s.age_min, s.pin, s.targeting, s.abroad]),
+    [["sBD", "account", "BD set", 1, 0, 100, 1000, 100, 50, 2, 10, null, null, null, null, true], ["s1", "app", "BISHAN · b1", 2, 1, 35, 1600, 41, 5, 7, 2.56, "men", 25, "Bishan", "Broad", false], ["s9", "account", "0331 Katong | Abs", 2, 0, 400, 10000, 100, 30, 13.33, 1, "women", 25, "Katong +4km", "Fitness", false]],
+    "grouped, summed (the remade ad's spend counts, the ad itself apart), cheapest lead first — the abroad one is flagged, not hidden");
+  assert.deepEqual(adsetRows([]), []);
+  // The campaign level: ad sets and ads counted, numbers summed, the abroad flag carried up.
+  const camps = campaignRows(rows.map((r, i) => ({ ...r, campaign: r.campaign || (r.campaign_id === "c1" ? null : r.campaign), batch: r.batch, campaign_status: r.campaign_id === "c9" ? "live" : "paused" })));
+  assert.deepEqual(camps.map((c) => [c.campaign_id, c.source, c.name, c.status, c.adsets, c.ads, c.superseded, c.spend, c.leads, c.cost_per_lead, c.abroad]), [["c1", "app", "b1", "paused", 1, 2, 1, 35, 5, 7, false], ["c9", "account", "0331 Challenge", "live", 1, 2, 0, 400, 30, 13.33, false]], "the campaign level; the BD row has no campaign id and stays out");
+  assert.deepEqual(campaignRows([]), []);
 });

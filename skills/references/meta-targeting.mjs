@@ -133,8 +133,13 @@ const broadPreset = () => ({ id: BROAD, name: "Broad", source: "built-in", spec:
  * Every distinct targeting the account's ad sets have run → a preset with its record; the saved
  * audiences too. Names, notes and retirements the owner set are kept; stats and examples refreshed.
  */
-export async function importPresets({ client, accountId, gymDir, now = new Date().toISOString() }) {
+/** The countries an ad set's targeting names, beside its pins (a pin carries its own country). */
+export const adsetCountries = (t) => [...new Set([...((t?.geo_locations?.countries) || []), ...((t?.geo_locations?.custom_locations) || []).map((p) => p.country), ...((t?.geo_locations?.places) || []).map((p) => p.country_code || p.country), ...((t?.geo_locations?.cities) || []).map((c) => c.country)].filter(Boolean).map((c) => String(c).toUpperCase()))];
+/** Does the ad set reach people outside the gym's country? (Sculpt Society's cheapest "leads" were all from Bangladesh, 2026-09-18.) */
+export const isAbroad = (t, home = "SG") => adsetCountries(t).some((c) => c !== String(home).toUpperCase());
+export async function importPresets({ client, accountId, gymDir, now = new Date().toISOString(), home = null }) {
   const before = readPresets(gymDir);
+  home = home || (() => { try { return JSON.parse(readFileSync(join(gymDir, "gym-profile.json"), "utf-8")).locale?.country || "SG"; } catch { return "SG"; } })();
   const sets = await client.adsetHistory(accountId);
   const insights = await client.adsetInsights(accountId, { datePreset: "maximum" });
   const byAdset = new Map(insights.map((r) => [r.adset_id, r]));
@@ -142,8 +147,10 @@ export async function importPresets({ client, accountId, gymDir, now = new Date(
   const found = new Map();
   for (const s of sets) {
     const spec = normaliseSpec(s.targeting), id = fingerprint(spec);
-    const cur = found.get(id) || { id, spec, adsets: [], spend: 0, leads: 0, impressions: 0, genders: { men: 0, women: 0, all: 0 }, ages: {}, first: null, last: null };
+    const cur = found.get(id) || { id, spec, adsets: [], spend: 0, leads: 0, impressions: 0, genders: { men: 0, women: 0, all: 0 }, ages: {}, first: null, last: null, abroad: { adsets: 0, spend: 0, leads: 0, countries: [] } };
     const ins = byAdset.get(s.id);
+    // An ad set reaching outside the gym's country is counted apart: its leads say nothing about people near the gym.
+    if (isAbroad(s.targeting, home)) { cur.abroad.adsets++; if (ins) { cur.abroad.spend += ins.spend; cur.abroad.leads += ins.leads; } for (const c of adsetCountries(s.targeting)) if (c !== home.toUpperCase() && !cur.abroad.countries.includes(c)) cur.abroad.countries.push(c); found.set(id, cur); continue; }
     cur.adsets.push(s.name); if (ins) { cur.spend += ins.spend; cur.leads += ins.leads; cur.impressions += ins.impressions; }
     const g = s.targeting?.genders, gk = !g?.length ? "all" : g.includes(1) && !g.includes(2) ? "men" : g.includes(2) && !g.includes(1) ? "women" : "all";
     cur.genders[gk]++;
@@ -155,12 +162,13 @@ export async function importPresets({ client, accountId, gymDir, now = new Date(
   }
   const keep = new Map(before.presets.map((p) => [p.id, p]));
   const presets = [];
-  const stats = (c) => ({ adsets: c.adsets.length, spend: Math.round(c.spend * 100) / 100, leads: c.leads, impressions: c.impressions, cost_per_lead: c.leads ? Math.round((c.spend / c.leads) * 100) / 100 : null, genders: c.genders, ages: Object.entries(c.ages).sort((a, b) => b[1] - a[1]).map(([a]) => a), first_used: c.first, last_used: c.last });
+  const stats = (c) => ({ adsets: c.adsets.length, spend: Math.round(c.spend * 100) / 100, leads: c.leads, impressions: c.impressions, cost_per_lead: c.leads ? Math.round((c.spend / c.leads) * 100) / 100 : null, genders: c.genders, ages: Object.entries(c.ages).sort((a, b) => b[1] - a[1]).map(([a]) => a), first_used: c.first, last_used: c.last, ...(c.abroad.adsets ? { abroad: { adsets: c.abroad.adsets, spend: Math.round(c.abroad.spend * 100) / 100, leads: c.abroad.leads, countries: c.abroad.countries } } : {}) });
   // Broad, always, with the record of the ad sets that ran broad.
   const broad = found.get(BROAD);
   presets.push({ ...broadPreset(), ...(keep.get(BROAD) ? { notes: keep.get(BROAD).notes || "" } : {}), stats: broad ? stats(broad) : null, examples: broad ? [...new Set(broad.adsets)].slice(0, 5) : [] });
   for (const [id, c] of found) {
     if (id === BROAD) continue;
+    if (!c.adsets.length && c.abroad.adsets && !keep.get(id)) continue; // only ever run abroad: not a preset for this gym
     const old = keep.get(id), examples = [...new Set(c.adsets)].slice(0, 5);
     presets.push({ id, name: old?.renamed ? old.name : nameFor(c.spec, c.adsets), source: old?.source === "owner" ? "owner" : "account", spec: c.spec, summary: summarise(c.spec), stats: stats(c), examples, notes: old?.notes || "", renamed: !!old?.renamed, retired: old?.retired || null, added: old?.added || now.slice(0, 10) });
   }
@@ -240,6 +248,7 @@ export function rankPresets(data, { gender = "all", words: text = "", minLeads =
     const cpl = st && st.leads >= minLeads ? st.cost_per_lead : null;
     if (cpl != null) why.push(`${st.leads} leads at ${cpl.toFixed(2)} each over ${st.adsets} ad set${st.adsets === 1 ? "" : "s"}`);
     else if (st?.adsets) why.push(`${st.adsets} ad set${st.adsets === 1 ? "" : "s"}, ${st.leads} lead${st.leads === 1 ? "" : "s"}`);
+    if (st?.abroad) why.push(`(${st.abroad.adsets} ad set${st.abroad.adsets === 1 ? "" : "s"} reaching ${st.abroad.countries.join(", ")} left out: ${st.abroad.leads} leads there)`);
     else if (p.source === "saved_audience") why.push("a saved audience in Ads Manager, not run yet");
     else if (p.source === "owner") why.push("built here, not run yet");
     return { preset: p, ranFor, overlap: overlap.length, cpl, why };
