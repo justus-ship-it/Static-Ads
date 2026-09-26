@@ -198,6 +198,33 @@ export const VARIETY_WEIGHTS = { exercise: 3, age: 3, setting: 2, equipment: 2, 
 /** Does a scene show a must_show value? An exercise matches by name part: "squat" is any squat. */
 export const shows = (scene, tag, value) => scene[tag] != null && (scene[tag] === value || (tag === "exercise" && String(scene[tag]).split("-").includes(value)) || (tag === "exercise" && String(scene[tag]).includes(value)));
 
+/**
+ * The scenes a batch of `count` generated photos draws from: a gendered callout ("LADIES WANTED") its own
+ * scenes, with the mixed ("any") ones only when its own are fewer than the photos wanted; an ungendered
+ * callout the mixed ones. planVisuals and spreadFor share it, so the check and the run agree.
+ */
+export function scenePool(scenes, audience, count) {
+  const own = scenes.filter((s) => !s.audience || s.audience === audience), mixed = scenes.filter((s) => s.audience === "any");
+  return audience === "any" ? scenes.filter((s) => !s.audience || s.audience === "any") : own.length >= count ? own : [...own, ...mixed];
+}
+/** What "Spread across exercises, ages, settings and equipment" asks for, before it meets a gym's scenes. */
+export const SPREAD_WISH = Object.freeze({ exercise: ["lunge", "squat", "deadlift", "bench-press"], age: ["young", "prime", "older"], setting: ["solo", "coached", "group"], equipment: ["bodyweight", "dumbbells", "barbell"] });
+/**
+ * The spread a gym's library can deliver for this audience: every wished value some scene in the pool shows
+ * (`shows`, the planner's own match), in the wish's order; the rest named in `left_out`. A tag with nothing
+ * left is dropped. Before (2026-09-26), the panel sent the whole wish and a 10-scene library without a bench
+ * press refused the batch.
+ */
+export function spreadFor({ scenes = [], audience = "any", count = 1, wish = SPREAD_WISH }) {
+  const pool = scenePool(scenes, audience, count), must_show = {}, left_out = [];
+  for (const [tag, values] of Object.entries(wish)) {
+    const ok = values.filter((v) => pool.some((sc) => shows(sc, tag, v)));
+    for (const v of values) if (!ok.includes(v)) left_out.push(`${tag} ${v}`);
+    if (ok.length) must_show[tag] = ok;
+  }
+  return { must_show, left_out };
+}
+
 /** must_show values no suitable scene can show — refused before planning. */
 export function unshowable(mustShow = {}, scenes = []) {
   return Object.entries(mustShow || {}).flatMap(([tag, values]) => (values || []).filter((v) => !scenes.some((sc) => shows(sc, tag, v))).map((v) => `${tag} "${v}"`));
@@ -210,8 +237,7 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
   // A gendered callout ("LADIES WANTED") draws from its own scenes; the mixed ("any") scenes serve
   // ungendered callouts, and fill in only when the gendered scenes are fewer than the photos wanted
   // (2026-09-12: a women's batch had planned three mixed scenes with a man in frame).
-  const own = scenes.filter((s) => !s.audience || s.audience === audience), mixed = scenes.filter((s) => s.audience === "any");
-  const suits = shuffle(audience === "any" ? scenes.filter((s) => !s.audience || s.audience === "any") : own.length >= count ? own : [...own, ...mixed]);
+  const suits = shuffle(scenePool(scenes, audience, count));
   if (!suits.length) throw new Error(`no scene in the library suits a "${audience}" audience`);
   const layouts = shuffle(primaryLayouts(catalogue, ratio, exclude));
   const usedL = new Map(layouts.map((l) => [l, 0])), usedS = new Map(suits.map((s) => [s, 0]));

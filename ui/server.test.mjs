@@ -180,7 +180,15 @@ test("U3 the panel refuses exactly what Step 6 refuses, and saves the words exac
   // Generated photos need an approved scene library.
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: false, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
   const draft = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2 } } })).json();
-  assert.ok(draft.errors.some((e) => /not approved yet/.test(e)));
+  assert.ok(draft.errors.some((e) => /no approved scenes yet: approve some on Library → Scenes/.test(e)), draft.errors.join("; "));
+  writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
+  // The Spread switch: cut to what the library shows. m1 carries no tags, so nothing can be asked for; with tags, only what they show.
+  let sp = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2, spread: true } } })).json();
+  assert.deepEqual([sp.spread.must_show, sp.spread.left_out.length, "spread" in sp.brief, "must_show" in sp.brief], [{}, 13, false, false]);
+  writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank.", exercise: "forearm-plank", age: "prime", setting: "solo", equipment: "bodyweight" }, { id: "m2", audience: "men", pose: "upright", people: 2, scene: "A man in a goblet squat with his coach beside him.", exercise: "goblet-squat", age: "older", setting: "coached", equipment: "dumbbells" }] }));
+  sp = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 2, max_calls: 2, spread: true } } })).json();
+  assert.deepEqual([sp.errors, sp.brief.must_show], [[], { exercise: ["squat"], age: ["prime", "older"], setting: ["solo", "coached"], equipment: ["bodyweight", "dumbbells"] }], sp.errors.join("; "));
+  assert.ok(sp.spread.left_out.includes("exercise bench-press") && sp.spread.left_out.includes("setting group"));
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
   const ok = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2 } } })).json();
   assert.deepEqual(ok.errors, []);
@@ -401,6 +409,17 @@ test("U9 scenes through the panel: drafts listed; approve and reject write exact
   assert.ok(ran.lines.some((l) => /network blocked|GEMINI_KEY/.test(l)), ran.lines.join("\n"));
   r = await (await call(`/api/client/${GYM}/scenes`)).json();
   assert.equal(r.drafts.length, 0, "nothing was written");
+  // A gym with no library yet: its first refresh is accepted (before, it was refused), and the model's absence stops it before anything is written.
+  const libFile = join(brands, GYM, "scenes.json"), saved = readFileSync(libFile, "utf8"); rmSync(libFile);
+  try {
+    r = await (await call(`/api/client/${GYM}/scenes`)).json();
+    assert.deepEqual([r.status.exists, r.drafts], [false, []]);
+    const first = await runAndWait({ kind: "scenes-refresh", gym: GYM, audience: "men", count: 2 });
+    assert.ok(first.lines.some((l) => /network blocked|GEMINI_KEY/.test(l)) && !first.lines.some((l) => /no scene library/.test(l)), "it reached the model: " + first.lines.join("\n"));
+    assert.ok(!existsSync(libFile), "a failed first refresh leaves no empty library behind");
+    const check = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u9-first", generated: 1, max_calls: 2 } } })).json();
+    assert.ok(check.errors.some((e) => /no scene library yet: .*Draft the first ones on Library → Scenes/.test(e)), check.errors.join("; "));
+  } finally { writeFileSync(libFile, saved); }
 });
 
 test("U9b a directed batch through the panel: accepted with a direction; refused until planned; its drafts must be the ones confirmed; confirming approves them, and only for that batch", async () => {

@@ -36,7 +36,7 @@ import { whenGeminiFree } from "./gemini-busy.mjs";
 import { extname, join } from "path";
 import { tmpdir } from "os";
 import { loadCatalogue, layoutFor } from "./render-composites.mjs";
-import { describeSubjectArea, coveredSpans, MAX_SUBJECT_UNDER_TEXT } from "./visual-prompts.mjs";
+import { describeSubjectArea, coveredSpans, MAX_SUBJECT_UNDER_TEXT, checkableNever } from "./visual-prompts.mjs";
 import { loadGeminiKey } from "./generate_ads_gemini.mjs";
 
 // gemini-2.5-flash is listed by the API but refused for new keys (404, 2026-09-10); Google's own
@@ -111,7 +111,9 @@ export async function confirmItems(imagePath, items, opts = {}) {
 
 /** Ask the vision model. `fetchImpl` is injectable so the rules can be tested offline. */
 export async function askVision(imagePath, { never = [], ...opts } = {}) {
-  return callVision(imagePath, QUESTION + (never.length ? NEVER_QUESTION(never) : ""), SCHEMA, opts);
+  // Style rules ("stock gym photos") are for the image prompt only: nothing in a frame answers them.
+  const look = checkableNever(never);
+  return callVision(imagePath, QUESTION + (look.length ? NEVER_QUESTION(look) : ""), SCHEMA, opts);
 }
 
 // ── the rules (pure) ──────────────────────────────────────────────────────

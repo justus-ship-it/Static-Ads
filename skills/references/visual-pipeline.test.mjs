@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalogue, layoutFor } from "./render-composites.mjs";
-import { buildVisualPrompt, describeTextAreas, describeSubjectArea, maxFigureHeight, coveredSpans, poseProblem, POSES, NO_TEXT_CLAUSE, ONE_PHOTO_CLAUSE } from "./visual-prompts.mjs";
+import { buildVisualPrompt, describeTextAreas, describeSubjectArea, maxFigureHeight, coveredSpans, poseProblem, POSES, NO_TEXT_CLAUSE, ONE_PHOTO_CLAUSE, isStyleRule, checkableNever } from "./visual-prompts.mjs";
 import { judgeVisual, textAreaBoxes, askVision, bestCrop, imageSize, confirmItems, checkVisual, MAX_SUBJECT_UNDER_TEXT } from "./check-visual.mjs";
 import { generateVisuals } from "./generate-visuals.mjs";
 
@@ -329,7 +329,7 @@ test("V15 a reference photo carrying text is refused before anything is generate
     let gens = 0;
     await assert.rejects(generateVisuals({ visuals: [{ id: "v01", treatment: "t3-right-column", scene: SCENE }], refs: [ref], photography: PHOTO, outDir: dir,
       generate: async () => { gens++; return { buffer: Buffer.from("x"), ext: "png" }; }, checkRef: async () => [{ what: "SET 15", kind: "treadmill console" }], log: () => {} }),
-      /reference photo .*ref\.png contains text the model would copy: treadmill console "SET 15". Crop it out or clean the photo \(Step 5\) first/);
+      /reference photo .*ref\.png shows lettering the model would copy: treadmill console "SET 15"\. Crop it out or clean the photo \(Photos & assets → Clean\) first/);
     assert.equal(gens, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -350,6 +350,16 @@ test("V16 the client's never-list is verified, not just requested (run 8: a flam
     const q = body.contents[0].parts[0].text;
     for (const n of PHOTO.never) assert.ok(q.includes(`- ${n}`), n);
     assert.ok(body.generationConfig.responseSchema.required.includes("excluded_items"));
+    // A style rule is for the image prompt only: never asked of the checker, which would call a polished real photo "stock" (F45 Lower Peirce, 2026-09-26).
+    await askVision(img, { key: "K", never: ["stock gym photos", "oiled fitness models", "a staged look"], fetchImpl: async (u, init) => { body = JSON.parse(init.body); return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ...ans, excluded_items: [] }) }] } }] }) }; } });
+    const q2 = body.contents[0].parts[0].text;
+    assert.ok(q2.includes("- oiled fitness models") && !q2.includes("stock gym photos") && !q2.includes("staged look"), "only the item naming something in the frame is asked for");
+    await askVision(img, { key: "K", never: ["stock gym photos"], fetchImpl: async (u, init) => { body = JSON.parse(init.body); return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ...ans, excluded_items: [] }) }] } }] }) }; } });
+    assert.ok(!/never allows any of the following/.test(body.contents[0].parts[0].text), "a list of style rules alone asks nothing");
+    assert.deepEqual(["stock gym photography or any gym that is not this one", "a generic look", "the flame logo or flame-shaped wall sconces", "before-and-after body comparisons", "body-part crops or oiled fitness models", "the FirenGym wordmark"].map(isStyleRule), [true, true, false, false, false, false]);
+    assert.deepEqual(checkableNever(["stock gym photos", "", null, "oiled fitness models"]), ["oiled fitness models"]);
+    // The image prompt still carries a style rule: it guides the picture even though no check can judge it.
+    assert.match(buildVisualPrompt({ treatment: "t1-bottom-stack", scene: "A woman doing a goblet squat.", photography: { ...PHOTO, never: ["stock gym photos"] } }).prompt, /NEVER SHOW: stock gym photos/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

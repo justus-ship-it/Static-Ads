@@ -329,7 +329,7 @@ export async function draftScenes({ brandDir, scenesPath = join(brandDir, "scene
   if (direction) { const errs = validateDirection(direction, { brandDir }); if (errs.length) throw new Error(`direction: ${errs.join("; ")}`); }
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
   const photography = profile.brand_lock?.photography || {}, brandNames = brandNamesOf(profile);
-  const lib = readLibrary(scenesPath);
+  const lib = readLibrary(scenesPath, { create: true }); // a new gym's first refresh starts its library
   let text_calls = 0, vision_calls = 0, dir, expect = null, description = null, stamp;
   if (direction?.reference) {
     const path = referencePath(direction.reference, brandDir);
@@ -388,7 +388,7 @@ if (isMain) {
   const brandDir = resolve(v["brand-dir"]), scenesPath = join(brandDir, "scenes.json");
   try {
     if (v.list) {
-      const lib = readLibrary(scenesPath), st = libraryStatus(lib);
+      const lib = readLibrary(scenesPath, { create: true }), st = libraryStatus(lib);
       console.log(`${st.total} live (${Object.entries(st.counts).map(([k, n]) => `${n} ${k}`).join(", ")}), ${st.drafts} draft(s), ${st.retired} retired${st.approved ? "" : " — library not approved"}`);
       for (const s of lib.scenes) if (isDraft(s) || isRetired(s)) console.log(`  ${sceneSummary(s)}`);
     } else if (v.approve) {

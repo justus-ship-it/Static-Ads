@@ -971,7 +971,7 @@ const B = { gym:null, setup:null, scenes:null, draft:null, check:null, preview:n
 const today = () => new Date().toISOString().slice(0,10);
 const slugify = s => String(s||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 // The spread the variety batches asked for: every batch may ask for it with one switch.
-const SPREAD = { exercise:['lunge','squat','deadlift','bench-press'], age:['young','prime','older'], setting:['solo','coached','group'], equipment:['bodyweight','dumbbells','barbell'] };
+// The panel asks for the spread with one flag; the server cuts the wish to what this gym's scenes can show (spreadFor).
 /** The audience chips: the profile's callouts, or the two the reference ads use most. */
 const audiences = () => (B.setup?.creative_defaults?.audiences||[]).filter(Boolean).length ? B.setup.creative_defaults.audiences.filter(Boolean) : ['MEN WANTED','LADIES WANTED'];
 
@@ -1020,7 +1020,7 @@ function briefFromDraft(){
   const direction = directionFromDraft();
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
-    ...(d.spread && generated>0 ? { must_show: SPREAD } : {}) };
+    ...(d.spread && generated>0 ? { spread: true } : {}) };
 }
 function autoId(){
   const base = `${today()}-${slugify(B.draft.offer).slice(0,40) || 'batch'}`.replace(/-+$/,'');
@@ -1052,6 +1052,7 @@ function paintBatch(v){
           <div><label for="bGen" style="margin-top:0">New photos</label><div class="stepper"><button type="button" onclick="bStep('generated',-1)">−</button><input id="bGen" type="number" min="0" max="12" value="${esc(d.generated)}" oninput="bSet('generated',this.value)"><button type="button" onclick="bStep('generated',1)">+</button></div></div>
           <div><label for="bLooks" style="margin-top:0">Looks per photo</label><div class="stepper"><button type="button" onclick="bStep('looks_per_photo',-1)">−</button><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"><button type="button" onclick="bStep('looks_per_photo',1)">+</button></div></div>
           <label style="margin-top:0;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text)"><input type="checkbox" style="width:auto;margin:0" ${d.spread?'checked':''} onchange="bSet('spread',this.checked)"> Spread across exercises, ages, settings and equipment</label>
+          <div id="bSpread" class="hint" style="margin-top:4px;max-width:520px"></div>
         </div>
         <label>Real photos <span class="n">· cleaned</span></label>
         <div class="thumbs">${photos.length ? photos.map(p=>`<label><input type="checkbox" value="${esc(p.path)}" ${d.real.includes(p.path)?'checked':''} onchange="bReal(this.value,this.checked)"><img src="${esc(p.url)}" alt=""><span style="font-size:11px">${esc(p.path.split('/').pop())}</span></label>`).join('') : '<span class="hint">No cleaned photos yet — see clean-photo.mjs.</span>'}</div>
@@ -1121,8 +1122,12 @@ function paintList(){
 function paintDerived(){
   const c = B.check, s = c?.summary, sc = B.setup.scenes;
   const scenes = $('#bScenes');
-  if (scenes) scenes.innerHTML = B.mode==='rerender' ? '' : !sc.exists ? 'Scene library: none yet — generated photos need one.'
+  if (scenes) scenes.innerHTML = B.mode==='rerender' ? '' : !sc.exists ? 'Scene library: none yet — generated photos need approved scenes. <a href="#" onclick="go(\'scenes\');return false">Draft the first scenes</a>'
     : `Scene library: ${sc.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${Object.entries(sc.counts).map(([k,n])=>`${n} for ${esc(k)}`).join(', ')}${sc.drafts?` · <span style="color:var(--warn)">${sc.drafts} new scene${sc.drafts===1?'':'s'} awaiting approval</span>`:''}${s?` · this audience draws from <b>${esc(s.scenes_for)}</b>`:''} · <a href="#" onclick="go('scenes');return false">manage</a>`;
+  // What the Spread switch will ask for, cut to this gym's scenes for the batch's audience (the server's spreadFor).
+  const sp = $('#bSpread'), spr = c?.spread;
+  if (sp) sp.innerHTML = B.mode==='rerender' || !B.draft.spread || !(Number(B.draft.generated)>0) ? '' : !spr ? '' : spr.reason ? `Spread: ${esc(spr.reason)}.`
+    : `Spread asks for ${Object.entries(spr.must_show).map(([t,v])=>`${esc(t)} ${v.map(esc).join(', ')}`).join(' · ') || 'nothing this library can show'}.${spr.left_out.length?` <span style="color:var(--warn)">Left out, no ${esc(s?.scenes_for||'')} scene shows: ${spr.left_out.map(esc).join(', ')}.</span> Draft scenes for them on <a href="#" onclick="go('scenes');return false">Scenes</a> to include them.`:''}`;
   const errs = c?.errors || [];
   const eb = $('#bErrors');
   if (eb) eb.innerHTML = errs.length && B.touched ? errs.map(e=>`<div class="msg err">${esc(e)}</div>`).join('') : '';
@@ -1845,7 +1850,9 @@ async function viewScenes(v, seq=VIEW_SEQ){
 function paintScenes(){
   const box = $('#bSceneCard'); if (!box) return;
   const sc = B.scenes, st = sc?.status;
-  if (!st?.exists){ box.innerHTML = '<h3>Scene library</h3><div class="hint">None yet — generated photos need one (brands/{gym}/scenes.json).</div>'; return; }
+  if (!st?.exists){ const busy0 = STATE.run && !STATE.run.done; box.innerHTML = `<div class="row"><h3 style="margin:0">Scene library</h3><div class="spacer"></div><button class="primary sm" onclick="bRefreshConfirm()" ${busy0?'disabled':''}>Draft the first scenes…</button></div>
+    <p class="hint" style="margin-top:8px">This gym has no scenes yet. A scene is one photo idea in words: who is in it, the exercise, solo, coached or group, and roughly the pose. Generated photos are only ever made from scenes you approve; your real premises photos need none.</p>
+    <p class="hint">Draft the first scenes: pick the audience and how many, and the agent writes them to this gym's photography rules (text calls only, no image calls). Read them, approve the good ones, reject the rest with a reason. Your first approval approves the library, and batches can then generate from it.</p>`; return; }
   const drafts = sc.drafts || [];
   const busy = STATE.run && !STATE.run.done;
   box.innerHTML = `<div class="row"><h3 style="margin:0">Scene library</h3><div class="spacer"></div>

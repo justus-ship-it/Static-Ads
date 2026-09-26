@@ -18,7 +18,7 @@ import { launchBrowser, loadCatalogue, renderComposite } from "./render-composit
 import { fitLayouts } from "./check-visual.mjs";
 import { assignVariants } from "./assign-variants.mjs";
 import { cropImage } from "./clean-photo.mjs";
-import { validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
+import { spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
 const sceneProblemsOf = (s) => sceneProblems(s).join("; ");
 import { poseProblem } from "./visual-prompts.mjs";
 import { rejectScene } from "./scene-library.mjs";
@@ -124,6 +124,27 @@ test("B1b scenes suit the audience callout; an unapproved library is refused for
 });
 
 // ── B2 photos to generate ─────────────────────────────────────────────────
+
+test("B1c the spread a gym's library can deliver: the wished values its pool for the audience shows (the planner's match: a goblet squat is a squat), in the wish's order; the rest named; a tag with nothing left dropped; the pool is the planner's own (mixed scenes only when the gendered ones are fewer than the photos)", () => {
+  const sc = (id, audience, t) => ({ id, audience, pose: "upright", people: 1, scene: `A scene ${id}.`, ...t });
+  const lib = [
+    sc("w1", "women", { exercise: "goblet-squat", age: "young", setting: "solo", equipment: "dumbbells" }),
+    sc("w2", "women", { exercise: "walking-lunge", age: "prime", setting: "group", equipment: "bodyweight" }),
+    sc("a1", "any", { exercise: "barbell-deadlift", age: "older", setting: "coached", equipment: "barbell" }),
+    sc("m1", "men", { exercise: "bench-press", age: "older", setting: "coached", equipment: "barbell" }),
+  ];
+  let s = spreadFor({ scenes: lib, audience: "women", count: 2 });
+  assert.deepEqual(s.must_show, { exercise: ["lunge", "squat"], age: ["young", "prime"], setting: ["solo", "group"], equipment: ["bodyweight", "dumbbells"] }, "two women's scenes cover two photos: only their own count");
+  assert.deepEqual(s.left_out, ["exercise deadlift", "exercise bench-press", "age older", "setting coached", "equipment barbell"], "the men's bench press never counts for a women's batch");
+  s = spreadFor({ scenes: lib, audience: "women", count: 5 });
+  assert.deepEqual([s.must_show.exercise, s.must_show.age, s.left_out], [["lunge", "squat", "deadlift"], ["young", "prime", "older"], ["exercise bench-press"]], "more photos than own scenes: the mixed ones join the pool");
+  assert.deepEqual(scenePool(lib, "women", 5).map((x) => x.id), ["w1", "w2", "a1"]);
+  assert.deepEqual(spreadFor({ scenes: [], audience: "men", count: 3 }), { must_show: {}, left_out: Object.entries(SPREAD_WISH).flatMap(([t, vs]) => vs.map((v) => `${t} ${v}`)) });
+  // What it gives, the planner accepts: planning with it never refuses for a missing value.
+  const full = spreadFor({ scenes: lib, audience: "women", count: 5 });
+  assert.equal(planVisuals({ count: 3, scenes: lib, audience: "women", seed: "b1c", mustShow: full.must_show }).length, 3);
+  assert.throws(() => planVisuals({ count: 3, scenes: lib, audience: "women", seed: "b1c", mustShow: SPREAD_WISH }), /bench-press/, "the whole wish is what used to refuse");
+});
 
 test("B2 each photo to generate gets a layout it is made for and a scene that suits the audience and that layout's pose", () => {
   const prim = primaryLayouts(CAT);

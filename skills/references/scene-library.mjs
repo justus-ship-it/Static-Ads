@@ -56,9 +56,14 @@ export const isRetired = (s) => s?.status === "retired";
 export const isDraft = (s) => s?.draft === true && !isRetired(s);
 export const today = () => new Date().toISOString().slice(0, 10);
 
-/** The library file as written: every scene, drafts and retired ones included. */
-export function readLibrary(path) {
-  if (!existsSync(path)) throw new Error(`no scene library at ${path}: write one, or give scenes in the brief`);
+/** A gym's library before its first scene: written by the first refresh, approved by the owner's first approval. */
+export const newLibrary = () => ({ schema_version: 1, approved: false, note: "Scenes for generated photos, drafted by the agent and approved by the owner (Library → Scenes). Each describes the people and what they are doing, never words to show; the layout decides where they sit.", scenes: [] });
+/**
+ * The library file as written: every scene, drafts and retired ones included. `create` — a gym with no
+ * library yet reads as an empty one (the first refresh writes it); without it a missing library is refused.
+ */
+export function readLibrary(path, { create = false } = {}) {
+  if (!existsSync(path)) { if (create) return newLibrary(); throw new Error(`no scene library yet (${path}): draft the first scenes on Library → Scenes and approve them`); }
   const lib = JSON.parse(readFileSync(path, "utf-8"));
   if (!Array.isArray(lib.scenes)) lib.scenes = [];
   return lib;
@@ -77,7 +82,7 @@ export function loadScenes(path, { allowDraft = false } = {}) {
   const lib = readLibrary(path);
   const bad = lib.scenes.flatMap((s, i) => sceneProblems(s).map((e) => `${s.id || i}: ${e}`));
   if (bad.length) throw new Error(`scene library problems:\n${bad.join("\n")}`);
-  if (lib.approved !== true && !allowDraft) throw new Error(`the scene library ${path} is not approved yet — nothing is generated from it until the owner sets "approved": true`);
+  if (lib.approved !== true && !allowDraft) throw new Error(`the scene library ${path} is not approved yet — nothing is generated from it until the owner approves a scene on Library → Scenes`);
   const ids = lib.scenes.map((x) => x.id).filter(Boolean);
   if (new Set(ids).size !== ids.length) throw new Error("scene library: two scenes share an id");
   return lib.scenes.filter((x) => !isRetired(x) && (allowDraft || x.draft !== true));
@@ -109,6 +114,9 @@ export function approveScenes(path, ids, { via = null, date = today() } = {}) {
     if (via) s.approved_via = via;
     approved.push(s.id);
   }
+  // The owner's first approval of a scene approves the library itself: a gym started from the panel has no
+  // other way to set it (Sculpt Society's was set by hand). Nothing is generated from a draft either way.
+  if (approved.length && lib.approved !== true) { lib.approved = true; lib.approved_on = date; lib.approved_note = `approved with its first scenes (${approved.join(", ")})`; }
   writeLibrary(path, lib);
   return { approved, already };
 }

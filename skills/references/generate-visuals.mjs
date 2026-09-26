@@ -108,7 +108,11 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
   // A reference photo carrying lettering gets it copied into every visual, so it is refused first.
   for (const r of refs) {
     const found = await checkRef(r);
-    if (found.length) throw new Error(`reference photo ${r} contains text the model would copy: ${found.map((t) => `${t.kind} "${t.what}"`).join("; ")}. Crop it out or clean the photo (Step 5) first.`);
+    if (found.length) {
+      const text = found.filter((t) => t.kind !== "never-list item"), never = found.filter((t) => t.kind === "never-list item");
+      const said = [text.length ? `lettering the model would copy: ${text.map((t) => `${t.kind} "${t.what}"`).join("; ")}` : "", never.length ? `something the gym never allows: ${never.map((t) => `"${t.what}"`).join("; ")}` : ""].filter(Boolean).join(", and ");
+      throw new Error(`reference photo ${r} shows ${said}. Crop it out or clean the photo (Photos & assets → Clean) first.`);
+    }
   }
   // A scene whose pose its layout cannot hold is refused before a single call is spent.
   const misfits = visuals.map((v) => [v.id, poseProblem(v.treatment, v.pose)]).filter(([, e]) => e);

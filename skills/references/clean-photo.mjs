@@ -50,6 +50,7 @@ import { parseArgs } from "util";
 import { callVision, askVision, confirmItems, checkTiled, confirmTiled, dedupeItems, imageSize, CHECK_MODEL } from "./check-visual.mjs";
 import { generateImage, GEMINI_MODEL } from "./generate_ads_gemini.mjs";
 import { launchBrowser, imageDataUrl } from "./render-composites.mjs";
+import { checkableNever } from "./visual-prompts.mjs";
 
 /** Shapes the image model produces (imageConfig.aspectRatio), with the pixel size it actually makes
  *  for each at 1K ("2K" doubles it). "21:9" is really 1584 × 672, so the crop is cut to that, not to
@@ -260,7 +261,7 @@ const SURVEY_SCHEMA = {
  *  run 1 the survey missed an air-con logo, a notice and rack stickers that the after-check then
  *  found, a retry each. */
 export async function surveyPhoto(imagePath, { never = [], crop = null, ...opts } = {}) {
-  const a = await callVision(imagePath, SURVEY_QUESTION(never), SURVEY_SCHEMA, opts);
+  const a = await callVision(imagePath, SURVEY_QUESTION(checkableNever(never)), SURVEY_SCHEMA, opts); // nothing to remove for a style rule
   const items = (a.items || []).filter((i) => valid(i.box_2d));
   const found = crop ? await checkTiled(imagePath, { never, crop, ...opts }) : await checkClean(imagePath, { never, ...opts });
   const extra = leftoverItems(found).filter((i) => valid(i.box_2d)).map((i) => ({ ...i, object: i.object.replace(/^a remaining /, "a ") }));

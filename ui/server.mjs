@@ -43,8 +43,8 @@ import { draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, 
 import { liveEntries } from "../skills/references/copy-library.mjs";
 import { sendToLibrary } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
-import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
-import { libraryStatus, readLibrary, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
+import { validateBrief, sceneAudience, spreadFor, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
+import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 
@@ -427,18 +427,33 @@ function listBatches(gym) {
 }
 
 /** The brief's problems (Step 6 rules, plus the scene library) and what it would make. */
-function checkBrief(gym, brief) {
+/**
+ * The Create screen's Spread switch arrives as `spread: true`; it becomes the brief's `must_show` here, cut to
+ * what the gym's approved scenes can show for the batch's audience (`spreadFor`), with what was left out said.
+ * A library that cannot load yet gives no spread (the check says why the batch cannot run).
+ */
+function resolveSpread(gym, brief) {
+  if (!brief || typeof brief !== "object" || !("spread" in brief)) return { brief, spread: null };
+  const { spread, ...rest } = brief;
+  if (spread !== true || !(rest.generated > 0) || rest.must_show) return { brief: rest, spread: null };
+  let scenes = [];
+  try { scenes = loadScenes(join(brandDir(gym), "scenes.json")); } catch { return { brief: rest, spread: { must_show: {}, left_out: [], reason: "no approved scenes yet" } }; }
+  const s = spreadFor({ scenes, audience: sceneAudience(rest.audience, rest.scene_audience), count: rest.generated });
+  return { brief: Object.keys(s.must_show).length ? { ...rest, must_show: s.must_show } : rest, spread: s };
+}
+function checkBrief(gym, raw) {
+  const { brief, spread } = resolveSpread(gym, raw);
   const errors = validateBrief(brief, { brandDir: brandDir(gym) });
   const g = brief?.generated ?? 0, real = Array.isArray(brief?.real) ? brief.real : [];
   const scenes = sceneStatus(gym);
   const audienceFor = sceneAudience(brief?.audience, brief?.scene_audience);
   if (g > 0 && !brief?.scenes) {
-    if (!scenes.exists) errors.push("no scene library for this client: generated photos need one (brands/{gym}/scenes.json)");
-    else if (!scenes.approved) errors.push("the scene library is not approved yet — nothing is generated from it until the owner approves it");
+    if (!scenes.exists) errors.push("no scene library yet: generated photos need approved scenes. Draft the first ones on Library → Scenes, or set generated photos to 0 and use real photos only");
+    else if (!scenes.approved) errors.push("no approved scenes yet: approve some on Library → Scenes (nothing is generated from a draft)");
     else if (audienceFor !== "any" && !(scenes.counts[audienceFor] || scenes.counts.any)) errors.push(`the scene library has no scenes for a "${audienceFor}" audience`);
   }
   const photos = g + real.length, looks = brief?.looks_per_photo ?? 2, locs = Array.isArray(brief?.locations) ? brief.locations.length : 0;
-  return { errors, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor } };
+  return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor } };
 }
 
 // ── Review and picks (sub-step 2) ────────────────────────────────────────────
@@ -1049,8 +1064,8 @@ const server = createServer(async (req, res) => {
       if (what === "batch-setup" && req.method === "GET") return json(res, 200, { photos: cleanPhotos(gym), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults });
       if (what === "batch/check" && req.method === "POST") { const { brief } = await readBody(req); return json(res, 200, checkBrief(gym, brief)); }
       if (what === "batch" && req.method === "POST") {
-        const { brief, replace = false } = await readBody(req);
-        const { errors, summary } = checkBrief(gym, brief);
+        const { brief: raw, replace = false } = await readBody(req);
+        const { errors, summary, brief } = checkBrief(gym, raw); // the brief as saved: the spread resolved to must_show
         if (errors.length) return json(res, 400, { errors });
         const path = briefPath(gym, brief.batch_id);
         const prior = readJsonFile(path);
@@ -1141,7 +1156,8 @@ const server = createServer(async (req, res) => {
       if (body.numImages && !/^[1-9][0-9]?$/.test(String(body.numImages))) return json(res, 400, { error: "numImages must be 1-99" });
       const spec = RUNNABLE[kind];
       if (kind === "scenes-refresh") {
-        if (!okSlug(body.gym) || !existsSync(join(brandDir(body.gym), "scenes.json"))) return json(res, 400, { error: "a refresh needs a client with a scene library" });
+        // A gym without a library yet: the first refresh starts it (the owner's first approval approves it).
+        if (!okSlug(body.gym) || !existsSync(join(brandDir(body.gym), "gym-profile.json"))) return json(res, 400, { error: "a refresh needs a client with a profile" });
         if (!AUDIENCES.includes(body.audience)) return json(res, 400, { error: `audience must be one of ${AUDIENCES.join(", ")}` });
         if (!Number.isInteger(body.count) || body.count < 1 || body.count > MAX_REFRESH_COUNT) return json(res, 400, { error: `count must be 1 to ${MAX_REFRESH_COUNT}` });
         if (body.words != null && (typeof body.words !== "string" || body.words.trim().length < 3 || body.words.length > MAX_WORDS)) return json(res, 400, { error: `words must describe the pictures wanted, up to ${MAX_WORDS} characters` });

@@ -330,3 +330,30 @@ test("R7 an ungendered refresh drafts mixed scenes; a gendered one never keeps t
     assert.ok(rm.drafts.every((d) => d.audience === "men") && !rm.drafts.some((d) => d.id === "w-stray"));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── R8 a gym's first scenes ───────────────────────────────────────────────
+
+test("R8 a gym with no library: the first refresh writes it with the drafts, unapproved; a batch is refused until the owner's first approval, which approves the library; a missing library is still refused for a batch, with the way out", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "refresh-new-"));
+  try {
+    writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(PROFILE));
+    const p = join(dir, "scenes.json");
+    assert.throws(() => loadScenes(p), /no scene library yet .*draft the first scenes on Library → Scenes/);
+    const r = await draftScenes({ brandDir: dir, audience: "women", count: 2, ask: async () => ({ scenes: [draft("w-step-up"), draft("w-goblet", { exercise: "goblet-squat", scene: "A woman at the bottom of a goblet squat, kettlebell tight to her chest, eyes forward." })] }), catalogue: CAT, date: "2026-09-26", log: () => {} });
+    assert.equal(r.drafts.length, 2); assert.equal(r.text_calls, 1);
+    const lib = readLibrary(p);
+    assert.deepEqual([lib.approved, lib.scenes.map((s) => [s.id, s.draft])], [false, [["w-step-up", true], ["w-goblet", true]]], "written, every scene a draft, the library not approved");
+    assert.throws(() => loadScenes(p), /not approved yet .*approves a scene on Library → Scenes/);
+    const a = approveScenes(p, ["w-step-up"], { date: "2026-09-26" });
+    assert.deepEqual(a.approved, ["w-step-up"]);
+    const after = readLibrary(p);
+    assert.deepEqual([after.approved, after.approved_on], [true, "2026-09-26"], "the first approval approves the library");
+    assert.deepEqual(loadScenes(p).map((s) => s.id), ["w-step-up"], "and only approved scenes load; the other is still a draft");
+    // A library the owner had approved by hand keeps its own record.
+    const d2 = brand({ approved: true });
+    writeFileSync(join(d2, "scenes.json"), JSON.stringify({ approved: true, approved_note: "by hand", scenes: [...LIB, { ...draft("w-new"), draft: true }] }));
+    approveScenes(join(d2, "scenes.json"), ["w-new"]); assert.equal(readLibrary(join(d2, "scenes.json")).approved_note, "by hand");
+    rmSync(d2, { recursive: true, force: true });
+    assert.equal(readLibrary(join(dir, "nope.json"), { create: true }).scenes.length, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

@@ -158,6 +158,16 @@ const escapeRe = (n) => n.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
 export const scrubNames = (t, names = []) => names.filter(Boolean).reduce((a, n) => a.replace(new RegExp(`\\s*${escapeRe(n)}('s)?`, "gi"), ""), t).replace(/\s{2,}/g, " ").trim();
 /** A never-list item about words (a wordmark, a slogan): the image prompt never names words, even to forbid them. */
 export const isAboutText = (t) => /\b(text|wordmark|reading|words?|lettering|slogan)\b/i.test(t);
+/**
+ * A never-list item about how a photo looks, not a thing in it: "stock gym photos", "a staged look". It
+ * guides the image model and never fails a photo — a checker asked whether a real, polished premises photo
+ * is a "stock gym photo" says yes (F45 Lower Peirce, 2026-09-26), and there is no mark to point at or remove.
+ * Items naming a mark, a fitting or an object (a wordmark, a sconce, oiled models, before-and-after
+ * comparisons) are checked as before.
+ */
+export const isStyleRule = (t) => /\b(stock|photograph(y|s)?|photos?|imagery|style|aesthetic|vibe|look|feel)\b/i.test(String(t || ""));
+/** The never-list items a vision check can look for in a frame. */
+export const checkableNever = (list = []) => (list || []).filter((t) => t && !isStyleRule(t));
 
 export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, catalogue = loadCatalogue() }) {
   const T = catalogue.treatments;
