@@ -1502,11 +1502,18 @@ test("U24 copy in the panel: the gym's copy references (list, add, note, retire)
   r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/${a.id}`, { method: "PUT", body: { headline: "Dash — here" } })).json(); assert.equal(r.drafts.find((d) => d.id === a.id).headline, "Dash - here", "an edit's dash becomes a hyphen, never a refusal");
   r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/${a.id}`, { method: "PUT", body: { headline: "Edited headline" } })).json(); assert.equal(r.drafts.find((d) => d.id === a.id).headline, "Edited headline");
   assert.equal((await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/draft`, { method: "POST", body: { count: 99 } })).status, 400);
+  assert.equal((await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/draft`, { method: "POST", body: { count: 3, kind: "poem" } })).status, 400);
+  bad = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/draft`, { method: "POST", body: { count: 3, kind: "headline" } });
+  assert.equal(bad.status, 400); assert.match((await bad.json()).error, /no headline skeletons yet/, "the panel under test has an empty library: drafting says so before any call");
+  bad = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/recommended`, { method: "POST", body: { kind: "copy" } });
+  assert.equal(bad.status, 400); assert.match((await bad.json()).error, /nothing recommended/);
+  const hd = (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`, { method: "POST", body: { kind: "headline", headline: "Your reset in {AREA}", description: "" } })).json());
+  assert.deepEqual([hd.draft.kind, hd.kept_headlines, hd.library], ["headline", [hd.draft.id], { copy: 0, headline: 0 }], "the owner's own headline, kept at once, its own list");
   assert.equal((await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/nope`, { method: "PUT", body: { status: "keep" } })).status, 400);
   // The plan carries the kept copy; the setting for text options is saved and bounded.
   r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
-  assert.deepEqual([r.plan.copy.kept, r.plan.words.headline, r.plan.words.placeholders, r.copy.drafts.length, r.plan.ads[0].copies], [1, "Edited headline", [], 2, [a.id]]);
-  assert.equal(r.plan.ads[0].creative.object_story_spec.link_data?.name || r.plan.ads[0].creative.asset_feed_spec.titles[0].text, "Edited headline");
+  assert.deepEqual([r.plan.copy.kept, r.plan.copy.headlines.kept, r.plan.words.headline, r.plan.words.placeholders, r.copy.drafts.length, r.plan.ads[0].copies, r.plan.ads[0].headlines], [1, 1, "Your reset in {AREA}", [], 3, [a.id], [hd.draft.id]]);
+  assert.equal(r.plan.ads[0].creative.object_story_spec.link_data?.name || r.plan.ads[0].creative.asset_feed_spec.titles[0].text, "Your reset in Bishan", "the kept headline, its area filled for the ad set");
   assert.equal((await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { copy: { max_options: 7 } } })).status, 400);
   r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { copy: { max_options: 2 } } })).json();
   assert.equal(r.plan.copy.max_options, 2);
@@ -1517,7 +1524,8 @@ test("U24 copy in the panel: the gym's copy references (list, add, note, retire)
   await open(`${panel.url}/?u24#/${GYM}/publish/${BRIEF.batch_id}`, "!!PB.data && /Copy/.test(document.querySelector('#view')?.textContent||'') && document.querySelector('#cpN')", "the Publish screen");
   let text = await ev("document.querySelector('#view').textContent");
   assert.match(text, /1 kept/); assert.match(text, /Edited headline/); assert.match(text, /Excluded · 1/); assert.equal(await ev("document.querySelector('#cpN').value"), "2");
-  assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Draft 10 copies/.test(b.textContent))"));
+  assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Draft 10 copies/.test(b.textContent)) && [...document.querySelectorAll('#view button')].some(b=>/Draft 10 headlines/.test(b.textContent)) && !!document.querySelector('#cpNH') && !!document.querySelector('#cpCta')"), "Copy and Headlines sections, each with its draft button and its per-ad number");
+  assert.match(text, /Your reset in Bishan/, "the kept headline is shown with the area filled");
   await ev(`cpDecide('${b.id}','keep')`);
   text = await ev("document.querySelector('#view').textContent"); assert.match(text, /2 kept/);
   await open(`${panel.url}/?u24b#/${GYM}/copy`, "!!CR.data && /References · 1/.test(document.querySelector('#view')?.textContent||'')", "the Copy page");

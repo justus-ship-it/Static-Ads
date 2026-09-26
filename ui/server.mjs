@@ -39,7 +39,8 @@ import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS,
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
 import { buildPlan, keptAds, CTA_TYPES } from "../skills/references/meta-publish.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
-import { draftCopy, readCopy, keptCopies, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, analyseCopy } from "../skills/references/draft-copy.mjs";
+import { draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy } from "../skills/references/draft-copy.mjs";
+import { liveEntries } from "../skills/references/copy-library.mjs";
 import { sendToLibrary } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
@@ -521,6 +522,7 @@ function settingsProblem(b) {
   if (!isPlainObject(b)) return "settings must be an object";
   for (const k of Object.keys(b)) if (!["campaign", "adsets", "words", "destination", "copy", "updated"].includes(k)) return `unknown setting "${k}"`;
   if (b.copy != null && (!isPlainObject(b.copy) || (b.copy.max_options != null && !(Number.isInteger(b.copy.max_options) && b.copy.max_options >= 1 && b.copy.max_options <= MAX_OPTIONS)))) return `copy: text options per ad is a whole number, 1 to ${MAX_OPTIONS}`;
+  if (b.copy != null && b.copy.max_headlines != null && !(Number.isInteger(b.copy.max_headlines) && b.copy.max_headlines >= 1 && b.copy.max_headlines <= MAX_OPTIONS)) return `copy: headlines per ad is a whole number, 1 to ${MAX_OPTIONS}`;
   const str = (v, max) => v == null || (typeof v === "string" && v.length <= max && !/[\r\n]/.test(v));
   const numOr = (v) => v == null || (typeof v === "number" && Number.isFinite(v));
   const c = b.campaign || {};
@@ -938,19 +940,23 @@ const server = createServer(async (req, res) => {
       const out = outDirOf(gym, id), dir = brandDir(gym), brief = readJsonFile(briefPath(gym, id)) || {};
       const profile = readJsonFile(join(dir, "gym-profile.json")) || {};
       const offerDoc = (() => { const od = join(dir, "offers"); if (!existsSync(od)) return null; for (const f of readdirSync(od).filter((x) => x.endsWith(".json"))) { const o = readJsonFile(join(od, f)); if (o?.name && String(o.name).toLowerCase() === String(brief.offer || "").toLowerCase()) return o; } return null; })();
-      const view = (extra = {}) => json(res, 200, { ...readCopy(out), kept: keptCopies(out).map((d) => d.id), references: referencesFor(dir).length, max_options: MAX_OPTIONS, ...extra });
+      const view = (extra = {}) => json(res, 200, { ...readCopy(out), kept: keptCopies(out).map((d) => d.id), kept_headlines: keptCopies(out, "headline").map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, angles: ANGLES, max_options: MAX_OPTIONS, ...extra });
+      const kindOk = (k) => COPY_KINDS.includes(k);
       try {
         if (!cid && req.method === "GET") return view();
         if (cid === "draft" && req.method === "POST") {
-          const { count = 10 } = await readBody(req);
+          const { count = 10, kind = "copy" } = await readBody(req);
           if (!Number.isInteger(count) || count < 1 || count > 20) return json(res, 400, { error: "count must be 1 to 20" });
+          if (!kindOk(kind)) return json(res, 400, { error: "kind is copy or headline" });
           mkdirSync(out, { recursive: true });
           const cta = (readJsonFile(join(out, "publish-settings.json")) || {}).words?.cta, button = CTA_TYPES[cta] || CTA_TYPES.SIGN_UP;
-          const r = await draftCopy({ brandDir: dir, batchDir: out, offer: brief.offer, audience: brief.audience || null, locations: brief.locations || [], count, button });
-          return view({ added: r.added.length, dropped: r.dropped, calls: r.calls });
+          const r = await draftCopy({ brandDir: dir, batchDir: out, kind, offer: brief.offer, audience: brief.audience || null, locations: brief.locations || [], count, button });
+          return view({ added: r.added.length, dropped: r.dropped, calls: r.calls, recommended: r.recommended.length, skeletons: r.skeletons });
         }
-        if (!cid && req.method === "POST") { const { message, headline, description } = await readBody(req); mkdirSync(out, { recursive: true }); const d = addCopy(out, { message, headline, description }, { offer: brief.offer, profile, offerDoc }); return view({ added: 1, draft: d }); }
-        if (cid && req.method === "PUT") { const b = await readBody(req); const d = decideCopy(out, cid, { status: b.status, message: b.message, headline: b.headline, description: b.description }, { offer: brief.offer, profile, offerDoc }); return view({ draft: d }); }
+        // The owner's one click: keep the recommended drafts of a kind.
+        if (cid === "recommended" && req.method === "POST") { const { kind = "copy" } = await readBody(req); if (!kindOk(kind)) return json(res, 400, { error: "kind is copy or headline" }); const recs = keepRecommended(out, kind); return view({ kept_now: recs.map((d) => d.id) }); }
+        if (!cid && req.method === "POST") { const { kind = "copy", message, headline, description } = await readBody(req); if (!kindOk(kind)) return json(res, 400, { error: "kind is copy or headline" }); mkdirSync(out, { recursive: true }); const d = addCopy(out, { kind, message, headline, description }, { offer: brief.offer, profile, offerDoc, locations: brief.locations || [] }); return view({ added: 1, draft: d }); }
+        if (cid && req.method === "PUT") { const b = await readBody(req); const d = decideCopy(out, cid, { status: b.status, message: b.message, headline: b.headline, description: b.description }, { offer: brief.offer, profile, offerDoc, locations: brief.locations || [] }); return view({ draft: d }); }
       } catch (e) { return json(res, e.code === 190 || e.trace ? 502 : 400, { error: scrubTokens(e.message) }); }
     }
     const cr = p.match(/^\/api\/client\/([^/]+)\/copy-refs(?:\/([^/]+))?$/);
@@ -1009,9 +1015,9 @@ const server = createServer(async (req, res) => {
         const batch = readJsonFile(join(out, "batch.json")), presets = readPresets(dir);
         const kept = keptAds(out);
         let plan;
-        try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out) }); } catch (e) { return json(res, 400, { error: e.message }); }
+        try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline") }); } catch (e) { return json(res, 400, { error: e.message }); }
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, settings, thumbs, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: CTA_TYPES, words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, references: referencesFor(dir).length, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
+        return json(res, 200, { plan, settings, thumbs, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: CTA_TYPES, words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
       }
       if (what === "results" && req.method === "GET") return json(res, 200, { results: readJsonFile(join(out, "results.json")), rows: batchRows(dir, id), record: readJsonFile(join(out, "publish.json")) });
       if (what === "results/pull" && req.method === "POST") {
@@ -1187,7 +1193,7 @@ const server = createServer(async (req, res) => {
           const cfg = metaConfig({ gym: body.gym });
           if (!cfg.token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
           let plan;
-          try { plan = buildPlan({ profile: readJsonFile(join(brandDir(body.gym), "gym-profile.json")) || {}, batch: readJsonFile(join(out, "batch.json")), kept: keptAds(out), presets: readPresets(brandDir(body.gym)), settings: readJsonFile(join(out, "publish-settings.json")) || {}, copies: keptCopies(out) }); }
+          try { plan = buildPlan({ profile: readJsonFile(join(brandDir(body.gym), "gym-profile.json")) || {}, batch: readJsonFile(join(out, "batch.json")), kept: keptAds(out), presets: readPresets(brandDir(body.gym)), settings: readJsonFile(join(out, "publish-settings.json")) || {}, copies: keptCopies(out), headlines: keptCopies(out, "headline") }); }
           catch (e) { return json(res, 400, { error: e.message }); }
           if (!plan.ready) return json(res, 409, { error: `the plan has problems: ${plan.problems.join("; ")}` });
           const agreed = c.ads === plan.counts.ads && c.adsets === plan.counts.adsets && c.per_day === plan.budget.per_day_total;

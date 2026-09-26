@@ -1726,51 +1726,65 @@ function paintPublish(v){
 }
 /** The campaign's copy: drafts to keep or exclude, the owner's own, how many text options each ad carries. */
 function copyCard(D, P, sw){
-  const C = D.copy || { drafts:[], references:0, max_options:5 }, drafts = C.drafts || [];
-  const kept = drafts.filter(d=>d.status==='keep').sort((a,b)=>(a.kept_at||'').localeCompare(b.kept_at||'')), open = drafts.filter(d=>d.status==='draft'), out = drafts.filter(d=>d.status==='exclude');
-  const n = P.copy?.max_options || 5;
-  const btn = (D.cta||{})[P.words.cta] || 'Sign up', fillB = (t) => String(t||'').replace(/\{BUTTON\}/g, btn);
-  const card = (d) => `<div class="card" style="margin:0 0 8px;padding:12px 14px;${d.status==='exclude'?'opacity:.55':''}" id="cp_${esc(d.id)}">
-    <div class="row" style="gap:8px"><b style="font-size:14px">${esc(d.headline)}</b>${d.angle?`<span class="pill">${esc(d.angle)}</span>`:''}<span class="pill ${d.status==='keep'?'on':d.status==='exclude'?'err':''}">${d.status==='keep'?'kept':d.status==='exclude'?'excluded':'draft'}</span>${d.source==='owner'?'<span class="pill">yours</span>':''}<div class="spacer"></div>
+  const C = D.copy || {}, drafts = C.drafts || [], lib = C.library || {};
+  const n = P.copy?.max_options || 5, nh = P.copy?.max_headlines || 5;
+  const tc = (s) => String(s||'').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  const btn = (D.cta||{})[P.words.cta] || 'Sign up', area = (D.words?.locations||[])[0] ? tc(D.words.locations[0]) : 'the area';
+  const fillP = (t) => String(t||'').replace(/\{BUTTON\}/g, btn).replace(/\{AREA\}/g, area);
+  const card = (d) => { const isH = d.kind==='headline', rec = d.recommended; return `<div class="card" style="margin:0 0 8px;padding:12px 14px;${d.status==='exclude'?'opacity:.55':''}" id="cp_${esc(d.id)}">
+    <div class="row" style="gap:8px;flex-wrap:wrap"><b style="font-size:14px">${esc(isH ? fillP(d.headline) : (d.headline ? fillP(d.headline) : fillP(d.message).split('\n')[0].slice(0,70)))}</b>${rec?`<span class="pill on" title="${esc(rec.why)}">#${rec.rank} recommended</span>`:''}${d.angle?`<span class="pill">${esc(d.angle)}</span>`:''}<span class="pill ${d.status==='keep'?'on':d.status==='exclude'?'err':''}">${d.status==='keep'?'kept':d.status==='exclude'?'excluded':'draft'}</span>${d.source==='owner'?'<span class="pill">yours</span>':''}<div class="spacer"></div>
       ${d.status!=='keep'?`<button class="sm ok" onclick="cpDecide('${esc(d.id)}','keep')">Keep</button>`:''}${d.status!=='exclude'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','exclude')">Exclude</button>`:''}${d.status!=='draft'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','draft')">Undo</button>`:''}<button class="sm" onclick="cpEdit('${esc(d.id)}')">Edit</button></div>
-    <div style="white-space:pre-wrap;font-size:13px;margin-top:6px">${esc(fillB(d.message))}</div>${d.description?`<div class="hint" style="margin-top:4px">${esc(fillB(d.description))}</div>`:''}</div>`;
-  return `<div class="card"><div class="row"><h3 style="margin:0">Copy ${kept.length?`<span class="pill on">${kept.length} kept</span>`:'<span class="pill warn">placeholders</span>'}</h3><div class="spacer"></div>
-      <label style="margin:0" for="cpCta">Button</label><select id="cpCta" style="width:auto" title="The call to action on every ad in this campaign; the copy's {BUTTON} becomes this name" onchange="pbSet('words.cta',this.value)">${Object.entries(D.cta||{}).map(([k,l])=>`<option value="${k}" ${k===P.words.cta?'selected':''}>${l}</option>`).join('')}</select>
-      <label style="margin:0" for="cpN">Text options per ad</label><select id="cpN" style="width:auto" onchange="pbSet('copy.max_options',parseInt(this.value,10))">${[1,2,3,4,5].map(k=>`<option value="${k}" ${k===n?'selected':''}>${k}</option>`).join('')}</select>
-      <button class="sm" onclick="cpOwn()">Add your own</button><button class="${kept.length?'sm':'sm primary'}" onclick="cpDraft()" ${PB.busy?'disabled':''}>${PB.busy?'Working…':'Draft 10 copies…'}</button></div>
-    <p class="hint">The primary text, headline and description beside the ads. Drafts come from the offer's exact words, the audience, the locations and the gym's copy references (${C.references} shown to the model); the rules are checked in code: the offer named exactly, nothing from the never-list, no price, no free trial, no before-and-after. Where a copy names the button it says {BUTTON}, and that becomes the button chosen above ("${esc(btn)}") on every ad, so the words and the button never disagree; change the button and every copy follows. Keep the ones you want: each ad carries up to ${n} of them as Meta text options${kept.length>n?`, and with ${kept.length} kept they rotate so every copy runs`:''}. Meta reports which text wins.</p>
+    ${!isH?`<div style="white-space:pre-wrap;font-size:13px;margin-top:6px">${esc(fillP(d.message))}</div>`:''}${d.description?`<div class="hint" style="margin-top:4px">${esc(fillP(d.description))}</div>`:''}
+    ${rec?`<div class="hint" style="margin-top:6px"><b>Why:</b> ${esc(rec.why)}${d.clarity!=null?` · clarity ${d.clarity}/10`:''}</div>`:d.clarity!=null?`<div class="hint" style="margin-top:6px">clarity ${d.clarity}/10 · ${esc(d.clarity_why||'')}</div>`:''}</div>`; };
+  const order = (a,b) => (a.recommended?a.recommended.rank:99) - (b.recommended?b.recommended.rank:99) || (b.clarity??0) - (a.clarity??0);
+  const section = (kind) => {
+    const isH = kind==='headline', list = drafts.filter(d=>(d.kind||'copy')===kind);
+    const kept = list.filter(d=>d.status==='keep'), open = list.filter(d=>d.status==='draft').sort(order), out = list.filter(d=>d.status==='exclude'), recs = open.filter(d=>d.recommended);
+    const noun = isH ? 'headlines' : 'copies', have = isH ? lib.headline : lib.copy;
+    return `<div class="card"><div class="row" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">${isH?'Headlines':'Copy'} ${kept.length?`<span class="pill on">${kept.length} kept</span>`:`<span class="pill warn">${isH?'none kept':'placeholders'}</span>`}</h3><div class="spacer"></div>
+      ${!isH?`<label style="margin:0" for="cpCta">Button</label><select id="cpCta" style="width:auto" title="The call to action on every ad in this campaign; the copy's {BUTTON} becomes this name" onchange="pbSet('words.cta',this.value)">${Object.entries(D.cta||{}).map(([k,l])=>`<option value="${k}" ${k===P.words.cta?'selected':''}>${l}</option>`).join('')}</select>`:''}
+      <label style="margin:0" for="${isH?'cpNH':'cpN'}">${isH?'Headlines per ad':'Text options per ad'}</label><select id="${isH?'cpNH':'cpN'}" style="width:auto" onchange="pbSet('copy.${isH?'max_headlines':'max_options'}',parseInt(this.value,10))">${[1,2,3,4,5].map(k=>`<option value="${k}" ${k===(isH?nh:n)?'selected':''}>${k}</option>`).join('')}</select>
+      <button class="sm" onclick="cpOwn('${kind}')">Add your own</button><button class="${kept.length?'sm':'sm primary'}" onclick="cpDraft('${kind}')" ${PB.busy?'disabled':''}>${PB.busy?'Working…':`Draft 10 ${noun}…`}</button></div>
+    <p class="hint">${isH
+      ? `The headline beside each ad, its own list: Meta combines each ad's ${nh} headline${nh===1?'':'s'} with its text options. Drafted from the copy library's ${have||0} headline skeleton${have===1?'':'s'}, judged for clarity, the top five recommended. Until a headline is kept, the ads carry the copies' own headlines or a placeholder.`
+      : `The primary text beside each ad. Drafted from the copy library's ${have||0} copy skeleton${have===1?'':'s'} (their structure and voice, never a gym's own past ads), the offer's exact words, the audience and the areas; the rules are checked in code: the offer named exactly, nothing from the never-list, no price, no free trial, no before-and-after. A judge rates each draft's clarity for the audience and the agent recommends five, one per angle first. Where a copy addresses the area it says {AREA} (each ad set's own area, shown here as ${esc(area)}); where it names the button it says {BUTTON}, which becomes the button chosen above ("${esc(btn)}"). Each ad carries up to ${n} of the kept copies as Meta text options; Meta reports which text wins.`}</p>
+    ${recs.length?`<div class="row" style="margin:6px 0;gap:8px"><span class="hint"><b>${recs.length} recommended</b> by the agent, one per angle first, then the clearest read for the audience.</span><div class="spacer"></div><button class="sm ok" onclick="cpKeepRecommended('${kind}')">Keep the ${recs.length} recommended</button></div>`:''}
     ${kept.length?`<div class="hint" style="margin:8px 0 4px"><b>Kept · ${kept.length}</b></div>${kept.map(card).join('')}`:''}
     ${open.length?`<div class="hint" style="margin:8px 0 4px"><b>Drafts · ${open.length}</b></div>${open.map(card).join('')}`:''}
     ${out.length?`<details style="margin-top:6px"><summary class="hint">Excluded · ${out.length}</summary>${out.map(card).join('')}</details>`:''}
-    ${!drafts.length?`<div class="hint" style="margin-top:8px">Nothing yet. Draft copies, or add your own. Until something is kept the ads carry placeholders that say so: <i>${esc(P.words.message)}</i></div>`:''}
-    ${PB.cpmsg?`<div class="msg ${/could not|failed/i.test(PB.cpmsg)?'err':'ok'}" style="margin-top:8px">${esc(PB.cpmsg)}</div>`:''}
-  </div>`;
+    ${!list.length?`<div class="hint" style="margin-top:8px">Nothing yet. Draft ${noun}, or add your own.${!isH?` Until something is kept the ads carry placeholders that say so: <i>${esc(P.words.message)}</i>`:''}${!have?` The library has no ${isH?'headline':'copy'} skeletons yet: paste a few on Library → Copy first.`:''}</div>`:''}
+  </div>`; };
+  return section('copy') + section('headline') + (PB.cpmsg?`<div class="msg ${/could not|failed|not /i.test(PB.cpmsg)?'err':'ok'}" style="margin-top:8px">${esc(PB.cpmsg)}</div>`:'');
 }
 async function cpReload(){ try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/publish`); PB.data = r; PB.settings = r.settings; } catch(e){ PB.error = e.message; } }
-async function cpDraft(){ const v = prompt('How many copies to draft? (1-20)', '10'); if (v==null) return; const count = parseInt(v,10); if (!Number.isInteger(count)||count<1||count>20){ toast('A whole number, 1 to 20.','err'); return; }
+async function cpDraft(kind){ const noun = kind==='headline'?'headlines':'copies'; const v = prompt(`How many ${noun} to draft? (1-20)`, '10'); if (v==null) return; const count = parseInt(v,10); if (!Number.isInteger(count)||count<1||count>20){ toast('A whole number, 1 to 20.','err'); return; }
   PB.busy = true; PB.cpmsg = null; paintPublish($('#view'));
-  try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/draft`, { method:'POST', body:{ count } }); PB.cpmsg = `Drafted ${r.added} (${r.calls} call${r.calls===1?'':'s'}).${r.dropped.length?' Dropped: '+r.dropped.map(d=>`"${d.headline}" (${d.why})`).join('; '):''}`; await cpReload(); }
+  try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/draft`, { method:'POST', body:{ count, kind } }); PB.cpmsg = `Drafted ${r.added} ${noun} from ${r.skeletons} skeleton${r.skeletons===1?'':'s'} (${r.calls} call${r.calls===1?'':'s'}); ${r.recommended} recommended.${r.dropped.length?' Dropped: '+r.dropped.map(d=>`"${d.headline}" (${d.why})`).join('; '):''}`; await cpReload(); }
   catch(e){ PB.cpmsg = 'Drafting failed: ' + e.message; }
   PB.busy = false; paintPublish($('#view')); }
+async function cpKeepRecommended(kind){ try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/recommended`, { method:'POST', body:{ kind } }); PB.cpmsg = `Kept the ${r.kept_now.length} recommended ${kind==='headline'?'headlines':'copies'}.`; await cpReload(); } catch(e){ PB.cpmsg = 'Could not keep: ' + e.message; } paintPublish($('#view')); }
 async function cpDecide(id, status){ try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${id}`, { method:'PUT', body:{ status } }); await cpReload(); } catch(e){ PB.cpmsg = e.message; } paintPublish($('#view')); }
-async function cpEdit(id){ const d = (PB.data.copy?.drafts||[]).find(x=>x.id===id); if (!d) return; const headline = prompt('Headline', d.headline); if (headline==null) return; const message = prompt('Primary text', d.message); if (message==null) return; const description = prompt('Description (may be empty)', d.description||''); if (description==null) return;
+async function cpEdit(id){ const d = (PB.data.copy?.drafts||[]).find(x=>x.id===id); if (!d) return; const isH = d.kind==='headline';
+  const headline = prompt('Headline', d.headline||''); if (headline==null) return; const message = isH ? '' : prompt('Primary text', d.message); if (message==null) return; const description = prompt('Description (may be empty)', d.description||''); if (description==null) return;
   try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${id}`, { method:'PUT', body:{ headline, message, description } }); await cpReload(); } catch(e){ PB.cpmsg = 'Not saved: ' + e.message; } paintPublish($('#view')); }
-function cpOwn(err){
-  const f = PB.ownForm || (PB.ownForm = { headline:'', message:'', description:'' });
+function cpOwn(kind, err){
+  const isH = kind==='headline';
+  const f = PB.ownForm && PB.ownForm.kind===kind ? PB.ownForm : (PB.ownForm = { kind, headline:'', message:'', description:'' });
   $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)cpOwnClose()"><div class="card" style="max-width:640px">
-    <h3>Add your own copy</h3><p class="hint">Checked by the same rules as the drafts: the offer named exactly, nothing the gym never says, no price. Kept at once.</p>
+    <h3>Add your own ${isH?'headline':'copy'}</h3><p class="hint">Checked by the same rules as the drafts: ${isH?'nothing the gym never says, no price':'the offer named exactly, nothing the gym never says, no price'}; write {AREA} where the area goes and {BUTTON} where the button is named. Kept at once.</p>
     ${err?`<div class="msg err">${esc(err)}</div>`:''}
     <label>Headline</label><input id="cpOwnHead" value="${esc(f.headline)}" oninput="PB.ownForm.headline=this.value">
-    <label style="margin-top:8px">Primary text</label><textarea id="cpOwnMsg" rows="8" style="width:100%" oninput="PB.ownForm.message=this.value">${esc(f.message)}</textarea>
+    ${isH?'':`<label style="margin-top:8px">Primary text</label><textarea id="cpOwnMsg" rows="8" style="width:100%" oninput="PB.ownForm.message=this.value">${esc(f.message)}</textarea>`}
     <label style="margin-top:8px">Description (optional)</label><input id="cpOwnDesc" value="${esc(f.description)}" oninput="PB.ownForm.description=this.value">
     <div class="row" style="margin-top:12px"><div class="spacer"></div><button class="sm" onclick="cpOwnClose()">Cancel</button><button class="primary" onclick="cpOwnSave()">Add and keep</button></div></div></div>`;
-  $('#cpOwnHead').focus();
+  $(isH?'#cpOwnHead':'#cpOwnMsg').focus();
 }
 function cpOwnClose(){ $('#gModal').innerHTML = ''; }
 async function cpOwnSave(){
-  const body = { headline:$('#cpOwnHead').value, message:$('#cpOwnMsg').value, description:$('#cpOwnDesc').value }; PB.ownForm = { ...body };
+  const kind = PB.ownForm?.kind || 'copy', isH = kind==='headline';
+  const body = { kind, headline:$('#cpOwnHead').value, message: isH ? '' : $('#cpOwnMsg').value, description:$('#cpOwnDesc').value }; PB.ownForm = { ...body };
   try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy`, { method:'POST', body }); PB.ownForm = null; cpOwnClose(); await cpReload(); PB.cpmsg = 'Added and kept.'; paintPublish($('#view')); }
-  catch(e){ cpOwn('Not added: ' + e.message + '. Your text is kept here; fix it and try again.'); }
+  catch(e){ cpOwn(kind, 'Not added: ' + e.message + '. Your text is kept here; fix it and try again.'); }
 }
 
 /** What is on Meta already for this batch: the record written as each object landed. */

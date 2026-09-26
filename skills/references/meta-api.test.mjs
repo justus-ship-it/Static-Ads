@@ -632,7 +632,7 @@ test("M11 copy on the plan: the kept copies ride as Meta text options — up to 
   const batch = { batch_id: "2026-09-13-men" };
   // Five per ad (the default), seven kept: the options rotate; every text is labelled for the placement rules.
   const p = buildPlan({ profile, batch, kept, presets: { presets: [] }, copies });
-  assert.deepEqual([p.copy, p.words.placeholders, p.words.headline], [{ kept: 7, max_options: 5, per_ad: 5, rotating: true, descriptions: 3 }, [], "Headline 0"]);
+  assert.deepEqual([p.copy, p.words.placeholders, p.words.headline], [{ kept: 7, max_options: 5, per_ad: 5, rotating: true, descriptions: 3, headlines: { kept: 0, max_options: 5, per_ad: 0, rotating: false } }, [], "Headline 0"]);
   assert.ok(p.warnings.some((w) => /7 copies kept, 5 per ad: they rotate/.test(w)) && !p.warnings.some((w) => /placeholder/.test(w)));
   assert.ok(p.warnings.some((w) => /3 kept copies have a description; Meta takes one description per placement rule/.test(w)), "one description per rule (Meta refused several, 2026-09-18)"); assert.equal(p.copy.descriptions, 3);
   assert.deepEqual(p.ads.map((a) => a.copies.join("")), ["c0c1c2c3c4", "c5c6c0c1c2", "c3c4c5c6c0"]);
@@ -652,10 +652,26 @@ test("M11 copy on the plan: the kept copies ride as Meta text options — up to 
   // The setting holds 1 to 5; nothing kept → placeholders and the plain words.
   assert.equal(buildPlan({ profile, batch, kept, presets: { presets: [] }, copies, settings: { copy: { max_options: 9 } } }).copy.max_options, 5);
   const none = buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: [] });
-  assert.deepEqual([none.copy, none.words.placeholders.length, none.ads[0].copies], [{ kept: 0, max_options: 5, per_ad: 0, rotating: false, descriptions: 0 }, 3, []]);
+  assert.deepEqual([none.copy, none.words.placeholders.length, none.ads[0].copies], [{ kept: 0, max_options: 5, per_ad: 0, rotating: false, descriptions: 0, headlines: { kept: 0, max_options: 5, per_ad: 0, rotating: false } }, 3, []]);
   assert.ok(none.warnings.some((w) => /draft and keep copy/.test(w)));
   // The button chosen in the settings applies to every kept copy.
   const cta = buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: copies.slice(0, 1), settings: { words: { cta: "APPLY_NOW" } } });
   assert.deepEqual(cta.ads[0].creative.asset_feed_spec.call_to_actions, [{ type: "APPLY_NOW", value: { lead_gen_form_id: "4001" } }]);
   assert.equal(cta.ads[0].creative.asset_feed_spec.bodies[0].text, "Text 0 about the 12 Week Total Body Reset. Tap Apply now.", "the copy's {BUTTON} is the chosen button's name, so the words and the button never disagree");
+  // Headlines are their own list: bodies from the kept copies, titles from the kept headlines, each rotated by its own number; {AREA} becomes each ad set's own area.
+  const bodiesOnly = Array.from({ length: 3 }, (_, i) => ({ id: `b${i}`, message: `Ladies in {AREA}, text ${i}: the 12 Week Total Body Reset. Tap {BUTTON}.`, headline: "", description: "" }));
+  const heads = Array.from({ length: 6 }, (_, i) => ({ id: `h${i}`, headline: `{AREA} ladies: headline ${i}`, description: i === 0 ? "One description" : "" }));
+  const keptTwo = [{ ...kept[0] }, { ...kept[1], location: "ANG MO KIO" }];
+  const two = buildPlan({ profile, batch, kept: keptTwo, presets: { presets: [] }, copies: bodiesOnly, headlines: heads, settings: { copy: { max_options: 2, max_headlines: 4 } } });
+  assert.deepEqual([two.copy.kept, two.copy.headlines, two.copy.descriptions], [3, { kept: 6, max_options: 4, per_ad: 4, rotating: true }, 1]);
+  assert.deepEqual([two.ads[0].copies, two.ads[0].headlines, two.ads[1].copies, two.ads[1].headlines], [["b0", "b1"], ["h0", "h1", "h2", "h3"], ["b2", "b0"], ["h4", "h5", "h0", "h1"]], "each list rotates by its own number");
+  const a0 = two.ads[0].creative.asset_feed_spec, a1 = two.ads[1].creative.asset_feed_spec;
+  assert.deepEqual([a0.bodies[0].text, a0.titles.map((t) => t.text), a0.descriptions], ["Ladies in Bishan, text 0: the 12 Week Total Body Reset. Tap Sign up.", ["Bishan ladies: headline 0", "Bishan ladies: headline 1", "Bishan ladies: headline 2", "Bishan ladies: headline 3"], [{ text: "One description", adlabels: [{ name: "copy" }] }]]);
+  assert.deepEqual([a1.bodies.map((t) => t.text), a1.titles[0].text], [["Ladies in Ang Mo Kio, text 2: the 12 Week Total Body Reset. Tap Sign up.", "Ladies in Ang Mo Kio, text 0: the 12 Week Total Body Reset. Tap Sign up."], "Ang Mo Kio ladies: headline 4"], "the second ad set's own area");
+  assert.ok(two.warnings.some((w) => /6 headlines kept, 4 per ad: they rotate/.test(w)));
+  // No headline kept and the copies carry none: a placeholder headline, and a warning that says so.
+  const noHead = buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: bodiesOnly, headlines: [] });
+  assert.deepEqual([noHead.ads[0].creative.asset_feed_spec.titles.map((t) => t.text), noHead.ads[0].headlines], [[noHead.words.headline], []]);
+  assert.ok(noHead.warnings.some((w) => /no headline kept: draft and keep headlines/.test(w)));
+  assert.equal(buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: bodiesOnly, headlines: heads, settings: { copy: { max_headlines: 9 } } }).copy.headlines.max_options, 5);
 });
