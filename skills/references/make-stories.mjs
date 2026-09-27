@@ -30,6 +30,8 @@
  *     [--max-calls 24] [--attempts 2] [--dry-run] [--render-only]
  */
 
+import { generateImage } from "./generate_ads_gemini.mjs";
+import { readShotGuide } from "./visual-prompts.mjs";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
 import { join, resolve, basename, dirname, extname } from "path";
 import { fileURLToPath } from "url";
@@ -42,7 +44,7 @@ import { checkSibling } from "./check-quality.mjs";
 import { renderPlan } from "./assign-variants.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { resolveSelections, loadRulings, withRulings, CHECKS_VERSION, exitWhenWritten } from "./plan-offer-batch.mjs";
-import { catalogueFor } from "./client-config.mjs";
+import { catalogueFor, imageModelFor } from "./client-config.mjs";
 import { inPage, LOAD } from "./clean-photo.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -229,11 +231,11 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
     if (todo.length && !left) log(`- the stories budget of ${maxCalls} image calls is spent: ${todo.map((v) => v.id).join(", ")} not generated`);
     if (todo.length && left) {
       const rep = await generateVisuals({
-        visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio: RATIO,
+        visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio: RATIO, shotGuide: deps.shotGuide !== undefined ? deps.shotGuide : readShotGuide(),
         refs: reference ? [at(reference)] : [], anchorFor: (v) => v.anchor, maxCalls: left, attempts,
         // The room reference was text-checked when the batch was made; not again here.
         checkRef: deps.checkRef || (async () => []),
-        ...(deps.generate ? { generate: deps.generate } : {}), check, ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
+        generate: deps.generate || ((p, parts, o) => generateImage(p, parts, { ...o, model: imageModelFor(profile) })), check, ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
       });
       calls += rep.image_calls;
       for (const r of rep.results) prior[r.id] = record(r, r.file, r.check);

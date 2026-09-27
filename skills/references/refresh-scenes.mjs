@@ -43,7 +43,7 @@ import { join, resolve, extname, relative } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
-import { POSES, scrubNames, isAboutText } from "./visual-prompts.mjs";
+import { POSES, scrubNames, isAboutText, readShotGuide } from "./visual-prompts.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
 import { SCENE_TAGS, MAX_SCENE_PEOPLE, AUDIENCES, sceneProblems, sceneWarnings, readLibrary, writeLibrary, isRetired, isDraft, sceneSummary, approveScenes, rejectScene, libraryStatus, today } from "./scene-library.mjs";
 
@@ -232,7 +232,7 @@ const PREFIX = { men: "m-", women: "w-", any: "a-" };
 const WHO = { men: "men", women: "women", any: "a mix of men and women (or either)" };
 
 /** The drafting request: everything the model needs to write scenes for this gym that repeat nothing. */
-export function buildRefreshRequest({ audience = "any", count = 6, direction = { kind: "gaps", cover: [], exercises: [] }, scenes = [], photography = {}, brandNames = [] }) {
+export function buildRefreshRequest({ audience = "any", count = 6, direction = { kind: "gaps", cover: [], exercises: [] }, scenes = [], photography = {}, brandNames = [], shotGuide = null }) {
   if (!AUDIENCES.includes(audience)) throw new Error(`audience must be one of ${AUDIENCES.join(", ")}`);
   const must = (photography.must || []).map((t) => scrubNames(t, brandNames));
   const never = (photography.never || []).filter((t) => !isAboutText(t)).map((t) => scrubNames(t, brandNames));
@@ -245,6 +245,8 @@ export function buildRefreshRequest({ audience = "any", count = 6, direction = {
     "REAL: real equipment, complete and used the way it is meant to be — bodies rest on what holds them, hands grip real handles, the load sits where it does in the real exercise.",
     `FIELDS for each scene: id (a new lower-case slug starting with "${PREFIX[audience]}", e.g. ${PREFIX[audience]}lunge-coach); audience ("${audience}"); pose — one of ${Object.entries(POSES).map(([k, v]) => `${k} (${v})`).join("; ")}; people (1 to ${MAX_SCENE_PEOPLE}: solo = 1, coached = 2 or more, group = 3 or more); exercise (a short lower-case name, e.g. back-squat); age — ${SCENE_TAGS.age.join(", ")} (20s; 30s–40s; 50s–60s); setting — ${SCENE_TAGS.setting.join(", ")}; equipment — ${SCENE_TAGS.equipment.join(", ")}; muscles — ${SCENE_TAGS.muscles.join(", ")}; scene (the description).`,
   ];
+  // The high-performing references' shot types (reference-shots.mjs): scenes that can be photographed that way.
+  if (shotGuide?.recipes?.length) lines.push(`SHOT TYPES that perform best — write scenes a photographer could shoot as one of these, close and at eye level, caught mid-rep or at peak effort with a clear expression: ${shotGuide.recipes.map((r) => `${r.name} (${r.when || r.moment})`).join("; ")}. About half the scenes have two people: a coach or a training partner.`);
   if (direction.kind === "words") lines.push(`DIRECTION from the owner: ${direction.words.trim()} — every scene follows this, in this gym.`);
   else if (direction.kind === "reference") {
     lines.push(`DIRECTION: ${describeReference(direction.description)}`);
@@ -323,7 +325,7 @@ const forbiddenFrom = (photography, brandNames, description = null) => [...brand
  * was dropped and why, and the calls made. `ask` is the model call (callVision's shape: image or
  * null, question, schema, options) — injectable for tests.
  */
-export async function draftScenes({ brandDir, scenesPath = join(brandDir, "scenes.json"), audience = "any", count = 6, direction = null, cover = null, source = "refresh", ask = callVision, catalogue = loadCatalogue(), dryRun = false, date = today(), log = console.log }) {
+export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath = join(brandDir, "scenes.json"), audience = "any", count = 6, direction = null, cover = null, source = "refresh", ask = callVision, catalogue = loadCatalogue(), dryRun = false, date = today(), log = console.log }) {
   if (!AUDIENCES.includes(audience)) throw new Error(`audience must be one of ${AUDIENCES.join(", ")}`);
   if (!Number.isInteger(count) || count < 1 || count > 12) throw new Error("count must be 1 to 12");
   if (direction) { const errs = validateDirection(direction, { brandDir }); if (errs.length) throw new Error(`direction: ${errs.join("; ")}`); }
@@ -356,7 +358,7 @@ export async function draftScenes({ brandDir, scenesPath = join(brandDir, "scene
   const kept = [], dropped = [];
   for (let call = 0; call < MAX_DRAFT_CALLS && kept.length < count; call++) {
     const need = count - kept.length;
-    const { prompt, schema } = buildRefreshRequest({ audience, count: need, direction: dir, scenes: [...lib.scenes, ...kept], photography, brandNames });
+    const { prompt, schema } = buildRefreshRequest({ audience, count: need, direction: dir, scenes: [...lib.scenes, ...kept], photography, brandNames, shotGuide: shotGuide === undefined ? readShotGuide() : shotGuide });
     let answer;
     try { answer = await ask(null, prompt, schema, { model: DRAFT_MODEL }); text_calls++; }
     catch (e) { text_calls++; log(`⚑ the drafter's answer could not be used: ${e.message}`); continue; }

@@ -89,7 +89,7 @@ function loadImageAsInlineData(filePath) {
  * Call Gemini generateContent with text + reference images.
  * Returns the generated image as a Buffer, or null on failure.
  */
-async function generateImage(prompt, referenceImageParts, { aspectRatio, imageSize } = {}) {
+async function generateImage(prompt, referenceImageParts, { aspectRatio, imageSize, model = null } = {}) {
   const parts = [
     { text: prompt },
     ...referenceImageParts,
@@ -107,7 +107,8 @@ async function generateImage(prompt, referenceImageParts, { aspectRatio, imageSi
     },
   };
 
-  const url = `${GEMINI_URL}?key=${GEMINI_KEY}`;
+  // A model other than the default (the Flash vs Pro test, 2026-09-27); the default is unchanged.
+  const url = `${model ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent` : GEMINI_URL}?key=${GEMINI_KEY}`;
   // A busy Gemini (503 "high demand", 429, a dropped connection) is waited out — 10, 20, 40 s — here, for
   // every caller (the batch runner, Stories, the clean-up edit, the old template path); any other fault stops.
   const data = await whenGeminiFree(async () => {

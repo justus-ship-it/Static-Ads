@@ -421,9 +421,12 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       });
       const score = (p, alpha) => p.filter((x) => x.steps.includes("band")).length * 10
         + p.filter((x) => x.steps.includes("stroke")).length + (alpha ? 0.5 : 0);
+      // A floor from the other locations of the same ad (renderPlan): the scrim is at least that, and always drawn.
+      const F = Math.min(C.scrim_max_alpha, +((S.scrim_floor || {})[g.G.id] || 0));
+      if (F > A && g.G.scrim.direction !== "none") A = F;
       const noScrim = plan(0);
       const withScrim = A > 0 ? plan(A) : null;
-      const useScrim = withScrim && score(withScrim, A) < score(noScrim, 0);
+      const useScrim = withScrim && (F > 0 || score(withScrim, A) < score(noScrim, 0));
       const chosen = useScrim ? withScrim : noScrim;
       if (!useScrim) A = 0;
       g.A = A;

@@ -43,7 +43,7 @@ import { draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, 
 import { liveEntries } from "../skills/references/copy-library.mjs";
 import { sendToLibrary } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
-import { validateBrief, sceneAudience, spreadFor, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
+import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
@@ -438,7 +438,9 @@ function resolveSpread(gym, brief) {
   if (spread !== true || !(rest.generated > 0) || rest.must_show) return { brief: rest, spread: null };
   let scenes = [];
   try { scenes = loadScenes(join(brandDir(gym), "scenes.json")); } catch { return { brief: rest, spread: { must_show: {}, left_out: [], reason: "no approved scenes yet" } }; }
-  const s = spreadFor({ scenes, audience: sceneAudience(rest.audience, rest.scene_audience), count: rest.generated });
+  // With an age range the ages come from the bell curve (plan-offer-batch → ageTargets), so the spread leaves them out.
+  const wish = Array.isArray(rest.age_range) ? Object.fromEntries(Object.entries(SPREAD_WISH).filter(([k]) => k !== "age")) : SPREAD_WISH;
+  const s = spreadFor({ scenes, audience: sceneAudience(rest.audience, rest.scene_audience), count: rest.generated, wish });
   return { brief: Object.keys(s.must_show).length ? { ...rest, must_show: s.must_show } : rest, spread: s };
 }
 function checkBrief(gym, raw) {
@@ -1061,7 +1063,7 @@ const server = createServer(async (req, res) => {
     if (bm) {
       const [, gym, what, id] = bm;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "batch-setup" && req.method === "GET") return json(res, 200, { photos: cleanPhotos(gym), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults });
+      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
       if (what === "batch/check" && req.method === "POST") { const { brief } = await readBody(req); return json(res, 200, checkBrief(gym, brief)); }
       if (what === "batch" && req.method === "POST") {
         const { brief: raw, replace = false } = await readBody(req);

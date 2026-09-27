@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalogue, layoutFor } from "./render-composites.mjs";
-import { buildVisualPrompt, describeTextAreas, describeSubjectArea, maxFigureHeight, coveredSpans, poseProblem, POSES, NO_TEXT_CLAUSE, ONE_PHOTO_CLAUSE, isStyleRule, checkableNever } from "./visual-prompts.mjs";
+import { shotClause, recipeFor, readShotGuide, buildVisualPrompt, describeTextAreas, describeSubjectArea, maxFigureHeight, coveredSpans, poseProblem, POSES, NO_TEXT_CLAUSE, ONE_PHOTO_CLAUSE, isStyleRule, checkableNever } from "./visual-prompts.mjs";
 import { judgeVisual, textAreaBoxes, askVision, bestCrop, imageSize, confirmItems, checkVisual, MAX_SUBJECT_UNDER_TEXT } from "./check-visual.mjs";
 import { generateVisuals } from "./generate-visuals.mjs";
 
@@ -43,7 +43,7 @@ test("V2 the composition comes from the layout's own text areas, for the ratio b
   assert.equal(t1.aspect, "3:4");
   assert.match(t1.prompt, /portrait 3:4/);
   assert.match(t1.prompt, /Text will be laid over the area from 49% to 83% of the height, across the full width/, "48–94% of the ad = 49–83% of the photo");
-  assert.match(t1.prompt, /place the subject in the upper half/);
+  assert.match(t1.prompt, /Head and face in the upper half of the frame; the lower half may hold the torso, arms or legs/, "close framing (2026-09-27): the body may sit under the words, never a face");
   const t3 = buildVisualPrompt({ treatment: "t3-right-column", scene: SCENE, photography: PHOTO });
   assert.equal(t3.aspect, "4:3");
   assert.match(t3.prompt, /on the right side \(49%–83% of the width\)/);
@@ -95,11 +95,12 @@ test("V4 check rules depend on how the layout uses the photo", () => {
   assert.equal(faceLow.ok, true);
   assert.equal(faceLow.placement.faces_under_text_area, 1, "still reported");
   assert.deepEqual(faceLow.faces, [[520, 450, 600, 530]], "handed on to the renderer");
-  // A layout with a subject area: at most 40% of the people under its text areas.
-  const tall = judgeVisual({ ...clean, people_box: [100, 300, 900, 700] }, t1); // 420/800 under text
-  assert.match(tall.failures.join(), /53% of the people sit under text areas/);
+  // A layout with a subject area: at most 65% of the people under its text areas (40% until 2026-09-27: the references put the words over the body).
+  assert.equal(judgeVisual({ ...clean, people_box: [100, 300, 900, 700] }, t1).ok, true, "53% under the words now passes");
+  const tall = judgeVisual({ ...clean, people_box: [300, 300, 1000, 700] }, t1); // 460/700 under text
+  assert.match(tall.failures.join(), /66% of the people sit under text areas \(max 65%\)/);
   assert.equal(tall.placement.rule, "subject-area");
-  assert.ok(MAX_SUBJECT_UNDER_TEXT === 0.4);
+  assert.ok(MAX_SUBJECT_UNDER_TEXT === 0.65);
   // T4 puts text over the whole frame by design: no body rule.
   const t4 = judgeVisual({ ...clean, people_box: [100, 100, 900, 900] }, { treatment: "t4-centred-stack" });
   assert.equal(t4.ok, true, t4.failures.join());
@@ -235,11 +236,13 @@ test("V9 learned from runs 1–3: the photo is asked to be plain, never darker, 
 test("V10 the size limit comes from the same rule the check applies; 9:16 never sends faces into the covered zones", () => {
   const T = CAT.treatments, o = (r) => ({ canvas: T.canvas[r], covered: coveredSpans(r, T) });
   const L = (id, r) => layoutFor(T.treatments[id], r, T);
-  assert.equal(maxFigureHeight(L("t1-bottom-stack", "1x1"), o("1x1")), 65, "(48 − 8) / 0.6 → 65%");
-  assert.equal(maxFigureHeight(L("t2-top-bottom-split", "1x1"), o("1x1")), 40, "24 / 0.6 → 40%");
+  assert.equal(maxFigureHeight(L("t1-bottom-stack", "1x1"), o("1x1")), 95, "(48 − 8) / 0.35 → capped at 95%");
+  assert.equal(maxFigureHeight(L("t2-top-bottom-split", "1x1"), o("1x1")), 65, "24 / 0.35 → 65%");
   assert.equal(maxFigureHeight(L("t3-right-column", "1x1"), o("1x1")), null, "columns: height is free");
-  assert.match(buildVisualPrompt({ treatment: "t2-top-bottom-split", scene: SCENE, photography: PHOTO }).prompt, /SIZE: each person's whole figure, head to feet, is at most 25% of the frame's height/, "40% of the ad = 30% of the 3:4 photo; asked for 85% of that");
-  assert.doesNotMatch(buildVisualPrompt({ treatment: "t3-right-column", scene: SCENE, photography: PHOTO }).prompt, /SIZE:/);
+  assert.match(buildVisualPrompt({ treatment: "t2-top-bottom-split", scene: SCENE, photography: PHOTO }).prompt, /SIZE: the main person fills about 30% to 40% of the frame's height — step in close/, "in the 3:4 photo the band is 18%: 18 / 0.35 → 50%, asked for 85% of that; a low pose");
+  assert.match(buildVisualPrompt({ treatment: "t1-bottom-stack", scene: SCENE, photography: PHOTO }).prompt, /SIZE: the main person fills about 60% to 80% of the frame's height/, "the references' median is 80%");
+  assert.match(buildVisualPrompt({ treatment: "t3-right-column", scene: SCENE, photography: PHOTO }).prompt, /SIZE: the main person fills about 65% to 85% of the frame's height/, "a column: the person fills the height on their side");
+  assert.doesNotMatch(buildVisualPrompt({ treatment: "t4-centred-stack", scene: SCENE, photography: PHOTO }).prompt, /SIZE:/, "text over the whole frame: no size line");
   // In 9:16 the app covers the top 14% and bottom 35%: a face there is hidden, so it is not free space.
   assert.deepEqual(coveredSpans("9x16", T), [[0, 14], [65, 100]]);
   assert.equal(describeSubjectArea(L("t4-centred-stack", "9x16"), o("9x16")), null, "not 'the bottom 36%'");
@@ -274,9 +277,9 @@ test("V12 a scene whose pose its layout cannot hold is refused before any image 
 });
 
 test("V13 crop to fit: a subject Gemini centred is placed by moving the square crop through the taller photo", () => {
-  // Centred people in a 3:4 photo (896 × 1200): a centred square crop puts 54% of them under T1's text;
+  // Tall people in a 3:4 photo (896 × 1200): a centred square crop puts 70% of them under T1's text;
   // moving the crop down lifts them in the ad, and the rules pass.
-  const ans = { text_items: [], people_box: [300, 300, 700, 700], face_boxes: [[310, 450, 380, 550]], people_count: 1 };
+  const ans = { text_items: [], people_box: [300, 300, 900, 700], face_boxes: [[310, 450, 380, 550]], people_count: 1 };
   const square = judgeVisual(ans, { treatment: "t1-bottom-stack" });
   assert.match(square.failures.join(), /of the people sit under text areas/, "a square photo has no room to move");
   const tall = judgeVisual(ans, { treatment: "t1-bottom-stack", imageSize: [896, 1200] });
@@ -431,4 +434,22 @@ test("V19 a busy Gemini is waited out, never a stopped run: a 503 'high demand' 
   let tries = 0;
   const out = await whenGeminiFree(async () => { if (++tries < 2) throw new Error("fetch failed"); return "image"; }, { sleep: async () => {}, log: () => {} });
   assert.deepEqual([out, tries], ["image", 2]);
+});
+
+test("V20 the shot guide in the prompt (2026-09-27): its rules as SHOT, the recipe for the scene's setting, a clear clothing colour; with it the room reference is matched for the room, not its light; the photo's target age named; without a guide the prompt is as before", () => {
+  const G = { rules: [{ rule: "Shoot from eye level.", evidence: "15 of 19" }, { rule: "Fill at least 60 percent of the frame with the subject.", evidence: "18 of 19" }], recipes: [{ name: "The Partner Training Shot", when: "teamwork, classes or coaching", camera: "eye level, full body", moment: "mid-rep", light: "soft window-side light", colour: "neutral", background: "a bright gym", words: "over the body" }, { name: "The Focused Lifter", when: "individual strength training", camera: "medium-close, eye level", moment: "lockout", light: "window-side", colour: "warm", background: "a clean gym", words: "over the body" }] };
+  assert.equal(recipeFor(G, "coached").name, "The Partner Training Shot"); assert.equal(recipeFor(G, "group").name, "The Partner Training Shot"); assert.equal(recipeFor(G, "solo").name, "The Focused Lifter"); assert.equal(recipeFor(G, null), null);
+  const p = buildVisualPrompt({ treatment: "t1-bottom-stack", scene: SCENE, photography: PHOTO, hasReference: true, setting: "coached", age: 44, shotGuide: G }).prompt;
+  assert.match(p, /SHOT \(how the best-performing gym adverts are photographed; where the people sit and how big they are is set by COMPOSITION and SIZE below\): Shoot from eye level\.\n/);
+  assert.doesNotMatch(p.match(/SHOT \([^\n]*/)[0], /60 percent/, "a size rule is the layout's SIZE line, not SHOT's");
+  assert.match(p, /SHOT TYPE, The Partner Training Shot: camera eye level, full body; moment mid-rep; light soft window-side light; colour neutral; background a bright gym\./);
+  assert.match(p, /training clothes in one clear, bright colour/);
+  assert.match(p, /AGE: the person training is about 44 years old; the coach is any adult age\. If the scene gives them another age, this age wins\./);
+  assert.match(p, /Match its room: wall colour, ceiling, floor and equipment\. Light the people as SHOT says, keeping the room recognisable\./);
+  const plain = buildVisualPrompt({ treatment: "t1-bottom-stack", scene: SCENE, photography: PHOTO, hasReference: true }).prompt;
+  assert.doesNotMatch(plain, /SHOT|AGE:/); assert.match(plain, /Match its room: wall colour, ceiling, lighting, floor and equipment\./);
+  assert.deepEqual(shotClause(null), []); assert.deepEqual(shotClause({ rules: [] }), []);
+  assert.equal(readShotGuide("/nonexistent-dir"), null);
+  // Faces never under the words; the body may be.
+  assert.match(p, /No face may fall inside it, and keep it free of busy detail behind the words; the body may run into the text: the words may sit over a torso, arms or legs, never over a face\./);
 });

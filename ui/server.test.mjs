@@ -189,6 +189,10 @@ test("U3 the panel refuses exactly what Step 6 refuses, and saves the words exac
   sp = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 2, max_calls: 2, spread: true } } })).json();
   assert.deepEqual([sp.errors, sp.brief.must_show], [[], { exercise: ["squat"], age: ["prime", "older"], setting: ["solo", "coached"], equipment: ["bodyweight", "dumbbells"] }], sp.errors.join("; "));
   assert.ok(sp.spread.left_out.includes("exercise bench-press") && sp.spread.left_out.includes("setting group"));
+  sp = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 2, max_calls: 2, spread: true, age_range: [25, 60] } } })).json();
+  assert.deepEqual([sp.errors, "age" in sp.brief.must_show, sp.spread.left_out.some((x) => x.startsWith("age")), sp.brief.age_range], [[], false, false, [25, 60]], "an age range: the ages come from the bell curve, not the spread");
+  const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
+  assert.equal(setup.photo_ages.length, 2, "Create is pre-filled with the gym's ad-set ages");
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
   const ok = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2 } } })).json();
   assert.deepEqual(ok.errors, []);

@@ -29,8 +29,8 @@
         "Asheville, boxing ('HEY, ASHEVILLE!')",
         "Mount Dora, plank"
       ],
-      "visual_hint": "Keep the lower half of the frame plain and uncluttered (floor or plain surfaces); place the subject in the upper half. No text, letters, signage, logos or watermarks anywhere.",
-      "visual_framing": "Keep the people compact and high in the frame: a seated, kneeling or crouching version of the movement, or a shot from the waist up, with the camera a little above eye level so the lower part of the frame is floor. No full-length standing figures.",
+      "visual_hint": "Head and face in the upper half of the frame; the lower half may hold the torso, arms or legs, kept free of faces and busy detail. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "The person fills most of the frame from the waist up, or in a seated, kneeling or crouching version of the movement, with the head in the upper half; eye-level camera. No full-length standing figures.",
       "pose_fit": ["compact", "low"],
       "layouts": {
         "1x1": {
@@ -77,8 +77,8 @@
         "Mount Dora, HPA ('MOUNT DORA AREA … LADIES WANTED')",
         "Mount Dora, ladies on bench"
       ],
-      "visual_hint": "Subject centred in the middle band of the frame; keep the top quarter and the bottom third plain and uncluttered (ceiling above, floor below). No text, letters, signage, logos or watermarks anywhere.",
-      "visual_framing": "Keep the people small and low: a horizontal or low pose (plank, push-up, floor work, a seated movement, a deep lunge seen side-on), shot from a few metres back so heads and bodies stay in the middle band. No standing full-length figures.",
+      "visual_hint": "Faces in the middle band of the frame; the top quarter and the bottom third may hold the body or plain surfaces, never a face. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "Keep the people low: a horizontal or low pose (plank, push-up, floor work, a seated movement, a deep lunge seen side-on), close enough that the person fills the frame side to side, with heads in the middle band. No standing full-length figures.",
       "pose_fit": ["low"],
       "layouts": {
         "1x1": {
@@ -143,8 +143,8 @@
         "Mount Dora, green dumbbell",
         "Asheville, boxing blue ('LADIES WANTED … FITNESS KICKSTART')"
       ],
-      "visual_hint": "Subject in the left half of the frame; keep the right half plain and uncluttered (bare wall or empty floor). No text, letters, signage, logos or watermarks anywhere.",
-      "visual_framing": "People on the left side only, upright and full-length if the scene wants it; the right side is plain wall or empty floor with nothing in it.",
+      "visual_hint": "Subject and face in the left half of the frame; the right half is kept free of faces and busy detail. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "The people on the left side, close enough to fill most of the frame's height; faces stay on the left, and the right side may hold part of the body or a plain wall, never a face.",
       "pose_fit": ["upright", "compact", "low"],
       "layouts": {
         "1x1": {
@@ -243,8 +243,8 @@
         "Mount Dora, purple pill ('High Performance Aging Transformation Program')",
         "Mount Dora, black bar"
       ],
-      "visual_hint": "Subject in the middle of the frame; keep the top fifth and the bottom third plain and uncluttered (ceiling above, floor below). No text, letters, signage, logos or watermarks anywhere.",
-      "visual_framing": "Keep the people small and low: a horizontal or low pose (plank, push-up, floor work, a seated movement), shot from a few metres back so heads and bodies stay in the middle band. No standing full-length figures.",
+      "visual_hint": "Faces in the middle of the frame; the top fifth and the bottom third may hold the body or plain surfaces, never a face. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "Keep the people low: a horizontal or low pose (plank, push-up, floor work, a seated movement), close enough that the person fills the frame side to side, with heads in the middle band. No standing full-length figures.",
       "pose_fit": ["low"],
       "layouts": {
         "1x1": {
@@ -317,8 +317,8 @@
         "Asheville ladies, muay thai",
         "Asheville ladies, MMA cage ('ASHEVILLE LADIES WANTED … FITNESS KICKSTART')"
       ],
-      "visual_hint": "Subject in the right half of the frame; keep the left half plain and uncluttered (bare wall or empty floor). No text, letters, signage, logos or watermarks anywhere.",
-      "visual_framing": "People on the right side only, upright and full-length if the scene wants it; the left side is plain wall or empty floor with nothing in it.",
+      "visual_hint": "Subject and face in the right half of the frame; the left half is kept free of faces and busy detail. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "The people on the right side, close enough to fill most of the frame's height; faces stay on the right, and the left side may hold part of the body or a plain wall, never a face.",
       "pose_fit": ["upright", "compact", "low"],
       "layouts": {
         "1x1": {

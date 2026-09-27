@@ -102,7 +102,7 @@ export async function checkRefTiled(path, { never = [] } = {}) {
 /** `generate`, `check` and `compositor` are injectable, so the flow and the call budget can be tested offline.
  *  `onProgress(event)` hears each photo as it goes — { id, event: "generating" | "checking" | "tried" | "done",
  *  attempt, file, status, failures, notes, calls } — for the panel's Generating screen; it can never stop a run. */
-export async function generateVisuals({ visuals, text = null, photography = {}, brandNames = [], outDir, ratio = "1x1", refs = [], anchorFor = null, maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkPicture, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log, onProgress = null }) {
+export async function generateVisuals({ visuals, text = null, photography = {}, shotGuide = null, brandNames = [], outDir, ratio = "1x1", refs = [], anchorFor = null, maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkPicture, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log, onProgress = null }) {
   const tell = (e) => { try { onProgress?.(e); } catch {} };
   mkdirSync(outDir, { recursive: true });
   // A reference photo carrying lettering gets it copied into every visual, so it is refused first.
@@ -124,7 +124,7 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
     // A sibling of a chosen photo (Step 8, 9:16): that photo goes first, as the scene itself.
     const anchor = anchorFor ? anchorFor(v) : null;
     const parts = anchor ? [inline(anchor), ...refParts] : refParts;
-    const { prompt, aspect } = buildVisualPrompt({ treatment: v.treatment, scene: v.scene, ratio, photography, brandNames, hasReference: refParts.length > 0, anchor: !!anchor, people: typeof v.people === "number" ? v.people : null, setting: v.tags?.setting ?? v.setting ?? null });
+    const { prompt, aspect } = buildVisualPrompt({ treatment: v.treatment, scene: v.scene, ratio, photography, shotGuide, age: Number.isInteger(v.age) ? v.age : null, brandNames, hasReference: refParts.length > 0, anchor: !!anchor, people: typeof v.people === "number" ? v.people : null, setting: v.tags?.setting ?? v.setting ?? null });
     writeFileSync(join(outDir, `${v.id}.prompt.txt`), prompt + "\n");
     const tries = [];
     let final = null;

@@ -30,6 +30,7 @@
  *     --brief batches/2026-09-12-test/brief.json [--dry-run] [--render-only]
  */
 
+import { generateImage } from "./generate_ads_gemini.mjs";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync, readdirSync, renameSync } from "fs";
 import { join, resolve, basename, dirname, relative } from "path";
 import { fileURLToPath } from "url";
@@ -37,11 +38,11 @@ import { parseArgs } from "util";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
 import { validateInputs, loadCatalogue, launchBrowser, layoutFor } from "./render-composites.mjs";
-import { poseProblem, POSES } from "./visual-prompts.mjs";
+import { poseProblem, POSES, readShotGuide } from "./visual-prompts.mjs";
 import { fitLayouts, imageSize, checkTiled } from "./check-visual.mjs";
 import { QUALITY_VERSION } from "./check-quality.mjs";
 import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from "./assign-variants.mjs";
-import { catalogueFor } from "./client-config.mjs";
+import { catalogueFor, imageModelFor } from "./client-config.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { SCENE_TAGS, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
@@ -103,6 +104,7 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
     if (!Array.isArray(brief.scenes) || brief.scenes.length < g) errs.push(`scenes, when given, must list at least one per generated photo (${g})`);
     else for (const [i, s] of brief.scenes.entries()) for (const e of sceneProblems(s)) errs.push(`scenes[${i}]: ${e}`);
   }
+  if (brief.age_range != null && !(Array.isArray(brief.age_range) && brief.age_range.length === 2 && brief.age_range.every((n) => Number.isInteger(n) && n >= 18 && n <= 75) && brief.age_range[0] <= brief.age_range[1])) errs.push("age_range is the photos' ages as [youngest, oldest], whole years from 18 to 75");
   if (brief.must_show != null) {
     if (typeof brief.must_show !== "object" || Array.isArray(brief.must_show)) errs.push("must_show must map a tag to the values the batch must include");
     else for (const [tag, values] of Object.entries(brief.must_show)) {
@@ -188,6 +190,18 @@ function rngFrom(seed) {
 
 /** How much a scene adds by bringing something new on each tag — the exercise most. */
 export const VARIETY_WEIGHTS = { exercise: 3, age: 3, setting: 2, equipment: 2, muscles: 1 };
+/** A scene's age tag for an age in years: young 20s, prime 30s–40s, older 50s–60s (SCENE_TAGS.age). */
+export const ageBand = (n) => (n < 30 ? "young" : n < 50 ? "prime" : "older");
+/**
+ * One age per generated photo on a bell curve over the owner's range (2026-09-27: "if I give 25-60, most
+ * should be in their 40s"): mean at the middle, standard deviation a quarter of the range (so about 95%
+ * fall inside it), clamped to the range, seeded so the same brief gives the same ages.
+ */
+export function ageTargets({ range, count, seed = "batch" }) {
+  if (!Array.isArray(range) || range.length !== 2) return null;
+  const [lo, hi] = range, mean = (lo + hi) / 2, sd = Math.max(1.5, (hi - lo) / 4), rand = rngFrom(`${seed}|ages`);
+  return Array.from({ length: count }, () => { const u = Math.max(1e-9, rand()), v = rand(); const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); return Math.round(Math.min(hi, Math.max(lo, mean + z * sd))); });
+}
 
 /**
  * For each photo to generate: the layout it is made for and a scene that suits the audience and that
@@ -230,7 +244,7 @@ export function unshowable(mustShow = {}, scenes = []) {
   return Object.entries(mustShow || {}).flatMap(([tag, values]) => (values || []).filter((v) => !scenes.some((sc) => shows(sc, tag, v))).map((v) => `${tag} "${v}"`));
 }
 
-export function planVisuals({ count, scenes, audience, seed = "batch", mustShow = {}, catalogue = loadCatalogue(), ratio = "1x1", exclude = {} }) {
+export function planVisuals({ count, scenes, audience, seed = "batch", mustShow = {}, catalogue = loadCatalogue(), ratio = "1x1", exclude = {}, ages = null }) {
   if (!count) return [];
   const rand = rngFrom(`${seed}|visuals`);
   const shuffle = (xs) => { const a = [...xs]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -270,8 +284,10 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
       const fits = layouts.filter((la) => !poseProblem(la, s.pose, catalogue));
       const la = fits.includes(s.prefer_layout) ? s.prefer_layout : fits.reduce((best, x) => (best === null || usedL.get(x) < usedL.get(best) ? x : best), null);
       if (la === null) continue;
+      // The photo's target age (the bell curve): a scene of that age band first, one of another band last.
+      const ageFit = ages && s.age ? (s.age === ageBand(ages[i]) ? 1 : -1) : 0;
       // A repeated scene is worst; then less new; then a busier layout. Ties keep the seeded order.
-      const score = -usedS.get(s) * 100000 + asked * 1000 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
+      const score = -usedS.get(s) * 100000 + ageFit * 3000 + asked * 1000 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
       if (!pick || score > pick.score) pick = { la, s, score };
     }
     if (!pick) throw new Error("no scene in the library fits any layout the batch can use");
@@ -279,7 +295,7 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
     for (const k of Object.keys(VARIETY_WEIGHTS)) if (pick.s[k] != null) { seen[k].add(pick.s[k]); uses[k].set(pick.s[k], (uses[k].get(pick.s[k]) || 0) + 1); }
     for (const w of wanted) if (shows(pick.s, w.tag, w.value)) w.done = true;
     const tags = Object.fromEntries(["exercise", ...Object.keys(SCENE_TAGS)].filter((k) => pick.s[k] != null).map((k) => [k, pick.s[k]]));
-    out.push({ id: `g${String(i + 1).padStart(2, "0")}`, treatment: pick.la, scene: pick.s.scene, scene_id: pick.s.id || null, pose: pick.s.pose, people: pick.s.people, tags, look: CHECK_LOOK });
+    out.push({ id: `g${String(i + 1).padStart(2, "0")}`, treatment: pick.la, scene: pick.s.scene, scene_id: pick.s.id || null, pose: pick.s.pose, people: pick.s.people, tags, ...(ages ? { age: ages[i] } : {}), look: CHECK_LOOK });
     Object.defineProperty(out.at(-1), "src", { value: pick.s, enumerable: false }); // for the even-spread rule; not written out
   }
   const notShown = wanted.filter((w) => !w.done).map((w) => `${w.tag} "${w.value}"`);
@@ -394,7 +410,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   const plannedPath = join(out, "visuals.json");
   let visuals;
   if (renderOnly && existsSync(plannedPath)) visuals = JSON.parse(readFileSync(plannedPath, "utf-8")).visuals;
-  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: brief.must_show, catalogue, ratio, exclude });
+  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: brief.must_show, catalogue, ratio, exclude, ages: ageTargets({ range: brief.age_range, count: g, seed }) });
   if (visuals.notShown) log(`  note: too few photos to show everything asked — not shown: ${visuals.notShown.join(", ")}`);
   for (const v of visuals) for (const w of sceneWarnings({ scene: v.scene, people: v.people, setting: v.tags?.setting })) log(`  warning: ${v.id} (${v.scene_id || "brief scene"}): ${w}`);
   for (const v of visuals) { const p = poseProblem(v.treatment, v.pose, catalogue); if (p) throw new Error(`${v.id}: ${p}`); }
@@ -489,10 +505,12 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     if (todo.length && !left) log(`- the batch's budget of ${plan.max_calls} image calls is spent: ${todo.map((v) => v.id).join(", ")} not generated`);
     if (todo.length && !left) for (const v of todo) prog.photo(v.id, { state: "skipped", failures: [`the batch's budget of ${plan.max_calls} image calls is spent`] });
     if (todo.length && left) {
+      if (!deps.generate) log(`· image model: ${imageModelFor(profile)}`);
       const rep = await generateVisuals({
-        visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio,
+        visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio, shotGuide: deps.shotGuide !== undefined ? deps.shotGuide : readShotGuide(),
         refs: reference ? [at(reference)] : [], maxCalls: left, attempts: plan.attempts,
-        ...(deps.generate ? { generate: deps.generate } : {}), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
+        // The gym's image model (creative_defaults.image_model, Pro by default); tests inject their own.
+        generate: deps.generate || ((p, parts, o) => generateImage(p, parts, { ...o, model: imageModelFor(profile) })), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
         onProgress: (e) => {
           if (e.event === "generating") prog.photo(e.id, { state: "generating", attempt: e.attempt });
           else if (e.event === "checking") prog.photo(e.id, { state: "checking", attempt: e.attempt, file: e.file });

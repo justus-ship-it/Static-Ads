@@ -18,7 +18,7 @@ import { launchBrowser, loadCatalogue, renderComposite } from "./render-composit
 import { fitLayouts } from "./check-visual.mjs";
 import { assignVariants } from "./assign-variants.mjs";
 import { cropImage } from "./clean-photo.mjs";
-import { spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
+import { ageTargets, ageBand, spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
 const sceneProblemsOf = (s) => sceneProblems(s).join("; ");
 import { poseProblem } from "./visual-prompts.mjs";
 import { rejectScene } from "./scene-library.mjs";
@@ -146,6 +146,25 @@ test("B1c the spread a gym's library can deliver: the wished values its pool for
   assert.throws(() => planVisuals({ count: 3, scenes: lib, audience: "women", seed: "b1c", mustShow: SPREAD_WISH }), /bench-press/, "the whole wish is what used to refuse");
 });
 
+test("B1d ages on a bell curve over the owner's range (2026-09-27): seeded, inside the range, most near the middle; the planner picks a scene of each photo's age band first and the photo carries its age; the brief's range is checked", () => {
+  const a = ageTargets({ range: [25, 60], count: 400, seed: "x" });
+  assert.deepEqual(ageTargets({ range: [25, 60], count: 400, seed: "x" }), a, "the same brief, the same ages");
+  assert.ok(a.every((n) => Number.isInteger(n) && n >= 25 && n <= 60));
+  const mean = a.reduce((t, n) => t + n, 0) / a.length, inForties = a.filter((n) => n >= 35 && n <= 50).length / a.length;
+  assert.ok(Math.abs(mean - 42.5) < 1.5, `mean ${mean}`); assert.ok(inForties > 0.55, `${inForties} between 35 and 50`);
+  const narrow = ageTargets({ range: [50, 60], count: 200, seed: "y" });
+  assert.ok(narrow.filter((n) => n >= 53 && n <= 57).length / 200 > 0.55, "50-60: most near 55");
+  assert.equal(ageTargets({ range: null, count: 3 }), null);
+  assert.deepEqual([ageBand(25), ageBand(30), ageBand(49), ageBand(50)], ["young", "prime", "prime", "older"]);
+  const sc = (id, age) => ({ id, audience: "women", pose: "upright", people: 1, exercise: `ex-${id}`, age, setting: "solo", equipment: "dumbbells", muscles: "legs", scene: `A woman training (${id}).` });
+  const lib = [sc("y1", "young"), sc("y2", "young"), sc("p1", "prime"), sc("p2", "prime"), sc("o1", "older"), sc("o2", "older")];
+  const plan = planVisuals({ count: 4, scenes: lib, audience: "women", seed: "b1d", ages: [44, 41, 58, 27] });
+  assert.deepEqual(plan.map((x) => [x.age, lib.find((s) => s.id === x.scene_id).age]), [[44, "prime"], [41, "prime"], [58, "older"], [27, "young"]]);
+  assert.ok(planVisuals({ count: 2, scenes: lib, audience: "women", seed: "b1d" }).every((x) => x.age === undefined), "no range: no age");
+  for (const bad of [[25], [60, 25], [10, 40], [25, 90], ["25", 40]]) assert.ok(validateBrief({ ...BRIEF, age_range: bad }).some((e) => /age_range/.test(e)), JSON.stringify(bad));
+  assert.ok(!validateBrief({ ...BRIEF, age_range: [25, 60] }).some((e) => /age_range/.test(e)));
+});
+
 test("B2 each photo to generate gets a layout it is made for and a scene that suits the audience and that layout's pose", () => {
   const prim = primaryLayouts(CAT);
   assert.deepEqual([...prim].sort(), ["t1-bottom-stack", "t2-top-bottom-split", "t3-right-column", "t5-offer-band", "t6-left-column"], "only single-photo layouts with a subject area");
@@ -235,10 +254,15 @@ test("B3 one check judges a photo against every layout: looks only where it work
   const f = (a, size) => Object.fromEntries(Object.entries(fitLayouts(a, { imageSize: size, expectPeople: true, maxPeople: 1 })).map(([k, v]) => [k.split("-")[0], v]));
   const high = f({ people_box: [80, 380, 420, 620], face_boxes: [[90, 460, 170, 540]], people_count: 1 }, [896, 1200]);
   assert.ok(high.t1.ok && high.t4.ok, "a subject high in the frame carries bottom text");
-  assert.ok(!high.t3.ok && !high.t6.ok, "but not a column over a centred subject");
+  // Since 2026-09-27 the words may sit over part of the body (65%), never a face: a centred subject can carry a column…
+  assert.ok(high.t3.ok && high.t6.ok, "a centred subject: the column may sit over part of the body");
+  // …but not one standing almost wholly under it.
+  const right = f({ people_box: [80, 600, 420, 950], face_boxes: [[90, 720, 170, 800]], people_count: 1 }, [896, 1200]);
+  assert.ok(!right.t3.ok && right.t6.ok, "a subject on the right: the right-hand column would cover most of them; the left-hand one fits");
   assert.ok(high.t1.focus[1] < 0.5, "and T1's crop keeps the subject clear of the bottom text");
   const left = f({ people_box: [150, 60, 900, 330], face_boxes: [[160, 150, 250, 240]], people_count: 1 }, [1200, 896]);
-  assert.ok(left.t3.ok && !left.t6.ok && !left.t1.ok, "a subject on the left carries the right-hand column only");
+  assert.ok(left.t3.ok && !left.t6.ok, "a subject on the left carries the right-hand column, never the left-hand one over them");
+  assert.ok(left.t1.ok, "and, with the face high, the bottom words may cover their legs (since 2026-09-27)");
   assert.ok(left.t3.focus[0] < 0.5);
   const low = f({ people_box: [420, 150, 600, 850], face_boxes: [[430, 700, 500, 780]], people_count: 1 }, [1024, 1024]);
   assert.ok(low.t2.ok && low.t5.ok, "a low, wide pose fits the split layouts");
@@ -348,6 +372,8 @@ test("B5–B8 a whole batch offline: planned, generated within budget, fitted, r
       assert.deepEqual({ ...wa, location: null }, { ...wb, location: null }, `${cid}: every line but the location is identical`);
       assert.equal(wa.location, "BISHAN"); assert.equal(wb.location, "ANG MO KIO");
       assert.equal(wa.duration, "12 Week"); assert.equal(wa.offer_name, "Total Body Reset"); assert.equal(wa.audience, "MEN");
+      // The same scrim for every location (one location's longer word may need one; then all get it).
+      assert.deepEqual(c.renders[0].r.report.groups.map((g) => g.scrim.alpha), c.renders[1].r.report.groups.map((g) => g.scrim.alpha), `${cid}: the same scrim for both locations`);
       // Outside the text groups, the two ads are the same picture: same photo, same crop.
       const A = decodePNG(readFileSync(join(out, a.file))), B = decodePNG(readFileSync(join(out, b.file)));
       let diff = 0, n = 0;

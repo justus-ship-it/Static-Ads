@@ -12,11 +12,45 @@
  * invite the model to draw it.
  */
 
+import { readFileSync, existsSync } from "fs";
+import { join, resolve } from "path";
+import { fileURLToPath } from "url";
 import { loadCatalogue, layoutFor } from "./render-composites.mjs";
 
 // The share of the people's box that may sit under text areas (check-visual.mjs enforces it; the
-// prompt's size limit is derived from it, so the two can never disagree).
-export const MAX_SUBJECT_UNDER_TEXT = 0.4;
+// prompt's size target is derived from it, so the two can never disagree). 0.4 until 2026-09-27: it
+// made small figures in empty rooms, where the high-performing references fill a median 80% of the
+// frame's height with the words over the body (10 of 19). Faces never go under the words: the
+// finished ad fails if a letter covers one (render-composites.mjs), judged against the letters set.
+export const MAX_SUBJECT_UNDER_TEXT = 0.65;
+
+// ── the shot guide (reference-shots.mjs writes it; read here with fs only, so no import cycle) ──
+const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+/** The shot guide from the reference ads, or null when none has been made (library/ is gitignored). */
+export function readShotGuide(dir = process.env.COPY_LIBRARY_DIR || join(REPO_ROOT, "library")) {
+  const p = join(dir, "shot-guide.json");
+  if (!existsSync(p)) return null;
+  try { const g = JSON.parse(readFileSync(p, "utf-8")); return Array.isArray(g?.rules) && g.rules.length ? g : null; } catch { return null; }
+}
+const RECIPE_FOR = { coached: /partner|coach|team|class|camarader|interaction|pair/i, group: /partner|coach|team|class|camarader|interaction|group/i, solo: /solo|individual|lifter|single|focused/i };
+/** The recipe that suits a scene's setting (a partner shot for coached and group, the focused one for solo), or null. */
+export function recipeFor(guide, setting) {
+  const re = RECIPE_FOR[setting]; if (!guide?.recipes?.length || !re) return null;
+  return guide.recipes.find((r) => re.test(`${r.name} ${r.when || ""}`)) || null;
+}
+// A guide rule about where the subject sits or how much of the frame they fill is left to the layout's own lines
+// (COMPOSITION, SIZE), which carry the guide's numbers per layout: a plank cannot fill 80% of the height.
+const PLACEMENT_RULE = /\b(fill|fills|percent|centre|center|centred|centered)\b/i;
+/** The SHOT lines of a prompt: how the best-performing gym ads are photographed. Placement is the layout's; the look is the guide's. */
+export function shotClause(guide, setting = null) {
+  if (!guide?.rules?.length) return [];
+  const r = recipeFor(guide, setting);
+  return [
+    `SHOT (how the best-performing gym adverts are photographed; where the people sit and how big they are is set by COMPOSITION and SIZE below): ${guide.rules.filter((x) => !PLACEMENT_RULE.test(x.rule)).map((x) => x.rule.replace(/\s*\.$/, ".")).join(" ")}`,
+    ...(r ? [`SHOT TYPE, ${r.name}: camera ${r.camera.replace(/\.$/, "")}; moment ${r.moment.replace(/\.$/, "")}; light ${r.light.replace(/\.$/, "")}${r.colour ? `; colour ${r.colour.replace(/\.$/, "")}` : ""}; background ${r.background.replace(/\.$/, "")}.`] : []),
+    "Colour: training clothes in one clear, bright colour (a lime, a coral, a cobalt) against the darker floor, never all grey.",
+  ];
+}
 
 // Gemini took "keep this area darker" literally and painted dark or mirrored strips across the
 // frame (Step 4, runs 1–3). The renderer darkens what the words need, so the photo is asked to be
@@ -169,7 +203,7 @@ export const isStyleRule = (t) => /\b(stock|photograph(y|s)?|photos?|imagery|sty
 /** The never-list items a vision check can look for in a frame. */
 export const checkableNever = (list = []) => (list || []).filter((t) => t && !isStyleRule(t));
 
-export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, catalogue = loadCatalogue() }) {
+export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, age = null, shotGuide = null, catalogue = loadCatalogue() }) {
   const T = catalogue.treatments;
   const tr = T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}"`);
@@ -203,28 +237,31 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
   // Group classes came back as line-ups — identical poses at the same instant (48-ad batch, 2026-09-12).
   // Said as what a real class looks like; the faults are never named, since naming invites them.
   if (CANDID[setting]) lines.push(CANDID[setting]);
+  // Ages on a bell curve over the owner's range (plan-offer-batch → ageTargets): the photo names one.
+  if (Number.isInteger(age)) lines.push(`AGE: the person training is about ${age} years old${setting === "coached" ? "; the coach is any adult age" : ""}. If the scene gives them another age, this age wins.`);
   lines.push(REAL_CLAUSE);
+  lines.push(...shotClause(shotGuide, setting));
   if (anchor) lines.push(ANCHOR_CLAUSE);
   if (must.length) lines.push(`SETTING (must show): ${must.join("; ")}.`);
   if (hasReference) {
-    lines.push(`${anchor ? "The second attached photo" : "The attached reference photo"} is the real gym. Match its room: wall colour, ceiling, lighting, floor and equipment. ` +
+    // With a shot guide the room is matched but not its light: a flat fluorescent reference made flat photos (F45 Lower Peirce, 2026-09-26).
+    lines.push(`${anchor ? "The second attached photo" : "The attached reference photo"} is the real gym. Match its room: wall colour, ceiling, ${shotGuide ? "" : "lighting, "}floor and equipment.${shotGuide ? " Light the people as SHOT says, keeping the room recognisable." : ""} ` +
       "Do NOT copy any sign, lettering or neon words from it — none may appear in your image.");
   }
   lines.push(
     "",
     `COMPOSITION: ${hint}`,
     ...(tr.visual_framing ? [`FRAMING: ${tr.visual_framing} If the scene's pose would not fit this framing, show a variant of the same exercise that does (for example a seated, kneeling or floor version).`] : []),
-    `Text will be laid over ${areas.join(" and over ")}. Keep ${areas.length > 1 ? "those areas" : "that area"} calm, plain and free of ` +
-      "faces and the main action, so the words stay readable. No face may fall inside them.",
+    `Text will be laid over ${areas.join(" and over ")}. No face may fall inside ${areas.length > 1 ? "them" : "it"}, and keep ${areas.length > 1 ? "them" : "it"} free of busy detail behind the words; ` +
+      "the body may run into the text: the words may sit over a torso, arms or legs, never over a face.",
   );
   if (subjectArea && layout.background?.type !== "panels") {
-    lines.push(`Place every face, and the subject's head and upper body, within ${subjectArea}. Frame the shot so the people are small enough to fit — ` +
-      "only arms, legs or equipment may run into the text area, and only a little.");
-    // Gemini overshoots a size limit slightly (run 6: 31% when asked for 30%), so it is asked for 85% of the maximum.
-    const target = Math.floor((maxH * 0.85) / 5) * 5;
-    if (maxH) lines.push(`SIZE: each person's whole figure, head to feet, is at most ${target}% of the frame's height — shoot from further back or use a lower pose.`);
+    lines.push(`Place every face, and the subject's head and upper body, within ${subjectArea}. Frame the shot close, the way a phone photo taken a few steps away looks: the body may run into the text area.`);
+    // Gemini overshoots a size slightly (run 6: 31% when asked for 30%), so the top of the range is 85% of the maximum.
+    if (maxH) { const target = Math.floor((maxH * 0.85) / 5) * 5, lo = Math.max(30, target - 20); lines.push(`SIZE: the main person fills about ${lo}% to ${target}% of the frame's height — step in close; the frame may cut the body at the knees or the waist.`); }
+    else if (!layout.background?.type) lines.push("SIZE: the main person fills about 65% to 85% of the frame's height — step in close; the frame may cut the body at the knees or the waist.");
   }
-  if (frame.visW < 1 || frame.visH < 1) lines.push("The advert is a square cut from this photo, so keep the people whole and well inside the frame, with plain floor, wall or ceiling around them.");
+  if (frame.visW < 1 || frame.visH < 1) lines.push("The advert is a square cut from this photo, so keep every head and face whole and inside the frame with a little room above the head; the body may be cut by the frame, as in a close photograph.");
   if (layout.background?.type === "panels") lines.push("This photo will be cropped to a circle: keep the subject centred with space around it.");
   if (layout.background?.type === "collage") lines.push("This photo will be one tile of a collage: a tight, single-subject crop.");
   if (never.length) lines.push("", `NEVER SHOW: ${never.join("; ")}.`);

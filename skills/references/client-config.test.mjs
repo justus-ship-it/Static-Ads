@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
+import { validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES, IMAGE_MODELS, imageModelFor } from "./client-config.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems, MAX_WORDINGS } from "./ad-wordings.mjs";
 
@@ -248,4 +248,13 @@ test("P6 publishing defaults: the budget's level and bid strategy are checked (a
   g.targeting_defaults.demographics.callout_genders = { "EVERYONE": "women", "men wanted": "all" };
   assert.deepEqual([calloutGender("EVERYONE", g), calloutGender("MEN WANTED", g), calloutGender("Fit Fathers", g)], ["women", "all", "men"], "the owner's map wins, whatever the case; the words decide the rest");
   assert.deepEqual(GENDER_CHOICES, ["men", "women", "all"]);
+});
+
+test("P7 the image model per gym: Pro by default (the Flash vs Pro test, 2026-09-27), Flash when chosen, anything else refused at save", () => {
+  assert.equal(imageModelFor({}), IMAGE_MODELS.pro);
+  assert.equal(imageModelFor({ creative_defaults: { image_model: "flash" } }), IMAGE_MODELS.flash);
+  assert.equal(imageModelFor({ creative_defaults: { image_model: "nope" } }), IMAGE_MODELS.pro);
+  assert.equal(IMAGE_MODELS.pro, "gemini-3-pro-image-preview");
+  const base = PROFILE_STARTER("x-gym");
+  { assert.ok(validateProfile({ ...base, creative_defaults: { ...(base.creative_defaults || {}), image_model: "gpt" } }).errors.some((e) => /image_model must be one of pro, flash/.test(e))); assert.ok(!validateProfile({ ...base, creative_defaults: { ...(base.creative_defaults || {}), image_model: "flash" } }).errors.some((e) => /image_model/.test(e))); }
 });

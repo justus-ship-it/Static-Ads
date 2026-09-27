@@ -357,3 +357,10 @@ test("R8 a gym with no library: the first refresh writes it with the drafts, una
     assert.equal(readLibrary(join(dir, "nope.json"), { create: true }).scenes.length, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("R9 with a shot guide the drafter writes toward its shot types — close, eye level, mid-rep or peak effort, about half with a coach or partner; without one the request is as before", () => {
+  const G = { rules: [{ rule: "Shoot from eye level.", evidence: "15 of 19" }, { rule: "Fill at least 60 percent of the frame with the subject.", evidence: "18 of 19" }], recipes: [{ name: "The Partner Training Shot", when: "teamwork, classes or coaching", camera: "eye level, full body", moment: "mid-rep", light: "soft window-side light", colour: "neutral", background: "a bright gym", words: "over the body" }, { name: "The Focused Lifter", when: "individual strength training", camera: "medium-close, eye level", moment: "lockout", light: "window-side", colour: "warm", background: "a clean gym", words: "over the body" }] };
+  const withG = buildRefreshRequest({ audience: "women", count: 2, scenes: LIB, photography: PROFILE.brand_lock.photography, shotGuide: G }).prompt;
+  assert.match(withG, /SHOT TYPES that perform best — write scenes a photographer could shoot as one of these, close and at eye level, caught mid-rep or at peak effort with a clear expression: The Partner Training Shot \(teamwork, classes or coaching\); The Focused Lifter \(individual strength training\)\. About half the scenes have two people: a coach or a training partner\./);
+  assert.doesNotMatch(buildRefreshRequest({ audience: "women", count: 2, scenes: LIB, photography: PROFILE.brand_lock.photography }).prompt, /SHOT TYPES/);
+});

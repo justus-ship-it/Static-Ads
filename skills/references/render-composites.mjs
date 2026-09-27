@@ -280,7 +280,7 @@ export function imagesNeeded(layout) {
  *  opening a browser is rejected here, with a message saying what to change. `styleSpec` and
  *  `treatmentSpec` let a caller pass a style or layout object directly instead of an id (used by
  *  the UI preview and the tests). */
-export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, debug = false, catalogue = loadCatalogue() }) {
+export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, scrimFloor = null, debug = false, catalogue = loadCatalogue() }) {
   const { treatments: T, palettes: P, styles: S } = catalogue;
   const tr = treatmentSpec || T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}". Known: ${Object.keys(T.treatments).join(", ")}`);
@@ -348,6 +348,8 @@ export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-s
   const stack = groups.flatMap((g) => g.stack.filter((it) => !it.divider).map((it) => ({ ...it, group: g.id })));
 
   return {
+    // A group's lowest scrim, by group id: every location of an ad gets the darkest any of them needed (renderPlan), so the look is identical.
+    ...(scrimFloor && Object.keys(scrimFloor).length ? { scrim_floor: scrimFloor } : {}),
     treatment: treatmentSpec ? "(custom)" : treatment, palette, style: styleSpec ? "(custom)" : style, ratio,
     canvas: T.canvas[ratio],
     layout: { groups, stack, clear_zones: layout.clear_zones || [] },
@@ -586,7 +588,7 @@ export function verifyReport(spec, report) {
 
 // ── High-level: inputs → verified PNG ─────────────────────────────────────
 
-export async function renderComposite(browser, { image, images, faces, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug = false, catalogue }) {
+export async function renderComposite(browser, { image, images, faces, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, scrimFloor = null, debug = false, catalogue }) {
   const inputErrors = validateInputs({ location, audience, offer });
   if (inputErrors.length) return { ok: false, failures: inputErrors };
   const { duration, offer_name } = splitOffer(offer, free);
@@ -594,7 +596,7 @@ export async function renderComposite(browser, { image, images, faces, location,
   let spec;
   try {
     // A gym's own brand palettes ride in its catalogue (client-config catalogueFor); the default is the reference set.
-    spec = buildSpec({ image, images, faces, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, debug, ...(catalogue ? { catalogue } : {}) });
+    spec = buildSpec({ image, images, faces, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, scrimFloor, debug, ...(catalogue ? { catalogue } : {}) });
   } catch (e) {
     return { ok: false, failures: [e.message] }; // rejected before any browser work
   }

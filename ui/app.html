@@ -564,6 +564,10 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     <label>Real photos in every batch</label>
     <div class="thumbs">${photos.length ? photos.map(ph=>`<label><input type="checkbox" ${(D.real_photos||[]).includes(ph.path)?'checked':''} onchange="cdPhoto('${esc(ph.path)}',this.checked)"><img src="${esc(ph.url)}" alt=""><span style="font-size:11px">${esc(ph.path.split('/').pop())}</span></label>`).join('') : '<span class="hint">No cleaned photos yet.</span>'}</div>
   </div>
+  <div class="card"><h3>Image model</h3>
+    <p class="hint">The model new photos are made with, for batches and Stories versions. Cleaning the gym's real photos keeps its own model.</p>
+    ${[['pro','Pro (default)','sharper and better lit; passed the checks first time 5 of 5 in the test'],['flash','Flash','cheaper and faster; passed 3 of 5 first time in the test']].map(([m,l,d])=>`<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:6px"><input type="radio" name="cdModel" style="width:auto;margin:0" ${(D.image_model||'pro')===m?'checked':''} onchange="setP('creative_defaults.image_model','${m}')"> ${l} <span class="hint" style="font-weight:400">· ${d}</span></label>`).join('')}
+  </div>
   <div class="card"><h3>Colours on the ads</h3>
     <p class="hint">The loud pairings of the high-performing reference ads, the gym's own brand colours (three pairings built from <a href="#" onclick="go('brand');return false">Brand & photography</a>), or both in the same spread.</p>
     ${[['reference','Reference pairings','the ten pairings the reference ads use'],['brand','Brand palettes','the gym\'s colours only'],['both','Both','reference pairings and brand palettes, spread evenly']].map(([m,l,d])=>`<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin:6px 0"><input type="radio" name="pm" style="width:auto;margin:0" value="${m}" ${(D.palettes||'reference')===m?'checked':''} ${m!=='reference'&&!hasBrand?'disabled':''} onchange="setP('creative_defaults.palettes',this.value)"> ${l} <span class="n" style="color:var(--dim);font-weight:400">· ${d}</span></label>`).join('')}
@@ -995,7 +999,8 @@ function freshDraft(){
   const cd = B.setup.creative_defaults || {}, clean = B.setup.photos.map(p=>p.path);
   const locs = (cd.locations||[]).filter(Boolean), real = (cd.real_photos||[]).filter(p=>clean.includes(p));
   return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 10, real: cd.real_photos?.length ? real : clean.slice(0,2),
-    looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true };
+    looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true,
+    age_min: (B.setup.photo_ages||[25,60])[0], age_max: (B.setup.photo_ages||[25,60])[1] };
 }
 /** The offer wordings as chips: picking one is choosing its exact words. */
 function paintWordChips(){
@@ -1020,6 +1025,7 @@ function briefFromDraft(){
   const direction = directionFromDraft();
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
+    ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
     ...(d.spread && generated>0 ? { spread: true } : {}) };
 }
 function autoId(){
@@ -1050,8 +1056,9 @@ function paintBatch(v){
       <fieldset style="margin-top:16px" ${re?'disabled':''}><legend>Photos${re?' (fixed for this batch)':''}</legend>
         <div class="row" style="gap:28px">
           <div><label for="bGen" style="margin-top:0">New photos</label><div class="stepper"><button type="button" onclick="bStep('generated',-1)">−</button><input id="bGen" type="number" min="0" max="12" value="${esc(d.generated)}" oninput="bSet('generated',this.value)"><button type="button" onclick="bStep('generated',1)">+</button></div></div>
+          <div><label for="bAgeMin" style="margin-top:0">Ages in the photos</label><div class="row" style="gap:6px;align-items:center"><input id="bAgeMin" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_min)}" oninput="bSet('age_min',this.value)"><span>to</span><input id="bAgeMax" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_max)}" oninput="bSet('age_max',this.value)"></div><div class="hint" style="margin-top:2px">Most near ${esc(Math.round(((Number(d.age_min)||25)+(Number(d.age_max)||60))/2))}, fewer toward the ends</div></div>
           <div><label for="bLooks" style="margin-top:0">Looks per photo</label><div class="stepper"><button type="button" onclick="bStep('looks_per_photo',-1)">−</button><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"><button type="button" onclick="bStep('looks_per_photo',1)">+</button></div></div>
-          <label style="margin-top:0;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text)"><input type="checkbox" style="width:auto;margin:0" ${d.spread?'checked':''} onchange="bSet('spread',this.checked)"> Spread across exercises, ages, settings and equipment</label>
+          <label style="margin-top:0;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text)"><input type="checkbox" style="width:auto;margin:0" ${d.spread?'checked':''} onchange="bSet('spread',this.checked)"> Spread across exercises, settings and equipment</label>
           <div id="bSpread" class="hint" style="margin-top:4px;max-width:520px"></div>
         </div>
         <label>Real photos <span class="n">· cleaned</span></label>

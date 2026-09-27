@@ -146,16 +146,18 @@ test("S2 the 9:16 prompt is anchored to the chosen photo, which goes first to th
     const calls = [], logs = [];
     const r = await runStories({ brandDir: bdir, batchId: "test-batch", deps: { generate: generate(calls), check: check9, sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser, gallery: () => {} }, log: (m) => logs.push(m) });
     const twoLooks = r.plan.photos.filter((p) => p.kind === "generated" && p.layouts.length > 1);
-    assert.deepEqual(twoLooks.map((p) => [p.id, p.layouts.map(short)]), [["g01", [short(g01.treatment), "t3"]]], "g01 now has two looks, its own first");
+    // g01 has the look added by hand; since the looser fit (2026-09-27) another photo may have two of its own.
+    assert.deepEqual(twoLooks.find((p) => p.id === "g01")?.layouts.map(short), [short(g01.treatment), "t3"], "g01 now has two looks, its own first");
     // One call per generated photo, plus one per second look the first photo does not fit.
-    const extras = twoLooks.flatMap((p) => p.layouts.slice(1).map((la) => `${p.id}-${RATIO}-${short(la)}`));
-    assert.deepEqual(extras, [`g01-${RATIO}-t3`]);
+    // Only a look the first 9:16 photo does not fit gets its own photo: g01's T3 by design (check9 fails it); another photo's second look only if its first misses it.
+    const extras = twoLooks.flatMap((p) => p.layouts.slice(1).map((la) => `${p.id}-${RATIO}-${short(la)}`)).filter((id) => id === `g01-${RATIO}-t3` || r.stories.photos[id]);
+    assert.ok(extras.includes(`g01-${RATIO}-t3`), extras.join(" "));
     assert.ok(!r.stories.photos[`g01-${RATIO}`].failures?.length, "the first photo passed its own look");
     const made = Object.keys(r.stories.photos).filter((id) => r.stories.photos[id].kind === "generated");
     assert.deepEqual(made.sort(), [...r.plan.photos.filter((p) => p.kind === "generated").map((p) => `${p.id}-${RATIO}`), ...extras].sort());
     assert.equal(calls.length, made.length, "one image call per 9:16 photo");
     assert.ok(calls.every((c) => c.aspectRatio === "9:16"));
-    assert.ok(logs.some((l) => /1 look\(s\) not fitted by the first 9:16 photo: g01-9x16-t3/.test(l)));
+    assert.ok(logs.some((l) => /look\(s\) not fitted by the first 9:16 photo: .*g01-9x16-t3/.test(l)), logs.join(" | "));
     // Every selected ad got its Stories version, from a photo that fits its layout; the added look from the second photo.
     assert.equal(r.stories.ads.length, batch.ads.length + 1, `all ${batch.ads.length + 1} ads: failed ${JSON.stringify(r.stories.failed)} left out ${JSON.stringify(r.stories.left_out)}`);
     assert.deepEqual(r.stories.ads.find((a) => a.candidate === "cx").photos, [`g01-${RATIO}-t3`]);
@@ -201,9 +203,10 @@ test("S3 the sibling check is a gate with a retry; the stories budget holds acro
     // g02 could not be generated within the budget: its ads still get a Stories version, from the chosen photo as a band.
     assert.deepEqual([...r1.stories.left_out, ...r1.stories.failed], []);
     assert.equal(r1.stories.ads.length, r1.plan.ads.length);
-    const la2 = short(r1.plan.photos.find((p) => p.id === "g02").layouts[0]);
-    for (const a of r1.stories.ads.filter((a) => a.photos[0].startsWith("g02-"))) assert.deepEqual(a.photos, [`g02-${RATIO}-band-${la2}`]);
-    assert.equal(r1.stories.photos[`g02-${RATIO}-band-${la2}`].kind, "band");
+    // Each of g02's ads gets the band of its own 1:1 crop (a photo with two looks has a band per look).
+    const g02Ads = r1.stories.ads.filter((a) => a.photos[0].startsWith("g02-"));
+    assert.ok(g02Ads.length > 0);
+    for (const a of g02Ads) { assert.deepEqual(a.photos, [`g02-${RATIO}-band-${short(a.treatment)}`]); assert.equal(r1.stories.photos[a.photos[0]].kind, "band"); }
     assert.equal(JSON.parse(readFileSync(join(out, "spend.json"), "utf-8")).stories_image_calls, 2);
     assert.equal(JSON.parse(readFileSync(join(out, "spend.json"), "utf-8")).image_calls, batch.image_calls, "the batch's own count is untouched");
     const bands = r1.plan.photos.filter((p) => p.kind !== "generated");

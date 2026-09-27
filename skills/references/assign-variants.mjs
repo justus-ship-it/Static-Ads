@@ -324,11 +324,20 @@ export async function renderPlan(browser, plan, { text, texts = null, imageFor, 
       const ims = photosFor(c, treatment);
       // Faces from each photo's visual check are keep-out areas: a look whose letters would cover one
       // fails and is swapped. Each photo is cropped where its check found it fits this layout.
-      const renders = [];
-      for (const t of all) {
-        const r = await renderComposite(browser, { images: ims.map(imageFor), faces: ims.map(facesFor), focus: ims.map((id) => focusFor(id, treatment)), ...t, treatment, style, palette, ratio: plan.ratio || "1x1", catalogue });
+      let renders = [];
+      const renderAll = async (scrimFloor = null) => { renders = []; for (const t of all) {
+        const r = await renderComposite(browser, { images: ims.map(imageFor), faces: ims.map(facesFor), focus: ims.map((id) => focusFor(id, treatment)), ...t, treatment, style, palette, ratio: plan.ratio || "1x1", ...(scrimFloor ? { scrimFloor } : {}), catalogue });
         renders.push({ text: t, r });
         if (!r.ok) break;
+      } };
+      await renderAll();
+      // One location's longer word can reach a busier part of the photo and need a scrim the others did not:
+      // then every location is drawn with the darkest scrim any needed, so the look stays identical (a clean location test).
+      if (renders.length > 1 && renders.every((x) => x.r.ok)) {
+        const floor = {};
+        for (const x of renders) for (const g of x.r.report?.groups || []) floor[g.id] = Math.max(floor[g.id] || 0, g.scrim?.alpha || 0);
+        const differs = renders.some((x) => (x.r.report?.groups || []).some((g) => Math.abs((g.scrim?.alpha || 0) - floor[g.id]) > 0.001));
+        if (differs) await renderAll(floor);
       }
       const bad = renders.find((x) => !x.r.ok);
       if (!bad) {

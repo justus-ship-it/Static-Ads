@@ -278,7 +278,14 @@ function validate(profile, offer, resolved, gymDir) {
 export const PROFILE_SCHEMA = 3;
 const MAX_LOCATION_CALLOUTS = 4; // plan-offer-batch MAX_LOCATIONS: one version of every ad per location
 /** What the Create screen opens with when a profile says nothing. The offer is never among them. */
-export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 10, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true, palettes: "reference" };
+export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 10, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true, palettes: "reference", image_model: "pro" };
+/**
+ * The image model a gym's new photos are made with (batch photos and Stories). Pro by default since the
+ * Flash vs Pro test (2026-09-27: 5 of 5 passed the checks first time against 3 of 5, sharper and better lit);
+ * Flash is cheaper and faster. The clean-up edit of real photos keeps its own model.
+ */
+export const IMAGE_MODELS = Object.freeze({ pro: "gemini-3-pro-image-preview", flash: "gemini-3.1-flash-image-preview" });
+export const imageModelFor = (profile) => IMAGE_MODELS[profile?.creative_defaults?.image_model] || IMAGE_MODELS[CREATIVE_DEFAULTS.image_model];
 /** Which colour pairings a gym's ads draw from: the reference catalogue (the loud pairings the
  *  high-performing ads use), the gym's own brand colours, or both in the same spread. */
 export const PALETTE_MODES = ["reference", "brand", "both"];
@@ -418,6 +425,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       if (Number.isInteger(cd.max_calls) && Number.isInteger(cd.generated) && cd.max_calls < cd.generated) errors.push(`creative_defaults.max_calls (${cd.max_calls}) must cover one call per new photo (${cd.generated})`);
       if (cd.spread != null && typeof cd.spread !== "boolean") errors.push("creative_defaults.spread must be true or false");
       if (cd.palettes != null && !PALETTE_MODES.includes(cd.palettes)) errors.push(`creative_defaults.palettes must be one of ${PALETTE_MODES.join(", ")}`);
+      if (cd.image_model != null && !IMAGE_MODELS[cd.image_model]) errors.push(`creative_defaults.image_model must be one of ${Object.keys(IMAGE_MODELS).join(", ")}`);
       if (["brand", "both"].includes(cd.palettes) && !brandRoles(profile.brand_lock?.colors)) errors.push(`creative_defaults.palettes is "${cd.palettes}", but the brand has no colours yet (Brand & photography)`);
     }
   }
