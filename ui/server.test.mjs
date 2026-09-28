@@ -191,6 +191,9 @@ test("U3 the panel refuses exactly what Step 6 refuses, and saves the words exac
   assert.ok(sp.spread.left_out.includes("exercise bench-press") && sp.spread.left_out.includes("setting group"));
   sp = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 2, max_calls: 2, spread: true, age_range: [25, 60] } } })).json();
   assert.deepEqual([sp.errors, "age" in sp.brief.must_show, sp.spread.left_out.some((x) => x.startsWith("age")), sp.brief.age_range], [[], false, false, [25, 60]], "an age range: the ages come from the bell curve, not the spread");
+  // A directed batch: the spread is off (its own drafted scenes decide what the photos show), and the saved brief carries none.
+  sp = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 2, max_calls: 2, spread: true, direction: { words: "older women lunging with a coach" } } } })).json();
+  assert.deepEqual(["must_show" in sp.brief, "spread" in sp.brief, sp.spread.reason], [false, false, "off for a directed batch: the reference or your words decide what the photos show"]);
   const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
   assert.equal(setup.photo_ages.length, 2, "Create is pre-filled with the gym's ad-set ages");
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
@@ -478,6 +481,7 @@ test("U9c the page: the Direction fields feed the brief, the scene library card 
   const type = (sel, text) => ev(`(()=>{const el=document.querySelector('${sel}'); el.focus(); el.value=${JSON.stringify(text)}; el.dispatchEvent(new Event('input',{bubbles:true})); return true})()`);
   await type("#bDirWords", "older women lunging with a coach");
   assert.deepEqual(await ev(`briefFromDraft().direction`), { words: "older women lunging with a coach" });
+  assert.equal(await ev(`B.draft.spread===true && !("spread" in briefFromDraft())`), true, "a directed batch never asks for the spread (2026-09-28)");
   assert.ok(await ev(`!!document.querySelector('input[name="bRef"][value="ad.png"]')`), "the uploaded reference is offered");
   await ev(`bRef('ad.png'); true`);
   assert.deepEqual(await ev(`briefFromDraft().direction`), { words: "older women lunging with a coach", reference: "ad.png" });

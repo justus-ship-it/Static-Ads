@@ -1026,7 +1026,7 @@ function briefFromDraft(){
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
-    ...(d.spread && generated>0 ? { spread: true } : {}) };
+    ...(d.spread && generated>0 && !direction ? { spread: true } : {}) };
 }
 function autoId(){
   const base = `${today()}-${slugify(B.draft.offer).slice(0,40) || 'batch'}`.replace(/-+$/,'');
@@ -1058,7 +1058,7 @@ function paintBatch(v){
           <div><label for="bGen" style="margin-top:0">New photos</label><div class="stepper"><button type="button" onclick="bStep('generated',-1)">−</button><input id="bGen" type="number" min="0" max="12" value="${esc(d.generated)}" oninput="bSet('generated',this.value)"><button type="button" onclick="bStep('generated',1)">+</button></div></div>
           <div><label for="bAgeMin" style="margin-top:0">Ages in the photos</label><div class="row" style="gap:6px;align-items:center"><input id="bAgeMin" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_min)}" oninput="bSet('age_min',this.value)"><span>to</span><input id="bAgeMax" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_max)}" oninput="bSet('age_max',this.value)"></div><div class="hint" style="margin-top:2px">Most near ${esc(Math.round(((Number(d.age_min)||25)+(Number(d.age_max)||60))/2))}, fewer toward the ends</div></div>
           <div><label for="bLooks" style="margin-top:0">Looks per photo</label><div class="stepper"><button type="button" onclick="bStep('looks_per_photo',-1)">−</button><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"><button type="button" onclick="bStep('looks_per_photo',1)">+</button></div></div>
-          <label style="margin-top:0;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text)"><input type="checkbox" style="width:auto;margin:0" ${d.spread?'checked':''} onchange="bSet('spread',this.checked)"> Spread across exercises, settings and equipment</label>
+          <label style="margin-top:0;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text)"><input type="checkbox" style="width:auto;margin:0" ${d.spread?'checked':''} ${directionFromDraft()?'disabled title="Off for a directed batch: the reference or your words decide what the photos show"':''} onchange="bSet('spread',this.checked)"> Spread across exercises, settings and equipment</label>
           <div id="bSpread" class="hint" style="margin-top:4px;max-width:520px"></div>
         </div>
         <label>Real photos <span class="n">· cleaned</span></label>
@@ -1133,7 +1133,7 @@ function paintDerived(){
     : `Scene library: ${sc.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${Object.entries(sc.counts).map(([k,n])=>`${n} for ${esc(k)}`).join(', ')}${sc.drafts?` · <span style="color:var(--warn)">${sc.drafts} new scene${sc.drafts===1?'':'s'} awaiting approval</span>`:''}${s?` · this audience draws from <b>${esc(s.scenes_for)}</b>`:''} · <a href="#" onclick="go('scenes');return false">manage</a>`;
   // What the Spread switch will ask for, cut to this gym's scenes for the batch's audience (the server's spreadFor).
   const sp = $('#bSpread'), spr = c?.spread;
-  if (sp) sp.innerHTML = B.mode==='rerender' || !B.draft.spread || !(Number(B.draft.generated)>0) ? '' : !spr ? '' : spr.reason ? `Spread: ${esc(spr.reason)}.`
+  if (sp) sp.innerHTML = B.mode==='rerender' || !(Number(B.draft.generated)>0) ? '' : directionFromDraft() ? 'Spread is off for a directed batch: the reference or your words decide what the photos show.' : !B.draft.spread || !spr ? '' : spr.reason ? `Spread: ${esc(spr.reason)}.`
     : `Spread asks for ${Object.entries(spr.must_show).map(([t,v])=>`${esc(t)} ${v.map(esc).join(', ')}`).join(' · ') || 'nothing this library can show'}.${spr.left_out.length?` <span style="color:var(--warn)">Left out, no ${esc(s?.scenes_for||'')} scene shows: ${spr.left_out.map(esc).join(', ')}.</span> Draft scenes for them on <a href="#" onclick="go('scenes');return false">Scenes</a> to include them.`:''}`;
   const errs = c?.errors || [];
   const eb = $('#bErrors');

@@ -435,6 +435,9 @@ function listBatches(gym) {
 function resolveSpread(gym, brief) {
   if (!brief || typeof brief !== "object" || !("spread" in brief)) return { brief, spread: null };
   const { spread, ...rest } = brief;
+  // A directed batch photographs what its reference or words show, from the scenes it drafts for itself;
+  // a spread worked out from the whole library would ask those scenes for what they cannot show (2026-09-28).
+  if (spread === true && rest.direction && (rest.direction.words || rest.direction.reference)) return { brief: rest, spread: { must_show: {}, left_out: [], reason: "off for a directed batch: the reference or your words decide what the photos show" } };
   if (spread !== true || !(rest.generated > 0) || rest.must_show) return { brief: rest, spread: null };
   let scenes = [];
   try { scenes = loadScenes(join(brandDir(gym), "scenes.json")); } catch { return { brief: rest, spread: { must_show: {}, left_out: [], reason: "no approved scenes yet" } }; }
