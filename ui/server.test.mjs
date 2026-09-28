@@ -1595,3 +1595,24 @@ test("U25 the kept ads as a zip for Ads Manager: every kept ad's images by ad se
   const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!document.querySelector('#pbZip')"))) await new Promise((x) => setTimeout(x, 150));
   assert.match(await ev("document.querySelector('#pbZip').getAttribute('onclick')"), new RegExp(`/api/client/${GYM}/batch/${BRIEF.batch_id}/images\\.zip`));
 });
+
+test("U26 a restart no longer strands the page: /api/token answers the panel's own page only (not another site, not another origin, not another host); a page holding a stale token fetches the current one and its save goes through, once", async () => {
+  const t = await call("/api/token", { token: "" });
+  assert.equal(t.status, 200); assert.equal((await t.json()).token, panel.token);
+  assert.equal((await call("/api/token", { headers: { origin: "http://evil.example" } })).status, 403, "a foreign origin");
+  assert.equal((await call("/api/token", { headers: { "sec-fetch-site": "cross-site" } })).status, 403, "a request another site made");
+  assert.ok(!(await call("/api/token")).headers.get("access-control-allow-origin"), "no cross-origin reading");
+  const rebound = await raw("/api/token", { headers: { host: "evil.example" } });
+  assert.equal(rebound.status, 403, "another host name (DNS rebinding)"); assert.ok(!rebound.body.includes(panel.token));
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+  const loaded = cdp.once("Page.loadEventFired", sessionId);
+  await cdp.send("Page.navigate", { url: `${panel.url}/?u26` }, sessionId); await loaded;
+  const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("typeof api==='function' && typeof STATE!=='undefined' && !!STATE.sel"))) await new Promise((x) => setTimeout(x, 150));
+  // As after a restart: the page's token is no longer the panel's.
+  await ev("TOKEN = 'stale-token-from-before-a-restart'; true");
+  const r = await ev(`api('/api/client/${GYM}/batch/${BRIEF.batch_id}/picks', { method:'PUT', body:{} }).then(() => 'saved', (e) => 'refused: ' + e.message)`);
+  assert.equal(r, "saved", "the save went through after one catch-up");
+  assert.equal(await ev("TOKEN"), panel.token, "and the page now holds the current token");
+  assert.equal(await ev("document.querySelector('meta[name=\"panel-token\"]').content"), panel.token);
+});

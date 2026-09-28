@@ -245,12 +245,29 @@
 const $ = (s,r=document)=>r.querySelector(s);
 // This launch's token, put in the page by the panel. Writes and runs without it are refused, so a
 // page on another site cannot drive the panel.
-const TOKEN = document.querySelector('meta[name="panel-token"]').content;
+let TOKEN = document.querySelector('meta[name="panel-token"]').content;
+/**
+ * Every request the page makes to the panel. After a restart the page's token is stale and the panel refuses
+ * writes: then the current token is fetched once (/api/token, same origin only) and the request retried, so a
+ * restart no longer needs a reload (2026-09-28). A panel that is not running says so in words, not "Failed to fetch".
+ */
+async function panelFetch(path, init = {}) {
+  const send = () => fetch(path, { ...init, headers: { ...(init.headers || {}), 'x-panel-token': TOKEN } });
+  let r;
+  try { r = await send(); } catch (e) { throw new Error("the panel isn't answering: it may have stopped. Start it again, then retry"); }
+  if (r.status === 403) {
+    const j = await r.clone().json().catch(() => ({}));
+    if (/did not come from the panel's own page/.test(j.error || '')) {
+      try { const t = await fetch('/api/token', { cache: 'no-store' }); if (t.ok) { TOKEN = (await t.json()).token; const m = document.querySelector('meta[name="panel-token"]'); if (m) m.content = TOKEN; r = await send(); } } catch {}
+    }
+  }
+  return r;
+}
 const api = async (path, opts={}) => {
-  const r = await fetch(path, { headers:{'content-type':'application/json','x-panel-token':TOKEN}, ...opts,
+  const r = await panelFetch(path, { ...opts, headers:{'content-type':'application/json', ...(opts.headers||{})},
     body: opts.body ? JSON.stringify(opts.body) : undefined });
   const j = await r.json().catch(()=>({error:'bad response'}));
-  if (!r.ok) throw new Error(j.error || r.statusText);
+  if (!r.ok) throw new Error(r.status === 403 && /did not come from the panel's own page/.test(j.error||'') ? "the panel restarted and this page could not catch up: reload the page (Cmd+R)" : (j.error || r.statusText));
   return j;
 };
 const esc = s => String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1202,7 +1219,7 @@ async function bUpload(input){
   const name = `${base}.${ext}`;
   const m = $('#bRefMsg'); if (m) m.textContent = 'Uploading…';
   try {
-    const r = await fetch(`/api/client/${STATE.sel}/reference/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream','x-panel-token':TOKEN}, body: await f.arrayBuffer() });
+    const r = await panelFetch(`/api/client/${STATE.sel}/reference/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream'}, body: await f.arrayBuffer() });
     const j = await r.json().catch(()=>({error:'bad response'}));
     if (!r.ok) throw new Error(j.error || r.statusText);
     B.scenes = await api(`/api/client/${STATE.sel}/scenes`);
@@ -2000,7 +2017,7 @@ async function aUploadKind(files, kind, after){
     const name = `${slugify(f.name.replace(/\.[^.]+$/,'')).slice(0,48) || kind}.${ext}`;
     aMsg(f.name, 'uploading…');
     try {
-      const r = await fetch(`/api/client/${STATE.sel}/asset/${kind}/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream','x-panel-token':TOKEN,'x-original-name':encodeURIComponent(f.name)}, body: await f.arrayBuffer() });
+      const r = await panelFetch(`/api/client/${STATE.sel}/asset/${kind}/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream','x-original-name':encodeURIComponent(f.name)}, body: await f.arrayBuffer() });
       const j = await r.json().catch(()=>({error:'bad response'}));
       if (!r.ok) throw new Error(j.error || r.statusText);
       aMsg(f.name, `saved as ${j.asset.path}${j.asset.logo_set?" · now the profile's logo":''}`, 'ok');

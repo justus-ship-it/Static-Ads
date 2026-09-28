@@ -710,6 +710,16 @@ const server = createServer(async (req, res) => {
   // Addressed to this panel, or nothing: a page on another site that re-points its own hostname at
   // 127.0.0.1 (DNS rebinding) sends its own Host and is refused before anything is read.
   if (!hostOk(req)) return json(res, 403, { error: "this panel only answers requests addressed to localhost" });
+  // The current token, for the panel's own page after a restart (a page loaded before it holds the old one,
+  // and every save was refused until a reload). Only the panel's own page can read it: the Host check above
+  // stops another name; a request another site makes says so (Sec-Fetch-Site, Origin) and is refused; and the
+  // answer carries no cross-origin headers, so no other page can read it. Exactly what the page itself is.
+  if (req.url === "/api/token" && req.method === "GET") {
+    const site = req.headers["sec-fetch-site"];
+    if ((site && site !== "same-origin") || !originOk(req)) return json(res, 403, { error: "the token is only for the panel's own page" });
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    return res.end(JSON.stringify({ token: TOKEN }));
+  }
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const p = url.pathname;
   const writes = !["GET", "HEAD"].includes(req.method);
