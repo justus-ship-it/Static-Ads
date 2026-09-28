@@ -409,8 +409,12 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   } else scenes = loadScenes(libraryPath, { allowDraft: dryRun });
   const plannedPath = join(out, "visuals.json");
   let visuals;
+  // A directed batch photographs what its reference or words show, from its own drafted scenes: a must_show
+  // (the Spread switch, saved before 2026-09-28) cannot apply to them and is ignored, said in the log.
+  const directed = !!(brief.direction && (brief.direction.words || brief.direction.reference));
+  if (directed && brief.must_show && Object.keys(brief.must_show).length) log("· must_show is ignored for a directed batch: its reference or words decide what the photos show");
   if (renderOnly && existsSync(plannedPath)) visuals = JSON.parse(readFileSync(plannedPath, "utf-8")).visuals;
-  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: brief.must_show, catalogue, ratio, exclude, ages: ageTargets({ range: brief.age_range, count: g, seed }) });
+  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: directed ? {} : brief.must_show, catalogue, ratio, exclude, ages: ageTargets({ range: brief.age_range, count: g, seed }) });
   if (visuals.notShown) log(`  note: too few photos to show everything asked — not shown: ${visuals.notShown.join(", ")}`);
   for (const v of visuals) for (const w of sceneWarnings({ scene: v.scene, people: v.people, setting: v.tags?.setting })) log(`  warning: ${v.id} (${v.scene_id || "brief scene"}): ${w}`);
   for (const v of visuals) { const p = poseProblem(v.treatment, v.pose, catalogue); if (p) throw new Error(`${v.id}: ${p}`); }

@@ -690,6 +690,11 @@ test("B10 a directed batch drafts its own scenes in the dry run, is refused unti
     assert.equal(calls.length, 0);
     // 3 another dry run drafts nothing more.
     await runBatch({ brandDir: dir, brief, deps, dryRun: true, log: () => {} });
+    // A spread saved with a directed brief (the Spread switch before 2026-09-28) asks its drafts for what they cannot show: ignored, and said.
+    const spreadLogs = [];
+    const withSpread = await runBatch({ brandDir: dir, brief: { ...brief, must_show: { exercise: ["deadlift"], setting: ["group"], equipment: ["barbell"] } }, deps, dryRun: true, log: (m) => spreadLogs.push(m) });
+    assert.equal(withSpread.plan.visuals.length, 2);
+    assert.ok(spreadLogs.some((m) => /must_show is ignored for a directed batch/.test(m)), spreadLogs.join("\n"));
     assert.equal(drafted.length, 1);
     // 4 rejecting one (with a reason) makes the next dry run draft one replacement.
     rejectScene(join(dir, "scenes.json"), "w-dir-1-2", "not the box we have", { date: "2026-09-13" });
