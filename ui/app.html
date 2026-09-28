@@ -1743,9 +1743,10 @@ function copyCard(D, P, sw){
   const tc = (s) => String(s||'').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
   const btn = (D.cta||{})[P.words.cta] || 'Sign up', area = (D.words?.locations||[])[0] ? tc(D.words.locations[0]) : 'the area';
   const fillP = (t) => String(t||'').replace(/\{BUTTON\}/g, btn).replace(/\{AREA\}/g, area);
+  const areas = (D.words?.locations||[]).length ? D.words.locations.map(tc) : ['the area'];
   const card = (d) => { const isH = d.kind==='headline', rec = d.recommended; return `<div class="card" style="margin:0 0 8px;padding:12px 14px;${d.status==='exclude'?'opacity:.55':''}" id="cp_${esc(d.id)}">
     <div class="row" style="gap:8px;flex-wrap:wrap"><b style="font-size:14px">${esc(isH ? fillP(d.headline) : (d.headline ? fillP(d.headline) : fillP(d.message).split('\n')[0].slice(0,70)))}</b>${rec?`<span class="pill on" title="${esc(rec.why)}">#${rec.rank} recommended</span>`:''}${d.angle?`<span class="pill">${esc(d.angle)}</span>`:''}<span class="pill ${d.status==='keep'?'on':d.status==='exclude'?'err':''}">${d.status==='keep'?'kept':d.status==='exclude'?'excluded':'draft'}</span>${d.source==='owner'?'<span class="pill">yours</span>':''}<div class="spacer"></div>
-      ${d.status!=='keep'?`<button class="sm ok" onclick="cpDecide('${esc(d.id)}','keep')">Keep</button>`:''}${d.status!=='exclude'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','exclude')">Exclude</button>`:''}${d.status!=='draft'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','draft')">Undo</button>`:''}<button class="sm" onclick="cpEdit('${esc(d.id)}')">Edit</button></div>
+      ${d.status!=='keep'?`<button class="sm ok" onclick="cpDecide('${esc(d.id)}','keep')">Keep</button>`:''}${d.status!=='exclude'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','exclude')">Exclude</button>`:''}${d.status!=='draft'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','draft')">Undo</button>`:''}<button class="sm" onclick="cpEdit('${esc(d.id)}')">Edit</button>${areas.map(a=>`<button class="sm" title="Copy as it reads on the ad for ${esc(a)}: the area and button filled, line breaks kept" onclick="cpCopy('${esc(d.id)}','${esc(a).replace(/'/g,'&#39;')}')">Copy${areas.length>1?` · ${esc(a)}`:''}</button>`).join('')}</div>
     ${!isH?`<div style="white-space:pre-wrap;font-size:13px;margin-top:6px">${esc(fillP(d.message))}</div>`:''}${d.description?`<div class="hint" style="margin-top:4px">${esc(fillP(d.description))}</div>`:''}
     ${rec?`<div class="hint" style="margin-top:6px"><b>Why:</b> ${esc(rec.why)}${d.clarity!=null?` · clarity ${d.clarity}/10`:''}</div>`:d.clarity!=null?`<div class="hint" style="margin-top:6px">clarity ${d.clarity}/10 · ${esc(d.clarity_why||'')}</div>`:''}</div>`; };
   const order = (a,b) => (a.recommended?a.recommended.rank:99) - (b.recommended?b.recommended.rank:99) || (b.clarity??0) - (a.clarity??0);
@@ -1776,9 +1777,37 @@ async function cpDraft(kind){ const noun = kind==='headline'?'headlines':'copies
   PB.busy = false; paintPublish($('#view')); }
 async function cpKeepRecommended(kind){ try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/recommended`, { method:'POST', body:{ kind } }); PB.cpmsg = `Kept the ${r.kept_now.length} recommended ${kind==='headline'?'headlines':'copies'}.`; await cpReload(); } catch(e){ PB.cpmsg = 'Could not keep: ' + e.message; } paintPublish($('#view')); }
 async function cpDecide(id, status){ try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${id}`, { method:'PUT', body:{ status } }); await cpReload(); } catch(e){ PB.cpmsg = e.message; } paintPublish($('#view')); }
-async function cpEdit(id){ const d = (PB.data.copy?.drafts||[]).find(x=>x.id===id); if (!d) return; const isH = d.kind==='headline';
-  const headline = prompt('Headline', d.headline||''); if (headline==null) return; const message = isH ? '' : prompt('Primary text', d.message); if (message==null) return; const description = prompt('Description (may be empty)', d.description||''); if (description==null) return;
-  try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${id}`, { method:'PUT', body:{ headline, message, description } }); await cpReload(); } catch(e){ PB.cpmsg = 'Not saved: ' + e.message; } paintPublish($('#view')); }
+/** Edit a draft in a modal: the primary text in a multi-line box, so its paragraphs survive (2026-09-28: a
+ *  browser prompt is one line and saved every edited copy as a single block). Kept open with the reason on a refusal. */
+function cpEdit(id, err){
+  const d = (PB.data.copy?.drafts||[]).find(x=>x.id===id); if (!d) return; const isH = d.kind==='headline';
+  const f = PB.editForm && PB.editForm.id===id ? PB.editForm : (PB.editForm = { id, headline:d.headline||'', message:d.message||'', description:d.description||'' });
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)cpEditClose()"><div class="card" style="max-width:680px">
+    <h3>Edit ${isH?'headline':'copy'}</h3><p class="hint">Checked by the same rules as the drafts. Keep {AREA} where the area goes and {BUTTON} where the button is named. Line breaks are kept as you type them.</p>
+    ${err?`<div class="msg err">${esc(err)}</div>`:''}
+    ${isH?'':`<label>Primary text</label><textarea id="cpEditMsg" rows="14" style="width:100%;white-space:pre-wrap" oninput="PB.editForm.message=this.value">${esc(f.message)}</textarea>`}
+    <label style="margin-top:8px">Headline${isH?'':' (optional here: headlines are their own list)'}</label><input id="cpEditHead" value="${esc(f.headline)}" oninput="PB.editForm.headline=this.value">
+    <label style="margin-top:8px">Description (optional)</label><input id="cpEditDesc" value="${esc(f.description)}" oninput="PB.editForm.description=this.value">
+    <div class="row" style="margin-top:12px"><div class="spacer"></div><button class="sm" onclick="cpEditClose()">Cancel</button><button class="primary" onclick="cpEditSave()">Save</button></div></div></div>`;
+  $(isH?'#cpEditHead':'#cpEditMsg').focus();
+}
+function cpEditClose(){ $('#gModal').innerHTML = ''; PB.editForm = null; }
+async function cpEditSave(){
+  const f = PB.editForm; if (!f) return; const d = (PB.data.copy?.drafts||[]).find(x=>x.id===f.id); const isH = d?.kind==='headline';
+  const body = { headline:$('#cpEditHead').value, description:$('#cpEditDesc').value, ...(isH ? {} : { message:$('#cpEditMsg').value }) };
+  Object.assign(f, body);
+  try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${f.id}`, { method:'PUT', body }); cpEditClose(); await cpReload(); PB.cpmsg = 'Saved.'; paintPublish($('#view')); }
+  catch(e){ cpEdit(f.id, 'Not saved: ' + e.message + '. Your text is kept here; fix it and try again.'); }
+}
+/** Copy a draft to the clipboard as it will read on the ad for one area: {AREA} and {BUTTON} filled, line breaks kept. */
+async function cpCopy(id, area){
+  const d = (PB.data.copy?.drafts||[]).find(x=>x.id===id); if (!d) return;
+  const btn = (PB.data.cta||{})[PB.settings?.words?.cta] || 'Sign up';
+  const fill = (t) => String(t||'').replace(/\{BUTTON\}/g, btn).replace(/\{AREA\}/g, area);
+  const text = d.kind==='headline' ? [fill(d.headline), fill(d.description)].filter(Boolean).join('\n') : fill(d.message);
+  try { await navigator.clipboard.writeText(text); toast(`Copied for ${area}, line breaks and all.`); }
+  catch(e){ const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast(`Copied for ${area}.`); }
+}
 function cpOwn(kind, err){
   const isH = kind==='headline';
   const f = PB.ownForm && PB.ownForm.kind===kind ? PB.ownForm : (PB.ownForm = { kind, headline:'', message:'', description:'' });

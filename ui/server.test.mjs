@@ -1553,6 +1553,18 @@ test("U24 copy in the panel: the gym's copy references (list, add, note, retire)
   assert.match(text, /1 kept/); assert.match(text, /Edited headline/); assert.match(text, /Excluded · 1/); assert.equal(await ev("document.querySelector('#cpN').value"), "2");
   assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Draft 10 copies/.test(b.textContent)) && [...document.querySelectorAll('#view button')].some(b=>/Draft 10 headlines/.test(b.textContent)) && !!document.querySelector('#cpNH') && !!document.querySelector('#cpCta')"), "Copy and Headlines sections, each with its draft button and its per-ad number");
   assert.match(text, /Your reset in Bishan/, "the kept headline is shown with the area filled");
+  // Editing keeps paragraphs (2026-09-28: the old one-line prompt saved every edited copy as one block); each card can be copied per area.
+  const para = (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`, { method: "POST", body: { message: `First paragraph about the ${WORDS.offer}.\n\nSecond paragraph. Tap Sign up.`, headline: "" } })).json()).draft;
+  await ev("(async()=>{ await cpReload(); paintPublish(document.querySelector('#view')); return true })()");
+  await ev(`cpEdit('${para.id}'); true`);
+  assert.equal(await ev("document.querySelector('#cpEditMsg').value"), `First paragraph about the ${WORDS.offer}.\n\nSecond paragraph. Tap {BUTTON}.`, "the editor shows the paragraphs");
+  await ev(`(()=>{ const t=document.querySelector('#cpEditMsg'); t.value += '\\n\\nThird paragraph.'; t.dispatchEvent(new Event('input',{bubbles:true})); return true })()`);
+  await ev("(async()=>{ await cpEditSave(); return true })()");
+  const saved = (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`)).json()).drafts.find((d) => d.id === para.id);
+  assert.equal(saved.message, `First paragraph about the ${WORDS.offer}.\n\nSecond paragraph. Tap {BUTTON}.\n\nThird paragraph.`, "saved with every line break");
+  assert.ok(await ev(`!!document.querySelector('#cp_${para.id} button[onclick^="cpCopy"]')`), "a Copy button on the card");
+  await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/${para.id}`, { method: "PUT", body: { status: "exclude" } });
+  await ev("(async()=>{ await cpReload(); paintPublish(document.querySelector('#view')); return true })()");
   await ev(`cpDecide('${b.id}','keep')`);
   text = await ev("document.querySelector('#view').textContent"); assert.match(text, /2 kept/);
   await open(`${panel.url}/?u24b#/${GYM}/copy`, "!!CR.data && /References · 1/.test(document.querySelector('#view')?.textContent||'')", "the Copy page");
