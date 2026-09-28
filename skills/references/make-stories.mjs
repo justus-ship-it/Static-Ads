@@ -62,7 +62,7 @@ const short = (id) => id.split("-")[0];
  * the layouts it must fit — its own primary layout first, so it is composed for the look it was made
  * for. Collage and panels ads need none. Pure.
  */
-export function planStories(batch, chosen, { catalogue = loadCatalogue() } = {}) {
+export function planStories(batch, chosen, { catalogue = loadCatalogue(), poseOf = () => null } = {}) {
   const T = catalogue.treatments;
   const photoOf = Object.fromEntries(batch.photos.map((p) => [p.id, p]));
   const needs = {};
@@ -78,6 +78,16 @@ export function planStories(batch, chosen, { catalogue = loadCatalogue() } = {})
   });
   const photos = Object.values(needs).sort((a, b) => a.id.localeCompare(b.id));
   for (const p of photos) p.layouts.sort((a, b) => (a === p.primary ? -1 : b === p.primary ? 1 : 0));
+  // The native 9:16 photo is composed for the first look its pose can hold. The 1:1 batch may have given a
+  // photo a look by fit alone (its own layout failed, or the looser fit of 2026-09-27: an upright
+  // kettlebell clean kept for T1), and a standing figure cannot be composed for T1. That look is served by
+  // the band of its 1:1 crop instead; a photo whose pose holds none of its looks gets no new photo at all.
+  for (const p of photos) {
+    if (p.kind !== "generated") continue;
+    const pose = poseOf(p.id), ok = p.layouts.find((la) => !poseProblem(la, pose, catalogue));
+    if (ok && ok !== p.layouts[0]) p.layouts = [ok, ...p.layouts.filter((x) => x !== ok)];
+    p.composable = !!ok;
+  }
   return { photos, ads, generated: photos.filter((p) => p.kind === "generated").length, real: photos.filter((p) => p.kind !== "generated").length };
 }
 
@@ -164,8 +174,9 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
   // ── 1 plan ──
   const chosen = resolveSelections(out);
   if (!chosen.length) throw new Error("selections.json chooses no ads");
-  const plan = planStories(batch, chosen, { catalogue });
-  const gen = plan.photos.filter((p) => p.kind === "generated"), real = plan.photos.filter((p) => p.kind !== "generated");
+  const plan = planStories(batch, chosen, { catalogue, poseOf: (id) => visualsById[id]?.pose ?? null });
+  const gen = plan.photos.filter((p) => p.kind === "generated" && p.composable !== false), real = plan.photos.filter((p) => p.kind !== "generated");
+  for (const p of plan.photos.filter((x) => x.kind === "generated" && x.composable === false)) log(`- ${p.id}: its pose (${visualsById[p.id]?.pose}) holds none of its looks (${p.layouts.map(short).join("/")}) — no 9:16 photo is made; each look uses the band of its 1:1 crop`);
   const singles = plan.ads.filter((a) => a.background === "single").length;
   log(`· stories: ${chosen.length} selected ad(s); ${singles} need a 9:16 photo — ${gen.length} generated (${gen.map((p) => `${p.id} for ${p.layouts.map(short).join("/")}`).join(", ") || "none"})${real.length ? `, ${real.length} real as a fitted band (${real.map((p) => p.id).join(", ")})` : ""}; ${plan.ads.length - singles} collage/panels ad(s) reuse their photos; at most ${maxCalls} image call(s) for this batch's stories in all`);
   if (dryRun) return { out, plan, dryRun: true };
@@ -306,7 +317,8 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
       }
       return id;
     };
-    for (const p of gen) for (const la of p.layouts) if (!photo9For(p.id, la)) await bandFor(p, la, prior[`${p.id}-${RATIO}`]?.failures?.join("; ") || "no native 9:16 photo passed");
+    // Every generated photo, the ones given no new photo (their pose holds none of their looks) included.
+    for (const p of plan.photos.filter((x) => x.kind === "generated")) for (const la of p.layouts) if (!photo9For(p.id, la)) await bandFor(p, la, p.composable === false ? `its pose holds none of its looks (${p.layouts.map(short).join("/")})` : prior[`${p.id}-${RATIO}`]?.failures?.join("; ") || "no native 9:16 photo passed");
     // Real photos: the whole photo as a fitted band, no image call. Nothing to check — it was checked
     // clean for the batch and has no people.
     for (const p of real) {

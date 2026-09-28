@@ -456,3 +456,44 @@ test("S8 a band keeps the layout its 1:1 ad verified even when its own 9:16 fit 
     for (const x of res.renders) for (const bl of x.r.report.blocks) assert.ok(inside(bl.rect, S), `${bl.block} inside the safe area`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("S9 the native 9:16 is composed for the first look the photo's pose can hold (2026-09-28: an upright scene kept by fit for T1 stopped the run); a photo whose pose holds none of its looks gets no new photo, only bands", () => {
+  const batch = { photos: [{ id: "g01", kind: "generated", file: "g01.jpg", primary: null }, { id: "g02", kind: "generated", file: "g02.jpg", primary: null }, { id: "g03", kind: "generated", file: "g03.jpg", primary: "t1-bottom-stack" }] };
+  const ad = (folder, photo, treatment) => ({ folder, photos: [photo], treatment });
+  const chosen = [ad("101", "g01", "t1-bottom-stack"), ad("102", "g01", "t6-left-column"), ad("103", "g02", "t1-bottom-stack"), ad("104", "g02", "t2-top-bottom-split"), ad("105", "g03", "t1-bottom-stack")];
+  const poses = { g01: "upright", g02: "upright", g03: "compact" };
+  const plan = planStories(batch, chosen, { catalogue: CAT, poseOf: (id) => poses[id] });
+  const by = Object.fromEntries(plan.photos.map((p) => [p.id, p]));
+  assert.deepEqual([by.g01.layouts, by.g01.composable], [["t6-left-column", "t1-bottom-stack"], true], "the column, which a standing figure can hold, comes first");
+  assert.deepEqual(by.g02.composable, false, "T1 and T2 both refuse a standing figure: no new photo");
+  assert.deepEqual([by.g03.layouts, by.g03.composable], [["t1-bottom-stack"], true]);
+  const plain = planStories(batch, chosen, { catalogue: CAT });
+  assert.deepEqual(plain.photos.find((p) => p.id === "g01").layouts, ["t1-bottom-stack", "t6-left-column"], "no pose known: the order as before");
+});
+
+test("S10 end to end: a photo whose pose holds none of its looks costs no image call and its ads still get a Stories version, from the band of each 1:1 crop", async () => {
+  const bdir = brandSetup();
+  try {
+    const { out, batch } = await finishedBatch(bdir);
+    const vj = JSON.parse(readFileSync(join(out, "visuals.json"), "utf-8"));
+    // A generated photo whose single-photo looks some pose cannot hold (T1, T2 and T5 refuse a standing figure; columns take any): give it that pose.
+    const { poseProblem } = await import("./visual-prompts.mjs");
+    const looksOf = (id) => [...new Set(batch.ads.filter((a) => a.photos.length === 1 && a.photos[0] === id).map((a) => a.treatment))];
+    // The seeded batch gives g02 T1 and T3; its T3 ads are left unpicked, so its only look is T1, which a standing figure cannot be composed for.
+    const G = batch.photos.find((p) => p.kind === "generated" && looksOf(p.id).includes("t1-bottom-stack"))?.id, forbidding = "upright";
+    const sel = JSON.parse(readFileSync(join(out, "selections.json"), "utf-8"));
+    for (const ad of batch.ads) if (ad.photos.length === 1 && ad.photos[0] === G && ad.treatment !== "t1-bottom-stack") delete sel[ad.folder];
+    writeFileSync(join(out, "selections.json"), JSON.stringify(sel));
+    assert.ok(poseProblem("t1-bottom-stack", forbidding, CAT), "T1 refuses a standing figure");
+    assert.ok(G, "some generated photo has looks a pose cannot hold: " + batch.photos.filter((x) => x.kind === "generated").map((p) => p.id + "=" + looksOf(p.id)).join(" "));
+    vj.visuals.find((v) => v.id === G).pose = forbidding; writeFileSync(join(out, "visuals.json"), JSON.stringify(vj));
+    const calls = [], logs = [];
+    const r = await runStories({ brandDir: bdir, batchId: "test-batch", deps: { generate: generate(calls), check: check9, sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser, gallery: () => {} }, log: (m) => logs.push(m) });
+    assert.ok(logs.some((l) => l.startsWith("- " + G + ": its pose") && l.includes("no 9:16 photo is made")), logs.join(" | "));
+    const own = Object.keys(r.stories.photos).filter((id) => id.startsWith(G + "-" + RATIO) && !id.includes("-band-"));
+    assert.deepEqual(own, [], "no new photo for " + G);
+    const ads = r.stories.ads.filter((a) => a.photos[0].startsWith(G + "-"));
+    assert.ok(ads.length > 0, "its ads still have Stories versions");
+    for (const a of ads) assert.equal(r.stories.photos[a.photos[0]].kind, "band");
+  } finally { rmSync(bdir, { recursive: true, force: true }); }
+});
