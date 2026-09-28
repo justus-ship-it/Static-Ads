@@ -38,6 +38,7 @@ import { imageSize } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
 import { buildPlan, keptAds, CTA_TYPES } from "../skills/references/meta-publish.mjs";
+import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
 import { draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy } from "../skills/references/draft-copy.mjs";
 import { liveEntries } from "../skills/references/copy-library.mjs";
@@ -952,6 +953,17 @@ const server = createServer(async (req, res) => {
 
     // /api/client/{gym}/batch/{id}/progress · /review · /picks · /publish
     // /api/client/{gym}/batch/{id}/copy — the campaign's copy: drafts (the model, one call), the owner's own, keep / exclude / edit.
+    // /api/client/{gym}/batch/{id}/images.zip — every kept ad's 1:1 and 9:16 by ad set, for building the ads by hand in Ads Manager.
+    const zp = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/images\.zip$/);
+    if (zp && req.method === "GET") {
+      const [, gym, id] = zp;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      if (!okSlug(id) || !existsSync(join(outDirOf(gym, id), "batch.json"))) return json(res, 404, { error: "no finished batch of that name" });
+      const z = keptImagesZip(outDirOf(gym, id), { batchId: id });
+      if (!z.ads) return json(res, 409, { error: "no kept ads in this batch" });
+      res.writeHead(200, { "content-type": "application/zip", "content-length": z.buffer.length, "content-disposition": `attachment; filename="${id}-images.zip"`, "cache-control": "no-store" });
+      return res.end(z.buffer);
+    }
     const cp = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/copy(?:\/([^/]+))?$/);
     if (cp) {
       const [, gym, id, cid] = cp;

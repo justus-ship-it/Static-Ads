@@ -1575,3 +1575,23 @@ test("U24 copy in the panel: the gym's copy references (list, add, note, retire)
   await ev(`crRetire('${refId}')`);
   assert.match(await ev("document.querySelector('#view').textContent"), /References · 1/);
 });
+
+test("U25 the kept ads as a zip for Ads Manager: every kept ad's images by ad set, the list and the instructions; refused for a batch that is not finished or a bad name; the Publish screen's button", async () => {
+  const res = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/images.zip`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "application/zip");
+  assert.equal(res.headers.get("content-disposition"), `attachment; filename="${BRIEF.batch_id}-images.zip"`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  assert.equal(buf.readUInt32LE(0), 0x04034b50, "a zip");
+  const text = buf.toString("latin1");
+  assert.ok(text.includes("ads.csv") && text.includes("README.txt"), "the list and the instructions");
+  assert.ok(/Bishan\/[^\/]+_1x1\.png/.test(text) && !/_v1\.png/.test(text), "one folder per ad set; names that pair (no _v1)");
+  assert.equal((await call(`/api/client/${GYM}/batch/no-such-batch/images.zip`)).status, 404);
+  assert.equal((await call(`/api/client/..%2F..%2Fx/batch/${BRIEF.batch_id}/images.zip`)).status, 400);
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+  const loaded = cdp.once("Page.loadEventFired", sessionId);
+  await cdp.send("Page.navigate", { url: `${panel.url}/?u25#/${GYM}/publish/${BRIEF.batch_id}` }, sessionId); await loaded;
+  const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!document.querySelector('#pbZip')"))) await new Promise((x) => setTimeout(x, 150));
+  assert.match(await ev("document.querySelector('#pbZip').getAttribute('onclick')"), new RegExp(`/api/client/${GYM}/batch/${BRIEF.batch_id}/images\\.zip`));
+});
