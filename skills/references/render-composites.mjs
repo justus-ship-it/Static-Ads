@@ -470,8 +470,9 @@ export async function launchBrowser() {
       // child itself, or Node waits on those pipes and a finished run lingers for minutes (seen 2026-09-17).
       for (const st of [proc.stdin, proc.stdout, proc.stderr]) { try { st?.destroy(); } catch {} }
       proc.unref();
-      rmSync(profile, { recursive: true, force: true });
-      rmSync(work, { recursive: true, force: true });
+      // Chrome's helpers can still be writing into its profile for a moment; a temporary folder left behind
+      // is no reason to fail a finished run.
+      for (const d of [profile, work]) { try { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {} }
     },
   };
 }

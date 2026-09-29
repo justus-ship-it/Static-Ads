@@ -48,6 +48,8 @@ import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MA
 import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
+import { readReading, checkUrl as checkSiteUrl, MIN_PHOTO_PX, ONBOARDING_DIR } from "../skills/references/read-website.mjs";
+import { readInstagramReading, cleanHandle, INSTAGRAM_DIR } from "../skills/references/read-instagram.mjs";
 
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(UI_DIR, "..");
@@ -57,6 +59,10 @@ const BATCH_SCRIPT = join(REPO_ROOT, "skills", "references", "plan-offer-batch.m
 const STORIES_SCRIPT = join(REPO_ROOT, "skills", "references", "make-stories.mjs");
 const REFRESH_SCRIPT = join(REPO_ROOT, "skills", "references", "refresh-scenes.mjs");
 const CLEAN_SCRIPT = join(REPO_ROOT, "skills", "references", "clean-photo.mjs");
+const READ_SCRIPT = join(REPO_ROOT, "skills", "references", "read-website.mjs");
+const IG_SCRIPT = join(REPO_ROOT, "skills", "references", "read-instagram.mjs");
+// The tests serve a fake gym site from this machine; a real panel reads public websites only.
+const ALLOW_LOCAL_SITES = process.env.READ_WEBSITE_ALLOW_LOCAL === "1";
 const PUBLISH_SCRIPT = join(REPO_ROOT, "skills", "references", "meta-publish.mjs");
 /** A reference image's file name: a slug and an image extension — it becomes a path segment. */
 const REFERENCE_NAME = /^[a-z0-9][a-z0-9-]{0,63}\.(png|jpe?g|webp)$/;
@@ -142,6 +148,12 @@ const RUNNABLE = {
   // itself under a confirmed call cap. Photos are names in brand-assets/facility, checked before they
   // become arguments; the clean copies land in brand-assets/facility-clean as the CLI's do.
   "photo-survey": { label: "Survey premises photos (free)", argv: ({ gym, photos }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--survey-only", ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", "facility", p)])] },
+  // Onboarding, part one: read the gym's website into a proposal (model calls for the sort and the colours;
+  // no image generation). The address is checked for shape before it becomes an argument.
+  "website-read": { label: "Read the website", argv: ({ gym, url }) => [READ_SCRIPT, "--brand-dir", brandDir(gym), "--url", url] },
+  // Onboarding, part two: a gym's Instagram photos through Meta's Business Discovery (read-only; model calls
+  // for the sort). The handle is checked for shape before it becomes an argument.
+  "instagram-read": { label: "Read Instagram", argv: ({ gym, handle }) => [IG_SCRIPT, "--brand-dir", brandDir(gym), "--handle", handle] },
   "photo-clean": { label: "Clean premises photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", "facility", p)])] },
 };
 
@@ -228,7 +240,10 @@ function listAssets(gym) {
 const fail = (status, message) => Object.assign(new Error(message), { status });
 /** Keep an uploaded file as one of the gym's assets: an image by its first bytes (an iPhone's HEIC
  *  is converted here; an SVG only as a logo, and only a plain one), named as asked, never twice. */
-function saveAsset(gym, kindId, name, buf, originalName = null) {
+// Photos of the gym (premises, coaches, members) are refused under MIN_PHOTO_PX on the long side unless the
+// owner keeps one anyway: a soft photo makes a soft ad, and the room reference passes its softness on.
+const PHOTO_KIND_IDS = new Set(["facility", "coaches", "members"]);
+function saveAsset(gym, kindId, name, buf, originalName = null, { source = "upload", sourceUrl = null, keepLowRes = false } = {}) {
   const kind = assetKind(kindId);
   if (!kind) throw fail(400, `the kind must be one of ${ASSET_KINDS.map((k) => k.id).join(", ")}`);
   if (!ASSET_NAME.test(name)) throw fail(400, "the file name must be lower-case letters, digits and hyphens, ending in .png, .jpg, .webp, .heic or (for a logo) .svg");
@@ -242,6 +257,9 @@ function saveAsset(gym, kindId, name, buf, originalName = null) {
     if (!hasSips()) throw fail(400, "HEIC photos are converted with sips, which this machine does not have — export the photo as JPEG first");
     buf = heicToJpeg(buf); name = name.replace(/\.heic$/i, ".jpg"); found = "jpg";
   }
+  const size = found === "svg" ? null : sizeOf(buf);
+  const lowRes = PHOTO_KIND_IDS.has(kind.id) && size && Math.max(...size) < MIN_PHOTO_PX;
+  if (lowRes && !keepLowRes) throw Object.assign(fail(422, `this photo is ${size[0]}×${size[1]}: under ${MIN_PHOTO_PX} px on its long side it looks soft on a 1080 px ad. Keep it only if there is no larger copy`), { low_res: true, size });
   const sha256 = createHash("sha256").update(buf).digest("hex");
   const manifest = readManifest(gym);
   const dup = manifest.assets.find((a) => a.sha256 === sha256 && !a.removed && existsSync(join(assetsDir(gym), a.path)));
@@ -251,7 +269,7 @@ function saveAsset(gym, kindId, name, buf, originalName = null) {
   let final = name, n = 2;
   while (existsSync(join(dir, final))) final = `${stem(name)}-${n++}${extname(name)}`;
   writeFileSync(join(dir, final), buf);
-  const row = { path: `${kind.folder}/${final}`, kind: kind.id, original_name: originalName || name, sha256, bytes: buf.length, size: found === "svg" ? null : sizeOf(buf), source: "upload", added: new Date().toISOString().slice(0, 10) };
+  const row = { path: `${kind.folder}/${final}`, kind: kind.id, original_name: originalName || name, sha256, bytes: buf.length, size, source, ...(sourceUrl ? { source_url: sourceUrl } : {}), ...(lowRes ? { low_res_kept: true } : {}), added: new Date().toISOString().slice(0, 10) };
   manifest.assets = manifest.assets.filter((a) => a.path !== row.path).concat(row);
   writeManifest(gym, manifest);
   // The first logo uploaded becomes the profile's logo file, unless one is already named.
@@ -285,6 +303,137 @@ function removeAsset(gym, kindId, name) {
   else manifest.assets.push({ path, kind: kind.id, source: "folder", removed: new Date().toISOString().slice(0, 10), trashed: `_trash/${basename(to)}` });
   writeManifest(gym, manifest);
   return { ok: true, trashed: `_trash/${basename(to)}` };
+}
+
+// ── The website's reading (onboarding, part one) ─────────────────────────────
+// read-website.mjs writes brands/{gym}/onboarding/website/reading.json; the owner ticks what to keep and
+// acceptWebsite files it: photos and the logo into brand-assets through saveAsset (source "website", with
+// the address it came from), the colours, fonts, address and Instagram into the profile — never over a
+// locked colour, and only after the profile with them passes validateProfile.
+const FILE_AS = ["facility", "coaches", "members", "brand", "other"];
+const KIND_TO_FOLDER = { premises: "facility", coaches: "coaches", members: "members", graphic: "brand", screenshot: "brand", logo: "logo", other: "other" };
+const HEX6 = /^#[0-9A-F]{6}$/i;
+function websiteView(gym) {
+  const r = readReading(brandDir(gym)), profile = readJsonFile(join(brandDir(gym), "gym-profile.json")) || {};
+  const have = new Map(readManifest(gym).assets.filter((a) => a.sha256 && !a.removed && existsSync(join(assetsDir(gym), a.path))).map((a) => [a.sha256, a.path]));
+  const base = `/files/brands/${gym}/${ONBOARDING_DIR}`;
+  const lock = profile.brand_lock || {};
+  return {
+    min_photo_px: MIN_PHOTO_PX, file_as: FILE_AS, kind_to_folder: KIND_TO_FOLDER,
+    profile: { website: profile.website || "", colors: lock.colors || {}, typography: lock.typography || {}, locations: profile.locations || [], social: profile.social || {}, logo: lock.logo?.files?.primary || "" },
+    reading: r && {
+      ...r,
+      screenshot_url: `${base}/${r.screenshot}`,
+      photos: (r.photos || []).map((p) => ({ ...p, image_url: `${base}/${p.file}`, thumb_url: `${base}/${p.thumb || p.file}`, have: have.get(p.sha256) || null, file_as: KIND_TO_FOLDER[p.kind] || "other" })),
+      logos: (r.logos || []).map((l) => ({ ...l, image_url: `${base}/${l.file}`, have: (l.sha256 && have.get(l.sha256)) || null })),
+    },
+  };
+}
+/** A filing name for a file from the website: web-{its name}, a slug the asset rules accept. */
+const webName = (file, ext, fallback = "image") => `web-${basename(file).replace(/^(p\d+|logo-\d+)-?/, "").replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || fallback}.${ext}`;
+function acceptWebsite(gym, body) {
+  const r = readReading(brandDir(gym));
+  if (!r) throw fail(409, "read the website first");
+  const dir = join(brandDir(gym), ONBOARDING_DIR), pf = join(brandDir(gym), "gym-profile.json");
+  const changes = [];
+  // The profile's part first, on a copy: nothing is filed when the profile it leads to would be refused.
+  const edit = (profile, say) => {
+    const lock = (profile.brand_lock ||= {}), colors = (lock.colors ||= {});
+    for (const role of ["primary", "secondary", "accent"]) {
+      const hex = body.colours?.[role];
+      if (hex == null || hex === "") continue;
+      if (!HEX6.test(hex) || !(r.colours?.candidates || []).some((c) => c.hex === hex.toUpperCase())) throw fail(400, `${role}: ${hex} is not one of the colours the website showed`);
+      const had = colors[role];
+      if (had?.hex && had.locked) { say(`${role} colour kept: ${had.hex} is locked in the profile`); continue; }
+      colors[role] = { ...(had || {}), hex: hex.toUpperCase(), name: had?.name || "", locked: false, source: "website" };
+      say(`${role} colour ${hex.toUpperCase()}`);
+    }
+    const typo = (lock.typography ||= {});
+    for (const role of ["headline", "body"]) {
+      if (!body.fonts?.[role]) continue;
+      const fam = r.fonts?.[role];
+      if (!fam) continue;
+      if (typo[role]?.family) { say(`${role} font kept: ${typo[role].family}`); continue; }
+      typo[role] = { ...(typo[role] || {}), family: fam };
+      say(`${role} font ${fam}`);
+    }
+    if (body.address) {
+      const a = (r.identity?.addresses || []).find((x) => x.postal_code === String(body.address));
+      if (!a) throw fail(400, "that address is not one the website showed");
+      const locs = (profile.locations ||= []);
+      if (locs.some((l) => String(l.postal_code) === a.postal_code)) say(`address ${a.postal_code} is already a location`);
+      else {
+        const row = { label: "", address: a.address, postal_code: a.postal_code, ...(Number.isFinite(a.lat) ? { lat: a.lat, lng: a.lng } : {}), nearest_mrt: "", catchment: "", opening_hours: "" };
+        const empty = locs.findIndex((l) => !l.address && !l.postal_code);
+        if (empty >= 0) locs[empty] = { ...locs[empty], ...row, label: locs[empty].label || "" }; else locs.push(row);
+        say(`location added: ${a.address}`);
+      }
+    }
+    const social = { ...(profile.social || {}) };
+    if (body.instagram) { const h = String(body.instagram).replace(/^@/, "").toLowerCase(); if (!(r.identity?.instagram || []).some((x) => x.value === h)) throw fail(400, "that Instagram account is not one the website linked"); social.instagram = h; say(`Instagram @${h}`); }
+    if (body.facebook) { if (!(r.identity?.facebook || []).some((x) => x.value === body.facebook)) throw fail(400, "that Facebook Page is not one the website linked"); social.facebook = body.facebook; say(`Facebook ${body.facebook}`); }
+    if (Object.keys(social).length) profile.social = social;
+    if (!profile.website) { profile.website = r.url; say(`website ${r.url}`); }
+    return profile;
+  };
+  const trial = edit(JSON.parse(JSON.stringify(readJsonFile(pf) || {})), () => {});
+  const { errors } = validateProfile(trial, { gymDir: brandDir(gym) });
+  if (errors.length) throw Object.assign(fail(400, errors[0]), { errors });
+
+  const added = [], skipped = [];
+  const file = (id, rel, kind, url, keepLowRes) => {
+    const abs = join(dir, rel);
+    if (!rel || rel.includes("..") || !existsSync(abs)) { skipped.push({ id, reason: "the file from the reading is gone; read the website again" }); return null; }
+    try { const row = saveAsset(gym, kind, webName(rel, extname(rel).slice(1).toLowerCase(), kind === "logo" ? "logo" : "photo"), readFileSync(abs), url ? basename(new URL(url).pathname) : basename(rel), { source: "website", sourceUrl: url || r.url, keepLowRes }); added.push({ id, path: row.path, kind, ...(row.logo_set ? { logo_set: true } : {}) }); return row; }
+    catch (e) { skipped.push({ id, reason: e.message, ...(e.low_res ? { low_res: true } : {}) }); return null; }
+  };
+  for (const pick of Array.isArray(body.photos) ? body.photos : []) {
+    const ph = (r.photos || []).find((x) => x.id === pick?.id);
+    if (!ph) { skipped.push({ id: pick?.id, reason: "not a photo from the reading" }); continue; }
+    if (!FILE_AS.includes(pick.kind)) { skipped.push({ id: ph.id, reason: `file it as one of ${FILE_AS.join(", ")}` }); continue; }
+    file(ph.id, ph.file, pick.kind, ph.url, pick.keep_low_res === true);
+  }
+  if (body.logo) {
+    const l = (r.logos || []).find((x) => x.id === body.logo);
+    if (!l) skipped.push({ id: body.logo, reason: "not a logo from the reading" });
+    else file(l.id, l.file, "logo", l.url, false);
+  }
+  if (body.screenshot === true) file("home", r.screenshot, "brand", r.url, false);
+  const profile = edit(readJsonFile(pf) || {}, (t) => changes.push(t));
+  writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+  return { ok: true, added, skipped, changes };
+}
+
+// The Instagram reading (read-instagram.mjs): photos only, filed the website's way with the post's address as
+// where each came from; the handle read becomes the profile's Instagram when it has none.
+function instagramView(gym) {
+  const r = readInstagramReading(brandDir(gym)), profile = readJsonFile(join(brandDir(gym), "gym-profile.json")) || {};
+  const have = new Map(readManifest(gym).assets.filter((a) => a.sha256 && !a.removed && existsSync(join(assetsDir(gym), a.path))).map((a) => [a.sha256, a.path]));
+  const base = `/files/brands/${gym}/${INSTAGRAM_DIR}`;
+  return {
+    min_photo_px: MIN_PHOTO_PX, file_as: FILE_AS, meta_ready: !!metaConfig({ gym }).token,
+    profile: { instagram: profile.social?.instagram || "", website_instagram: readReading(brandDir(gym))?.identity?.instagram?.[0]?.value || "" },
+    reading: r && { ...r, photos: (r.photos || []).map((p) => ({ ...p, image_url: `${base}/${p.file}`, thumb_url: `${base}/${p.thumb || p.file}`, have: have.get(p.sha256) || null, file_as: KIND_TO_FOLDER[p.kind] || "other" })) },
+  };
+}
+function acceptInstagram(gym, body) {
+  const r = readInstagramReading(brandDir(gym));
+  if (!r) throw fail(409, "read Instagram first");
+  const dir = join(brandDir(gym), INSTAGRAM_DIR), added = [], skipped = [], changes = [];
+  for (const pick of Array.isArray(body.photos) ? body.photos : []) {
+    const ph = (r.photos || []).find((x) => x.id === pick?.id);
+    if (!ph) { skipped.push({ id: pick?.id, reason: "not a photo from the reading" }); continue; }
+    if (!FILE_AS.includes(pick.kind)) { skipped.push({ id: ph.id, reason: `file it as one of ${FILE_AS.join(", ")}` }); continue; }
+    const abs = join(dir, ph.file);
+    if (!existsSync(abs)) { skipped.push({ id: ph.id, reason: "the file from the reading is gone; read Instagram again" }); continue; }
+    const post = String(ph.post || "").match(/\/(p|reel)\/([A-Za-z0-9_-]+)/)?.[2];
+    const name = `ig-${r.handle.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24)}-${(post || ph.id).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 20)}${ph.of > 1 ? `-${ph.in_post}` : ""}${extname(ph.file).toLowerCase()}`;
+    try { const row = saveAsset(gym, pick.kind, name, readFileSync(abs), basename(ph.file), { source: "instagram", sourceUrl: ph.post || `https://www.instagram.com/${r.handle}/`, keepLowRes: pick.keep_low_res === true }); added.push({ id: ph.id, path: row.path, kind: pick.kind }); }
+    catch (e) { skipped.push({ id: ph.id, reason: e.message, ...(e.low_res ? { low_res: true } : {}) }); }
+  }
+  const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
+  if (added.length && !profile.social?.instagram) { profile.social = { ...(profile.social || {}), instagram: r.handle }; writeWhole(pf, JSON.stringify(profile, null, 2) + "\n"); changes.push(`Instagram @${r.handle}`); }
+  return { ok: true, added, skipped, changes };
 }
 
 const referencesDir = (gym) => join(brandDir(gym), REFERENCES_DIR);
@@ -689,9 +838,10 @@ function allowedFile(rel) {
   if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "outputs" && (ext === ".html" || IMAGE_EXT.has(ext))) base = join(BRANDS, parts[1], "outputs");
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "brand-assets" && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "logo")) && parts[3] !== "_trash") base = join(BRANDS, parts[1], "brand-assets");
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === REFERENCES_DIR && parts.length === 4 && REFERENCE_NAME.test(parts[3])) base = join(BRANDS, parts[1], REFERENCES_DIR);
+  else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "onboarding" && ["website", "instagram"].includes(parts[3]) && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "website" && parts[4] === "logos"))) base = join(BRANDS, parts[1], "onboarding", parts[3]);
   else if (parts[0] === "swipe" && parts.length >= 3 && (ext === ".html" || IMAGE_EXT.has(ext))) base = SWIPE;
   if (!base) return null;
-  const abs = parts[0] === "brands" ? join(base, ...parts.slice(3)) : join(SWIPE, ...parts.slice(1));
+  const abs = parts[0] === "brands" ? join(base, ...parts.slice(parts[2] === "onboarding" ? 4 : 3)) : join(SWIPE, ...parts.slice(1));
   if (!existsSync(abs) || statSync(abs).isDirectory()) return null;
   // Symlinks may not lead out of the allowed folder.
   const real = realpathSync(abs), realBase = realpathSync(base);
@@ -906,6 +1056,30 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { errors: [], looks: await job });
     }
 
+    // /api/client/{gym}/website · /website/accept — the website's reading, and filing what the owner ticked.
+    const webm = p.match(/^\/api\/client\/([^/]+)\/website(\/accept)?$/);
+    if (webm) {
+      const [, gym, accept] = webm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      if (!accept && req.method === "GET") return json(res, 200, websiteView(gym));
+      if (accept && req.method === "POST") {
+        try { return json(res, 200, { ...acceptWebsite(gym, await readBody(req)), ...websiteView(gym) }); }
+        catch (e) { return json(res, e.status || 400, { error: e.message, ...(e.errors ? { errors: e.errors } : {}) }); }
+      }
+    }
+
+    // /api/client/{gym}/instagram · /instagram/accept — the Instagram reading, and filing the ticked photos.
+    const igm = p.match(/^\/api\/client\/([^/]+)\/instagram(\/accept)?$/);
+    if (igm) {
+      const [, gym, accept] = igm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      if (!accept && req.method === "GET") return json(res, 200, instagramView(gym));
+      if (accept && req.method === "POST") {
+        try { return json(res, 200, { ...acceptInstagram(gym, await readBody(req)), ...instagramView(gym) }); }
+        catch (e) { return json(res, e.status || 400, { error: e.message }); }
+      }
+    }
+
     // /api/client/{gym}/assets · /asset/{kind}/{name} — the gym's own files, from the panel's drop zone.
     const am = p.match(/^\/api\/client\/([^/]+)\/(assets|asset\/([a-z]+)\/([^/]+))$/);
     if (am) {
@@ -917,9 +1091,9 @@ const server = createServer(async (req, res) => {
         try { buf = await readRaw(req, MAX_ASSET_BYTES); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
         try {
           const original = req.headers["x-original-name"] ? decodeURIComponent(String(req.headers["x-original-name"])).slice(0, 200) : null;
-          const row = saveAsset(gym, kind, name, buf, original);
+          const row = saveAsset(gym, kind, name, buf, original, { keepLowRes: req.headers["x-keep-low-res"] === "1" });
           return json(res, 200, { ok: true, asset: { ...row, url: `/files/brands/${gym}/brand-assets/${row.path}` } });
-        } catch (e) { return json(res, e.status || 400, { error: e.message }); }
+        } catch (e) { return json(res, e.status || 400, { error: e.message, ...(e.low_res ? { low_res: true, size: e.size, min_px: MIN_PHOTO_PX } : {}) }); }
       }
       if (kind && req.method === "DELETE") {
         try { return json(res, 200, removeAsset(gym, kind, name)); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
@@ -1190,6 +1364,22 @@ const server = createServer(async (req, res) => {
         if (body.words != null && (typeof body.words !== "string" || body.words.trim().length < 3 || body.words.length > MAX_WORDS)) return json(res, 400, { error: `words must describe the pictures wanted, up to ${MAX_WORDS} characters` });
         if (body.reference != null && (!REFERENCE_NAME.test(String(body.reference)) || !existsSync(join(referencesDir(body.gym), body.reference)))) return json(res, 400, { error: "reference must name an uploaded reference image" });
         const run = startRun(kind, { gym: body.gym, audience: body.audience, count: body.count, words: body.words?.trim() || null, reference: body.reference || null });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "website-read") {
+        if (!okSlug(body.gym) || !existsSync(join(brandDir(body.gym), "gym-profile.json"))) return json(res, 400, { error: "reading a website needs a client with a profile" });
+        let url;
+        try { if (typeof body.url !== "string" || body.url.length > 300) throw new Error("give the gym's web address (up to 300 characters)"); url = checkSiteUrl(body.url, { allowLocal: ALLOW_LOCAL_SITES }).href; }
+        catch (e) { return json(res, 400, { error: e.message }); }
+        const run = startRun(kind, { gym: body.gym, url });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "instagram-read") {
+        if (!okSlug(body.gym) || !existsSync(join(brandDir(body.gym), "gym-profile.json"))) return json(res, 400, { error: "reading Instagram needs a client with a profile" });
+        const handle = cleanHandle(body.handle);
+        if (!handle) return json(res, 400, { error: "give the gym's Instagram handle (letters, digits, dots and underscores)" });
+        if (!metaConfig({ gym: body.gym }).token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page): Instagram is read through it" });
+        const run = startRun(kind, { gym: body.gym, handle });
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "photo-survey" || kind === "photo-clean") {

@@ -197,6 +197,20 @@
   .asset .tick{position:absolute;top:8px;left:8px;width:20px;height:20px;border-radius:50%;background:var(--surface);border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
   .asset.sel .tick{background:var(--navy);border-color:var(--navy)}
   .asset .tag{position:absolute;top:8px;right:8px}
+  .wgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+  .wph{background:var(--surface);border:1px solid var(--line);border-radius:9px;overflow:hidden;position:relative}
+  .wph.on{border-color:var(--navy);box-shadow:0 0 0 2px var(--accent-soft)} .wph.off .im{opacity:.55}
+  .wph .im{aspect-ratio:4/3;background:#0b1430;overflow:hidden;cursor:pointer} .wph .im img{width:100%;height:100%;object-fit:cover;display:block}
+  .wph.logo .im{background:repeating-conic-gradient(#d9dce3 0 25%,#f4f5f8 0 50%) 0 0/16px 16px;padding:10px} .wph.logo .im img{object-fit:contain}
+  .wph .tick{position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:50%;background:var(--surface);border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
+  .wph.on .tick{background:var(--navy);border-color:var(--navy)}
+  .wph .m{padding:7px 9px;font-size:11.5px;color:var(--dim)} .wph .m b{display:block;color:var(--text);font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wph .m select{font-size:11.5px;padding:2px 4px;margin-top:5px;width:100%}
+  .wph .flags{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+  .wflag{font-size:10.5px;border-radius:5px;padding:1px 6px;background:var(--surface-2);border:1px solid var(--line)} .wflag.warn{background:#fff4e0;border-color:#f0c77a;color:#8a5a00} .wflag.bad{background:#fdecec;border-color:#f2b8b8;color:#9b1c1c}
+  .wsw{display:inline-block;width:18px;height:18px;border-radius:4px;border:1px solid var(--line-2);vertical-align:-4px;margin-right:6px}
+  .wrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)} .wrow:first-of-type{border-top:0}
+  .wfoot{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:12px 0;margin-top:14px;display:flex;align-items:center;gap:12px;z-index:3}
   .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
   .swatch{border-radius:10px;padding:14px 16px;background:#262626;background-image:linear-gradient(135deg,#3a3a3a,#161616);font-family:Montserrat,Inter,sans-serif;font-weight:900;text-transform:uppercase;line-height:1.15;letter-spacing:.3px}
   .swatch div{font-size:17px;paint-order:stroke fill;-webkit-text-stroke:1px} .swatch .sm{font-size:12px}
@@ -278,10 +292,10 @@ let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'
 const NAV = [
   ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'], ['results','Results','▤'],
   ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'],
-  ['sec','Profile'], ['overview','Overview','◎'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
+  ['sec','Profile'], ['overview','Overview','◎'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'], ['generate','Templates (old)','·'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -373,6 +387,8 @@ function render(){
   if (STATE.tab==='setup') return viewSetup(v);
   if (!STATE.sel) { v.innerHTML = `<div class="empty">No client selected.<br><br><button class="primary" onclick="newClient()">Create your first gym</button></div>`; return; }
   if (STATE.tab==='overview') return viewOverview(v, seq);
+  if (STATE.tab==='website') return viewWebsite(v, seq);
+  if (STATE.tab==='instagram') return viewInstagram(v, seq);
   if (STATE.tab==='identity') return viewIdentity(v);
   if (STATE.tab==='brand') return viewBrand(v, seq);
   if (STATE.tab==='offer') return viewOffer(v, seq);
@@ -434,6 +450,7 @@ async function viewOverview(v, seq=VIEW_SEQ){
   const create = c.sections.filter(s=>s.for!=='publishing'), publish = c.sections.filter(s=>s.for==='publishing');
   v.innerHTML = `<div class="row" style="margin-bottom:4px"><h1 style="margin:0">${esc(p.display_name||STATE.sel)}</h1>${d.logo?`<img src="${esc(d.logo)}" alt="" style="height:34px;margin-left:8px;background:#0a0a0a;border-radius:6px;padding:4px 8px">`:''}</div>
     <p class="sub">The gym's profile: filled in once, remembered, and used by every batch. Switch gyms from the top bar.</p>
+    ${c.ready_to_create ? '' : `<div class="msg">New gym? <a href="#" onclick="go('website');return false">Read its website</a>: the colours, fonts, logo, address, Instagram and photos, proposed for you to tick.</div>`}
     ${c.ready_to_create ? `<div class="msg ok">Ready to create ads. <a href="#" onclick="go('batch');return false">Create →</a></div>` : `<div class="msg warn">${c.to_do} section${c.to_do===1?'':'s'} to finish before creating ads.</div>`}
     <h2 style="margin-top:16px">To create ads</h2><div class="ov">${create.map(card).join('')}</div>
     <h2 style="margin-top:20px">To publish to Meta <span class="pill">later</span></h2><p class="hint" style="margin-top:-4px">Publishing is not built yet. Filling these in now means it will work for this gym when it is.</p><div class="ov">${publish.map(card).join('')}</div>`;
@@ -1959,6 +1976,179 @@ function bRefreshGo(){
   run({kind:'scenes-refresh', gym:STATE.sel, audience, count, ...(dir==='words'?{words}:{}), ...(dir==='reference'?{reference}:{})}, async()=>{ await reloadScenes(); });
 }
 
+// ── From the website (onboarding, part one) ─────────────────────────────────
+// The reader (read-website.mjs, a run) reads the gym's own site into a proposal; this page shows it and the
+// owner ticks what to keep. Nothing reaches the profile or brand-assets until "Add to the gym".
+const WS = { data:null, pick:null, gym:null, filter:'all', dups:false, msg:null };
+const W_KIND = { premises:'Premises', coaches:'Coaches', members:'Members', graphic:'Graphics', screenshot:'Screenshots', logo:'Logos', other:'Other' };
+const W_FILE = { facility:'Premises', coaches:'Coaches', members:'Members', brand:'Brand', other:'Other' };
+async function loadWebsite(){ WS.data = await api(`/api/client/${STATE.sel}/website`); WS.gym = STATE.sel; wDefaults(); return WS.data; }
+/** What is ticked to begin with: the gym's own photos that are clear, sharp, new and not stock; the empty profile fields. */
+function wDefaults(){
+  const d = WS.data, r = d.reading; if (!r){ WS.pick = null; return; }
+  const prof = d.profile, photos = phDefaults(d);
+  const colours = {}; for (const role of ['primary','secondary','accent']){ const had = prof.colors?.[role]; colours[role] = { hex: r.colours.proposal?.[role] || '', on: !!r.colours.proposal?.[role] && !(had?.hex) }; }
+  const fonts = { headline: !!r.fonts?.headline && !prof.typography?.headline?.family, body: !!r.fonts?.body && !prof.typography?.body?.family };
+  const locs = new Set((prof.locations||[]).map(l=>String(l.postal_code||'')));
+  const addr = r.identity.addresses.find(a=>!locs.has(a.postal_code));
+  const logo = !prof.logo ? (r.logos.find(l=>!l.have)?.id || null) : null;
+  WS.pick = { photos, colours, fonts, address: addr?.postal_code || null, instagram: prof.social?.instagram ? null : (r.identity.instagram[0]?.value || null), facebook: prof.social?.facebook ? null : (r.identity.facebook[0]?.value || null), logo, screenshot: true };
+}
+async function viewWebsite(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>From the website</h1><p class="sub">Loading…</p>';
+  try { if (WS.gym !== STATE.sel || !WS.data) await loadWebsite(); } catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<h1>From the website</h1><div class="empty">${esc(e.message)}</div>`; return; }
+  if (seq !== VIEW_SEQ) return;
+  paintWebsite(v);
+}
+function wCount(){
+  const k = WS.pick; if (!k) return { n:0, parts:[] };
+  const ph = Object.values(k.photos).filter(x=>x.on).length, col = Object.values(k.colours).filter(x=>x.on&&x.hex).length, fo = Object.values(k.fonts).filter(Boolean).length;
+  const parts = [ph && `${ph} photo${ph===1?'':'s'}`, k.logo && 'the logo', col && `${col} colour${col===1?'':'s'}`, fo && `${fo} font${fo===1?'':'s'}`, k.address && 'the address', k.instagram && 'Instagram', k.facebook && 'Facebook', k.screenshot && 'the home page screenshot'].filter(Boolean);
+  return { n: parts.length, parts };
+}
+function paintWebsite(v){
+  const d = WS.data, r = d.reading, prof = d.profile, k = WS.pick;
+  const running = STATE.run && !STATE.run.done && /^website-read/.test(STATE.run.id||'');
+  const head = `<h1>From the website</h1><p class="sub">Reads the gym's own website once: its colours, fonts, logo, address, Instagram and photos, each proposed for you to tick. Nothing is kept until you add it. Photos come as the site's original uploads where its image service keeps them.</p>
+  <div class="card"><h3>Read the website</h3>
+    <div class="row"><input id="wUrl" value="${esc(WS.url ?? (prof.website || r?.url || ''))}" placeholder="https://" style="flex:1" oninput="WS.url=this.value"><button class="primary" ${running?'disabled':''} onclick="wRead()">${r?'Read again':'Read the website'}</button></div>
+    <p class="hint" style="margin:8px 0 0">The home page and up to five of the gym's own pages (about, contact, gallery, coaches…). For a studio page on a franchise site, only that studio's pages. A minute or two; a few model calls to sort the photos and read the colours, no image generation.</p>
+    ${r?`<p class="hint" style="margin:6px 0 0">Last read ${esc(new Date(r.read_at).toLocaleString())} from ${esc(r.url)}: ${r.pages.length} page${r.pages.length===1?'':'s'}, ${r.photos.filter(p=>!p.duplicate_of).length} photos, ${r.calls} model call${r.calls===1?'':'s'}.${r.problems?.length?` Could not read: ${r.problems.map(esc).join('; ')}`:''}</p>`:''}
+    <div id="runbox"></div></div>`;
+  if (!r || !k){ v.innerHTML = head; renderRunBox(); return; }
+  const id = r.identity, locs = new Set((prof.locations||[]).map(l=>String(l.postal_code||'')));
+  const radio = (name, val, cur, label, extra='') => `<label class="wrow" style="cursor:pointer"><input type="radio" name="${name}" ${cur===val?'checked':''} onchange="WS.pick.${name}=${val==null?'null':`'${esc(val)}'`};paintWebsite($('#view'))" style="width:auto">${label}${extra}</label>`;
+  const identity = `<div class="card"><h3>Where and who</h3>
+    <p class="hint" style="margin-top:4px">The site calls itself <b>${esc(r.site.name_seen || id.names[0] || '—')}</b>${id.phones.length?` · phone ${id.phones.map(esc).join(', ')}`:''}.</p>
+    <h4 style="margin:12px 0 2px">Address</h4>${id.addresses.length ? id.addresses.map(a=>radio('address', a.postal_code, k.address, `<span>${esc(a.address)}${a.onemap_address?`<br><span class="hint" style="margin:0">on the map: ${esc(a.onemap_address)}</span>`:''}</span>`, locs.has(a.postal_code)?' <span class="pill on">already a location</span>':'')).join('') + radio('address', null, k.address, '<span class="hint" style="margin:0">None of these</span>') : '<p class="hint" style="margin:0">The site shows no Singapore address. Add it on Identity & locations.</p>'}
+    <h4 style="margin:12px 0 2px">Instagram</h4>${id.instagram.length ? id.instagram.map(x=>radio('instagram', x.value, k.instagram, `<a href="https://www.instagram.com/${esc(x.value)}/" target="_blank" rel="noopener">@${esc(x.value)}</a>`, ` <span class="hint" style="margin:0">linked ${x.seen} time${x.seen===1?'':'s'}</span>${prof.social?.instagram===x.value?' <span class="pill on">in the profile</span>':''}`)).join('') + radio('instagram', null, k.instagram, '<span class="hint" style="margin:0">None of these</span>') : '<p class="hint" style="margin:0">No Instagram link on the site.</p>'}
+    <p class="hint" style="margin:4px 0 0"><a href="#" onclick="go('instagram');return false">From Instagram</a> reads this account's photos. A franchise site links the brand's global account too: pick the studio's own.</p>
+    <h4 style="margin:12px 0 2px">Facebook</h4>${id.facebook.length ? id.facebook.map(x=>radio('facebook', x.value, k.facebook, `<a href="${esc(x.value)}" target="_blank" rel="noopener">${esc(x.value.replace('https://www.facebook.com/',''))}</a>`, ` <span class="hint" style="margin:0">linked ${x.seen} time${x.seen===1?'':'s'}</span>${prof.social?.facebook===x.value?' <span class="pill on">in the profile</span>':''}`)).join('') + radio('facebook', null, k.facebook, '<span class="hint" style="margin:0">None of these</span>') : '<p class="hint" style="margin:0">No Facebook link on the site.</p>'}
+  </div>`;
+  const cands = r.colours.candidates;
+  const colourRow = (role) => { const had = prof.colors?.[role], c = k.colours[role], locked = had?.hex && had.locked;
+    return `<div class="wrow"><input type="checkbox" style="width:auto" ${c.on&&c.hex?'checked':''} ${locked||!c.hex?'disabled':''} onchange="WS.pick.colours.${role}.on=this.checked;paintWebsite($('#view'))"><b style="width:84px;text-transform:capitalize">${role}</b>
+      <select onchange="WS.pick.colours.${role}.hex=this.value;WS.pick.colours.${role}.on=!!this.value;paintWebsite($('#view'))" style="width:auto"><option value="">none</option>${cands.map(x=>`<option value="${x.hex}" ${x.hex===c.hex?'selected':''}>${x.hex}</option>`).join('')}</select>
+      ${c.hex?`<span class="wsw" style="background:${esc(c.hex)}"></span>`:''}<span class="hint" style="margin:0">${had?.hex?`now ${esc(had.hex)}${locked?' · locked, kept':''} <span class="wsw" style="background:${esc(had.hex)};margin-left:4px"></span>`:'not set yet'}</span></div>`; };
+  const colours = `<div class="card"><h3>Colours</h3><p class="hint" style="margin-top:4px">Measured from the page's own styles; the model picked the roles looking at the home page. ${esc(r.colours.proposal?.why||'')}</p>
+    ${['primary','secondary','accent'].map(colourRow).join('')}
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">${cands.map(x=>`<span class="pill" title="background ${(x.share_bg*100).toFixed(1)}% · text ${(x.share_text*100).toFixed(1)}% · buttons ${x.buttons}"><span class="wsw" style="background:${x.hex};width:12px;height:12px;vertical-align:-2px"></span>${x.hex}</span>`).join('')}</div>
+    <h4 style="margin:14px 0 2px">Fonts</h4>
+    ${['headline','body'].map(role=>`<div class="wrow"><input type="checkbox" style="width:auto" ${k.fonts[role]?'checked':''} ${!r.fonts?.[role]||prof.typography?.[role]?.family?'disabled':''} onchange="WS.pick.fonts.${role}=this.checked;paintWebsite($('#view'))"><b style="width:84px;text-transform:capitalize">${role}</b><span>${esc(r.fonts?.[role]||'—')}</span><span class="hint" style="margin:0">${prof.typography?.[role]?.family?`now ${esc(prof.typography[role].family)}, kept`:'not set yet'}</span></div>`).join('')}
+    ${r.fonts?.headline_look?`<p class="hint" style="margin:6px 0 0">Headline look: ${esc(r.fonts.headline_look)}.</p>`:''}</div>`;
+  const logoTile = (l) => `<div class="wph logo ${k.logo===l.id?'on':''}"><div class="im" onclick="WS.pick.logo=WS.pick.logo==='${l.id}'?null:'${l.id}';paintWebsite($('#view'))"><img src="${esc(l.image_url)}" alt="" loading="lazy"></div><span class="tick">${k.logo===l.id?'✓':''}</span>
+    <div class="m"><b>${esc(l.from)}</b>${l.size?`${l.size[0]}×${l.size[1]}`:'SVG'}${l.model_pick?' · the model\'s pick':''}<div class="flags">${l.have?`<span class="wflag">already here</span>`:''}</div></div></div>`;
+  const logos = `<div class="card"><h3>Logo</h3><p class="hint" style="margin-top:4px">${prof.logo?`The profile's logo is ${esc(prof.logo)}; a logo added here is filed beside it (Brand & photography sets which is used).`:'Pick the gym\'s own logo; it becomes the profile\'s logo.'} An SVG is the best copy when there is one.</p>
+    ${r.logos.length?`<div class="wgrid">${r.logos.map(logoTile).join('')}</div>`:'<p class="hint" style="margin:0">No logo found on the site.</p>'}</div>`;
+  const photos = photoGrid('website', { hint: `Ticked to begin with: the gym's own premises, coach and member photos that are ${d.min_photo_px} px or more on the long side, carry no big lettering and do not look like stock. People photos are kept as references only, never put in an ad. A photo under ${d.min_photo_px} px is refused unless you tick "keep it anyway".`, extra: `
+    <label class="wrow" style="margin-top:10px"><input type="checkbox" style="width:auto" ${k.screenshot?'checked':''} onchange="WS.pick.screenshot=this.checked;paintWebsite($('#view'))"> Also keep the home page's screenshot with the brand files <a href="${esc(r.screenshot_url)}" target="_blank" rel="noopener">view</a></label>` });
+  const cnt = wCount();
+  v.innerHTML = head + (WS.msg?`<div class="msg ${WS.msg.cls}">${WS.msg.html}</div>`:'') + identity + colours + logos + photos +
+    `<div class="wfoot"><span>${cnt.n?`Add ${esc(cnt.parts.join(', '))}.`:'Nothing ticked.'}</span><div class="spacer"></div><button class="primary" ${cnt.n?'':'disabled'} onclick="wAccept()">Add to the gym</button></div>`;
+  renderRunBox();
+}
+// ── The photo grid both readings share (the website's and Instagram's) ─────
+const PH = { website: { st: () => WS, paint: () => paintWebsite($('#view')) }, instagram: { st: () => IGS, paint: () => paintInstagram($('#view')) } };
+/** Ticked to begin with: the gym's own premises, coach and member photos — not stock, no big lettering, not a
+ *  before-and-after (never used in ads), sharp enough, not a repeat, not filed already. */
+function phDefaults(d){
+  const photos = {};
+  for (const p of d.reading.photos){
+    const own = ['premises','coaches','members'].includes(p.kind) && !p.stock && p.lettering !== 'prominent' && !p.before_after;
+    photos[p.id] = { on: own && !p.low_res && !p.have && !p.duplicate_of && !p.dropped, kind: d.file_as.includes(p.file_as) ? p.file_as : 'other', keep_low_res:false };
+  }
+  return photos;
+}
+function phShown(key){ const st = PH[key].st(); return st.data.reading.photos.filter(p=>!p.dropped && (st.dups || !p.duplicate_of)); }
+function photoGrid(key, { hint='', extra='' } = {}){
+  const st = PH[key].st(), d = st.data, r = d.reading, k = st.pick;
+  const shown = phShown(key), byKind = (kd) => shown.filter(p=>p.kind===kd), vis = st.filter==='all' ? shown : byKind(st.filter);
+  const tile = (p) => { const x = k.photos[p.id];
+    const flags = [p.before_after&&'<span class="wflag bad">before and after: never used</span>', p.low_res&&`<span class="wflag warn" title="under ${d.min_photo_px} px on the long side">${p.size[0]}×${p.size[1]} · low resolution</span>`, p.stock&&'<span class="wflag warn">looks like stock</span>', p.lettering==='prominent'&&'<span class="wflag warn">words on it</span>', p.have&&`<span class="wflag">already here: ${esc(p.have)}</span>`, p.duplicate_of&&`<span class="wflag">same as ${esc(p.duplicate_of)}</span>`, p.original&&'<span class="wflag" title="the site\'s original upload, not the page\'s smaller copy">original</span>',
+      p.post&&`<a class="wflag" href="${esc(p.post)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">post${p.of>1?` · ${p.in_post} of ${p.of}`:''}${p.taken?` · ${esc(p.taken.slice(0,10))}`:''}</a>`].filter(Boolean).join('');
+    return `<div class="wph ${x.on?'on':'off'}"><div class="im" onclick="phToggle('${key}','${p.id}')"><img src="${esc(p.thumb_url)}" alt="" loading="lazy"></div><span class="tick">${x.on?'✓':''}</span>
+      <div class="m"><b title="${esc(p.what)}">${esc(p.what||p.id)}</b>${p.size[0]}×${p.size[1]} · ${esc(W_KIND[p.kind]||p.kind)}${p.people?` · ${p.people} ${p.people===1?'person':'people'}`:''}
+        <select onchange="PH['${key}'].st().pick.photos['${p.id}'].kind=this.value">${d.file_as.map(f=>`<option value="${f}" ${x.kind===f?'selected':''}>File as ${W_FILE[f]||f}</option>`).join('')}</select>
+        <div class="flags">${flags}</div>
+        ${p.low_res&&x.on?`<label style="font-size:11px;display:flex;gap:5px;align-items:center;margin-top:5px"><input type="checkbox" style="width:auto" ${x.keep_low_res?'checked':''} onchange="PH['${key}'].st().pick.photos['${p.id}'].keep_low_res=this.checked"> keep it anyway</label>`:''}
+      </div></div>`; };
+  const kinds = Object.keys(W_KIND).filter(kd=>byKind(kd).length);
+  return `<div class="card"><div class="row"><h3 style="margin:0">Photos <span class="pill">${shown.length}</span></h3><div class="spacer"></div>
+      <button class="sm" onclick="phAll('${key}',true)">Tick the shown</button><button class="sm" onclick="phAll('${key}',false)">Untick the shown</button></div>
+    ${hint?`<p class="hint" style="margin-top:8px">${hint}</p>`:''}
+    <div class="chips" style="margin:8px 0 10px"><span class="chip ${st.filter==='all'?'sel':''}" onclick="phFilter('${key}','all')">All ${shown.length}</span>${kinds.map(kd=>`<span class="chip ${st.filter===kd?'sel':''}" onclick="phFilter('${key}','${kd}')">${W_KIND[kd]} ${byKind(kd).length}</span>`).join('')}
+      <label style="font-size:12px;display:inline-flex;gap:5px;align-items:center;margin-left:8px"><input type="checkbox" style="width:auto" ${st.dups?'checked':''} onchange="phDups('${key}',this.checked)"> show repeats (${r.photos.filter(p=>p.duplicate_of).length})</label></div>
+    ${vis.length?`<div class="wgrid">${vis.map(tile).join('')}</div>`:'<p class="hint">No photos of this kind.</p>'}
+    ${extra}</div>`;
+}
+function phToggle(key, id){ const x = PH[key].st().pick.photos[id]; x.on = !x.on; PH[key].paint(); }
+function phFilter(key, kd){ PH[key].st().filter = kd; PH[key].paint(); }
+function phDups(key, on){ PH[key].st().dups = on; PH[key].paint(); }
+function phAll(key, on){ const st = PH[key].st(); for (const p of phShown(key).filter(p=>st.filter==='all'||p.kind===st.filter)) st.pick.photos[p.id].on = on; PH[key].paint(); }
+
+// ── From Instagram (onboarding, part two) ────────────────────────────────────
+// read-instagram.mjs (a run) reads the gym's latest 100 posts through Meta's Business Discovery; photos only,
+// videos skipped. The owner ticks; "Add to the gym" files them with the post as where each came from.
+const IGS = { data:null, pick:null, gym:null, filter:'all', dups:false, msg:null, handle:undefined };
+async function loadInstagram(){ IGS.data = await api(`/api/client/${STATE.sel}/instagram`); IGS.gym = STATE.sel; IGS.pick = IGS.data.reading ? { photos: phDefaults(IGS.data) } : null; return IGS.data; }
+async function viewInstagram(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>From Instagram</h1><p class="sub">Loading…</p>';
+  try { if (IGS.gym !== STATE.sel || !IGS.data) await loadInstagram(); } catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<h1>From Instagram</h1><div class="empty">${esc(e.message)}</div>`; return; }
+  if (seq !== VIEW_SEQ) return;
+  paintInstagram(v);
+}
+function paintInstagram(v){
+  const d = IGS.data, r = d.reading, prof = d.profile, k = IGS.pick;
+  const running = STATE.run && !STATE.run.done && /^instagram-read/.test(STATE.run.id||'');
+  const handle = IGS.handle ?? (prof.instagram || r?.handle || prof.website_instagram || '');
+  const n = k ? Object.values(k.photos).filter(x=>x.on).length : 0;
+  v.innerHTML = `<h1>From Instagram</h1><p class="sub">Reads the gym's latest 100 Instagram posts: every photo post and each photo in a carousel (videos are skipped), sorted and proposed for you to tick. Nothing is kept until you add it.</p>
+  ${d.meta_ready?'':`<div class="msg warn">Instagram is read through the Meta link, which is not set up yet. <a href="#" onclick="go('meta');return false">Meta link →</a></div>`}
+  <div class="card"><h3>Read Instagram</h3>
+    <div class="row"><span style="font-weight:600">@</span><input id="igHandle" value="${esc(handle)}" placeholder="the gym's handle" style="flex:1" oninput="IGS.handle=this.value"><button class="primary" ${running||!d.meta_ready?'disabled':''} onclick="igRead()">${r?'Read again':'Read Instagram'}</button></div>
+    <p class="hint" style="margin:8px 0 0">Read through Strategym's own Instagram account (Meta's Business Discovery), so the gym's account must be a business or creator account; a personal one cannot be read. About a minute; a few model calls to sort the photos, no image generation.${!prof.instagram&&prof.website_instagram?` The website links @${esc(prof.website_instagram)}.`:''}</p>
+    ${r?`<p class="hint" style="margin:6px 0 0">Last read ${esc(new Date(r.read_at).toLocaleString())}: @${esc(r.handle)}${r.account?.name?` (${esc(r.account.name)}, ${r.account.followers ?? '?'} followers)`:''}, ${r.posts_read} posts, ${r.photos.filter(p=>!p.duplicate_of).length} photos, ${r.videos_skipped} videos skipped, ${r.calls} model call${r.calls===1?'':'s'}.${r.problems?.length?` ${r.problems.map(esc).join('; ')}.`:''}</p>`:''}
+    <div id="runbox"></div></div>
+  ${IGS.msg?`<div class="msg ${IGS.msg.cls}">${IGS.msg.html}</div>`:''}
+  ${r&&k ? photoGrid('instagram', { hint: `Ticked to begin with: the gym's own premises, coach and member photos, not stock, without big lettering, and never a before-and-after. People photos are kept as references only, never put in an ad. Each photo links to its post.` }) +
+    `<div class="wfoot"><span>${n?`Add ${n} photo${n===1?'':'s'}.`:'Nothing ticked.'}</span><div class="spacer"></div><button class="primary" ${n?'':'disabled'} onclick="igAccept()">Add to the gym</button></div>` : ''}`;
+  renderRunBox();
+}
+function igRead(){
+  const handle = ($('#igHandle')?.value || '').trim().replace(/^@/,''); if (!handle) return alert("Type the gym's Instagram handle first.");
+  IGS.msg = null;
+  run({ kind:'instagram-read', gym:STATE.sel, handle }, async(code)=>{ if (code===0){ await loadInstagram(); IGS.handle = undefined; } });
+}
+async function igAccept(){
+  const body = { photos: Object.entries(IGS.pick.photos).filter(([,x])=>x.on).map(([id,x])=>({ id, kind:x.kind, keep_low_res:x.keep_low_res })) };
+  try {
+    const res = await api(`/api/client/${STATE.sel}/instagram/accept`, { method:'POST', body });
+    IGS.data = res; IGS.pick = res.reading ? { photos: phDefaults(res) } : null;
+    const low = res.skipped.filter(x=>x.low_res).length;
+    IGS.msg = { cls: res.skipped.length ? 'warn' : 'ok', html: `Added ${res.added.length} photo${res.added.length===1?'':'s'}${res.changes.length?`; the profile now has: ${res.changes.map(esc).join('; ')}`:''}.${res.skipped.length?`<br>Not added: ${res.skipped.map(x=>`${esc(x.id)} (${esc(x.reason)})`).join('; ')}${low?`. Tick "keep it anyway" on a low-resolution photo to add it.`:''}`:''} <a href="#" onclick="go('photos');return false">Photos & assets →</a>` };
+    await refreshProfile();
+  } catch(e){ IGS.msg = { cls:'err', html: `Not added: ${esc(e.message)}` }; }
+  paintInstagram($('#view')); scrollTo(0,0);
+}
+function wRead(){
+  const url = ($('#wUrl')?.value || '').trim(); if (!url) return alert("Type the gym's web address first.");
+  WS.msg = null;
+  run({ kind:'website-read', gym:STATE.sel, url }, async(code)=>{ if (code===0){ await loadWebsite(); WS.url = undefined; } });
+}
+async function wAccept(){
+  const k = WS.pick;
+  const body = { photos: Object.entries(k.photos).filter(([,x])=>x.on).map(([id,x])=>({ id, kind:x.kind, keep_low_res:x.keep_low_res })), logo:k.logo, colours:Object.fromEntries(Object.entries(k.colours).filter(([,c])=>c.on&&c.hex).map(([r,c])=>[r,c.hex])), fonts:k.fonts, address:k.address, instagram:k.instagram, facebook:k.facebook, screenshot:k.screenshot };
+  try {
+    const res = await api(`/api/client/${STATE.sel}/website/accept`, { method:'POST', body });
+    WS.data = res; wDefaults();
+    const low = res.skipped.filter(x=>x.low_res).length;
+    WS.msg = { cls: res.skipped.length ? 'warn' : 'ok', html: `Added ${res.added.length} file${res.added.length===1?'':'s'}${res.changes.length?`; the profile now has: ${res.changes.map(esc).join('; ')}`:''}.${res.skipped.length?`<br>Not added: ${res.skipped.map(x=>`${esc(x.id)} (${esc(x.reason)})`).join('; ')}${low?`. Tick "keep it anyway" on a low-resolution photo to add it.`:''}`:''} <a href="#" onclick="go('photos');return false">Photos & assets →</a>` };
+    await refreshProfile();
+  } catch(e){ WS.msg = { cls:'err', html: `Not added: ${esc(e.message)}` }; }
+  paintWebsite($('#view'));
+  scrollTo(0,0);
+}
+
 // ── Photos and references ────────────────────────────────────────────────────
 // The gym's own files — logo, premises, coaches, members, brand screenshots — dropped onto the page
 // and kept in its brand-assets folder with a manifest (what, from where, when, content hash). The
@@ -2010,17 +2200,19 @@ function aMsg(file, text, cls=''){ const box = $('#aMsgs'); if (!box) return; le
 function aDrop(ev){ ev.preventDefault(); $('#aDrop')?.classList.remove('over'); aFiles(ev.dataTransfer.files); }
 async function aFiles(files){ await aUploadKind(files, A.kind, async()=>{ await loadAssets(); const box=$('#aMsgs'); const keep=box?box.innerHTML:''; paintAssets($('#view')); const b2=$('#aMsgs'); if (b2) b2.innerHTML = keep; }); }
 /** Upload files one by one as raw bytes; the server keeps images only, named from the file, filed by kind. */
-async function aUploadKind(files, kind, after){
+async function aKeepLowRes(name, after){ const x = A.lowRes?.[name]; if (!x) return; delete A.lowRes[name]; await aUploadKind([x.f], x.kind, after, true); }
+async function aUploadKind(files, kind, after, keepLowRes=false){
   for (const f of [...files]) {
     const m = f.name.match(/\.(png|jpe?g|webp|heic|svg)$/i);
     const ext = m ? m[1].toLowerCase().replace('jpeg','jpg') : (f.type==='image/png'?'png':f.type==='image/webp'?'webp':f.type==='image/svg+xml'?'svg':'jpg');
     const name = `${slugify(f.name.replace(/\.[^.]+$/,'')).slice(0,48) || kind}.${ext}`;
     aMsg(f.name, 'uploading…');
     try {
-      const r = await panelFetch(`/api/client/${STATE.sel}/asset/${kind}/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream','x-original-name':encodeURIComponent(f.name)}, body: await f.arrayBuffer() });
+      const r = await panelFetch(`/api/client/${STATE.sel}/asset/${kind}/${name}`, { method:'PUT', headers:{'content-type':f.type||'application/octet-stream','x-original-name':encodeURIComponent(f.name), ...(keepLowRes?{'x-keep-low-res':'1'}:{})}, body: await f.arrayBuffer() });
       const j = await r.json().catch(()=>({error:'bad response'}));
+      if (!r.ok && j.low_res && !keepLowRes) { A.lowRes = A.lowRes || {}; A.lowRes[f.name] = { f, kind }; aMsg(f.name, `${j.error}.`, 'err'); const el = $('#aMsgs')?.querySelector(`[data-f="${CSS.escape(f.name)}"]`); if (el){ const b = document.createElement('button'); b.className='sm'; b.style.marginLeft='8px'; b.textContent='Keep it anyway'; b.onclick = ()=>aKeepLowRes(f.name, after); el.appendChild(b); } continue; }
       if (!r.ok) throw new Error(j.error || r.statusText);
-      aMsg(f.name, `saved as ${j.asset.path}${j.asset.logo_set?" · now the profile's logo":''}`, 'ok');
+      aMsg(f.name, `saved as ${j.asset.path}${j.asset.logo_set?" · now the profile's logo":''}${j.asset.low_res_kept?' · kept at low resolution':''}`, 'ok');
       if (j.asset.logo_set) await refreshProfile();
     } catch(e){ aMsg(f.name, e.message, 'err'); }
   }

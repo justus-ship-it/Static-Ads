@@ -1616,3 +1616,121 @@ test("U26 a restart no longer strands the page: /api/token answers the panel's o
   assert.equal(await ev("TOKEN"), panel.token, "and the page now holds the current token");
   assert.equal(await ev("document.querySelector('meta[name=\"panel-token\"]').content"), panel.token);
 });
+
+test("U27 from the website: the reading shown with its files; the owner's ticks filed — photos by kind with where they came from, a low-resolution photo only when kept anyway, the logo, colours never over a locked one, fonts, the address as a location, Instagram and Facebook; nothing twice; a pick the reading does not hold files nothing; the read run refuses addresses on this machine; uploads refuse a low-resolution photo unless kept anyway", async () => {
+  const { deflateSync, crc32 } = await import("node:zlib");
+  const { createHash } = await import("node:crypto");
+  const pngOf = (w, h, seed) => {
+    const rows = []; for (let y = 0; y < h; y++) { const row = Buffer.alloc(1 + w * 3); for (let x = 0; x < w; x++) { row[1 + x * 3] = (x * seed) & 255; row[2 + x * 3] = (y * seed) & 255; row[3 + x * 3] = seed * 40; } rows.push(row); }
+    const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc32(td) >>> 0); return Buffer.concat([l, td, c]); };
+    const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 2;
+    return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ih), chunk("IDAT", deflateSync(Buffer.concat(rows))), chunk("IEND", Buffer.alloc(0))]);
+  };
+  const sha = (b) => createHash("sha256").update(b).digest("hex");
+  const G = "webgym", g = join(brands, G), w = join(g, "onboarding", "website");
+  mkdirSync(join(w, "photos", "thumbs"), { recursive: true }); mkdirSync(join(w, "logos"), { recursive: true });
+  writeFileSync(join(g, "gym-profile.json"), JSON.stringify({ display_name: "Web Gym", locations: [{ label: "", address: "", postal_code: "" }], brand_lock: { colors: { primary: { hex: "#111111", locked: true }, secondary: { hex: "", locked: true } } } }));
+  const big = pngOf(1600, 1000, 1), small = pngOf(700, 500, 2), logo = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60"><rect width="200" height="60" fill="#E63946"/></svg>');
+  writeFileSync(join(w, "photos", "p01-room.png"), big); writeFileSync(join(w, "photos", "thumbs", "p01.jpg"), big);
+  writeFileSync(join(w, "photos", "p02-coach.png"), small); writeFileSync(join(w, "photos", "thumbs", "p02.jpg"), small);
+  writeFileSync(join(w, "logos", "logo-1.svg"), logo); writeFileSync(join(w, "home.png"), pngOf(1440, 900, 3));
+  const reading = { schema: 1, url: "https://webgym.sg/", read_at: "2026-09-28T10:00:00.000Z", gym: "Web Gym", calls: 2, pages: [{ url: "https://webgym.sg/", title: "Web Gym", images: 2 }], site: { name_seen: "Web Gym" },
+    identity: { names: ["Web Gym"], addresses: [{ address: "10 Test Road, Singapore 570123", postal_code: "570123", from: "schema.org", lat: 1.36, lng: 103.85 }], phones: [], instagram: [{ value: "webgym.sg", seen: 3 }], facebook: [{ value: "https://www.facebook.com/webgymsg", seen: 2 }], hours: [] },
+    colours: { candidates: [{ hex: "#1A2B3C", share_bg: 0.4, share_text: 0, buttons: 0 }, { hex: "#E63946", share_bg: 0.01, share_text: 0.05, buttons: 3 }, { hex: "#FFFFFF", share_bg: 0.5, share_text: 0.3, buttons: 0 }], proposal: { primary: "#1A2B3C", secondary: "#E63946", accent: null, why: "x" } },
+    fonts: { headline: "Oswald", body: "Lato" }, logos: [{ id: "logo-1", file: "logos/logo-1.svg", from: "inline svg in the header" }],
+    photos: [{ id: "p01", file: "photos/p01-room.png", thumb: "photos/thumbs/p01.jpg", url: "https://webgym.sg/wp-content/uploads/room.png", size: [1600, 1000], sha256: sha(big), low_res: false, kind: "premises" },
+      { id: "p02", file: "photos/p02-coach.png", thumb: "photos/thumbs/p02.jpg", url: "https://webgym.sg/img/coach.png", size: [700, 500], sha256: sha(small), low_res: true, kind: "coaches" }],
+    screenshot: "home.png", problems: [] };
+  writeFileSync(join(w, "reading.json"), JSON.stringify(reading));
+  // The view: the reading with its files' addresses, each served; the reading itself is not a file anyone may fetch.
+  let v = await (await call(`/api/client/${G}/website`)).json();
+  assert.equal(v.min_photo_px, 1080);
+  assert.deepEqual(v.reading.photos.map((p) => [p.id, p.file_as, p.have]), [["p01", "facility", null], ["p02", "coaches", null]]);
+  for (const u of [v.reading.photos[0].image_url, v.reading.photos[0].thumb_url, v.reading.logos[0].image_url, v.reading.screenshot_url]) assert.equal((await fetch(panel.url + u)).status, 200, u);
+  assert.equal((await fetch(panel.url + `/files/brands/${G}/onboarding/website/reading.json`)).status, 404);
+  assert.match((await fetch(panel.url + v.reading.logos[0].image_url)).headers.get("content-security-policy") || "", /default-src 'none'/, "an SVG is served as a picture, never a page");
+  const accept = (body, opts) => call(`/api/client/${G}/website/accept`, { method: "POST", body, ...opts });
+  assert.equal((await accept({ photos: [{ id: "p01", kind: "facility" }] }, { token: null })).status, 403);
+  let r = await accept({ photos: [{ id: "p01", kind: "facility" }], colours: { primary: "#ABCDEF" } });
+  assert.equal(r.status, 400); assert.match((await r.json()).error, /not one of the colours the website showed/);
+  assert.equal((await accept({ photos: [{ id: "p01", kind: "facility" }], instagram: "someoneelse" })).status, 400, "an account the site never linked");
+  assert.ok(!existsSync(join(g, "brand-assets")), "a refused accept files nothing");
+  r = await accept({ photos: [{ id: "p01", kind: "facility" }, { id: "p02", kind: "coaches" }, { id: "p99", kind: "facility" }], logo: "logo-1", colours: { primary: "#1A2B3C", secondary: "#E63946" }, fonts: { headline: true, body: true }, address: "570123", instagram: "webgym.sg", facebook: "https://www.facebook.com/webgymsg", screenshot: true });
+  assert.equal(r.status, 200); let j = await r.json();
+  assert.deepEqual(j.added.map((a) => [a.id, a.path]), [["p01", "facility/web-room.png"], ["logo-1", "logo/web-logo.svg"], ["home", "brand/web-home.png"]]);
+  assert.deepEqual(j.skipped.map((x) => [x.id, !!x.low_res]), [["p02", true], ["p99", false]], "the low-resolution photo waits for the owner's override; an unknown pick is named");
+  assert.ok(j.changes.includes("primary colour kept: #111111 is locked in the profile"));
+  const prof = JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf8"));
+  assert.equal(prof.brand_lock.colors.primary.hex, "#111111", "a locked colour is never replaced");
+  assert.deepEqual(prof.brand_lock.colors.secondary, { hex: "#E63946", locked: false, source: "website", name: "" });
+  assert.deepEqual([prof.brand_lock.typography.headline.family, prof.brand_lock.typography.body.family], ["Oswald", "Lato"]);
+  assert.equal(prof.locations.length, 1, "the empty location is filled, not added beside");
+  assert.deepEqual([prof.locations[0].postal_code, prof.locations[0].lat, prof.locations[0].address], ["570123", 1.36, "10 Test Road, Singapore 570123"]);
+  assert.deepEqual(prof.social, { instagram: "webgym.sg", facebook: "https://www.facebook.com/webgymsg" });
+  assert.equal(prof.website, "https://webgym.sg/");
+  assert.equal(prof.brand_lock.logo.files.primary, "logo/web-logo.svg", "the first logo becomes the profile's");
+  const man = JSON.parse(readFileSync(join(g, "brand-assets", "manifest.json"), "utf8")).assets;
+  const room = man.find((a) => a.path === "facility/web-room.png");
+  assert.deepEqual([room.source, room.source_url, room.original_name, room.sha256], ["website", "https://webgym.sg/wp-content/uploads/room.png", "room.png", sha(big)]);
+  // Again: the photo already filed is not filed twice; the low-resolution one goes in once the owner keeps it anyway.
+  j = await (await accept({ photos: [{ id: "p01", kind: "facility" }, { id: "p02", kind: "coaches", keep_low_res: true }] })).json();
+  assert.deepEqual(j.added.map((a) => a.path), ["coaches/web-coach.png"]);
+  assert.match(j.skipped[0].reason, /already here as facility\/web-room\.png/);
+  assert.equal(JSON.parse(readFileSync(join(g, "brand-assets", "manifest.json"), "utf8")).assets.find((a) => a.path === "coaches/web-coach.png").low_res_kept, true);
+  assert.deepEqual(j.reading.photos.map((p) => p.have), ["facility/web-room.png", "coaches/web-coach.png"], "the view says what is filed already");
+  // Uploads from the drop zone follow the same rule.
+  const tiny = pngOf(640, 480, 5);
+  const up = (headers = {}) => raw(`/api/client/${G}/asset/members/tiny.png`, { method: "PUT", headers: { "content-type": "application/octet-stream", "x-panel-token": panel.token, ...headers }, body: tiny });
+  let u = await up();
+  assert.equal(u.status, 422); assert.deepEqual([JSON.parse(u.body).low_res, JSON.parse(u.body).min_px, JSON.parse(u.body).size], [true, 1080, [640, 480]]);
+  u = await up({ "x-keep-low-res": "1" });
+  assert.equal(u.status, 200, u.body); assert.equal(JSON.parse(u.body).asset.low_res_kept, true);
+  assert.equal((await raw(`/api/client/${G}/asset/logo/small-logo.png`, { method: "PUT", headers: { "content-type": "application/octet-stream", "x-panel-token": panel.token }, body: pngOf(300, 100, 6) })).status, 200, "a logo has no size floor");
+  // The read run: a public web address only, for a gym with a profile.
+  for (const [body, re] of [[{ kind: "website-read", gym: G, url: "http://127.0.0.1:9/" }, /private network|this computer/], [{ kind: "website-read", gym: G, url: "file:///etc/passwd" }, /http and https/], [{ kind: "website-read", gym: "nope", url: "https://webgym.sg/" }, /needs a client with a profile/], [{ kind: "website-read", gym: G, url: 42 }, /web address/]]) {
+    const x = await call("/api/run", { method: "POST", body });
+    assert.equal(x.status, 400, JSON.stringify(body)); assert.match((await x.json()).error, re);
+  }
+});
+
+test("U28 from Instagram: the reading shown with its files; ticked photos filed with their post as where each came from, a low-resolution one only when kept anyway, never twice; the handle becomes the profile's Instagram when it has none; the read run needs a handle and the Meta link", async () => {
+  const { deflateSync, crc32 } = await import("node:zlib");
+  const { createHash } = await import("node:crypto");
+  const pngOf = (w, h, seed) => {
+    const rows = []; for (let y = 0; y < h; y++) { const row = Buffer.alloc(1 + w * 3); for (let x = 0; x < w; x++) { row[1 + x * 3] = (x * seed) & 255; row[2 + x * 3] = (y * seed) & 255; row[3 + x * 3] = seed * 30; } rows.push(row); }
+    const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc32(td) >>> 0); return Buffer.concat([l, td, c]); };
+    const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 2;
+    return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ih), chunk("IDAT", deflateSync(Buffer.concat(rows))), chunk("IEND", Buffer.alloc(0))]);
+  };
+  const sha = (b) => createHash("sha256").update(b).digest("hex");
+  const G = "iggym", g = join(brands, G), w = join(g, "onboarding", "instagram");
+  mkdirSync(join(w, "photos", "thumbs"), { recursive: true });
+  writeFileSync(join(g, "gym-profile.json"), JSON.stringify({ display_name: "IG Gym" }));
+  const a = pngOf(1080, 1350, 1), b = pngOf(640, 800, 2);
+  writeFileSync(join(w, "photos", "i001.png"), a); writeFileSync(join(w, "photos", "thumbs", "i001.jpg"), a);
+  writeFileSync(join(w, "photos", "i002.png"), b); writeFileSync(join(w, "photos", "thumbs", "i002.jpg"), b);
+  writeFileSync(join(w, "reading.json"), JSON.stringify({ schema: 1, source: "instagram", handle: "iggym.sg", read_at: "2026-09-29T10:00:00.000Z", account: { username: "iggym.sg", followers: 10 }, asked_via: "strategym", posts_read: 2, videos_skipped: 3, calls: 1,
+    photos: [{ id: "i001", file: "photos/i001.png", thumb: "photos/thumbs/i001.jpg", post: "https://www.instagram.com/p/Ab_Cd-1/", taken: "2026-09-20T10:00:00+0000", in_post: 2, of: 3, size: [1080, 1350], sha256: sha(a), low_res: false, kind: "members", before_after: false },
+      { id: "i002", file: "photos/i002.png", thumb: "photos/thumbs/i002.jpg", post: "https://www.instagram.com/p/XYZ/", taken: "2026-09-10T10:00:00+0000", in_post: 1, of: 1, size: [640, 800], sha256: sha(b), low_res: true, kind: "premises" }], problems: [] }));
+  let v = await (await call(`/api/client/${G}/instagram`)).json();
+  assert.equal(v.meta_ready, false, "the test panel has no Meta keys");
+  assert.deepEqual(v.reading.photos.map((p) => [p.id, p.file_as]), [["i001", "members"], ["i002", "facility"]]);
+  for (const u of [v.reading.photos[0].image_url, v.reading.photos[0].thumb_url]) assert.equal((await fetch(panel.url + u)).status, 200, u);
+  assert.equal((await fetch(panel.url + `/files/brands/${G}/onboarding/instagram/reading.json`)).status, 404);
+  const accept = (body, opts) => call(`/api/client/${G}/instagram/accept`, { method: "POST", body, ...opts });
+  assert.equal((await accept({ photos: [{ id: "i001", kind: "members" }] }, { token: null })).status, 403);
+  let j = await (await accept({ photos: [{ id: "i001", kind: "members" }, { id: "i002", kind: "facility" }, { id: "i404", kind: "members" }] })).json();
+  assert.deepEqual(j.added.map((x) => x.path), ["members/ig-iggym-sg-ab-cd-1-2.png"], "named from the handle, the post and its place in the carousel");
+  assert.deepEqual(j.skipped.map((x) => [x.id, !!x.low_res]), [["i002", true], ["i404", false]]);
+  assert.deepEqual(j.changes, ["Instagram @iggym.sg"]);
+  assert.equal(JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf8")).social.instagram, "iggym.sg");
+  const row = JSON.parse(readFileSync(join(g, "brand-assets", "manifest.json"), "utf8")).assets.find((x) => x.path === "members/ig-iggym-sg-ab-cd-1-2.png");
+  assert.deepEqual([row.source, row.source_url], ["instagram", "https://www.instagram.com/p/Ab_Cd-1/"]);
+  j = await (await accept({ photos: [{ id: "i001", kind: "members" }, { id: "i002", kind: "facility", keep_low_res: true }] })).json();
+  assert.deepEqual(j.added.map((x) => x.path), ["facility/ig-iggym-sg-xyz.png"]); assert.match(j.skipped[0].reason, /already here/); assert.deepEqual(j.changes, [], "the profile's Instagram is not set twice");
+  assert.deepEqual(j.reading.photos.map((p) => p.have), ["members/ig-iggym-sg-ab-cd-1-2.png", "facility/ig-iggym-sg-xyz.png"]);
+  for (const [body, status, re] of [[{ kind: "instagram-read", gym: G, handle: "two words" }, 400, /Instagram handle/], [{ kind: "instagram-read", gym: "nope", handle: "iggym.sg" }, 400, /needs a client/], [{ kind: "instagram-read", gym: G, handle: "@iggym.sg" }, 409, /Meta link is not set up/]]) {
+    const x = await call("/api/run", { method: "POST", body });
+    assert.equal(x.status, status, JSON.stringify(body)); assert.match((await x.json()).error, re);
+  }
+});

@@ -398,6 +398,13 @@ export function validateProfile(profile, { gymDir = null } = {}) {
     for (const k of ["lat", "lng"]) if (l?.[k] != null && l[k] !== "" && !Number.isFinite(l[k])) errors.push(`${name}: ${k} must be a number`);
     if (Number.isFinite(l?.lat) && (l.lat < 1.1 || l.lat > 1.5) && currency === "SGD") warnings.push(`${name}: latitude ${l.lat} is outside Singapore`);
   });
+  // The gym's own social accounts (read from its website; the Instagram handle is what the Instagram import asks Meta for).
+  const social = profile.social;
+  if (social != null && !isObj(social)) errors.push("social must be an object");
+  if (isObj(social)) {
+    if (social.instagram && !/^[a-z0-9._]{1,30}$/.test(String(social.instagram))) errors.push(`Instagram "${social.instagram}" is not a handle (letters, digits, dots and underscores, no @)`);
+    if (social.facebook && !/^https:\/\/(www\.)?facebook\.com\/\S+$/.test(String(social.facebook))) errors.push(`Facebook "${social.facebook}" is not a Facebook Page address`);
+  }
   for (const [k, v] of Object.entries(profile.brand_lock?.colors || {})) {
     if (isObj(v) && v.hex && !/^#[0-9A-Fa-f]{6}$/.test(v.hex)) errors.push(`colour ${k}: "${v.hex}" is not a 6-digit hex like #0A0A0A`);
   }
