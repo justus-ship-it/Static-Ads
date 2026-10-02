@@ -33,7 +33,8 @@
 
 import { readFileSync, mkdtempSync, rmSync } from "fs";
 import { whenGeminiFree } from "./gemini-busy.mjs";
-import { extname, join } from "path";
+import { extname, join, dirname, basename } from "path";
+import { createHash } from "crypto";
 import { tmpdir } from "os";
 import { loadCatalogue, layoutFor } from "./render-composites.mjs";
 import { describeSubjectArea, coveredSpans, MAX_SUBJECT_UNDER_TEXT, checkableNever } from "./visual-prompts.mjs";
@@ -146,6 +147,36 @@ export function imageSize(buf) {
     if (t === "VP8L") { const b = buf.readUInt32LE(21); return [1 + (b & 0x3fff), 1 + ((b >> 14) & 0x3fff)]; }
   }
   throw new Error("unrecognised image format");
+}
+
+// ── a real photo's marks: which fail it, which are notes ─────────────────────
+// One rule for the clean-up's verdict, a batch's real photos and the room reference (2026-10-02). Before, a
+// real photo failed on any mark at all — a restroom sign 15 px wide on a far door, a maker's logo on a rack, a
+// warning sticker — while a generated photo's small marks had been notes since 2026-09-12 (the owner's bar).
+/** Under this share of the frame a mark is small: 0.3%, about 59 × 59 px on a 1080 px ad (boxes are 0–1000). */
+export const SMALL_MARK_AREA = 3000;
+/** A mark that never fails a real photo: not legible on a phone, a marking on equipment, or small. Never a
+ *  never-list item, a web-page control, a watermark, or a check that could not run. */
+export function isSmallMark(t) {
+  if (!t || t.list === "never") return false;
+  const kind = String(t.kind || ""), all = `${kind} ${t.what || ""}`;
+  if (/^check$/i.test(kind) || /web|interface|\bui\b|button|zoom control|cursor|watermark|caption/i.test(all)) return false;
+  if (t.legible === false || /equipment/i.test(kind)) return true;
+  return valid(t.box_2d) && area(t.box_2d) < SMALL_MARK_AREA;
+}
+/** What a tiled check found, split: `marks` and `never` fail the photo, `small` are notes. */
+export function splitMarks(found = {}) {
+  const text = found.text || [];
+  return { marks: text.filter((t) => !isSmallMark(t)), small: text.filter(isSmallMark), never: found.never || [] };
+}
+/** The owner's "Use it anyway" on a cleaned photo: `owner-kept.json` beside it names the file and its contents'
+ *  hash. A photo it names passes the batch's checks on the owner's word; a file changed since does not. */
+export const OWNER_KEPT = "owner-kept.json";
+export function ownerKept(file) {
+  try {
+    const rec = JSON.parse(readFileSync(join(dirname(file), OWNER_KEPT), "utf-8"))[basename(file)];
+    return rec && rec.sha256 === createHash("sha256").update(readFileSync(file)).digest("hex") ? rec : null;
+  } catch { return null; }
 }
 
 const clip1000 = ([y0, x0, y1, x1]) => [Math.max(0, y0), Math.max(0, x0), Math.min(1000, y1), Math.min(1000, x1)];

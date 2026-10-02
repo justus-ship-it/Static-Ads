@@ -47,10 +47,10 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, rmSyn
 import { join, resolve, basename, extname, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { parseArgs } from "util";
-import { callVision, askVision, confirmItems, checkTiled, confirmTiled, dedupeItems, imageSize, CHECK_MODEL } from "./check-visual.mjs";
+import { callVision, askVision, confirmItems, checkTiled, confirmTiled, dedupeItems, imageSize, splitMarks, CHECK_MODEL } from "./check-visual.mjs";
 import { generateImage, GEMINI_MODEL } from "./generate_ads_gemini.mjs";
 import { launchBrowser, imageDataUrl } from "./render-composites.mjs";
-import { checkableNever } from "./visual-prompts.mjs";
+import { checkableNever, isStyleRule } from "./visual-prompts.mjs";
 
 /** Shapes the image model produces (imageConfig.aspectRatio), with the pixel size it actually makes
  *  for each at 1K ("2K" doubles it). "21:9" is really 1584 × 672, so the crop is cut to that, not to
@@ -535,7 +535,10 @@ export function makePixelTools() {
  *  the room came through intact and only marks are left, so the next edit can start from this one. */
 export function judgeClean({ left = {}, peopleBefore = 0, peopleAfter = 0, compare = null, pixels = null, sourceSize = null, editedSize = null, maxUnintended = MAX_UNINTENDED }) {
   const failures = [];
-  const text = left.text || [], never = left.never || [];
+  // Small marks are notes, never failures (isSmallMark: the rule every real photo is held to); a framing rule
+  // on the never-list is nothing an edit can remove.
+  const split = splitMarks(left), text = split.marks, never = split.never.filter((n) => !isStyleRule(n.what));
+  const notes = split.small.length ? [`small marks left: ${split.small.map((t) => `${t.kind || "mark"} "${t.what}" (${where(t.box_2d)})`).join("; ")}`] : [];
   if (text.length) failures.push(`marks still in the photo: ${text.map((t) => `${t.kind} "${t.what}" (${where(t.box_2d)})`).join("; ")}`);
   if (never.length) failures.push(`still shows what the client never allows: ${never.map((t) => `${t.what} (${where(t.box_2d)})`).join("; ")}`);
   const marks = failures.length;
@@ -551,7 +554,43 @@ export function judgeClean({ left = {}, peopleBefore = 0, peopleAfter = 0, compa
     if (pixels.changed_outside_share > maxUnintended) failures.push(`${(pixels.changed_outside_share * 100).toFixed(1)}% of the photo outside the removal areas changed (max ${maxUnintended * 100}%)`);
   } else failures.push("the pixel comparison did not run");
   if (sourceSize && editedSize && Math.min(...editedSize) < 0.95 * Math.min(...sourceSize)) failures.push(`lower resolution than the source (${editedSize.join("×")} from ${sourceSize.join("×")})`);
-  return { ok: failures.length === 0, failures, marks_only: marks > 0 && failures.length === marks };
+  return { ok: failures.length === 0, failures, notes, marks_only: marks > 0 && failures.length === marks };
+}
+
+/**
+ * Judge a finished run's candidates again by today's rules, from what its report recorded — no model call, no
+ * image call. For each photo not yet clean, its latest candidate that passes is copied to the clean folder.
+ * (2026-10-02: BFIT's four photos were edited well and refused for a far-off restroom sign, a maker's logo and
+ * a framing rule; three of them needed no new edit.)
+ */
+export function rejudgeRun(outDir, { cleanDir, log = console.log } = {}) {
+  const reportPath = join(outDir, "report.json"), report = JSON.parse(readFileSync(reportPath, "utf-8"));
+  mkdirSync(cleanDir, { recursive: true });
+  const out = [];
+  for (const r of report.results || []) {
+    if (["passed", "already clean"].includes(r.status)) { out.push({ id: r.id, status: r.status, changed: false }); continue; }
+    let before = 0;
+    try { before = JSON.parse(readFileSync(join(outDir, `${r.id}.survey.json`), "utf-8")).people_count || 0; } catch {}
+    const cands = [...(r.attempts || [])].reverse().filter((a) => a.file && a.left && existsSync(a.file));
+    let hit = null, last = null;
+    for (const a of cands) {
+      const v = judgeClean({ left: a.left, peopleBefore: before, peopleAfter: a.left.people_count || 0, compare: a.compare, pixels: a.registration, sourceSize: r.frame ? [r.frame.crop[2], r.frame.crop[3]] : null, editedSize: a.size });
+      last ||= v;
+      if (v.ok) { hit = { a, v }; break; }
+    }
+    if (hit) {
+      const clean = join(cleanDir, `${r.id}.png`);
+      copyFileSync(hit.a.file, clean);
+      Object.assign(r, { status: "passed", file: hit.a.file, attempt: hit.a.attempt, failures: [], notes: hit.v.notes, clean, rejudged: new Date().toISOString().slice(0, 10) });
+      log(`✓ ${r.id}: clean by today's rules (attempt ${hit.a.attempt})${hit.v.notes.length ? `; ${hit.v.notes.join("; ")}` : ""}`);
+    } else {
+      if (last) Object.assign(r, { failures: last.failures, notes: last.notes });
+      log(`⚑ ${r.id}: ${last ? last.failures.join(" | ") : "no candidate to judge"}`);
+    }
+    out.push({ id: r.id, status: r.status, changed: !!hit });
+  }
+  writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
+  return out;
 }
 
 // ── the flow ──────────────────────────────────────────────────────────────
@@ -639,9 +678,9 @@ export async function cleanPhotos({ photos, never = [], brandNames = [], outDir,
         try { cmp = await compare(src, file); } catch (e) { log(`  comparison could not run: ${e.message.slice(0, 160)}`); }
         try { after = await pixels.compare(src, file, { boxes: removed.map((i) => i.box_2d) }); await pixels.draw(file, after, join(outDir, `${tag}.changes.png`)); } catch (e) { log(`  pixel comparison could not run: ${e.message.slice(0, 160)}`); }
         const verdict = judgeClean({ left, peopleBefore: found.people_count, peopleAfter: left.people_count, compare: cmp, pixels: reg, sourceSize: [frame.crop[2], frame.crop[3]], editedSize });
-        final = { photo, id, status: verdict.ok ? "passed" : "flagged", file, attempt, frame, failures: verdict.failures };
-        tries.push({ attempt, from, raw, file, status: final.status, failures: verdict.failures, size: editedSize, left, dismissed: left.dismissed || [], compare: cmp, registration: { ...reg, changed: undefined, masked: undefined }, after: after && { ...after, changed: undefined, masked: undefined } });
-        log(`${verdict.ok ? "✓" : "⚑"} ${id}${attempt > 1 ? ` (attempt ${attempt}, from ${from})` : ""}: ${verdict.ok ? `clean; same room; the edit changed ${(reg.changed_outside_share * 100).toFixed(1)}% outside its boxes, and none of that is kept` : verdict.failures.join(" | ")}`);
+        final = { photo, id, status: verdict.ok ? "passed" : "flagged", file, attempt, frame, failures: verdict.failures, notes: verdict.notes };
+        tries.push({ attempt, from, raw, file, status: final.status, failures: verdict.failures, notes: verdict.notes, size: editedSize, left, dismissed: left.dismissed || [], compare: cmp, registration: { ...reg, changed: undefined, masked: undefined }, after: after && { ...after, changed: undefined, masked: undefined } });
+        log(`${verdict.ok ? "✓" : "⚑"} ${id}${attempt > 1 ? ` (attempt ${attempt}, from ${from})` : ""}: ${verdict.ok ? `clean; same room; the edit changed ${(reg.changed_outside_share * 100).toFixed(1)}% outside its boxes, and none of that is kept${verdict.notes.length ? `; ${verdict.notes.join("; ")}` : ""}` : verdict.failures.join(" | ")}`);
         if (verdict.ok) { final.clean = join(cleanDir, `${id}.png`); copyFileSync(file, final.clean); continue; }
         const more = leftoverItems(left);
         removed = [...removed, ...more];
@@ -657,7 +696,11 @@ export async function cleanPhotos({ photos, never = [], brandNames = [], outDir,
     await pixels.close?.();
   }
   const report = { model: GEMINI_MODEL, checked_with: CHECK_MODEL, image_calls: calls, max_calls: maxCalls, size, results };
-  writeFileSync(join(outDir, "report.json"), JSON.stringify(report, null, 2) + "\n");
+  // A second run on the same day shares the folder: what an earlier run found for photos this one did not touch
+  // stays in the report on disk (the panel's flagged list reads it), after this run's own results.
+  let earlier = [];
+  try { earlier = (JSON.parse(readFileSync(join(outDir, "report.json"), "utf-8")).results || []).filter((r) => r?.id && !results.some((x) => x.id === r.id)); } catch {}
+  writeFileSync(join(outDir, "report.json"), JSON.stringify({ ...report, results: [...results, ...earlier] }, null, 2) + "\n");
   return report;
 }
 
@@ -666,8 +709,15 @@ if (isMain) {
   const { values: v } = parseArgs({ options: {
     "brand-dir": { type: "string" }, photo: { type: "string", multiple: true }, out: { type: "string" }, "clean-dir": { type: "string" },
     "max-calls": { type: "string" }, attempts: { type: "string", default: "1" }, size: { type: "string", default: "2K" },
-    "survey-only": { type: "boolean", default: false },
+    "survey-only": { type: "boolean", default: false }, rejudge: { type: "string" },
   } });
+  if (v.rejudge && v["brand-dir"]) {
+    // A finished run judged again by today's rules, from its report: nothing is asked of any model.
+    const dir = resolve(v.rejudge), clean = resolve(v["clean-dir"] || join(resolve(v["brand-dir"]), "brand-assets", "facility-clean"));
+    const res = rejudgeRun(dir, { cleanDir: clean });
+    console.log(`${res.filter((r) => r.changed).length} photo(s) now clean · ${res.filter((r) => !["passed", "already clean"].includes(r.status)).length} still flagged · clean copies: ${clean}`);
+    process.exit(0);
+  }
   if (!v["brand-dir"] || !v.photo?.length) {
     console.error("Usage: clean-photo.mjs --brand-dir <brands/x> --photo <file> [--photo <file>] [--out <dir>] [--clean-dir <dir>] [--max-calls N] [--attempts N] [--size 2K]");
     process.exit(1);

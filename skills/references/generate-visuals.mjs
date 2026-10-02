@@ -28,7 +28,7 @@ import { join, resolve, extname, basename } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { buildVisualPrompt, poseProblem } from "./visual-prompts.mjs";
-import { checkVisual, checkTiled } from "./check-visual.mjs";
+import { checkVisual, checkTiled, splitMarks, ownerKept } from "./check-visual.mjs";
 import { checkQuality } from "./check-quality.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { generateImage, GEMINI_MODEL } from "./generate_ads_gemini.mjs";
@@ -92,10 +92,13 @@ async function assess(file, v, { ratio, text, check, compositor, outDir, never =
 /** A reference photo's lettering and never-list items, looked for in full-resolution tiles as well as
  *  whole (Step 5: the whole-image look missed thumb-sized marks). Returns what it found (empty = clean). */
 export async function checkRefTiled(path, { never = [] } = {}) {
+  // A photo the owner kept anyway (Photos & assets → Use it anyway) is used on their word; small marks never
+  // refuse a reference (splitMarks: the rule real photos share).
+  if (ownerKept(path)) return [];
   const px = makePixelTools();
   try {
-    const c = await checkTiled(path, { never, crop: px.crop });
-    return [...c.text, ...c.never.map((n) => ({ ...n, kind: "never-list item" }))];
+    const c = splitMarks(await checkTiled(path, { never, crop: px.crop }));
+    return [...c.marks, ...c.never.map((n) => ({ ...n, kind: "never-list item" }))];
   } finally { await px.close(); }
 }
 

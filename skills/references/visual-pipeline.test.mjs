@@ -361,6 +361,9 @@ test("V16 the client's never-list is verified, not just requested (run 8: a flam
     assert.ok(!/never allows any of the following/.test(body.contents[0].parts[0].text), "a list of style rules alone asks nothing");
     assert.deepEqual(["stock gym photography or any gym that is not this one", "a generic look", "the flame logo or flame-shaped wall sconces", "before-and-after body comparisons", "body-part crops or oiled fitness models", "the FirenGym wordmark"].map(isStyleRule), [true, true, false, false, false, false]);
     assert.deepEqual(checkableNever(["stock gym photos", "", null, "oiled fitness models"]), ["oiled fitness models"]);
+    // How a photo is framed is no object in the room either: "body-part crops" made the clean-up erase a trainer the frame cut off (BFIT, 2026-10-02).
+    assert.deepEqual(["body-part crops", "tight crops or close-ups", "awkward framing", "cropped heads", "a crop top", "cable machines"].map(isStyleRule), [true, true, true, true, false, false]);
+    assert.deepEqual(checkableNever(["body-part crops", "body-part crops or oiled fitness models", "the flame logo or flame-shaped wall sconces", "neon signs, mirrors"]), ["oiled fitness models", "the flame logo or flame-shaped wall sconces", "neon signs, mirrors"], "a framing rule inside an item is left out of it; an item without one is asked as written");
     // The image prompt still carries a style rule: it guides the picture even though no check can judge it.
     assert.match(buildVisualPrompt({ treatment: "t1-bottom-stack", scene: "A woman doing a goblet squat.", photography: { ...PHOTO, never: ["stock gym photos"] } }).prompt, /NEVER SHOW: stock gym photos/);
   } finally { rmSync(dir, { recursive: true, force: true }); }

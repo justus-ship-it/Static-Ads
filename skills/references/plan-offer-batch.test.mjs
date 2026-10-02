@@ -12,6 +12,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import zlib from "node:zlib";
 import { launchBrowser, loadCatalogue, renderComposite } from "./render-composites.mjs";
@@ -484,6 +485,32 @@ test("B7c a real photo that is not clean stops the batch before any spend", asyn
     assert.equal(calls.length, 0);
     await assert.rejects(runBatch({ brandDir: dir, brief: { ...BRIEF, offer: "" }, deps, log: () => {} }), /offer is required/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("B7f a real photo's small marks are notes and the owner's kept photo is used on their word: neither stops a batch; a photo changed since it was kept is checked again", async () => {
+  const wall = { kind: "wall lettering", what: "lettering on the wall", legible: true, box_2d: [150, 50, 400, 240] }, tiny = { kind: "signage", what: "restroom signage", legible: true, box_2d: [230, 278, 245, 290] };
+  const run = async (answers, setup = () => {}) => {
+    const dir = brandSetup(), logs = [], calls = [];
+    try {
+      await realPhotos(dir); setup(dir);
+      const deps = { ...fakes(calls), browser, checkPhoto: async (p) => ({ text: answers[p.endsWith("r1.png") ? 0 : 1], never: [], people_count: 0 }) };
+      let error = null;
+      try { await runBatch({ brandDir: dir, brief: BRIEF, deps, log: (l) => logs.push(l) }); } catch (e) { error = e.message; }
+      return { error, logs, calls };
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  const keep = (name, sha) => (dir) => { const f = join(dir, "brand-assets", "real", name); writeFileSync(join(dir, "brand-assets", "real", "owner-kept.json"), JSON.stringify({ [name]: { sha256: sha || createHash("sha256").update(readFileSync(f)).digest("hex"), kept_on: "2026-10-02" } })); };
+  // r1 carries only a small mark: it passes with a note, and the batch stops at r2's wall lettering instead.
+  let r = await run([[tiny], [wall]]);
+  assert.match(r.error, /real photo real\/r2\.png is not clean: wall lettering/); assert.equal(r.calls.length, 0);
+  assert.ok(r.logs.some((l) => /real photo real\/r1\.png: 1 small mark\(s\) left in it, noted: signage "restroom signage"/.test(l)), r.logs.join(" | "));
+  // r1 carries wall lettering but the owner kept it anyway: used as it is.
+  r = await run([[wall], [wall]], keep("r1.png"));
+  assert.match(r.error, /real photo real\/r2\.png is not clean/);
+  assert.ok(r.logs.some((l) => /real photo real\/r1\.png: kept by the owner on 2026-10-02; used as it is/.test(l)));
+  // The record names other contents: the photo is judged like any other.
+  r = await run([[wall], []], keep("r1.png", "0".repeat(64)));
+  assert.match(r.error, /real photo real\/r1\.png is not clean/);
 });
 
 // ── B9 per-photo crop ─────────────────────────────────────────────────────

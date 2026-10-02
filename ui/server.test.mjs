@@ -1729,8 +1729,55 @@ test("U28 from Instagram: the reading shown with its files; ticked photos filed 
   j = await (await accept({ photos: [{ id: "i001", kind: "members" }, { id: "i002", kind: "facility", keep_low_res: true }] })).json();
   assert.deepEqual(j.added.map((x) => x.path), ["facility/ig-iggym-sg-xyz.png"]); assert.match(j.skipped[0].reason, /already here/); assert.deepEqual(j.changes, [], "the profile's Instagram is not set twice");
   assert.deepEqual(j.reading.photos.map((p) => p.have), ["members/ig-iggym-sg-ab-cd-1-2.png", "facility/ig-iggym-sg-xyz.png"]);
-  for (const [body, status, re] of [[{ kind: "instagram-read", gym: G, handle: "two words" }, 400, /Instagram handle/], [{ kind: "instagram-read", gym: "nope", handle: "iggym.sg" }, 400, /needs a client/], [{ kind: "instagram-read", gym: G, handle: "@iggym.sg" }, 409, /Meta link is not set up/]]) {
+  for (const [body, status, re] of [[{ kind: "instagram-read", gym: G, handle: "two words" }, 400, /Instagram handle/], [{ kind: "instagram-read", gym: "nope", handle: "iggym.sg" }, 400, /needs a client/], [{ kind: "instagram-read", gym: G, handle: "iggym.sg", posts: 5000 }, 400, /how many posts to read must be 25 to 500/], [{ kind: "instagram-read", gym: G, handle: "iggym.sg", posts: "200" }, 400, /how many posts/], [{ kind: "instagram-read", gym: G, handle: "@iggym.sg", posts: 300 }, 409, /Meta link is not set up/], [{ kind: "instagram-read", gym: G, handle: "@iggym.sg" }, 409, /Meta link is not set up/]]) {
     const x = await call("/api/run", { method: "POST", body });
     assert.equal(x.status, status, JSON.stringify(body)); assert.match((await x.json()).error, re);
   }
+});
+
+test("U29 the clean-up's flagged photos: listed with the original and the edit; Use it anyway makes the edit a cleaned photo with the owner's word beside it (the file and its contents' hash); Remove moves it to the trash and drops the word; a photo already clean is not listed; one the gym's defaults use is not removed", async () => {
+  const { createHash } = await import("node:crypto");
+  const { ownerKept } = await import("../skills/references/check-visual.mjs");
+  const { readdirSync } = await import("node:fs");
+  const G = "keepgym", g = join(brands, G), run = join(g, "outputs", "clean-2026-10-02"), clean = join(g, "brand-assets", "facility-clean");
+  mkdirSync(run, { recursive: true }); mkdirSync(clean, { recursive: true });
+  writeFileSync(join(g, "gym-profile.json"), JSON.stringify({ display_name: "Keep Gym" }));
+  const png = readFileSync(join(brands, GYM, "brand-assets", "facility-clean", "r1.png")), png2 = readFileSync(join(brands, GYM, "brand-assets", "facility-clean", "r2.png"));
+  for (const [f, b] of [["room.source.png", png], ["room.png", png], ["room-a2.png", png2], ["done.png", png], ["done.source.png", png]]) writeFileSync(join(run, f), b);
+  writeFileSync(join(clean, "done.png"), png);
+  // The report names its files by the absolute paths of the machine that made it; only their names are used.
+  writeFileSync(join(run, "report.json"), JSON.stringify({ results: [
+    { id: "room", photo: "/elsewhere/brand-assets/facility/room.webp", status: "flagged", failures: ["marks still in the photo: sign \"a sign through the window\" (in the centre)"], notes: ["small marks left: logo \"a logo\""], attempts: [{ attempt: 1, file: "/elsewhere/room.png" }, { attempt: 2, file: "/elsewhere/room-a2.png" }] },
+    { id: "done", photo: "/elsewhere/done.png", status: "flagged", failures: ["x"], attempts: [{ attempt: 1, file: "/elsewhere/done.png" }] },
+    { id: "gone", photo: "/elsewhere/gone.png", status: "flagged", failures: ["x"], attempts: [{ attempt: 1, file: "/elsewhere/gone.png" }] },
+  ] }));
+  const assets = async () => (await call(`/api/client/${G}/assets`)).json();
+  let a = await assets();
+  assert.deepEqual(a.flagged.map((f) => [f.id, f.photo, f.attempt, f.after_url, f.before_url]), [["room", "room.webp", 2, `/files/brands/${G}/outputs/clean-2026-10-02/room-a2.png`, `/files/brands/${G}/outputs/clean-2026-10-02/room.source.png`]], "a photo with a clean copy, or with no candidate left on disk, is not listed");
+  assert.match(a.flagged[0].failures[0], /a sign through the window/);
+  for (const u of [a.flagged[0].after_url, a.flagged[0].before_url]) assert.equal((await fetch(panel.url + u)).status, 200, u);
+  const post = (what, body, opts) => call(`/api/client/${G}/clean/${what}`, { method: "POST", body, ...opts });
+  assert.equal((await post("keep", { id: "room" }, { token: null })).status, 403);
+  assert.equal((await post("keep", { id: "../x" })).status, 400);
+  assert.equal((await post("keep", { id: "done" })).status, 404, "already clean: nothing to keep");
+  assert.equal((await post("keep", { id: "room" })).status, 200);
+  assert.deepEqual(readFileSync(join(clean, "room.png")), png2, "the latest candidate");
+  const kept = ownerKept(join(clean, "room.png"));
+  assert.equal(kept.sha256, createHash("sha256").update(png2).digest("hex")); assert.equal(kept.from, "clean-2026-10-02, attempt 2"); assert.match(kept.left[0], /a sign through the window/);
+  a = await assets();
+  assert.deepEqual(a.flagged, []);
+  const row = a.clean.find((c) => c.path === "facility-clean/room.png");
+  assert.match(row.kept, /^\d{4}-\d\d-\d\d$/); assert.equal(a.clean.find((c) => c.path === "facility-clean/done.png").kept, undefined);
+  assert.equal((await fetch(panel.url + `/files/brands/${G}/brand-assets/facility-clean/owner-kept.json`)).status, 404, "the record is not a file anyone may fetch");
+  // Remove: to the trash, the word dropped, and the photo is flagged again.
+  assert.equal((await post("discard", { name: "nope.png" })).status, 404);
+  assert.equal((await post("discard", { name: "../room.png" })).status, 404);
+  writeFileSync(join(g, "gym-profile.json"), JSON.stringify({ display_name: "Keep Gym", creative_defaults: { real_photos: ["facility-clean/room.png"] } }));
+  const used = await post("discard", { name: "room.png" });
+  assert.equal(used.status, 409); assert.match((await used.json()).error, /Ad defaults/);
+  writeFileSync(join(g, "gym-profile.json"), JSON.stringify({ display_name: "Keep Gym" }));
+  assert.equal((await post("discard", { name: "room.png" })).status, 200);
+  assert.ok(!existsSync(join(clean, "room.png")) && readdirSync(join(g, "brand-assets", "_trash")).some((f) => /facility-clean-room\.png$/.test(f)), "moved, not deleted");
+  assert.deepEqual(JSON.parse(readFileSync(join(clean, "owner-kept.json"), "utf8")), {});
+  assert.deepEqual((await assets()).flagged.map((f) => f.id), ["room"]);
 });

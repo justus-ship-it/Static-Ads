@@ -15,10 +15,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { launchBrowser } from "./render-composites.mjs";
-import { imageSize } from "./check-visual.mjs";
+import { imageSize, isSmallMark, splitMarks, ownerKept, OWNER_KEPT, SMALL_MARK_AREA } from "./check-visual.mjs";
 import {
   editFrame, toCrop, where, plainWords, buildCleanPrompt, leftoverItems, judgeClean, cleanPhotos,
-  cropImage, comparePixels, WHOLE_BOX_FIT, EDIT_ASPECTS, EDIT_SIZES, placeOf, mergeItems, markItem, KEEP_CLAUSE, ADD_NOTHING_CLAUSE, REAL_PHOTO_CLAUSE, MAX_UNINTENDED,
+  rejudgeRun, cropImage, comparePixels, WHOLE_BOX_FIT, EDIT_ASPECTS, EDIT_SIZES, placeOf, mergeItems, markItem, KEEP_CLAUSE, ADD_NOTHING_CLAUSE, REAL_PHOTO_CLAUSE, MAX_UNINTENDED,
 } from "./clean-photo.mjs";
 
 const svg = (w, h, body) => "data:image/svg+xml;base64," + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${body}</svg>`).toString("base64");
@@ -156,7 +156,7 @@ test("P6b a second source adds only what the first did not already cover", () =>
 
 test("P7 every rule fails the photo on its own, and a clean edit passes", () => {
   const good = { left: { text: [], never: [] }, peopleBefore: 0, peopleAfter: 0, compare: { same_room: true, same_viewpoint: true, real_photo: true, differences: [{ what: "a cable is shorter", kind: "changed", noticeable: false }] }, pixels: { changed_outside_share: 0.03 }, sourceSize: [1874, 803], editedSize: [3168, 1344] };
-  assert.deepEqual(judgeClean(good), { ok: true, failures: [], marks_only: false }, "an unnoticeable difference does not fail");
+  assert.deepEqual(judgeClean(good), { ok: true, failures: [], notes: [], marks_only: false }, "an unnoticeable difference does not fail");
   const cases = [
     [{ left: { text: [{ kind: "neon", what: "mood", box_2d: [100, 600, 200, 900] }], never: [] } }, /marks still in the photo/],
     [{ left: { text: [], never: [{ what: "flame sconce", box_2d: [300, 0, 360, 40] }] } }, /never allows: flame sconce/],
@@ -287,6 +287,10 @@ test("P11 a failing edit is never used, the call budget is never exceeded, and o
     assert.equal(calls, 1, "one call allowed, one made");
     assert.equal(r.results[0].status, "flagged");
     assert.ok(!existsSync(join(clean, "a.png")), "a flagged edit is not written as the clean copy");
+    // A second run in the same day's folder keeps what the earlier one found for photos it did not touch.
+    writeFileSync(join(out, "report.json"), JSON.stringify({ results: [{ id: "earlier", status: "flagged" }, { id: "a", status: "stale" }] }));
+    await cleanPhotos({ photos: [a], outDir: out, cleanDir: clean, maxCalls: 1, generate, survey, check: dirty, compare: SAME, recheck: NONE, pixels: fakePixels(), log: () => {} });
+    assert.deepEqual(JSON.parse(readFileSync(join(out, "report.json"), "utf-8")).results.map((x) => [x.id, x.status]), [["a", "flagged"], ["earlier", "flagged"]]);
     // Too much changed outside the removal areas, even though every mark is gone.
     const moved = await cleanPhotos({ photos: [a], outDir: join(dir, "o2"), cleanDir: join(dir, "c2"), generate, survey, check: async () => ({ text: [], never: [], people_count: 0 }), compare: SAME, recheck: NONE, pixels: fakePixels(0.2), log: () => {} });
     assert.equal(moved.results[0].status, "flagged");
@@ -487,4 +491,74 @@ test("P16 the checklist looks for each item in the full-resolution tile that hol
     assert.ok(fromTile(sc.box_2d, t0, [2400, 1792]).every((v, i) => Math.abs(v - sconce.box_2d[i]) <= 2));
     assert.deepEqual(await confirmTiled(big, [], { crop, confirm }), [], "nothing to confirm, no call");
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── small marks are notes; a finished run judged again ────────────────────
+
+test("P17 a real photo's small marks are notes, never failures: not legible on a phone, a marking on equipment, or under 0.3% of the frame; readable lettering, a web control, a watermark, a never-list item and a check that could not run still fail; a framing rule on the never-list fails nothing; the owner's kept photo is known by its contents", () => {
+  const good = { peopleBefore: 0, peopleAfter: 0, compare: { same_room: true, same_viewpoint: true, real_photo: true, differences: [] }, pixels: { changed_outside_share: 0.01 }, sourceSize: [1000, 1000], editedSize: [2000, 2000] };
+  const small = [
+    { kind: "signage", what: "restroom signage", legible: true, box_2d: [230, 278, 245, 290] }, // readable up close, 15 × 12 of 1000: tiny on an ad
+    { kind: "number", what: "number 21 on gym machine", legible: false, box_2d: [100, 100, 400, 400] }, // not legible, whatever its size
+    { kind: "equipment marking", what: "markings on weight plates", box_2d: [184, 891, 477, 999] }, // equipment, a grouped box
+    { kind: "logo", what: "maker's logo on a rack", box_2d: [249, 613, 301, 644] },
+  ];
+  const big = [
+    { kind: "wall lettering", what: "black lettering on the left wall", legible: true, box_2d: [153, 45, 396, 240] },
+    { kind: "logo", what: "a logo" }, // no box, no word on legibility: not known to be small
+    { kind: "web control", what: "a button on the left edge", box_2d: [412, 0, 430, 23] },
+    { kind: "watermark", what: "a watermark", legible: false, box_2d: [900, 900, 920, 990] },
+    { kind: "check", what: "could not run: timeout" },
+    { kind: "sign", what: "a sign through the window", box_2d: [490, 613, 532, 698] }, // 42 × 85 = 0.36%: over the line
+  ];
+  assert.deepEqual(small.map(isSmallMark), [true, true, true, true]);
+  assert.deepEqual(big.map(isSmallMark), [false, false, false, false, false, false]);
+  assert.equal(isSmallMark({ kind: "logo", what: "x", list: "never", legible: false }), false, "a never-list item is never small");
+  assert.equal(SMALL_MARK_AREA, 3000);
+  assert.deepEqual(Object.fromEntries(Object.entries(splitMarks({ text: [...small, big[0]], never: [{ what: "the old logo" }] })).map(([k, v]) => [k, v.length])), { marks: 1, small: 4, never: 1 });
+  const ok = judgeClean({ ...good, left: { text: small, never: [] } });
+  assert.equal(ok.ok, true); assert.equal(ok.notes.length, 1);
+  assert.match(ok.notes[0], /^small marks left: signage "restroom signage" \(in the upper left\); number "number 21 on gym machine"/);
+  for (const m of big) { const r = judgeClean({ ...good, left: { text: [...small, m], never: [] } }); assert.equal(r.ok, false, m.what); assert.match(r.failures[0], /marks still in the photo/); assert.ok(!r.failures[0].includes("restroom"), "only the mark that fails is named as a failure"); assert.equal(r.notes.length, 1); }
+  // A framing rule is nothing an edit can remove; a thing in the room still is.
+  assert.equal(judgeClean({ ...good, left: { text: [], never: [{ what: "body-part crops", box_2d: [0, 600, 1000, 900] }] } }).ok, true);
+  assert.match(judgeClean({ ...good, left: { text: [], never: [{ what: "the old logo" }] } }).failures[0], /never allows: the old logo/);
+  // The owner's "Use it anyway": named with its contents' hash beside it; a file changed since is not kept.
+  const d = mkdtempSync(join(tmpdir(), "kept-")), f = join(d, "room.png");
+  try {
+    writeFileSync(f, "the photo");
+    assert.equal(ownerKept(f), null, "no record");
+    writeFileSync(join(d, OWNER_KEPT), JSON.stringify({ "room.png": { sha256: createHash("sha256").update("the photo").digest("hex"), kept_on: "2026-10-02" } }));
+    assert.equal(ownerKept(f).kept_on, "2026-10-02");
+    writeFileSync(f, "another photo under the same name");
+    assert.equal(ownerKept(f), null, "the record is for the contents it was given");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("P18 a finished run is judged again from its report, with no call to any model: a candidate left with only small marks becomes the clean copy, one that removed a person stays flagged, a passed photo is left alone", () => {
+  const d = mkdtempSync(join(tmpdir(), "rejudge-")), out = join(d, "run"), clean = join(d, "facility-clean");
+  try {
+    mkdirSync(out, { recursive: true });
+    const compare = { same_room: true, same_viewpoint: true, real_photo: true, differences: [] }, registration = { changed_outside_share: 0.001 }, frame = { aspect: "1:1", crop: [0, 0, 1000, 1000] };
+    const tiny = { kind: "signage", what: "restroom signage", legible: true, box_2d: [230, 278, 245, 290] }, wall = { kind: "wall lettering", what: "lettering on the wall", legible: true, box_2d: [150, 50, 400, 240] };
+    for (const f of ["a.png", "a-a2.png", "b.png", "c.png"]) writeFileSync(join(out, f), `candidate ${f}`);
+    for (const [id, people] of [["a", 0], ["b", 2], ["c", 0]]) writeFileSync(join(out, `${id}.survey.json`), JSON.stringify({ people_count: people }));
+    const att = (n, file, left, cmp = compare) => ({ attempt: n, file: join(out, file), status: "flagged", failures: ["old"], size: [2000, 2000], left: { people_count: 0, never: [], ...left }, compare: cmp, registration });
+    writeFileSync(join(out, "report.json"), JSON.stringify({ image_calls: 4, results: [
+      { id: "a", status: "flagged", frame, failures: ["old"], attempts: [att(1, "a.png", { text: [wall, tiny] }), att(2, "a-a2.png", { text: [tiny], never: [{ what: "body-part crops" }] })] },
+      { id: "b", status: "flagged", frame, failures: ["old"], attempts: [att(1, "b.png", { text: [], people_count: 1 }, { ...compare, differences: [{ what: "the man on the right", kind: "removed", noticeable: true }] })] },
+      { id: "c", status: "passed", frame, failures: [], attempts: [att(1, "c.png", { text: [] })] },
+    ] }));
+    const logs = [];
+    const res = rejudgeRun(out, { cleanDir: clean, log: (l) => logs.push(l) });
+    assert.deepEqual(res, [{ id: "a", status: "passed", changed: true }, { id: "b", status: "flagged", changed: false }, { id: "c", status: "passed", changed: false }]);
+    assert.equal(readFileSync(join(clean, "a.png"), "utf-8"), "candidate a-a2.png", "the latest candidate that passes is the clean copy");
+    assert.ok(!existsSync(join(clean, "b.png")) && !existsSync(join(clean, "c.png")), "nothing else is copied");
+    const rep = JSON.parse(readFileSync(join(out, "report.json"), "utf-8"));
+    assert.deepEqual([rep.results[0].status, rep.results[0].attempt, rep.results[0].failures, rep.image_calls], ["passed", 2, [], 4]);
+    assert.match(rep.results[0].notes[0], /small marks left: signage "restroom signage"/);
+    assert.match(rep.results[0].rejudged, /^\d{4}-\d\d-\d\d$/);
+    assert.match(rep.results[1].failures[0], /changed more than the marks: removed: the man on the right/, "the reason is today's, not the old one");
+    assert.ok(logs.some((l) => /✓ a: clean by today's rules \(attempt 2\)/.test(l)) && logs.some((l) => /⚑ b: changed more than the marks/.test(l)));
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });

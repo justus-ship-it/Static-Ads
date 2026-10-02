@@ -199,9 +199,16 @@ export const isAboutText = (t) => /\b(text|wordmark|reading|words?|lettering|slo
  * Items naming a mark, a fitting or an object (a wordmark, a sconce, oiled models, before-and-after
  * comparisons) are checked as before.
  */
-export const isStyleRule = (t) => /\b(stock|photograph(y|s)?|photos?|imagery|style|aesthetic|vibe|look|feel)\b/i.test(String(t || ""));
-/** The never-list items a vision check can look for in a frame. */
-export const checkableNever = (list = []) => (list || []).filter((t) => t && !isStyleRule(t));
+const STYLE_WORDS = /\b(stock|photograph(y|s)?|photos?|imagery|style|aesthetic|vibe|look|feel)\b/i;
+// How a photo is framed is a rule for the photographer, not an object in the room: "body-part crops" made the
+// clean-up erase a trainer the frame cut off, then refuse its own edit for removing a person (BFIT, 2026-10-02).
+const FRAMING_WORDS = /\b(crops?(?!\s+tops?\b)|cropped(?!\s+tops?\b)|cropping|framing|composition|camera angles?|close-?ups?)\b/i; // a crop top is clothing
+const ruleParts = (t) => String(t || "").split(/\s+or\s+|\s*[;,]\s*/i).map((s) => s.trim()).filter(Boolean);
+export const isStyleRule = (t) => STYLE_WORDS.test(String(t || "")) || (ruleParts(t).length > 0 && ruleParts(t).every((p) => FRAMING_WORDS.test(p)));
+/** The never-list items a vision check can look for in a frame; a framing rule inside an item is left out of it
+ *  ("body-part crops or oiled fitness models" is checked as "oiled fitness models"). */
+export const checkableNever = (list = []) => (list || []).filter((t) => t && !isStyleRule(t))
+  .map((t) => (ruleParts(t).some((p) => FRAMING_WORDS.test(p)) ? ruleParts(t).filter((p) => !FRAMING_WORDS.test(p)).join(" or ") : t));
 
 export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, age = null, shotGuide = null, catalogue = loadCatalogue() }) {
   const T = catalogue.treatments;

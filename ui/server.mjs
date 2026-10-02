@@ -34,7 +34,7 @@ import {
   loadClientConfig, writeResolved, scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
   catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
 } from "../skills/references/client-config.mjs";
-import { imageSize } from "../skills/references/check-visual.mjs";
+import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
 import { buildPlan, keptAds, CTA_TYPES } from "../skills/references/meta-publish.mjs";
@@ -49,7 +49,7 @@ import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, isD
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 import { readReading, checkUrl as checkSiteUrl, MIN_PHOTO_PX, ONBOARDING_DIR } from "../skills/references/read-website.mjs";
-import { readInstagramReading, cleanHandle, INSTAGRAM_DIR } from "../skills/references/read-instagram.mjs";
+import { readInstagramReading, cleanHandle, INSTAGRAM_DIR, DEFAULT_POSTS, MAX_POSTS } from "../skills/references/read-instagram.mjs";
 
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(UI_DIR, "..");
@@ -153,7 +153,7 @@ const RUNNABLE = {
   "website-read": { label: "Read the website", argv: ({ gym, url }) => [READ_SCRIPT, "--brand-dir", brandDir(gym), "--url", url] },
   // Onboarding, part two: a gym's Instagram photos through Meta's Business Discovery (read-only; model calls
   // for the sort). The handle is checked for shape before it becomes an argument.
-  "instagram-read": { label: "Read Instagram", argv: ({ gym, handle }) => [IG_SCRIPT, "--brand-dir", brandDir(gym), "--handle", handle] },
+  "instagram-read": { label: "Read Instagram", argv: ({ gym, handle, posts }) => [IG_SCRIPT, "--brand-dir", brandDir(gym), "--handle", handle, "--posts", String(posts)] },
   "photo-clean": { label: "Clean premises photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", "facility", p)])] },
 };
 
@@ -411,8 +411,8 @@ function instagramView(gym) {
   const have = new Map(readManifest(gym).assets.filter((a) => a.sha256 && !a.removed && existsSync(join(assetsDir(gym), a.path))).map((a) => [a.sha256, a.path]));
   const base = `/files/brands/${gym}/${INSTAGRAM_DIR}`;
   return {
-    min_photo_px: MIN_PHOTO_PX, file_as: FILE_AS, meta_ready: !!metaConfig({ gym }).token,
-    profile: { instagram: profile.social?.instagram || "", website_instagram: readReading(brandDir(gym))?.identity?.instagram?.[0]?.value || "" },
+    min_photo_px: MIN_PHOTO_PX, file_as: FILE_AS, meta_ready: !!metaConfig({ gym }).token, default_posts: DEFAULT_POSTS, max_posts: MAX_POSTS,
+    profile: { instagram: profile.social?.instagram || "", website_instagram: readReading(brandDir(gym))?.identity?.instagram?.[0]?.value || "", website_handles: (readReading(brandDir(gym))?.identity?.instagram || []).map((x) => x.value) },
     reading: r && { ...r, photos: (r.photos || []).map((p) => ({ ...p, image_url: `${base}/${p.file}`, thumb_url: `${base}/${p.thumb || p.file}`, have: have.get(p.sha256) || null, file_as: KIND_TO_FOLDER[p.kind] || "other" })) },
   };
 }
@@ -543,7 +543,60 @@ function cleanPhotos(gym) {
   if (!existsSync(base)) return [];
   return readdirSync(base).filter((d) => d.endsWith("-clean") && statSync(join(base, d)).isDirectory())
     .flatMap((d) => readdirSync(join(base, d)).filter((f) => IMAGE_EXT.has(extname(f).toLowerCase())).map((f) => `${d}/${f}`))
-    .map((path) => ({ path, url: `/files/brands/${gym}/brand-assets/${path}` }));
+    .map((path) => { const kept = ownerKept(join(base, path)); return { path, url: `/files/brands/${gym}/brand-assets/${path}`, ...(kept ? { kept: kept.kept_on, kept_with: kept.left || [] } : {}) }; });
+}
+
+// ── The clean-up's flagged photos, and the owner's word on them ──────────────
+// A clean-up run that flags a photo keeps its last candidate in outputs/clean-{date}/. The owner may look at
+// it beside the original and keep it anyway: it is copied to facility-clean with a line in owner-kept.json
+// (the file's name and its contents' hash), which the batch's checks honour (ownerKept in check-visual.mjs).
+const CLEAN_ID = /^[a-z0-9][a-z0-9-]{0,80}$/;
+const cleanDirOf = (gym) => join(brandDir(gym), "brand-assets", "facility-clean");
+function cleanRuns(gym) {
+  const out = join(brandDir(gym), "outputs");
+  if (!existsSync(out)) return [];
+  return readdirSync(out).filter((d) => /^clean-\d{4}-\d\d-\d\d$/.test(d) && existsSync(join(out, d, "report.json"))).sort().reverse()
+    .map((d) => ({ run: d, dir: join(out, d), report: readJsonFile(join(out, d, "report.json")) }));
+}
+/** The photos the latest run that tried them flagged, each with its last candidate — unless a clean copy exists. */
+function flaggedCleans(gym) {
+  const seen = new Set(), out = [];
+  for (const { run, dir, report } of cleanRuns(gym)) for (const r of report?.results || []) {
+    if (!r?.id || seen.has(r.id)) continue;
+    seen.add(r.id);
+    if (r.status !== "flagged" || existsSync(join(cleanDirOf(gym), `${r.id}.png`))) continue;
+    const a = [...(r.attempts || [])].reverse().find((x) => x.file && existsSync(join(dir, basename(x.file))));
+    if (!a) continue;
+    const base = `/files/brands/${gym}/outputs/${run}`;
+    out.push({ id: r.id, photo: basename(r.photo || ""), run, attempt: a.attempt, failures: r.failures || [], notes: r.notes || [], after_url: `${base}/${basename(a.file)}`, before_url: existsSync(join(dir, `${r.id}.source.png`)) ? `${base}/${r.id}.source.png` : null });
+  }
+  return out;
+}
+function keepFlagged(gym, id) {
+  if (!CLEAN_ID.test(String(id || ""))) throw fail(400, "name the flagged photo");
+  const f = flaggedCleans(gym).find((x) => x.id === id);
+  if (!f) throw fail(404, "no flagged photo of that name is waiting (it may be clean already, or was never edited)");
+  const { dir } = cleanRuns(gym).find((r) => r.run === f.run);
+  const buf = readFileSync(join(dir, basename(f.after_url)));
+  mkdirSync(cleanDirOf(gym), { recursive: true });
+  const name = `${id}.png`, recPath = join(cleanDirOf(gym), OWNER_KEPT), rec = readJsonFile(recPath) || {};
+  writeFileSync(join(cleanDirOf(gym), name), buf);
+  rec[name] = { sha256: createHash("sha256").update(buf).digest("hex"), kept_on: new Date().toISOString().slice(0, 10), from: `${f.run}, attempt ${f.attempt}`, left: f.failures };
+  writeWhole(recPath, JSON.stringify(rec, null, 2) + "\n");
+  return { ok: true, kept: `facility-clean/${name}` };
+}
+/** A cleaned copy the owner no longer wants: moved to _trash (never deleted), its kept line dropped. */
+function discardClean(gym, name) {
+  if (typeof name !== "string" || !/^[a-z0-9][a-z0-9-]{0,80}\.(png|jpe?g|webp)$/.test(name) || !existsSync(join(cleanDirOf(gym), name))) throw fail(404, "no such cleaned photo");
+  const rel = `facility-clean/${name}`, profile = readJsonFile(join(brandDir(gym), "gym-profile.json"));
+  if ((profile?.creative_defaults?.real_photos || []).includes(rel)) throw fail(409, "this is one of the gym's real photos on Ad defaults: untick it there first");
+  const trash = join(brandDir(gym), "brand-assets", "_trash");
+  mkdirSync(trash, { recursive: true });
+  const to = join(trash, `${new Date().toISOString().slice(0, 10)}-facility-clean-${name}`);
+  renameSync(join(cleanDirOf(gym), name), existsSync(to) ? to.replace(/(\.[^.]+)$/, `-${Date.now().toString(36)}$1`) : to);
+  const recPath = join(cleanDirOf(gym), OWNER_KEPT), rec = readJsonFile(recPath);
+  if (rec?.[name]) { delete rec[name]; writeWhole(recPath, JSON.stringify(rec, null, 2) + "\n"); }
+  return { ok: true, trashed: `_trash/${basename(to)}` };
 }
 
 function sceneStatus(gym) {
@@ -1068,6 +1121,15 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // /api/client/{gym}/clean/keep {id} · /clean/discard {name} — the owner's word on the clean-up's photos.
+    const ckm = p.match(/^\/api\/client\/([^/]+)\/clean\/(keep|discard)$/);
+    if (ckm && req.method === "POST") {
+      const [, gym, act] = ckm;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      try { const body = await readBody(req); return json(res, 200, act === "keep" ? keepFlagged(gym, body.id) : discardClean(gym, body.name)); }
+      catch (e) { return json(res, e.status || 400, { error: e.message }); }
+    }
+
     // /api/client/{gym}/instagram · /instagram/accept — the Instagram reading, and filing the ticked photos.
     const igm = p.match(/^\/api\/client\/([^/]+)\/instagram(\/accept)?$/);
     if (igm) {
@@ -1085,7 +1147,7 @@ const server = createServer(async (req, res) => {
     if (am) {
       const [, gym, what, kind, name] = am;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "assets" && req.method === "GET") return json(res, 200, { kinds: ASSET_KINDS, assets: listAssets(gym), clean: cleanPhotos(gym), heic: hasSips(), max_bytes: MAX_ASSET_BYTES, max_clean: MAX_CLEAN_PHOTOS });
+      if (what === "assets" && req.method === "GET") return json(res, 200, { kinds: ASSET_KINDS, assets: listAssets(gym), clean: cleanPhotos(gym), flagged: flaggedCleans(gym), heic: hasSips(), max_bytes: MAX_ASSET_BYTES, max_clean: MAX_CLEAN_PHOTOS });
       if (kind && req.method === "PUT") {
         let buf;
         try { buf = await readRaw(req, MAX_ASSET_BYTES); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
@@ -1378,8 +1440,10 @@ const server = createServer(async (req, res) => {
         if (!okSlug(body.gym) || !existsSync(join(brandDir(body.gym), "gym-profile.json"))) return json(res, 400, { error: "reading Instagram needs a client with a profile" });
         const handle = cleanHandle(body.handle);
         if (!handle) return json(res, 400, { error: "give the gym's Instagram handle (letters, digits, dots and underscores)" });
+        const posts = body.posts == null ? DEFAULT_POSTS : body.posts;
+        if (!Number.isInteger(posts) || posts < 25 || posts > MAX_POSTS) return json(res, 400, { error: `how many posts to read must be 25 to ${MAX_POSTS}` });
         if (!metaConfig({ gym: body.gym }).token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page): Instagram is read through it" });
-        const run = startRun(kind, { gym: body.gym, handle });
+        const run = startRun(kind, { gym: body.gym, handle, posts });
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "photo-survey" || kind === "photo-clean") {

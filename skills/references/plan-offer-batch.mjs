@@ -39,7 +39,7 @@ import { execFileSync } from "child_process";
 import { createHash } from "crypto";
 import { validateInputs, loadCatalogue, launchBrowser, layoutFor } from "./render-composites.mjs";
 import { poseProblem, POSES, readShotGuide } from "./visual-prompts.mjs";
-import { fitLayouts, imageSize, checkTiled } from "./check-visual.mjs";
+import { fitLayouts, imageSize, checkTiled, splitMarks, ownerKept } from "./check-visual.mjs";
 import { QUALITY_VERSION } from "./check-quality.mjs";
 import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from "./assign-variants.mjs";
 import { catalogueFor, imageModelFor } from "./client-config.mjs";
@@ -440,7 +440,11 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
         const file = at(rel), key = hashFile(file);
         let c = cache[key];
         if (!c) { c = await checkPhoto(file); cache[key] = { text: c.text, never: c.never, people_count: c.people_count, people_box: c.people_box || null, face_boxes: c.face_boxes || [] }; c = cache[key]; }
-        const marks = [...(c.text || []), ...(c.never || [])];
+        // Small marks are notes, and a photo the owner kept anyway passes on their word (splitMarks, ownerKept).
+        const split = splitMarks(c), kept = ownerKept(file);
+        const marks = kept ? [] : [...split.marks, ...split.never];
+        if (kept) log(`  real photo ${rel}: kept by the owner on ${kept.kept_on}; used as it is`);
+        else if (split.small.length) log(`  real photo ${rel}: ${split.small.length} small mark(s) left in it, noted: ${split.small.map((m) => `${m.kind || "mark"} "${m.what}"`).join("; ").slice(0, 300)}`);
         if (marks.length) throw new Error(`real photo ${rel} is not clean: ${marks.map((m) => `${m.kind || "never-list"} "${m.what}"`).join("; ")} — clean it first (clean-photo.mjs)`);
         photos.push({ id: `r${String(i + 1).padStart(2, "0")}`, kind: "real", file, source: rel, answer: { people_box: c.people_box, face_boxes: c.face_boxes, people_count: c.people_count }, expectPeople: false, maxPeople: null });
       }

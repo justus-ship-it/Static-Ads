@@ -29,7 +29,7 @@ import { checkUrl, fileKind, sizeOf, knownHashes, thumbsAndHashes, markRepeats, 
 
 export const INSTAGRAM_DIR = "onboarding/instagram";
 export const DEFAULT_POSTS = 100;
-export const MAX_POSTS = 200;
+export const MAX_POSTS = 500; // a video-heavy account keeps its photos further back (BFIT: 10 photos in its latest 100 posts)
 const PAGE = 25;
 export const HANDLE = /^[a-z0-9._]{1,30}$/;
 

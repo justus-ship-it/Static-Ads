@@ -211,6 +211,10 @@
   .wsw{display:inline-block;width:18px;height:18px;border-radius:4px;border:1px solid var(--line-2);vertical-align:-4px;margin-right:6px}
   .wrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)} .wrow:first-of-type{border-top:0}
   .wfoot{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:12px 0;margin-top:14px;display:flex;align-items:center;gap:12px;z-index:3}
+  .flagrow{display:flex;gap:14px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line);flex-wrap:wrap}
+  .flagrow .pair{display:flex;gap:8px} .flagrow .pair a{display:block;text-align:center;font-size:11px;color:var(--dim);text-decoration:none}
+  .flagrow .pair img{width:200px;height:134px;object-fit:cover;border-radius:7px;border:1px solid var(--line);display:block;margin-bottom:2px}
+  .flagrow .why{flex:1;min-width:240px;font-size:12.5px}
   .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
   .swatch{border-radius:10px;padding:14px 16px;background:#262626;background-image:linear-gradient(135deg,#3a3a3a,#161616);font-family:Montserrat,Inter,sans-serif;font-weight:900;text-transform:uppercase;line-height:1.15;letter-spacing:.3px}
   .swatch div{font-size:17px;paint-order:stroke fill;-webkit-text-stroke:1px} .swatch .sm{font-size:12px}
@@ -2089,7 +2093,7 @@ function phAll(key, on){ const st = PH[key].st(); for (const p of phShown(key).f
 // ── From Instagram (onboarding, part two) ────────────────────────────────────
 // read-instagram.mjs (a run) reads the gym's latest 100 posts through Meta's Business Discovery; photos only,
 // videos skipped. The owner ticks; "Add to the gym" files them with the post as where each came from.
-const IGS = { data:null, pick:null, gym:null, filter:'all', dups:false, msg:null, handle:undefined };
+const IGS = { data:null, pick:null, gym:null, filter:'all', dups:false, msg:null, handle:undefined, posts:null };
 async function loadInstagram(){ IGS.data = await api(`/api/client/${STATE.sel}/instagram`); IGS.gym = STATE.sel; IGS.pick = IGS.data.reading ? { photos: phDefaults(IGS.data) } : null; return IGS.data; }
 async function viewInstagram(v, seq=VIEW_SEQ){
   v.innerHTML = '<h1>From Instagram</h1><p class="sub">Loading…</p>';
@@ -2105,8 +2109,8 @@ function paintInstagram(v){
   v.innerHTML = `<h1>From Instagram</h1><p class="sub">Reads the gym's latest 100 Instagram posts: every photo post and each photo in a carousel (videos are skipped), sorted and proposed for you to tick. Nothing is kept until you add it.</p>
   ${d.meta_ready?'':`<div class="msg warn">Instagram is read through the Meta link, which is not set up yet. <a href="#" onclick="go('meta');return false">Meta link →</a></div>`}
   <div class="card"><h3>Read Instagram</h3>
-    <div class="row"><span style="font-weight:600">@</span><input id="igHandle" value="${esc(handle)}" placeholder="the gym's handle" style="flex:1" oninput="IGS.handle=this.value"><button class="primary" ${running||!d.meta_ready?'disabled':''} onclick="igRead()">${r?'Read again':'Read Instagram'}</button></div>
-    <p class="hint" style="margin:8px 0 0">Read through Strategym's own Instagram account (Meta's Business Discovery), so the gym's account must be a business or creator account; a personal one cannot be read. About a minute; a few model calls to sort the photos, no image generation.${!prof.instagram&&prof.website_instagram?` The website links @${esc(prof.website_instagram)}.`:''}</p>
+    <div class="row"><span style="font-weight:600">@</span><input id="igHandle" value="${esc(handle)}" placeholder="the gym's handle" style="flex:1" oninput="IGS.handle=this.value"><select id="igPosts" style="width:auto" onchange="IGS.posts=Number(this.value)" title="how far back to read">${[100,200,300,500].filter(n=>n<=(d.max_posts||500)).map(n=>`<option value="${n}" ${n===(IGS.posts||d.default_posts||100)?'selected':''}>latest ${n} posts</option>`).join('')}</select><button class="primary" ${running||!d.meta_ready?'disabled':''} onclick="igRead()">${r?'Read again':'Read Instagram'}</button></div>
+    <p class="hint" style="margin:8px 0 0">Read through Strategym's own Instagram account (Meta's Business Discovery), so the gym's account must be a business or creator account; a personal one cannot be read. About a minute; a few model calls to sort the photos, no image generation. An account that posts mostly videos keeps its photos further back: read more posts.${(prof.website_handles||[]).length?` The website links ${prof.website_handles.map(h=>`<a href="#" onclick="IGS.handle='${esc(h)}';paintInstagram($('#view'));return false">@${esc(h)}</a>`).join(' and ')}.`:''}</p>
     ${r?`<p class="hint" style="margin:6px 0 0">Last read ${esc(new Date(r.read_at).toLocaleString())}: @${esc(r.handle)}${r.account?.name?` (${esc(r.account.name)}, ${r.account.followers ?? '?'} followers)`:''}, ${r.posts_read} posts, ${r.photos.filter(p=>!p.duplicate_of).length} photos, ${r.videos_skipped} videos skipped, ${r.calls} model call${r.calls===1?'':'s'}.${r.problems?.length?` ${r.problems.map(esc).join('; ')}.`:''}</p>`:''}
     <div id="runbox"></div></div>
   ${IGS.msg?`<div class="msg ${IGS.msg.cls}">${IGS.msg.html}</div>`:''}
@@ -2117,7 +2121,7 @@ function paintInstagram(v){
 function igRead(){
   const handle = ($('#igHandle')?.value || '').trim().replace(/^@/,''); if (!handle) return alert("Type the gym's Instagram handle first.");
   IGS.msg = null;
-  run({ kind:'instagram-read', gym:STATE.sel, handle }, async(code)=>{ if (code===0){ await loadInstagram(); IGS.handle = undefined; } });
+  run({ kind:'instagram-read', gym:STATE.sel, handle, posts: IGS.posts || IGS.data?.default_posts || 100 }, async(code)=>{ if (code===0){ await loadInstagram(); IGS.handle = undefined; } });
 }
 async function igAccept(){
   const body = { photos: Object.entries(IGS.pick.photos).filter(([,x])=>x.on).map(([id,x])=>({ id, kind:x.kind, keep_low_res:x.keep_low_res })) };
@@ -2187,7 +2191,15 @@ function paintAssets(v){
   </div>
   <div class="card"><div class="row"><h3 style="margin:0">Cleaned premises photos <span class="pill">${d.clean.length}</span></h3></div>
     <p class="hint" style="margin-top:8px">What batches use as real photos and as the room reference: old marks and lettering removed, checked. Made from the premises photos below.</p>
-    ${d.clean.length?`<div class="thumbs">${d.clean.map(p=>`<label><img src="${esc(p.url)}" alt="" style="width:168px;height:112px"><span style="font-size:11.5px">${esc(p.path.split('/').pop())}</span></label>`).join('')}</div>`:'<div class="hint" style="margin:0">None yet — select premises photos below and clean them.</div>'}
+    ${d.clean.length?`<div class="thumbs">${d.clean.map(p=>{ const nm = p.path.split('/').pop(); return `<label style="max-width:168px"><a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="" style="width:168px;height:112px"></a><span style="font-size:11.5px">${esc(nm)}</span>${p.kept?`<span class="pill warn" title="${esc((p.kept_with||[]).join(' · '))}">kept by you ${esc(p.kept)}</span>`:''}${p.path.startsWith('facility-clean/')?`<button class="sm" onclick="aDiscardClean('${esc(nm)}')">Remove</button>`:''}</label>`; }).join('')}</div>`:'<div class="hint" style="margin:0">None yet — select premises photos below and clean them.</div>'}
+    ${(d.flagged||[]).length?`<h4 style="margin:16px 0 4px">Flagged by the check <span class="pill warn">${d.flagged.length}</span></h4>
+    <p class="hint" style="margin:0 0 8px">The edit was made, but the check found something it would not pass. Compare the original with the edit; if it is fine by you, use it anyway. Small leftover marks (a far-off sign, a maker's logo, a sticker) no longer fail a photo on their own.</p>
+    ${d.flagged.map(f=>`<div class="flagrow">
+      <div class="pair">${f.before_url?`<a href="${esc(f.before_url)}" target="_blank" rel="noopener"><img src="${esc(f.before_url)}" alt="" loading="lazy"><span>original</span></a>`:''}<a href="${esc(f.after_url)}" target="_blank" rel="noopener"><img src="${esc(f.after_url)}" alt="" loading="lazy"><span>edited</span></a></div>
+      <div class="why"><b>${esc(f.photo||f.id)}</b>
+        ${f.failures.map(x=>`<div class="amsg err" style="padding:1px 0">${esc(x)}</div>`).join('')}${(f.notes||[]).map(x=>`<div class="amsg" style="padding:1px 0">${esc(x)}</div>`).join('')}
+        <div class="row" style="margin-top:8px"><button class="sm primary" onclick="aKeepFlagged('${esc(f.id)}')">Use it anyway</button><span class="hint" style="margin:0">or select the photo below and clean it again</span></div></div>
+    </div>`).join('')}`:''}
   </div>
   ${section(fac, 'Click photos to select them, then survey what a clean-up would remove (free) or clean them (about 4 image calls each). Cleaned copies keep the same name.',
     `<button class="sm" ${n&&!running?'':'disabled'} onclick="aSurvey()">Survey ${n||''} (free)</button><button class="sm primary" ${n&&!running?'':'disabled'} onclick="aClean()">Clean ${n||''}…</button>`)}
@@ -2223,6 +2235,16 @@ async function aUseLogo(path){ setP('brand_lock.logo.files.primary', path); try 
 async function aRemove(kind, name){
   if (!confirm(`Move ${name} to the trash folder? (brand-assets/_trash — nothing is deleted)`)) return;
   try { await api(`/api/client/${STATE.sel}/asset/${kind}/${name}`, {method:'DELETE'}); } catch(e){ alert(e.message); }
+  await loadAssets(); paintAssets($('#view'));
+}
+async function aKeepFlagged(id){
+  if (!confirm('Use the edited photo as it is? It becomes a cleaned premises photo: batches will use it without checking it again. You can remove it later.')) return;
+  try { await api(`/api/client/${STATE.sel}/clean/keep`, {method:'POST', body:{id}}); } catch(e){ alert(e.message); }
+  await loadAssets(); paintAssets($('#view'));
+}
+async function aDiscardClean(name){
+  if (!confirm(`Remove the cleaned copy ${name}? It moves to the trash folder; the original stays.`)) return;
+  try { await api(`/api/client/${STATE.sel}/clean/discard`, {method:'POST', body:{name}}); } catch(e){ alert(e.message); }
   await loadAssets(); paintAssets($('#view'));
 }
 function aSurvey(){ run({kind:'photo-survey', gym:STATE.sel, photos:[...A.sel]}, async()=>{ await loadAssets(); paintAssets($('#view')); }); }
