@@ -20,6 +20,27 @@
 
 ---
 
+## Gym / Fitness Rules (Phase 0 niche)
+
+Fitness is a heavily restricted Meta category. Templates distilled from competitor gym ads
+(numbers 51+, tagged `swipe-sourced` in template-hook-map.md) often carry a `compliance_flags`
+marker — honor it in the copy.
+
+- **No before/after body claims** as the core message. Frame around routine, community,
+  consistency, energy, and showing up — not body-shape comparison. Add "results vary" /
+  "individual results may vary" wherever a transformation is implied.
+- **No weight-loss numbers or timelines**: never "lose 20 lbs in 30 days", "drop 2 sizes",
+  "shred fat fast". Soften to "build a routine", "feel stronger", "in your first few weeks".
+- **No health/medical outcome claims**: no "cure", "fix your metabolism", "boost immunity".
+- **No second-person body targeting**: never "Are YOU overweight?" or "Your belly fat…".
+  Speak to goals and identity ("For people who want to train consistently"), not the viewer's
+  assumed body.
+- **No guarantees**: no "guaranteed results", "you WILL get fit". Use trial/first-class framing.
+- See also `.claude/skills/swipe-intel/references/gym-compliance.md` for the distillation-time
+  guardrails that should have already abstracted these at the template level.
+
+---
+
 ## Brand-Specific Rules
 
 ### [Your Brand Name]

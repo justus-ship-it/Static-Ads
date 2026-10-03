@@ -82,7 +82,8 @@ npm install
 
 # 3. Install Firecrawl CLI (used for brand research / site scraping)
 npm install -g firecrawl-cli
-firecrawl auth          # paste your Firecrawl API key when prompted
+firecrawl login         # opens a browser to authenticate
+firecrawl --status      # verify: should report authenticated
 # Free tier works to get started — paid plan recommended for heavy use
 
 # 4. Add your API keys
