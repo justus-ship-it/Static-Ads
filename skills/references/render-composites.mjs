@@ -427,8 +427,18 @@ const withTimeout = (p, ms, what) => {
   return Promise.race([p, t]).finally(() => clearTimeout(timer));
 };
 
+/** Our headless Chrome. A start that times out (a busy machine: a batch failed with "timed out: DevTools connect"
+ *  while a test run had the load at 100, 2026-10-02) is tried once more with three times the patience, and a
+ *  start that fails never leaves its Chrome running. `LAUNCH_FAULT=1` in the environment fails the first start (tests). */
 export async function launchBrowser() {
   if (!existsSync(CHROME)) throw new Error(`Chrome not found at ${CHROME}. Set CHROME_PATH.`);
+  try { return await startBrowser({ startup: 20000, connect: 10000, fault: process.env.LAUNCH_FAULT === "1" }); }
+  catch (e) {
+    if (!/timed out|exited early|ECONNREFUSED|connection/i.test(String(e?.message || e))) throw e;
+    return startBrowser({ startup: 60000, connect: 30000 });
+  }
+}
+async function startBrowser({ startup, connect, fault = false }) {
   const profile = mkdtempSync(join(tmpdir(), "rc-chrome-"));
   const proc = spawn(CHROME, [
     "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
@@ -436,19 +446,31 @@ export async function launchBrowser() {
     "--mute-audio", "--disable-extensions", "--disable-background-networking",
     "--force-color-profile=srgb", "about:blank",
   ], { stdio: ["ignore", "ignore", "pipe"] });
-
-  const wsUrl = await withTimeout(new Promise((res, rej) => {
-    let buf = "";
-    proc.stderr.on("data", (d) => {
-      buf += d;
-      const m = buf.match(/DevTools listening on (ws:\/\/\S+)/);
-      if (m) res(m[1]);
-    });
-    proc.on("exit", (c) => rej(new Error(`Chrome exited early (code ${c})`)));
-  }), 20000, "Chrome startup");
-
-  const ws = new WebSocket(wsUrl);
-  await withTimeout(new Promise((res, rej) => { ws.addEventListener("open", res); ws.addEventListener("error", rej); }), 10000, "DevTools connect");
+  let ws = null;
+  try {
+    const wsUrl = await withTimeout(new Promise((res, rej) => {
+      let buf = "";
+      proc.stderr.on("data", (d) => {
+        buf += d;
+        const m = buf.match(/DevTools listening on (ws:\/\/\S+)/);
+        if (m) res(m[1]);
+      });
+      proc.on("exit", (c) => rej(new Error(`Chrome exited early (code ${c})`)));
+    }), startup, "Chrome startup");
+    if (fault) throw new Error("timed out: DevTools connect (a fault asked for by LAUNCH_FAULT)");
+    ws = new WebSocket(wsUrl);
+    await withTimeout(new Promise((res, rej) => { ws.addEventListener("open", res); ws.addEventListener("error", () => rej(new Error("DevTools connection failed"))); }), connect, "DevTools connect");
+    return await openBrowser(proc, ws, profile);
+  } catch (e) {
+    // Never leave a Chrome behind a failed start: it would run on with nobody to close it.
+    try { ws?.close(); } catch {}
+    try { proc.kill("SIGKILL"); } catch {}
+    for (const st of [proc.stdin, proc.stdout, proc.stderr]) { try { st?.destroy(); } catch {} }
+    try { rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+    throw e;
+  }
+}
+async function openBrowser(proc, ws, profile) {
   const cdp = new CDP(ws);
   const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });

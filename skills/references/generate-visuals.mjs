@@ -171,7 +171,8 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
         log(`✓ ${v.id}: ${basename(good.file)} passes the picture checks; its own layout did not work out (${good.failures.join("; ")}) — kept for the layouts it fits`);
       }
     }
-    tell({ id: v.id, event: "done", status: final?.status || "skipped", attempt: final?.attempt || tries.length, file: final?.file || null, own_layout_failed: final?.own_layout_failed || null, failures: final?.check?.failures || (final?.reason ? [final.reason] : []), notes: final?.check?.notes || [], calls });
+    // `result` is the photo's final record, so a caller can save it as it lands (a stopped run keeps what it finished).
+    tell({ id: v.id, event: "done", status: final?.status || "skipped", attempt: final?.attempt || tries.length, file: final?.file || null, own_layout_failed: final?.own_layout_failed || null, failures: final?.check?.failures || (final?.reason ? [final.reason] : []), notes: final?.check?.notes || [], calls, result: final });
     results.push({ ...final, attempts: tries.map(({ check, ...t }) => t) });
   }
   await compositor?.close();

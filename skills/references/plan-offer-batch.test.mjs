@@ -513,6 +513,27 @@ test("B7f a real photo's small marks are notes and the owner's kept photo is use
   assert.match(r.error, /real photo real\/r1\.png is not clean/);
 });
 
+test("B7g a run saves what it has spent and what it has finished as it goes, so one stopped part-way keeps both: at the second photo's call the first photo is already on record and both calls are counted", async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const calls = [], seen = [], base = fakes(calls), out = join(dir, "outputs", BRIEF.batch_id);
+    const generate = async (...a) => {
+      const read = (f) => { try { return JSON.parse(readFileSync(join(out, f), "utf-8")); } catch { return null; } };
+      seen.push({ spend: read("spend.json"), pictures: read("pictures.json"), pid: read("progress.json")?.pid });
+      return base.generate(...a);
+    };
+    await runBatch({ brandDir: dir, brief: BRIEF, deps: { ...base, generate, browser }, log: () => {} });
+    assert.equal(seen.length, 2);
+    assert.deepEqual(seen[0].spend, { image_calls: 1, max_calls: 4 }, "the call about to be made is already counted");
+    assert.equal(seen[0].pictures, null);
+    assert.deepEqual(seen[1].spend, { image_calls: 2, max_calls: 4 });
+    assert.deepEqual(Object.entries(seen[1].pictures).map(([id, x]) => [id, x.status]), [["g01", "passed"]], "the finished photo is on record before the next call");
+    assert.equal(seen[0].pid, process.pid, "the progress file names the process making the batch");
+    assert.deepEqual(JSON.parse(readFileSync(join(out, "spend.json"), "utf-8")), { image_calls: 2, max_calls: 4 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // ── B9 per-photo crop ─────────────────────────────────────────────────────
 
 test("B9 a collage or panels ad crops each photo where its own check said", async () => {

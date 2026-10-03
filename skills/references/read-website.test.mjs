@@ -142,6 +142,7 @@ test("W2 a whole reading of a fake gym site: pages, identity, colours, fonts, th
     assert.ok(existsSync(join(gymDir, "onboarding/website/home.png")));
     assert.deepEqual(readdirSync(join(gymDir, "onboarding")), ["website"]);
     assert.deepEqual(readdirSync(join(gymDir, "brand-assets")), ["manifest.json"], "a reading files nothing: that is the owner's accept step");
+    mkdirSync(join(gymDir, "onboarding", "website.reading-123", "photos"), { recursive: true }); // what a reading stopped part-way leaves behind
     const again = await readWebsite({ url: site, gymDir, vision, geocode: null, allowLocal: true, log: () => {} });
     assert.notEqual(again.read_at, r.read_at); assert.deepEqual(readdirSync(join(gymDir, "onboarding")), ["website"], "a new reading replaces the old one whole");
     await assert.rejects(readWebsite({ url: "http://127.0.0.1:1/", gymDir, vision, log: () => {} }), /private network|this computer/, "without the tests' allowance, a local address is refused");

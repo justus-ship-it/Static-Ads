@@ -625,6 +625,8 @@ function listBatches(gym) {
       published: (() => { const r = readJsonFile(join(out, "publish.json")), x = readJsonFile(join(out, "results.json")); return r?.campaign?.id ? { ads: Object.keys(r.ads || {}).length, done: !!r.done, status: x?.campaign?.words || "paused", leads: x?.campaign?.all_time?.leads ?? null, spend: x?.campaign?.all_time?.spend ?? null, cost_per_lead: x?.campaign?.all_time?.cost_per_lead ?? null, pulled: x?.pulled || null } : null; })(),
       review: batch ? (() => { const c = reviewState(gym, id).counts; return { kept: c.kept, excluded: c.excluded, unreviewed: c.unreviewed }; })() : null,
       running: activeRun(gym, id),
+      // A run the owner stopped before the batch was made: said on its card, with what it had spent.
+      stopped: !batch && readJsonFile(join(out, "progress.json"))?.stage === "stopped" ? { image_calls: readJsonFile(join(out, "spend.json"))?.image_calls ?? 0 } : null,
     };
   });
 }
@@ -837,6 +839,55 @@ function activeRun(gym, batch) {
   return null;
 }
 
+// ── Stopping a run ───────────────────────────────────────────────────────────
+// Every run is started as the leader of its own process group, so Stop ends the run and everything it started
+// (its headless Chrome and that browser's helpers) with one signal; a run that ignores it is killed after 4 s.
+// Creating on Meta is never stopped part-way: an object made between a call and its record would be made twice.
+const UNSTOPPABLE = new Set(["batch-publish"]);
+const TERMINAL_STAGES = new Set(["done", "failed", "stopped"]);
+function killGroup(pid, signal) {
+  try { process.kill(-pid, signal); return true; } catch {}
+  try { process.kill(pid, signal); return true; } catch { return false; }
+}
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** A batch's progress file says it was stopped (the run is gone, so nothing else writes it now). */
+function markStopped(gym, batch) {
+  const path = join(outDirOf(gym, batch), "progress.json"), prog = readJsonFile(path);
+  if (!prog || TERMINAL_STAGES.has(prog.stage)) return;
+  writeWhole(path, JSON.stringify({ ...prog, stopped_at: prog.stage, stage: "stopped", updated: new Date().toISOString() }, null, 2) + "\n");
+}
+function stopRun(run) {
+  if (!run || run.done) throw fail(409, "that run has already ended");
+  if (UNSTOPPABLE.has(run.kind)) throw fail(409, "creating on Facebook is not stopped part-way: it finishes the object it is making, and everything it makes is paused");
+  if (run.stopping) return { ok: true, stopping: true };
+  run.stopping = true;
+  run.push("■ stopping…", "meta");
+  const pid = run.child?.pid;
+  if (!pid || !killGroup(pid, "SIGTERM")) throw fail(500, "the run's process could not be reached");
+  setTimeout(() => { if (!run.done) killGroup(pid, "SIGKILL"); }, 4000).unref();
+  return { ok: true, stopping: true };
+}
+/** A batch run this panel did not start (it was restarted since) but that is still going: its process id from
+ *  progress.json, only when that process really is the batch script working on this batch's brief. */
+function orphanBatch(gym, batch) {
+  const prog = readJsonFile(join(outDirOf(gym, batch), "progress.json"));
+  if (!prog || TERMINAL_STAGES.has(prog.stage) || !Number.isInteger(prog.pid) || prog.pid <= 1 || prog.pid === process.pid || !pidAlive(prog.pid)) return null;
+  let cmd = "";
+  try { cmd = execFileSync("ps", ["-o", "command=", "-p", String(prog.pid)], { encoding: "utf-8" }); } catch { return null; }
+  return cmd.includes("plan-offer-batch.mjs") && cmd.includes(briefPath(gym, batch)) ? prog.pid : null;
+}
+async function stopBatch(gym, batch) {
+  const mine = [...runs.values()].find((r) => !r.done && r.gym === gym && r.batch === batch);
+  if (mine) return stopRun(mine);
+  const pid = orphanBatch(gym, batch);
+  if (!pid) throw fail(409, "nothing is running for this batch");
+  killGroup(pid, "SIGTERM");
+  for (let i = 0; i < 40 && pidAlive(pid); i++) { if (i === 30) killGroup(pid, "SIGKILL"); await new Promise((r) => setTimeout(r, 100)); }
+  if (pidAlive(pid)) throw fail(500, "the run did not stop");
+  markStopped(gym, batch);
+  return { ok: true, stopped: true };
+}
+
 function startRun(kind, params) {
   const spec = RUNNABLE[kind];
   if (!spec) throw new Error(`unknown command "${kind}"`);
@@ -856,7 +907,8 @@ function startRun(kind, params) {
 
   push(`$ node ${args.map((a) => a.replace(REPO_ROOT + sep, "")).join(" ")}`, "meta");
   // spawn with an argv array and no shell — nothing from the browser reaches a shell.
-  const child = spawn(process.execPath, args, { cwd: REPO_ROOT, env: process.env });
+  const child = spawn(process.execPath, args, { cwd: REPO_ROOT, env: process.env, detached: true }); // its own process group: see stopRun
+  run.child = child; run.push = push;
   child.stdout.on("data", (d) => push(d, "out"));
   child.stderr.on("data", (d) => push(d, "err"));
   child.on("error", (e) => push(`spawn failed: ${e.message}`, "err"));
@@ -865,10 +917,13 @@ function startRun(kind, params) {
       const out = outDirOf(run.gym, run.batch);
       try { if (existsSync(join(out, "review.json")) || existsSync(join(out, "selections.json"))) savePicks(run.gym, run.batch, {}); } catch (e) { push(`picks not refreshed: ${e.message}`, "err"); }
     }
+    const stopped = !!run.stopping && code !== 0;
+    if (stopped && run.gym && run.batch && ["batch", "batch-rerender"].includes(kind)) { try { markStopped(run.gym, run.batch); } catch (e) { push(`the batch was not marked stopped: ${e.message}`, "err"); } }
     run.done = true;
     run.code = code;
-    push(code === 0 ? "✓ finished" : `✗ exited with code ${code}`, "meta");
-    for (const res of run.clients) { res.write(`event: done\ndata: ${JSON.stringify({ code })}\n\n`); res.end(); }
+    run.stopped = stopped;
+    push(code === 0 ? "✓ finished" : stopped ? "■ stopped by you" : `✗ exited with code ${code}`, "meta");
+    for (const res of run.clients) { res.write(`event: done\ndata: ${JSON.stringify({ code, stopped })}\n\n`); res.end(); }
     run.clients.clear();
   });
   return run;
@@ -1274,7 +1329,7 @@ const server = createServer(async (req, res) => {
         const prog = readJsonFile(join(out, "progress.json"));
         if (prog) for (const x of Object.values(prog.photos || {})) x.url = x.file ? fileUrl(gym, resolve(out, x.file)) : null;
         const brief = readJsonFile(briefPath(gym, id));
-        return json(res, 200, { progress: prog, run: activeRun(gym, id), words: { offer: brief.offer, locations: brief.locations, audience: brief.audience ?? null }, made: existsSync(join(out, "batch.json")) });
+        return json(res, 200, { progress: prog, run: activeRun(gym, id), orphan: !activeRun(gym, id) && !!orphanBatch(gym, id), words: { offer: brief.offer, locations: brief.locations, audience: brief.audience ?? null }, made: existsSync(join(out, "batch.json")) });
       }
       // /publish — the plan for the kept ads (nothing created), the owner's settings for this batch, and what the
       // screen needs to change them: the profile's pins, the presets, the words. PUT saves settings, answers the new plan.
@@ -1346,9 +1401,18 @@ const server = createServer(async (req, res) => {
       if (id && req.method === "DELETE") {
         if (!okSlug(id) || !existsSync(briefPath(gym, id))) return json(res, 404, { error: "no such batch" });
         if (existsSync(join(brandDir(gym), "outputs", id, "batch.json"))) return json(res, 409, { error: "this batch has ads; it is not deleted from the panel" });
+        if (activeRun(gym, id) || orphanBatch(gym, id)) return json(res, 409, { error: "this batch is being made right now: stop it first" });
+        // A stopped run's photos were paid for: they are set aside, never deleted. A plan's notes alone are removed.
+        const outs = join(brandDir(gym), "outputs", id), vis = join(outs, "visuals");
+        const photos = existsSync(vis) ? readdirSync(vis).filter((f) => IMAGE_EXT.has(extname(f).toLowerCase())).length : 0;
+        let kept = null;
+        if (photos) {
+          kept = join("outputs", "_discarded", `${id}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "")}`);
+          mkdirSync(join(brandDir(gym), "outputs", "_discarded"), { recursive: true });
+          renameSync(outs, join(brandDir(gym), kept));
+        } else rmSync(outs, { recursive: true, force: true });
         rmSync(join(brandDir(gym), "batches", id), { recursive: true, force: true });
-        rmSync(join(brandDir(gym), "outputs", id), { recursive: true, force: true }); // a plan's notes, if any
-        return json(res, 200, { ok: true });
+        return json(res, 200, { ok: true, photos, kept });
       }
       if (id && req.method === "GET") {
         if (!okSlug(id) || !existsSync(briefPath(gym, id))) return json(res, 404, { error: "no such batch" });
@@ -1508,6 +1572,20 @@ const server = createServer(async (req, res) => {
         try { const b = readJsonFile(briefPath(body.gym, body.batch)); if (b?.offer) recordUse(brandDir(body.gym), b.offer); } catch {}
       }
       return json(res, 200, { id: run.id, label: run.label });
+    }
+
+    // Stop a run by its id (the log's Stop), or whatever is working on a batch (the Generating screen's).
+    const stopM = p.match(/^\/api\/run\/([A-Za-z0-9-]+)\/stop$/);
+    if (stopM && req.method === "POST") {
+      const run = runs.get(stopM[1]);
+      if (!run) return json(res, 404, { error: "no such run" });
+      try { return json(res, 200, stopRun(run)); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
+    }
+    const stopB = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/stop$/);
+    if (stopB && req.method === "POST") {
+      const [, gym, id] = stopB;
+      if (!okSlug(gym) || !okSlug(id) || !existsSync(briefPath(gym, id))) return json(res, 404, { error: "no such batch" });
+      try { return json(res, 200, await stopBatch(gym, id)); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
     }
 
     const rm = p.match(/^\/api\/run\/([A-Za-z0-9-]+)\/stream$/);

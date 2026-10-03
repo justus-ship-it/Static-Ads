@@ -25,7 +25,7 @@ import { fileURLToPath } from "url";
 import { launchBrowser } from "./render-composites.mjs";
 import { callVision } from "./check-visual.mjs";
 import { metaConfig, graphClient } from "./meta-api.mjs";
-import { checkUrl, fileKind, sizeOf, knownHashes, thumbsAndHashes, markRepeats, sortPhotos, instagramHandle, MIN_PHOTO_PX, MAX_PHOTO_BYTES } from "./read-website.mjs";
+import { checkUrl, fileKind, sizeOf, knownHashes, thumbsAndHashes, markRepeats, sortPhotos, instagramHandle, clearStaleWork, MIN_PHOTO_PX, MAX_PHOTO_BYTES } from "./read-website.mjs";
 
 export const INSTAGRAM_DIR = "onboarding/instagram";
 export const DEFAULT_POSTS = 100;
@@ -107,6 +107,7 @@ export async function readInstagram({ handle, gymDir, posts = DEFAULT_POSTS, cli
   log(`  ${list.length} post${list.length === 1 ? "" : "s"}: ${found.length} photo${found.length === 1 ? "" : "s"}, ${videos} video${videos === 1 ? "" : "s"} skipped`);
 
   const out = join(gymDir, INSTAGRAM_DIR), tmp = `${out}.reading-${Date.now()}`;
+  clearStaleWork(out);
   mkdirSync(join(tmp, "photos", "thumbs"), { recursive: true });
   const browser = given || (await launchBrowser());
   const problems = [];

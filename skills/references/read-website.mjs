@@ -412,6 +412,7 @@ export async function readWebsite({ url, gymDir, maxPages = MAX_PAGES, vision = 
   const profile = existsSync(join(gymDir, "gym-profile.json")) ? JSON.parse(readFileSync(join(gymDir, "gym-profile.json"), "utf8")) : {};
   const gym = profile.display_name || basename(gymDir);
   const out = join(gymDir, ONBOARDING_DIR), tmp = `${out}.reading-${Date.now()}`;
+  clearStaleWork(out);
   mkdirSync(join(tmp, "photos", "thumbs"), { recursive: true });
   mkdirSync(join(tmp, "logos"), { recursive: true });
   const browser = given || (await launchBrowser());
@@ -619,6 +620,11 @@ export async function onemapPlace(postal, { fetchImpl = fetch } = {}) {
   if (!r.ok) return null;
   const hit = (await r.json())?.results?.find((x) => x.POSTAL === postal) || null;
   return hit ? { lat: Number(hit.LATITUDE), lng: Number(hit.LONGITUDE), onemap_address: oneLine(hit.ADDRESS) } : null;
+}
+
+/** A reading stopped part-way (the panel's Stop) leaves its work folder beside the reading: cleared by the next one. */
+export function clearStaleWork(out) {
+  try { for (const f of readdirSync(join(out, ".."))) if (f.startsWith(`${basename(out)}.reading-`)) rmSync(join(out, "..", f), { recursive: true, force: true }); } catch {}
 }
 
 /** The reading on disk, or null. */

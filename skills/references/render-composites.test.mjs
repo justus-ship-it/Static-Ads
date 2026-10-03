@@ -1181,3 +1181,19 @@ test("R4 each line's reported letter band holds every lit pixel of its letters â
   const loc = r.report.blocks.find((b) => b.block === "location");
   assert.ok(loc.ink_lines[0].y + loc.ink_lines[0].h < loc.layout_rect.y + loc.layout_rect.h - 0.1 * loc.size, "the band stops well above the bottom of the line box");
 });
+
+test("R5 a browser start that fails is tried once more, and the failed start's Chrome is not left running", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { launchBrowser } = await import("./render-composites.mjs");
+  const mine = () => execFileSync("ps", ["-Ao", "pid=,ppid=,command="], { encoding: "utf-8" }).split("\n").filter((l) => new RegExp(`^\\s*\\d+\\s+${process.pid}\\s+.*Google Chrome --headless`).test(l)).length;
+  const before = mine();
+  process.env.LAUNCH_FAULT = "1";
+  let b;
+  try { b = await launchBrowser(); } finally { delete process.env.LAUNCH_FAULT; }
+  try {
+    const { result } = await b.cdp.send("Runtime.evaluate", { expression: "6 * 7", returnByValue: true }, b.sessionId);
+    assert.equal(result.value, 42, "the second start gave a working browser");
+    assert.equal(mine(), before + 1, "one Chrome of ours is running: the first start's was ended");
+  } finally { await b.close(); }
+  assert.equal(mine(), before, "and closing ends that one");
+});

@@ -1781,3 +1781,87 @@ test("U29 the clean-up's flagged photos: listed with the original and the edit; 
   assert.deepEqual(JSON.parse(readFileSync(join(clean, "owner-kept.json"), "utf8")), {});
   assert.deepEqual((await assets()).flagged.map((f) => f.id), ["room"]);
 });
+
+test("U30 Stop: a run is ended with everything it started (its own process group, its headless Chrome with it), and says it was stopped; a batch run from before a restart is found by its process, stopped, and its progress says so; a stopped batch's card says what it spent; discarding it sets its photos aside; nothing running is refused", async () => {
+  const { readdirSync } = await import("node:fs");
+  const ps = () => execFileSync("ps", ["-Ao", "pid=,pgid=,command="], { encoding: "utf-8" }).split("\n").map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean).map((m) => ({ pid: +m[1], pgid: +m[2], cmd: m[3] }));
+  const until = async (fn, ms = 15000) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) return null; await new Promise((r) => setTimeout(r, 150)); } };
+  // 1. A run with a browser: the website reader against a page that never answers.
+  const hang = http.createServer(() => {}); await new Promise((r) => hang.listen(0, "127.0.0.1", r));
+  const p2 = await startPanel({ READ_WEBSITE_ALLOW_LOCAL: "1" });
+  const c2 = (path, { method = "GET", body, token = p2.token } = {}) => fetch(p2.url + path, { method, headers: { "content-type": "application/json", ...(token ? { "x-panel-token": token } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  try {
+    const started = await (await c2("/api/run", { method: "POST", body: { kind: "website-read", gym: GYM, url: `http://127.0.0.1:${hang.address().port}/` } })).json();
+    assert.ok(started.id, JSON.stringify(started));
+    const stream = fetch(`${p2.url}/api/run/${started.id}/stream`).then((r) => r.text());
+    const script = await until(() => ps().find((x) => x.cmd.includes("read-website.mjs") && x.cmd.includes(join(brands, GYM))));
+    assert.ok(script, "the run's process");
+    assert.equal(script.pgid, script.pid, "it leads its own process group");
+    assert.ok(await until(() => ps().some((x) => x.pgid === script.pid && /Chrome/.test(x.cmd))), "its browser is in that group");
+    assert.equal((await c2(`/api/run/${started.id}/stop`, { method: "POST", body: {}, token: null })).status, 403);
+    assert.equal((await c2("/api/run/nope-1/stop", { method: "POST", body: {} })).status, 404);
+    assert.equal((await c2(`/api/run/${started.id}/stop`, { method: "POST", body: {} })).status, 200);
+    const text = await stream;
+    assert.match(text, /■ stopped by you/); assert.match(text, /event: done\ndata: \{"code":null,"stopped":true\}/);
+    assert.ok(await until(() => !ps().some((x) => x.pgid === script.pid)), "nothing of the run is left, the browser included");
+    assert.equal((await c2(`/api/run/${started.id}/stop`, { method: "POST", body: {} })).status, 409, "already ended");
+  } finally { await p2.stop(); hang.close(); }
+
+  // 2. A batch run this panel did not start (an earlier panel did): found by the process its progress file names.
+  const id = "stop-batch", out = join(brands, GYM, "outputs", id), briefFile = join(brands, GYM, "batches", id, "brief.json");
+  mkdirSync(join(brands, GYM, "batches", id), { recursive: true }); mkdirSync(join(out, "visuals"), { recursive: true });
+  writeFileSync(briefFile, JSON.stringify({ ...BRIEF, batch_id: id }));
+  writeFileSync(join(out, "visuals", "g01.png"), readFileSync(join(brands, GYM, "brand-assets", "facility-clean", "r1.png")));
+  writeFileSync(join(out, "spend.json"), JSON.stringify({ image_calls: 3, max_calls: 20 }));
+  const stopB = (opts) => call(`/api/client/${GYM}/batch/${id}/stop`, { method: "POST", body: {}, ...opts });
+  writeFileSync(join(out, "progress.json"), JSON.stringify({ stage: "photos", pid: process.pid, calls: 3, photos: { g01: { state: "passed" }, g02: { state: "generating" } } }));
+  assert.equal((await (await call(`/api/client/${GYM}/batch/${id}/progress`)).json()).orphan, false, "a process that is not the batch script is never taken for the run");
+  assert.equal((await stopB()).status, 409, "nothing is running for it");
+  const fake = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "plan-offer-batch.mjs", "--brief", briefFile], { detached: true, stdio: "ignore" });
+  try {
+    writeFileSync(join(out, "progress.json"), JSON.stringify({ stage: "photos", pid: fake.pid, calls: 3, photos: { g01: { state: "passed" }, g02: { state: "generating" } } }));
+    assert.ok(await until(async () => (await (await call(`/api/client/${GYM}/batch/${id}/progress`)).json()).orphan), "still going, though this panel did not start it");
+    assert.equal((await call(`/api/client/${GYM}/batch/${id}`, { method: "DELETE" })).status, 409, "not discarded while it is being made");
+    assert.equal((await stopB({ token: null })).status, 403);
+    assert.equal((await call(`/api/client/${GYM}/batch/nope/stop`, { method: "POST", body: {} })).status, 404);
+    const r = await stopB();
+    assert.equal(r.status, 200); assert.equal((await r.json()).stopped, true);
+    assert.ok(!ps().some((x) => x.pid === fake.pid && !/defunct/.test(x.cmd)), "the run is gone");
+  } finally { try { process.kill(fake.pid, "SIGKILL"); } catch {} }
+  const prog = JSON.parse(readFileSync(join(out, "progress.json"), "utf8"));
+  assert.deepEqual([prog.stage, prog.stopped_at, prog.calls], ["stopped", "photos", 3]);
+  const view = await (await call(`/api/client/${GYM}/batch/${id}/progress`)).json();
+  assert.deepEqual([view.orphan, view.run, view.progress.stage], [false, null, "stopped"]);
+  const card = (await (await call(`/api/client/${GYM}/batch-setup`)).json()).batches.find((b) => b.id === id);
+  assert.deepEqual(card.stopped, { image_calls: 3 });
+  assert.equal((await stopB()).status, 409, "stopped already");
+  // Discarding it: the brief goes, the photos it paid for are set aside.
+  const d = await (await call(`/api/client/${GYM}/batch/${id}`, { method: "DELETE" })).json();
+  assert.equal(d.photos, 1); assert.match(d.kept, /^outputs\/_discarded\/stop-batch-\d+/);
+  assert.ok(existsSync(join(brands, GYM, d.kept, "visuals", "g01.png")) && !existsSync(out) && !existsSync(briefFile));
+  assert.ok(!(await (await call(`/api/client/${GYM}/batch-setup`)).json()).batches.some((b) => b.id === id || /_discarded/.test(b.id)));
+});
+
+test("U31 the Generating screen's Stop: shown while a run is going (one from before a restart included), it ends the run and the screen says it was stopped, with what passed and what was spent", async () => {
+  const id = "stop-page", out = join(brands, GYM, "outputs", id), briefFile = join(brands, GYM, "batches", id, "brief.json");
+  mkdirSync(join(brands, GYM, "batches", id), { recursive: true }); mkdirSync(out, { recursive: true });
+  writeFileSync(briefFile, JSON.stringify({ ...BRIEF, batch_id: id }));
+  const fake = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "plan-offer-batch.mjs", "--brief", briefFile], { detached: true, stdio: "ignore" });
+  try {
+    writeFileSync(join(out, "progress.json"), JSON.stringify({ stage: "photos", pid: fake.pid, calls: 3, spent_before: 0, max_calls: 20, photos: { g01: { state: "passed", scene: "a" }, g02: { state: "generating", scene: "b" }, g03: { state: "queued", scene: "c" } } }));
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const wait = async (expr, ms = 20000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await ev(expr)) return true; await new Promise((x) => setTimeout(x, 150)); } return false; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId);
+    await cdp.send("Page.navigate", { url: `${panel.url}/?u31#/${GYM}/generating/${id}` }, sessionId); await loaded;
+    assert.ok(await wait("!!document.querySelector('#genStopBtn')"), "Stop is offered for a run this panel did not start");
+    assert.match(await ev("document.querySelector('#view').innerText"), /started before the panel was last restarted/);
+    assert.equal(await ev("document.querySelector('#genStopBtn').textContent"), "Stop");
+    await ev("window.confirm = () => true; document.querySelector('#genStopBtn').click(); true");
+    assert.ok(await wait("document.querySelector('#view h1')?.textContent === 'Stopped by you'"), await ev("document.querySelector('#view').innerText.slice(0, 300)"));
+    const text = await ev("document.querySelector('#view').innerText");
+    assert.match(text, /You stopped this run while it was generating photos\. 1 photo had passed and 3 image calls had been used; both are kept\./);
+    assert.equal(await ev("!!document.querySelector('#genStopBtn')"), false, "nothing left to stop");
+    assert.equal(JSON.parse(readFileSync(join(out, "progress.json"), "utf8")).stage, "stopped");
+  } finally { try { process.kill(fake.pid, "SIGKILL"); } catch {} }
+});

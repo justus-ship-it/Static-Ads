@@ -1158,8 +1158,8 @@ function paintList(){
   const bs = B.setup.batches, box = $('#bList'); if (!box) return;
   box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>{ const r = b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
-      <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}${b.published?` · <span class="pill ${b.published.status==='live'?'on':''}">on Facebook · ${esc(b.published.status)}${b.published.leads!=null?` · ${b.published.leads} leads${b.published.cost_per_lead!=null?` at ${b.published.cost_per_lead}`:''}`:''}</span>`:''}</div>
-      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm" onclick="bWords('${esc(b.id)}')">Change words</button>`:`<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
+      <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':b.stopped?` · <span class="pill warn">stopped · ${b.stopped.image_calls} call${b.stopped.image_calls===1?'':'s'} used</span>`:' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}${b.published?` · <span class="pill ${b.published.status==='live'?'on':''}">on Facebook · ${esc(b.published.status)}${b.published.leads!=null?` · ${b.published.leads} leads${b.published.cost_per_lead!=null?` at ${b.published.cost_per_lead}`:''}`:''}</span>`:''}</div>
+      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm" onclick="bWords('${esc(b.id)}')">Change words</button>`:`${b.stopped?`<button class="sm" onclick="openGenerating('${esc(b.id)}')">Open</button>`:''}<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
     </div></div>`; }).join('')}</div>` : '<div class="hint">No campaigns yet. Fill in the brief above and press Generate.</div>';
 }
 
@@ -1299,7 +1299,8 @@ async function bCancel(){
   if (fresh && id){ try { await api(`/api/client/${STATE.sel}/batch/${id}`, {method:'DELETE'}); B.savedId = null; } catch(e){} }
 }
 async function bDiscard(id){
-  if (!confirm(`Discard the planned batch ${id}? It has no ads yet.`)) return;
+  const b = (B.setup?.batches||[]).find(x=>x.id===id);
+  if (!confirm(b?.stopped ? `Discard the stopped batch ${id}? It has no ads yet. Photos it already made are set aside in outputs/_discarded, not deleted.` : `Discard the planned batch ${id}? It has no ads yet.`)) return;
   try {
     await api(`/api/client/${STATE.sel}/batch/${id}`, {method:'DELETE'}); if (B.savedId===id) B.savedId = null;
     B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); paintList();
@@ -1546,7 +1547,7 @@ function rvStoriesRerender(){ run({kind:'batch-stories-rerender', gym:STATE.sel,
 // run photo by photo), the calls used against the cap, then the ads. Reopening it mid-run picks the
 // run's log up again.
 const G = { timer:null, data:null };
-const STAGE_NOW = { photos:'Generating photos', fit:'Rendering ads', looks:'Rendering ads', render:'Rendering ads', gallery:'Rendering ads', done:'Done', failed:'Stopped' };
+const STAGE_NOW = { photos:'Generating photos', fit:'Rendering ads', looks:'Rendering ads', render:'Rendering ads', gallery:'Rendering ads', done:'Done', failed:'Stopped', stopped:'Stopped' };
 async function viewGenerating(v, seq=VIEW_SEQ){
   v.innerHTML = '<p class="sub">Loading…</p>';
   await genPoll(seq);
@@ -1561,35 +1562,47 @@ async function genPoll(seq){
   if (d.run && STATE.run?.id !== d.run.id) attachRun(d.run.id, d.run.label, async()=>{ B.setup = null; }, STATE.batch);
   paintGenerating();
   clearTimeout(G.timer);
-  if (d.run) G.timer = setTimeout(()=>genPoll(seq), 1500);
+  if (d.run || d.orphan) G.timer = setTimeout(()=>genPoll(seq), 1500);
+}
+/** Stop the batch's run: whatever is working on it ends, with what it finished and what it spent kept. */
+async function genStop(){
+  if (!confirm('Stop this run? Photos already finished are kept and the image calls already used still count. A photo being made right now is lost.')) return;
+  G.stopping = true; paintGenerating();
+  try { await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/stop`, { method:'POST', body:{} }); }
+  catch(e){ alert('Not stopped: ' + e.message); }
+  G.stopping = false; B.setup = null;
+  setTimeout(()=>genPoll(VIEW_SEQ), 700);
 }
 function paintGenerating(){
   const v = $('#view'), d = G.data, p = d.progress;
   const photos = Object.entries(p?.photos || {});
   const passed = photos.filter(([,x])=>x.state==='passed').length, settled = photos.filter(([,x])=>['passed','flagged','skipped','error'].includes(x.state)).length;
-  const stage = p?.stage || (d.made ? 'done' : 'photos'), done = stage==='done' && !d.run, failed = stage==='failed';
+  const stage = p?.stage || (d.made ? 'done' : 'photos'), done = stage==='done' && !d.run, failed = stage==='failed', stopped = stage==='stopped';
+  const live = !!(d.run || d.orphan), at = stopped ? (p.stopped_at || 'photos') : stage;
   const spent = (p?.spent_before||0) + (p?.calls||0);
   const RENDER = { fit:74, looks:80, render:88, gallery:96 };
   const pct = done ? 100 : stage==='photos' ? Math.round(70 * (photos.length ? settled/photos.length : 1)) : (RENDER[stage] || 70);
   const step = (label, state) => `<div class="${state}">${state==='done'?'✓ ':state==='now'?'● ':''}${label}</div>`;
-  const inPhotos = stage==='photos', inAds = !!RENDER[stage];
-  const title = failed ? 'Stopped' : done ? `Done · ${p?.ads ?? ''} ads` : inAds ? 'Rendering the ads' : `Generating · ${passed} of ${photos.length} photo${photos.length===1?'':'s'}`;
-  const stale = !d.run && p && !done && !failed;
+  const inPhotos = at==='photos', inAds = !!RENDER[at];
+  const title = failed ? 'Stopped' : stopped ? 'Stopped by you' : done ? `Done · ${p?.ads ?? ''} ads` : inAds ? 'Rendering the ads' : `Generating · ${passed} of ${photos.length} photo${photos.length===1?'':'s'}`;
+  const stale = !live && p && !done && !failed && !stopped;
   const mine = STATE.run?.batch === STATE.batch;
   const latest = mine ? STATE.run.lines.filter(l=>l.stream!=='meta').at(-1)?.line : null;
   const keepLog = $('#runbox')?.closest('details')?.open;
   v.innerHTML = `
-  <div class="steps">${step('Brief','done')}<i>›</i>${step('Photos', inPhotos&&!failed?'now':(inAds||done)?'done':'')}<i>›</i>${step('Ads', inAds?'now':done?'done':'')}<i>›</i>${step('Review', done?'now':'')}</div>
+  <div class="steps">${step('Brief','done')}<i>›</i>${step('Photos', inPhotos&&!failed&&!stopped?'now':(inAds||done)?'done':'')}<i>›</i>${step('Ads', inAds&&!stopped?'now':done?'done':'')}<i>›</i>${step('Review', done?'now':'')}</div>
   <h1>${esc(title)}</h1>
   <p class="sub">${failed ? '' : inPhotos ? 'Each photo appears as it passes its checks. ' : ''}${spent} image call${spent===1?'':'s'} used of ${p?.max_calls ?? '—'}${p?.real?` · plus ${p.real} real photo${p.real===1?'':'s'}`:''}${inAds?' · no image calls while rendering':''}</p>
   ${failed ? `<div class="msg err">${esc(p.error||'the run stopped')}</div>` : ''}
+  ${stopped ? `<div class="msg warn">You stopped this run while it was ${esc((STAGE_NOW[at]||at).toLowerCase())}. ${passed} photo${passed===1?'':'s'} had passed and ${spent} image call${spent===1?'':'s'} had been used; both are kept. Run the batch again from Create to continue (finished photos are reused, and the calls already used count toward the cap), or start a new batch.</div>` : ''}
+  ${d.orphan ? `<div class="msg">This run was started before the panel was last restarted, and it is still going. Its log is not shown here, but its progress is, and it can be stopped.</div>` : ''}
   ${stale ? `<div class="msg warn">This run is not running any more; it stopped while ${esc((STAGE_NOW[stage]||stage).toLowerCase())}. Run the batch again from Create to finish it (photos already made are reused).</div>` : ''}
   <div class="bar"><i style="width:${pct}%"></i></div>
   <div class="gen">${photos.map(([id,x])=>genCard(id,x)).join('') || '<div class="hint">No new photos in this batch: real photos only.</div>'}</div>
   <div class="row" style="margin-top:16px">
     ${d.made ? `<button class="primary" onclick="openReview('${esc(STATE.batch)}','ads')">Review ${p?.ads ?? ''} ads →</button>` : passed ? `<button class="keep" onclick="openReview('${esc(STATE.batch)}','photos')">Review the ${passed} passed photo${passed===1?'':'s'} →</button>` : ''}
-    ${!d.made && d.run ? '<span class="hint" style="margin:0">The ads render as soon as the photos are in; you can review photos meanwhile.</span>' : ''}
-    <div class="spacer"></div><button onclick="go('batch')">Back to Create</button>
+    ${!d.made && live ? '<span class="hint" style="margin:0">The ads render as soon as the photos are in; you can review photos meanwhile.</span>' : ''}
+    <div class="spacer"></div>${live ? `<button class="danger" id="genStopBtn" ${G.stopping||STATE.run?.stopping?'disabled':''} onclick="genStop()">${G.stopping?'Stopping…':'Stop'}</button>` : ''}<button onclick="go('batch')">Back to Create</button>
   </div>
   ${latest ? `<div class="latest" title="${esc(latest)}">${esc(latest)}</div>` : ''}
   ${mine ? `<details style="margin-top:10px" ${keepLog?'open':''}><summary>Full log</summary><div id="runbox"></div></details>` : ''}`;
@@ -2318,8 +2331,9 @@ function renderRunBox(){
   const r=STATE.run; if(!r){ box.innerHTML=''; return; }
   box.innerHTML=`<div class="card" style="margin-top:14px">
     <div class="row"><h2 style="margin:0">${esc(r.label)}</h2>
-      <span class="pill ${r.done&&r.code===0?'on':(r.done?'warn':'navy')}">${r.done?(r.code===0?'finished':'exit '+r.code):'running…'}</span>
+      <span class="pill ${r.done&&r.code===0?'on':(r.done?'warn':'navy')}">${r.done?(r.code===0?'finished':r.stopped?'stopped':'exit '+r.code):r.stopping?'stopping…':'running…'}</span>
       <div class="spacer"></div>
+      ${r.id && !r.done && !/^batch-publish/.test(r.id) ? `<button class="sm danger" id="runStopBtn" ${r.stopping?'disabled':''} onclick="stopRunNow()" title="end this run now; what it finished is kept">Stop</button>` : ''}
       <button class="sm" id="copyLogBtn" onclick="copyLog()" title="the whole log, command line first, ready to paste">Copy log</button>
       <button class="sm" onclick="STATE.run=null;renderRunBox()">Clear</button></div>
     <div class="log" id="log">${r.lines.map(l=>`<div class="${esc(l.stream)}">${esc(l.line)}</div>`).join('')}</div>
@@ -2337,6 +2351,14 @@ async function copyLog(){
   const b = $('#copyLogBtn'); if (b){ b.textContent = ok ? 'Copied' : 'Select and copy'; setTimeout(()=>{ if ($('#copyLogBtn')) $('#copyLogBtn').textContent = 'Copy log'; }, 1800); }
   if (!ok){ const log = $('#log'); if (log){ const range = document.createRange(); range.selectNodeContents(log); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range); } }
   return text;
+}
+/** Stop the run in the log: the run and everything it started end; what it had finished is kept. */
+async function stopRunNow(){
+  const r = STATE.run; if (!r?.id || r.done) return;
+  if (!confirm(`Stop "${r.label}"? What it has finished is kept; what it is doing right now is lost.`)) return;
+  r.stopping = true; renderRunBox();
+  try { await api(`/api/run/${r.id}/stop`, { method:'POST', body:{} }); }
+  catch(e){ r.stopping = false; renderRunBox(); alert('Not stopped: ' + e.message); }
 }
 async function run(params, after){
   STATE.run = { label:'Starting…', lines:[], done:false, code:null };
@@ -2365,7 +2387,8 @@ function attachRun(id, label, after, batch=null){
   es.addEventListener('done', async e => {
     es.close();
     if (STATE.run?.id !== id) return;
-    STATE.run.done = true; STATE.run.code = JSON.parse(e.data).code;
+    const end = JSON.parse(e.data);
+    STATE.run.done = true; STATE.run.code = end.code; STATE.run.stopped = !!end.stopped; STATE.run.stopping = false;
     // Refresh underlying data, then repaint — the log survives because it lives in STATE.
     STATE.status = await api('/api/status');
     await loadClients();

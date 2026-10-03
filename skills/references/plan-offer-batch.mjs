@@ -425,7 +425,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   log(`· plan: ${visuals.length} photo(s) to generate (${visuals.map((v) => `${v.id} for ${shortLayout(v.treatment)}: ${v.scene_id || "brief scene"}`).join("; ") || "none"}), ${(brief.real || []).length} real; ${looks} look(s) each × ${brief.locations.length} location(s); at most ${plan.max_calls} image call(s)`);
   if (dryRun) return { dryRun: true, plan, out };
   // What this run is doing, photo by photo: the panel's Generating screen reads it (progress.json).
-  const prog = progressWriter(out, { batch_id: brief.batch_id, run: renderOnly ? "render-only" : "run", started: new Date().toISOString(), stage: "photos", max_calls: plan.max_calls, attempts: plan.attempts, spent_before: 0, calls: 0, real: (brief.real || []).length, ads: null, failed: 0, error: null,
+  const prog = progressWriter(out, { batch_id: brief.batch_id, run: renderOnly ? "render-only" : "run", started: new Date().toISOString(), pid: process.pid, stage: "photos", max_calls: plan.max_calls, attempts: plan.attempts, spent_before: 0, calls: 0, real: (brief.real || []).length, ads: null, failed: 0, error: null,
     photos: Object.fromEntries(visuals.map((v) => [v.id, { scene_id: v.scene_id || null, scene: v.scene, treatment: v.treatment, state: "queued" }])) });
   try {
 
@@ -525,6 +525,11 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
           else if (e.event === "tried" && e.status !== "passed" && e.attempt < plan.attempts) prog.photo(e.id, { state: "retrying", attempt: e.attempt, failures: e.failures });
           else if (e.event === "done") prog.photo(e.id, { state: e.status, attempt: e.attempt, file: e.file, failures: e.failures, notes: e.notes, own_layout_failed: e.own_layout_failed });
           if (e.calls != null) prog.set({ calls: e.calls });
+          // Saved as it goes, so a run stopped part-way (the panel's Stop, 2026-10-02) keeps what it cost and
+          // what it finished: before, both were written only at the end, and a stopped run's calls were
+          // forgotten — the next run had its whole budget again and made the finished photos a second time.
+          if (e.calls != null) writeFileSync(spendPath, JSON.stringify({ image_calls: spentBefore + e.calls, max_calls: plan.max_calls }, null, 2) + "\n");
+          if (e.event === "done" && e.result) { prior[e.id] = record(e.result, e.result.file, e.result.check); writeFileSync(picsPath, JSON.stringify(prior, null, 2) + "\n"); }
         },
       });
       calls = rep.image_calls;
