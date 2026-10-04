@@ -1865,3 +1865,56 @@ test("U31 the Generating screen's Stop: shown while a run is going (one from bef
     assert.equal(JSON.parse(readFileSync(join(out, "progress.json"), "utf8")).stage, "stopped");
   } finally { try { process.kill(fake.pid, "SIGKILL"); } catch {} }
 });
+
+test("U32 filled in for the owner: saving a profile places a pin that has a postal code and no point (the gym's own location first, then the map), and says what could not be placed; the Publish screen reads the Singapore identity from the ad account's own ad sets — one is saved, several are offered and only one of them can be chosen, none is said with what to do", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8");
+  let adsets = [];
+  const sg = (ben, name) => ({ id: name, name, regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: ben, singapore_universal_payer: ben } });
+  let asked = 0;
+  const graph = http.createServer((req, res) => { const path = new URL(req.url, "http://x").pathname; res.writeHead(200, { "content-type": "application/json" }); if (/\/act_222000000002\/adsets$/.test(path)) { asked++; return res.end(JSON.stringify({ data: adsets })); } res.end(JSON.stringify({ data: [] })); });
+  await new Promise((r) => graph.listen(0, "127.0.0.1", r));
+  const onemap = await fakeOneMap(), main = panel;
+  await linkTestGym();
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: `http://127.0.0.1:${graph.address().port}`, ONEMAP_URL: onemap.url });
+  try {
+    // Pins: placed on save.
+    const base = JSON.parse(readFileSync(pf, "utf-8"));
+    const profile = { ...base, locations: [{ label: "Katong", postal_code: "428906", lat: 1.3073, lng: 103.9066 }], targeting_defaults: { ...base.targeting_defaults, geo: { radius_pins: [
+      { label: "Own", postal_code: "428906", radius_km: 3, callouts: ["BISHAN"] }, { label: "Mapped", postal_code: "575583", radius_km: 3, callouts: ["ANG MO KIO"] }, { label: "Lost", postal_code: "999999", radius_km: 3 }, { radius_km: 3 }, { label: "Has a point", lat: 1.35, lng: 103.85, postal_code: "575583" }] } } };
+    let r = await call(`/api/client/${GYM}`, { method: "PUT", body: profile });
+    assert.equal(r.status, 200); let j = await r.json();
+    assert.deepEqual(j.placed, ["Own: placed at the gym's location for 428906", "Mapped: placed at 2 SIN MING ROAD SIN MING PLAZA SINGAPORE 575583"]);
+    assert.equal(j.warnings.length, 2); assert.match(j.warnings[0], /Lost: postal code 999999 was not found on the map/); assert.match(j.warnings[1], /pin 4 has no place yet/);
+    const saved = JSON.parse(readFileSync(pf, "utf-8")).targeting_defaults.geo.radius_pins;
+    assert.deepEqual(saved.map((p) => [p.lat ?? null, p.lng ?? null]), [[1.3073, 103.9066], [1.352482302799053, 103.8357469735082], [null, null], [null, null], [1.35, 103.85]]);
+    assert.deepEqual(j.profile.targeting_defaults.geo.radius_pins[0].lat, 1.3073, "the page gets the placed pin back");
+    // The identity: missing from the profile, read from the account's ad sets when the Publish screen opens.
+    const strip = () => { const p = JSON.parse(readFileSync(pf, "utf-8")); p.meta_assets = { ...p.meta_assets, ad_account_id: "act_222000000002" }; delete p.meta_assets.singapore_beneficiary_id; delete p.meta_assets.singapore_payer_id; writeFileSync(pf, JSON.stringify(p)); };
+    const publish = async (opts) => (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, opts)).json();
+    const idProblem = (v) => v.plan.problems.some((x) => /no verified Singapore advertiser identity yet/.test(x));
+    strip(); adsets = [sg("519331755130652", "test"), sg("519331755130652", "Open | New-Patient Session")];
+    let v = await publish();
+    assert.deepEqual([v.identity.set.beneficiary, v.identity.set.adsets, idProblem(v)], ["519331755130652", 2, false]);
+    let m = JSON.parse(readFileSync(pf, "utf-8")).meta_assets;
+    assert.deepEqual([m.singapore_beneficiary_id, m.singapore_payer_id, m.labels.singapore_identity], ["519331755130652", "519331755130652", 'from 2 existing ad set(s), e.g. "test"']);
+    const n = asked; v = await publish();
+    assert.deepEqual([v.identity, asked], [null, n], "once it is in the profile Meta is not asked again");
+    // Several: nothing is taken; the owner chooses, and only from what the ad sets name.
+    strip(); adsets = [sg("111000111000111", "a"), sg("222000222000222", "b"), sg("222000222000222", "c")];
+    v = await publish();
+    assert.deepEqual([v.identity.set, v.identity.choices.map((c) => c.beneficiary), idProblem(v)], [undefined, ["222000222000222", "111000111000111"], true]);
+    assert.match(v.identity.reason, /2 different Singapore identities/);
+    const choose = (body, opts) => call(`/api/client/${GYM}/singapore-identity`, { method: "POST", body, ...opts });
+    assert.equal((await choose({ beneficiary: "111000111000111", payer: "111000111000111" }, { token: null })).status, 403);
+    r = await choose({ beneficiary: "999", payer: "999" }); assert.equal(r.status, 400); assert.match((await r.json()).error, /not one the account's ad sets name/);
+    assert.equal((await choose({ beneficiary: "111000111000111", payer: "111000111000111" })).status, 200);
+    assert.equal(JSON.parse(readFileSync(pf, "utf-8")).meta_assets.singapore_beneficiary_id, "111000111000111");
+    v = await publish(); assert.deepEqual([v.identity, idProblem(v)], [null, false]);
+    // None: said, with what to do; a settings save (PUT) never asks Meta.
+    strip(); adsets = [{ id: "x", name: "no identity" }];
+    v = await publish();
+    assert.deepEqual(v.identity.choices, []); assert.match(v.identity.reason, /publish one ad by hand in Ads Manager/); assert.equal(idProblem(v), true);
+    const n2 = asked; v = await publish({ method: "PUT", body: {} });
+    assert.deepEqual([v.identity, asked], [null, n2]);
+  } finally { await panel.stop(); panel = main; graph.close(); onemap.server.close(); writeFileSync(pf, before); }
+});

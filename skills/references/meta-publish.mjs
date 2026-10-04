@@ -25,7 +25,7 @@ import { join, resolve, basename } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { metaConfig, graphClient, actId, scrubTokens, MetaError } from "./meta-api.mjs";
-import { calloutGender, pinFor, pinUsable, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
+import { calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
 import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
 import { textOptionsFor, MAX_OPTIONS, fillButton } from "./draft-copy.mjs";
 
@@ -210,7 +210,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   // An empty Instagram id in the settings is a choice (none); an absent one takes the profile's.
   const page_id = m.page_id || null, instagram_user_id = dest.instagram_user_id != null ? (dest.instagram_user_id || null) : (m.instagram_user_id || null), lead_form_id = dest.lead_form_id || m.lead_form_id || null;
   for (const [k, v] of [["ad account", account], ["Page", page_id], ["lead form", lead_form_id]]) if (!v) problems.push(`no ${k} chosen (Meta link page)`);
-  if (singapore && (!m.singapore_beneficiary_id || !m.singapore_payer_id)) problems.push("no verified Singapore advertiser identity in the profile (read from the account's existing ad sets on the first publish test)");
+  if (singapore && (!m.singapore_beneficiary_id || !m.singapore_payer_id)) problems.push("no verified Singapore advertiser identity yet: the Publish screen reads it from the ad account's own ad sets (the beneficiary and payer every Singapore ad must name)");
   if (!/^https?:\/\/\S+\.\S+$/.test(profile.website || "")) problems.push("a lead ad must link to an external website and the profile has none (Identity & locations)");
   if (!instagram_user_id) warnings.push("no Instagram account chosen: Meta will run the ads under a Page-backed Instagram identity (Meta link page)");
   const abbr = profile.gym_abbr || "GYM", currency = profile.locale?.currency || "SGD";
@@ -257,8 +257,8 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
     // The pin: the owner's pick for this ad set, else the pin naming the callout, else the gym's first.
     let pin, fallback = false;
     const pickedPin = own.pin != null ? pins[own.pin] : null;
-    if (pickedPin) pin = pickedPin; else ({ pin, fallback } = pinFor(profile, callout));
-    if (!pinUsable(pin)) problems.push(`${callout}: no usable pin — a Meta place, or a point on the map (Targeting & budget)`);
+    if (pickedPin) pin = withPoint(profile, pickedPin); else ({ pin, fallback } = pinFor(profile, callout));
+    if (!pinUsable(pin)) problems.push(pin?.postal_code ? `${callout}: the pin "${pin.label || pin.postal_code}" has a postal code but no point on the map — open Targeting & budget and save, which places it, or press Find on the pin` : `${callout}: no usable pin — a Meta place, or a point on the map (Targeting & budget)`);
     else if (fallback && pins.length > 1) warnings.push(`${callout}: no pin names this callout, so the first pin (${pin.label || pin.place_name || "unnamed"}) is used`);
     const radius_km = num(own.radius_km, 1, 80) ?? pin?.radius_km ?? DEFAULT_RADIUS_KM;
     const age_min = num(own.age_min, 18, 65) ?? dem.age_min ?? 25, age_max = num(own.age_max, 18, 65) ?? dem.age_max ?? 60;
@@ -321,6 +321,28 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
     problems, warnings, ready: problems.length === 0,
   };
 }
+/**
+ * Singapore's verified advertiser identity for a gym: the beneficiary and payer the ad account's own ad sets
+ * already carry (Meta has no listing a system user can read). `choices` are the distinct identities found, the
+ * most used first. One identity → written into `profile.meta_assets` (the caller saves the profile); several or
+ * none → nothing is written and the caller says so. A profile that has one already is left alone.
+ */
+export async function findSingaporeIdentity(profile, client) {
+  const m = (profile.meta_assets ||= {});
+  if ((profile.locale?.country || "SG") !== "SG") return { needed: false, choices: [] };
+  if (m.singapore_beneficiary_id && m.singapore_payer_id) return { needed: false, have: true, choices: [] };
+  if (!m.ad_account_id) return { needed: true, choices: [], reason: "pick the gym's ad account on the Meta link page first" };
+  const choices = (await client.regulationIdentities(m.ad_account_id)).filter((x) => x.category === "SINGAPORE_UNIVERSAL" && x.beneficiary && x.payer);
+  if (choices.length === 1) { setSingaporeIdentity(profile, choices[0]); return { needed: true, set: choices[0], choices }; }
+  return { needed: true, choices, reason: choices.length ? `the account's ad sets carry ${choices.length} different Singapore identities: choose the one this gym advertises as` : "no ad set in this ad account names a Singapore beneficiary and payer yet: publish one ad by hand in Ads Manager (it asks for the verified advertiser), then open this screen again" };
+}
+export function setSingaporeIdentity(profile, c) {
+  const m = (profile.meta_assets ||= {});
+  m.singapore_beneficiary_id = String(c.beneficiary); m.singapore_payer_id = String(c.payer);
+  (m.labels ||= {}).singapore_identity = `from ${c.adsets} existing ad set(s), e.g. "${c.example}"`;
+  return profile;
+}
+
 /** The kept ads of a batch from its folder: batch.json, the picks, the Stories versions on disk. */
 export function keptAds(batchDir) {
   const batch = JSON.parse(readFileSync(join(batchDir, "batch.json"), "utf-8"));

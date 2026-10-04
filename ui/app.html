@@ -1762,6 +1762,9 @@ function paintPublish(v){
   <p class="sub">What will be created in ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account, every object paused. Every field below is this campaign's own; the profile's defaults filled it in. Nothing is created until the last button.</p>
   ${PB.error?`<div class="msg err">${esc(PB.error)}</div>`:''}
   ${P.problems.map(x=>`<div class="msg err">${esc(x)}</div>`).join('')}${P.warnings.map(x=>`<div class="msg warn">${esc(x)}</div>`).join('')}
+  ${D.identity?.set ? `<div class="msg ok">Singapore advertiser identity ${esc(D.identity.set.beneficiary)} read from the ad account's ${D.identity.set.adsets} existing ad set${D.identity.set.adsets===1?'':'s'} and saved to the profile.</div>` : ''}
+  ${D.identity && !D.identity.set ? `<div class="card" id="pbIdentity"><h3>Singapore advertiser identity</h3><p class="hint" style="margin-top:4px">Every ad delivered in Singapore names a verified advertiser as beneficiary and payer. ${esc(D.identity.reason||'')}.</p>
+    ${(D.identity.choices||[]).map(c=>`<div class="wrow"><span>Beneficiary <b class="mono">${esc(c.beneficiary)}</b> · payer <b class="mono">${esc(c.payer)}</b><br><span class="hint" style="margin:0">on ${c.adsets} ad set${c.adsets===1?'':'s'}, e.g. ${esc(c.example||'')}</span></span><div class="spacer"></div><button class="sm primary" onclick="pbIdentity('${esc(c.beneficiary)}','${esc(c.payer)}')">Use this one</button></div>`).join('')}</div>` : ''}
   <div class="card"><h3>Campaign</h3><div class="grid">
     <div style="grid-column:span 2"><label>Name</label><input value="${esc(P.campaign.name)}" onchange="pbSet('campaign.name',this.value.trim()||null)"></div>
     <div><label>Where the budget sits</label><select onchange="pbSet('campaign.level',this.value)"><option value="adset" ${P.budget.level==='adset'?'selected':''}>Ad set budget · each ad set has its own</option><option value="campaign" ${P.budget.level==='campaign'?'selected':''}>Campaign budget · Meta spreads it</option></select></div>
@@ -1917,6 +1920,11 @@ function pbSet(path, val){ setPath(PB.settings, path, val); pbSave(); }
 function pbSetAdset(callout, k, val){ ((PB.settings.adsets ||= {})[callout] ||= {})[k] = val; delete PB.estimates[callout]; pbSave(); }
 /** Save the settings (a moment after the last change) and repaint with the plan the server builds from them. */
 function pbSave(){ clearTimeout(PB.saveT); PB.saveT = setTimeout(async ()=>{ PB.busy = true; PB.error = null; try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/publish`, { method:'PUT', body: PB.settings }); PB.data = r; PB.settings = r.settings; } catch(e){ PB.error = e.message; } PB.busy = false; if (STATE.tab==='publish' && STATE.batch===PB.id) paintPublish($('#view')); }, 250); }
+async function pbIdentity(beneficiary, payer){
+  try { await api(`/api/client/${PB.gym}/singapore-identity`, { method:'POST', body:{ beneficiary, payer } }); PB.data = await api(`/api/client/${PB.gym}/batch/${PB.id}/publish`); PB.error = null; await refreshProfile(); }
+  catch(e){ PB.error = 'Not saved: ' + e.message; }
+  paintPublish($('#view'));
+}
 async function pbLoadLink(){ PB.busy = true; paintPublish($('#view')); try { const r = await api(`/api/client/${PB.gym}/meta-link`); PB.link = r.configured ? r : null; if (!r.configured) PB.error = 'The Meta link is not set up yet (Meta link page).'; } catch(e){ PB.error = e.message; } PB.busy = false; paintPublish($('#view')); }
 async function pbEstimate(callout){ const a = PB.data.plan.adsets.find(x=>x.callout===callout); if (!a) return; PB.busy = true; paintPublish($('#view'));
   const t = a.payload.targeting, base = { geo_locations: t.geo_locations, age_min: t.age_min, age_max: t.age_max, ...(t.genders ? { genders: t.genders } : {}) };
@@ -2302,14 +2310,17 @@ function saveBar(which){
     <button class="primary" id="saveBtn_${which}" ${DIRTY[which]?'':'disabled'} onclick="save('${which}')">${DIRTY[which]?'Save changes':'Saved'}</button>
     <span id="saveMsg_${which}" style="font-size:12px;color:var(--dim)"></span></div>`;
 }
+let SAVE_NOTES = { placed:[], warnings:[] };
 async function save(which){
   const btn=$('#saveBtn_'+which), msg=$('#saveMsg_'+which);
   btn.disabled=true; btn.textContent='Saving…';
   try{
-    if (which==='profile'){ const r = await api('/api/client/'+STATE.sel, {method:'PUT', body:STATE.profile}); STATE.view = r; STATE.profile = r.profile; }
+    let said = [];
+    if (which==='profile'){ const r = await api('/api/client/'+STATE.sel, {method:'PUT', body:STATE.profile}); STATE.view = r; STATE.profile = r.profile; said = [...(r.placed||[]), ...(r.warnings||[])]; SAVE_NOTES = { placed: r.placed||[], warnings: r.warnings||[] }; }
     else await api(`/api/client/${STATE.sel}/offer/${STATE.offer}`, {method:'PUT', body:STATE.offerDoc});
     DIRTY[which]=false; btn.textContent='Saved'; msg.textContent='written to disk';
     await loadClients(); render();
+    if (said.length) toast(said.join(' · '), (SAVE_NOTES.warnings||[]).length ? 'warn' : '');
   }catch(e){ btn.disabled=false; btn.textContent='Save changes'; msg.innerHTML=`<span style="color:var(--err)">${esc(e.message)}</span>`; }
 }
 

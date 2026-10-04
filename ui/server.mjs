@@ -32,12 +32,12 @@ import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
   loadClientConfig, writeResolved, scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
-  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS,
+  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint,
 } from "../skills/references/client-config.mjs";
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
-import { buildPlan, keptAds, CTA_TYPES } from "../skills/references/meta-publish.mjs";
+import { buildPlan, keptAds, CTA_TYPES, findSingaporeIdentity, setSingaporeIdentity } from "../skills/references/meta-publish.mjs";
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
 import { draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy } from "../skills/references/draft-copy.mjs";
@@ -839,6 +839,54 @@ function activeRun(gym, batch) {
   return null;
 }
 
+// ── Pins and the Singapore identity, filled in for the owner ─────────────────
+/** A Singapore postal code's point, from OneMap: { lat, lng, address } or null. */
+async function geocodePostal(postal) {
+  const r = await fetch(`${ONEMAP_URL}/api/common/elastic/search?${new URLSearchParams({ searchVal: postal, returnGeom: "Y", getAddrDetails: "Y", pageNum: "1" })}`, { headers: { accept: "application/json" } });
+  const hit = ((await r.json())?.results || []).find((x) => String(x.POSTAL) === String(postal) && Number.isFinite(Number(x.LATITUDE)) && Number.isFinite(Number(x.LONGITUDE)));
+  return hit ? { lat: Number(hit.LATITUDE), lng: Number(hit.LONGITUDE), address: String(hit.ADDRESS || "") } : null;
+}
+/**
+ * Every pin saved with a postal code and no place gets its point: the gym's own location at that postal code,
+ * else OneMap's. BFIT's pin was saved with its postal code alone (Find was never pressed) and its first publish
+ * was refused for "no usable pin" (2026-10-04). Changes `profile`; returns what was placed and what could not be.
+ */
+async function fillPinPoints(profile, { geocode = geocodePostal } = {}) {
+  const placed = [], warnings = [];
+  for (const [i, pin] of (profile?.targeting_defaults?.geo?.radius_pins || []).entries()) {
+    if (!pin || typeof pin !== "object" || pinUsable(pin)) continue;
+    const name = pin.label || `pin ${i + 1}`;
+    if (!/^\d{6}$/.test(String(pin.postal_code || ""))) { warnings.push(`${name} has no place yet: give it a postal code, or pick a Meta place`); continue; }
+    const own = withPoint(profile, pin);
+    if (pinUsable(own)) { pin.lat = own.lat; pin.lng = own.lng; placed.push(`${name}: placed at the gym's location for ${pin.postal_code}`); continue; }
+    try {
+      const g = await geocode(String(pin.postal_code));
+      if (g) { pin.lat = g.lat; pin.lng = g.lng; placed.push(`${name}: placed at ${g.address || pin.postal_code}`); }
+      else warnings.push(`${name}: postal code ${pin.postal_code} was not found on the map, so it cannot be targeted yet. Check the code, or press Find`);
+    } catch (e) { warnings.push(`${name}: the map could not be reached to place postal code ${pin.postal_code} (${e.message}). Save again, or press Find`); }
+  }
+  return { placed, warnings };
+}
+// The identity lookup is one Meta call; an account with none or several is not asked again for a minute.
+const identityMemo = new Map();
+async function singaporeIdentityFor(gym) {
+  const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
+  const m = profile.meta_assets || {};
+  if ((profile.locale?.country || "SG") !== "SG" || (m.singapore_beneficiary_id && m.singapore_payer_id)) return null;
+  const cfg = metaConfig({ gym });
+  if (!cfg.token) return { choices: [], reason: "the Meta link is not set up yet (Meta link page)" };
+  const key = `${gym}|${m.ad_account_id || ""}`, memo = identityMemo.get(key);
+  if (memo && Date.now() - memo.at < 60000) return memo.value;
+  let value;
+  try {
+    const r = await findSingaporeIdentity(profile, graphClient({ config: cfg }));
+    if (r.set) { writeWhole(pf, JSON.stringify(profile, null, 2) + "\n"); identityMemo.delete(key); return { set: r.set, choices: r.choices }; }
+    value = { choices: r.choices, reason: r.reason };
+  } catch (e) { value = { choices: [], reason: `the ad account's ad sets could not be read: ${scrubTokens(e.message)}` }; }
+  identityMemo.set(key, { at: Date.now(), value });
+  return value;
+}
+
 // ── Stopping a run ───────────────────────────────────────────────────────────
 // Every run is started as the leader of its own process group, so Stop ends the run and everything it started
 // (its headless Chrome and that browser's helpers) with one signal; a run that ignores it is killed after 4 s.
@@ -1176,6 +1224,27 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // /api/client/{gym}/singapore-identity { beneficiary, payer } — the owner's pick when the account's ad sets
+    // carry more than one: only an identity those ad sets really name is taken.
+    const sgm = p.match(/^\/api\/client\/([^/]+)\/singapore-identity$/);
+    if (sgm && req.method === "POST") {
+      const gym = sgm[1];
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const body = await readBody(req), cfg = metaConfig({ gym });
+      if (!cfg.token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+      const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
+      if (!profile.meta_assets?.ad_account_id) return json(res, 409, { error: "pick the gym's ad account on the Meta link page first" });
+      try {
+        const found = (await graphClient({ config: cfg }).regulationIdentities(profile.meta_assets.ad_account_id)).filter((x) => x.category === "SINGAPORE_UNIVERSAL");
+        const pick = found.find((x) => String(x.beneficiary) === String(body.beneficiary) && String(x.payer) === String(body.payer));
+        if (!pick) return json(res, 400, { error: "that identity is not one the account's ad sets name" });
+        setSingaporeIdentity(profile, pick);
+        writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+        identityMemo.clear();
+        return json(res, 200, { ok: true, beneficiary: pick.beneficiary, payer: pick.payer });
+      } catch (e) { return json(res, 502, { error: scrubTokens(e.message) }); }
+    }
+
     // /api/client/{gym}/clean/keep {id} · /clean/discard {name} — the owner's word on the clean-up's photos.
     const ckm = p.match(/^\/api\/client\/([^/]+)\/clean\/(keep|discard)$/);
     if (ckm && req.method === "POST") {
@@ -1344,13 +1413,15 @@ const server = createServer(async (req, res) => {
           settings = { ...body, updated: new Date().toISOString() };
           writeWhole(settingsPath, JSON.stringify(settings, null, 2) + "\n");
         }
+        // The Singapore identity: read from the account's own ad sets when the profile has none (GET only).
+        const identity = req.method === "GET" ? await singaporeIdentityFor(gym) : null;
         const profile = readJsonFile(join(dir, "gym-profile.json")) || {};
         const batch = readJsonFile(join(out, "batch.json")), presets = readPresets(dir);
         const kept = keptAds(out);
         let plan;
         try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline") }); } catch (e) { return json(res, 400, { error: e.message }); }
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, settings, thumbs, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: CTA_TYPES, words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
+        return json(res, 200, { plan, settings, thumbs, identity, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: CTA_TYPES, words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
       }
       if (what === "results" && req.method === "GET") return json(res, 200, { results: readJsonFile(join(out, "results.json")), rows: batchRows(dir, id), record: readJsonFile(join(out, "publish.json")) });
       if (what === "results/pull" && req.method === "POST") {
@@ -1453,8 +1524,10 @@ const server = createServer(async (req, res) => {
         } else {
           const { errors, warnings } = validateProfile(body, { gymDir: dir });
           if (errors.length) return json(res, 400, { error: errors[0], errors, warnings });
+          // A pin with a postal code and no point is placed here, so it can be targeted (said back to the page).
+          const pins = await fillPinPoints(body);
           writeFileSync(join(dir, "gym-profile.json"), JSON.stringify({ ...body, schema_version: Math.max(PROFILE_SCHEMA, Number(body.schema_version) || 0) }, null, 2) + "\n");
-          return json(res, 200, { ok: true, warnings, ...profileView(gym) });
+          return json(res, 200, { ok: true, warnings: [...warnings, ...pins.warnings], placed: pins.placed, ...profileView(gym) });
         }
         return json(res, 200, { ok: true });
       }

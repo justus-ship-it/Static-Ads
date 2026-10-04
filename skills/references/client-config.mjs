@@ -362,7 +362,17 @@ export function pinFor(profile, callout) {
   const pins = profile?.targeting_defaults?.geo?.radius_pins || [];
   const want = String(callout || "").trim().toUpperCase();
   const own = want && pins.find((p) => (p.callouts || []).some((c) => String(c).trim().toUpperCase() === want));
-  return own ? { pin: own, fallback: false } : pins[0] ? { pin: pins[0], fallback: true } : { pin: null, fallback: true };
+  return own ? { pin: withPoint(profile, own), fallback: false } : pins[0] ? { pin: withPoint(profile, pins[0]), fallback: true } : { pin: null, fallback: true };
+}
+/**
+ * A pin saved with a postal code and no point (the owner typed the code and never pressed Find — BFIT's first
+ * publish was refused for it, 2026-10-04) takes the point of the gym's own location at that postal code.
+ * The pin in the profile is not changed here; the panel's save writes the point in (fillPinPoints in ui/server.mjs).
+ */
+export function withPoint(profile, pin) {
+  if (!pin || pinUsable(pin) || !/^\d{6}$/.test(String(pin.postal_code || ""))) return pin;
+  const loc = (profile?.locations || []).find((l) => String(l?.postal_code || "") === String(pin.postal_code) && Number.isFinite(l.lat) && Number.isFinite(l.lng));
+  return loc ? { ...pin, lat: loc.lat, lng: loc.lng, point_from: "the gym's location at this postal code" } : pin;
 }
 /** Is this pin enough to target with: a Meta place, or a point on the map. */
 export const pinUsable = (pin) => !!pin && (/^\d{5,20}$/.test(String(pin.place_key || "")) || (Number.isFinite(pin.lat) && Number.isFinite(pin.lng)));

@@ -258,6 +258,26 @@ test("M4 one of everything (meta-publish): the payloads are built from the profi
   ] });
   const ids = await client().regulationIdentities("111");
   assert.deepEqual(ids, [{ category: "SINGAPORE_UNIVERSAL", beneficiary: "4260400000000001", payer: "4260400000000001", adsets: 2, example: "0715 Thomson | Fit Fathers" }, { category: "TAIWAN_UNIVERSAL", beneficiary: "5", payer: "6", adsets: 1, example: "old" }]);
+  // The Publish screen's own lookup: one identity is taken into the profile; several are the owner's to choose
+  // from; none is said with what to do; a profile that has one is left alone; a gym outside Singapore needs none.
+  const { findSingaporeIdentity } = await import("./meta-publish.mjs");
+  const fresh = () => ({ locale: { country: "SG" }, meta_assets: { ad_account_id: "act_111" } });
+  let p1 = fresh(), f = await findSingaporeIdentity(p1, client());
+  assert.deepEqual([f.set.beneficiary, f.choices.length, p1.meta_assets.singapore_beneficiary_id, p1.meta_assets.singapore_payer_id], ["4260400000000001", 1, "4260400000000001", "4260400000000001"], "the Taiwan identity is no Singapore choice");
+  assert.equal(p1.meta_assets.labels.singapore_identity, 'from 2 existing ad set(s), e.g. "0715 Thomson | Fit Fathers"');
+  const sg = (ben, name) => ({ id: name, name, regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: ben, singapore_universal_payer: ben } });
+  answers["act_111/adsets"] = () => ({ data: [sg("111", "a"), sg("222", "b"), sg("222", "c")] });
+  p1 = fresh(); f = await findSingaporeIdentity(p1, client());
+  assert.deepEqual([f.set, f.choices.map((c) => c.beneficiary), p1.meta_assets.singapore_beneficiary_id], [undefined, ["222", "111"], undefined], "several: nothing is taken, the most used first");
+  assert.match(f.reason, /2 different Singapore identities/);
+  answers["act_111/adsets"] = () => ({ data: [{ id: "4", name: "none" }] });
+  f = await findSingaporeIdentity(fresh(), client());
+  assert.deepEqual(f.choices, []); assert.match(f.reason, /publish one ad by hand in Ads Manager/);
+  let calls = 0; answers["act_111/adsets"] = () => { calls++; return { data: [] }; };
+  assert.deepEqual(await findSingaporeIdentity({ locale: { country: "SG" }, meta_assets: { ad_account_id: "act_111", singapore_beneficiary_id: "9", singapore_payer_id: "9" } }, client()), { needed: false, have: true, choices: [] });
+  assert.equal((await findSingaporeIdentity({ locale: { country: "MY" }, meta_assets: { ad_account_id: "act_111" } }, client())).needed, false);
+  assert.match((await findSingaporeIdentity({ locale: { country: "SG" }, meta_assets: {} }, client())).reason, /pick the gym's ad account/);
+  assert.equal(calls, 0, "none of those asked Meta anything");
   delete answers["act_111/adsets"];
 });
 
@@ -404,7 +424,13 @@ test("M6 the publish plan for a batch: the kept ads only (excluded ads and photo
     const many = buildPlan({ profile, batch, kept: Array.from({ length: ADS_PER_ADSET_CAP + 1 }, (_, i) => ({ folder: `f${i}`, file: `f${i}/1x1/a.png`, location: "BISHAN", words: ads[0].words, story: null })), presets });
     assert.ok(many.problems.some((x) => /51 ads in one ad set; Meta allows 50/.test(x)));
     const pinless = buildPlan({ profile: { ...profile, targeting_defaults: { geo: { radius_pins: [{ label: "code only", postal_code: "575583" }] } } }, batch, kept, presets });
-    assert.ok(pinless.problems.some((x) => /BISHAN: no usable pin/.test(x)));
+    assert.ok(pinless.problems.some((x) => /BISHAN: the pin "code only" has a postal code but no point on the map — open Targeting & budget and save/.test(x)), pinless.problems.join(" | "));
+    const bare = buildPlan({ profile: { ...profile, targeting_defaults: { geo: { radius_pins: [{ label: "nothing" }] } } }, batch, kept, presets });
+    assert.ok(bare.problems.some((x) => /BISHAN: no usable pin/.test(x)));
+    // The same pin, with the gym's own location at that postal code: placed from it, no problem (BFIT, 2026-10-04).
+    const placed = buildPlan({ profile: { ...profile, locations: [{ label: "Sin Ming", postal_code: "575583", lat: 1.3524, lng: 103.8357 }], targeting_defaults: { geo: { radius_pins: [{ label: "code only", postal_code: "575583", radius_km: 3 }] } } }, batch, kept, presets });
+    assert.ok(!placed.problems.some((x) => /pin/.test(x)), placed.problems.join(" | "));
+    assert.deepEqual(placed.adsets[0].payload.targeting.geo_locations.custom_locations.map((c) => [c.latitude, c.longitude, c.radius]), [[1.3524, 103.8357, 3]]);
     assert.ok(Object.keys(CTA_TYPES).includes("SIGN_UP") && campaignWords(profile, { offer: "X" }, { cta: "NOPE" }).cta === "SIGN_UP");
     assert.equal(creativeFor({ name: "n", page_id: "77", website: "https://x.sg", form_id: "1", words: { message: "m", headline: "h", description: "d", cta: "SIGN_UP" }, story: false }).object_story_spec.instagram_user_id, undefined);
   } finally { rmSync(d, { recursive: true, force: true }); }

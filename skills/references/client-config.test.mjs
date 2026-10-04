@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES, IMAGE_MODELS, imageModelFor } from "./client-config.mjs";
+import { validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES, IMAGE_MODELS, imageModelFor } from "./client-config.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems, MAX_WORDINGS } from "./ad-wordings.mjs";
 
@@ -257,4 +257,18 @@ test("P7 the image model per gym: Pro by default (the Flash vs Pro test, 2026-09
   assert.equal(IMAGE_MODELS.pro, "gemini-3-pro-image-preview");
   const base = PROFILE_STARTER("x-gym");
   { assert.ok(validateProfile({ ...base, creative_defaults: { ...(base.creative_defaults || {}), image_model: "gpt" } }).errors.some((e) => /image_model must be one of pro, flash/.test(e))); assert.ok(!validateProfile({ ...base, creative_defaults: { ...(base.creative_defaults || {}), image_model: "flash" } }).errors.some((e) => /image_model/.test(e))); }
+});
+
+test("P8 a pin saved with a postal code and no point takes the point of the gym's own location at that postal code: usable for the plan, the profile's pin unchanged; no location there, or no postal code, leaves it as it is; a pin with a place or a point is never touched", () => {
+  const profile = { locations: [{ label: "Katong", postal_code: "428906", lat: 1.3073, lng: 103.9066 }, { label: "No point", postal_code: "111111" }],
+    targeting_defaults: { geo: { radius_pins: [{ label: "BFIT Katong", postal_code: "428906", radius_km: 3, callouts: ["KATONG"] }, { label: "Elsewhere", postal_code: "575583" }, { label: "No point", postal_code: "111111" }, { label: "Place", place_key: "107327800879305", postal_code: "428906" }, { label: "Point", lat: 1.35, lng: 103.85, postal_code: "428906" }, { label: "Nothing" }] } } };
+  const pins = profile.targeting_defaults.geo.radius_pins;
+  assert.equal(pinUsable(pins[0]), false);
+  const p = withPoint(profile, pins[0]);
+  assert.deepEqual([p.lat, p.lng, pinUsable(p), p.point_from], [1.3073, 103.9066, true, "the gym's location at this postal code"]);
+  assert.equal(pins[0].lat, undefined, "the profile's own pin is not changed");
+  assert.deepEqual([1, 2, 5].map((i) => pinUsable(withPoint(profile, pins[i]))), [false, false, false]);
+  assert.equal(withPoint(profile, pins[3]), pins[3]); assert.equal(withPoint(profile, pins[4]), pins[4]); assert.equal(withPoint(profile, null), null);
+  assert.deepEqual([pinFor(profile, "KATONG").pin.lat, pinFor(profile, "KATONG").fallback], [1.3073, false]);
+  assert.deepEqual([pinFor(profile, "BEDOK").pin.lat, pinFor(profile, "BEDOK").fallback], [1.3073, true], "the first pin, placed the same way");
 });
