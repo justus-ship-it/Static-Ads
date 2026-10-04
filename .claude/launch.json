@@ -4,7 +4,16 @@
     {
       "name": "gym-ads-ui",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["ui/server.mjs", "--port", "4310"],
+      "runtimeArgs": [
+        "ui/server.mjs",
+        "--port",
+        "4310"
+      ],
+      "port": 4310
+    },
+    {
+      "name": "gym-ads-ui-attach",
+      "url": "http://localhost:4310",
       "port": 4310
     }
   ]
