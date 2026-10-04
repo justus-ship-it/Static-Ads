@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buttonPlaceholder, areaPlaceholder, fillButton, copyRules, copyProblems, referencesFor, addCopyRef, editCopyRef, buildDraftPrompt, draftCopy, readCopy, keptCopies, keepRecommended, recommend, judgeDrafts, addCopy, decideCopy, textOptionsFor, ALWAYS_NEVER, MAX_OPTIONS, offerDocFor, analyseCopy, ANGLES } from "./draft-copy.mjs";
+import { needsLayout, breakBySentence, layoutTexts, relayoutCopies, flatCopies, buildLayoutPrompt, buttonPlaceholder, areaPlaceholder, fillButton, copyRules, copyProblems, referencesFor, addCopyRef, editCopyRef, buildDraftPrompt, draftCopy, readCopy, keptCopies, keepRecommended, recommend, judgeDrafts, addCopy, decideCopy, textOptionsFor, ALWAYS_NEVER, MAX_OPTIONS, offerDocFor, analyseCopy, ANGLES } from "./draft-copy.mjs";
 
 const OFFER = "12 Week Total Body Reset";
 const profile = { display_name: "Sculpt Society", brand_lock: { voice: { adjectives: ["direct", "coach-led"], never: ["hype", "fitspo language", "complimentary session"] } } };
@@ -96,7 +96,7 @@ test("C3 drafting from the library: the prompt carries the skeletons of the kind
       return { drafts: [] }; };
     const r = await draftCopy({ brandDir: d, batchDir: out, offer: OFFER, audience: "LADIES WANTED", locations: ["BISHAN", "ANG MO KIO"], count: 6, skeletons, ask });
     assert.deepEqual([r.added.length, r.calls, r.skeletons, r.total, r.dropped.map((x) => x.why.split("; ")[0])], [6, 3, 3, 6, ["reads like one already here", 'says "free trial"', "unknown placeholder {COACH} (a draft may carry {AREA} and {BUTTON} only)"]], "two draft calls and one judge call");
-    assert.match(prompts[0], /SKELETONS[^]*1\. \[call-out\] \{AUDIENCE\} in \{AREA\}[^]*3\. \[benefits\]/); assert.match(prompts[0], /BISHAN, ANG MO KIO[^]*\{AREA\}/); assert.match(prompts[0], /\{BUTTON\}[^]*"Sign up"/); assert.match(prompts[0], /Sculpt Society/);
+    assert.match(prompts[0], /SKELETONS[^]*--- SKELETON 1 \[call-out\]\n\{AUDIENCE\} in \{AREA\}[^]*--- SKELETON 3 \[benefits\]/); assert.match(prompts[0], /BISHAN, ANG MO KIO[^]*\{AREA\}/); assert.match(prompts[0], /\{BUTTON\}[^]*"Sign up"/); assert.match(prompts[0], /Sculpt Society/);
     assert.doesNotMatch(prompts[0], /Katong/, "the gym's own past ads are not in the prompt"); assert.doesNotMatch(prompts[0], /REFERENCES/);
     assert.match(prompts[1], /ALREADY WRITTEN.*if the plan never stuck/, "the second call is told what exists");
     assert.deepEqual(schemas[0].properties.drafts.items.properties.angle.enum, ANGLES); assert.ok(schemas[2].properties.ratings, "the third call is the judge");
@@ -181,4 +181,58 @@ test("C7 the recommendation is diversity first, then clarity: the clearest of ea
   assert.deepEqual(recommend(ds, ratings, 5).map((p) => [p.rank, p.id]), [[1, "b"], [2, "c"], [3, "e"], [4, "f"], [5, "d"]], "one per angle (b, c, e, f) before the second benefits one; g unrated is out; a (6) loses to d (8)");
   assert.deepEqual(recommend(ds.slice(0, 2), ratings, 5).map((p) => p.id), ["b", "a"]);
   assert.deepEqual(recommend(ds, {}, 5), []);
+});
+
+test("C8 line breaks: the prompt shows each skeleton laid out as it is and asks for that layout; a primary text that still comes as one block gets its line breaks from one more call, used only when nothing but the spacing changed (else by rule, sentence by sentence); a batch's existing one-block texts are repaired the same way, ids and status kept; an area name with a dot or brackets becomes {AREA}", async () => {
+  const d = gym(), out = join(d, "outputs", "b8");
+  const skeletons = [{ id: "lib-1", kind: "copy", angle: "call-out", text: "{AUDIENCE} in {AREA}, read this.\n\nOur {OFFER} gives you:\n✔ A coach\n✔ A plan\n\n\n\nTap {BUTTON}." }];
+  try {
+    // The prompt: the skeleton with its own line breaks (never " / "), and the layout asked for; headlines stay one line each.
+    const { prompt } = buildDraftPrompt({ profile: { display_name: "Test Gym" }, kind: "copy", offer: OFFER, audience: "LADIES", locations: ["BISHAN"], rules: copyRules({}, null), skeletons, count: 2 });
+    assert.ok(prompt.includes("--- SKELETON 1 [call-out]\n{AUDIENCE} in {AREA}, read this.\n\nOur {OFFER} gives you:\n✔ A coach\n✔ A plan\n\nTap {BUTTON}."), prompt);
+    assert.match(prompt, /LAYOUT: set each primary text out the way its skeleton is set out above/);
+    assert.ok(!buildDraftPrompt({ profile: {}, kind: "headline", offer: OFFER, audience: null, locations: [], rules: copyRules({}, null), skeletons: [{ id: "h", kind: "headline", angle: "pain", text: "A\nB" }], count: 2 }).prompt.includes("LAYOUT:"));
+    // What counts as one block, and the rule's own breaks.
+    const flat = `LADIES in {AREA}, your time is now. Our ${OFFER} at Test Gym helps you build strength and feel confident without crazy diets. ✅ Get leaner and stronger. ✅ Eat better with no guilt. ✅ Stay consistent with a coach beside you. Tap {BUTTON} to get started.`;
+    assert.deepEqual([needsLayout(flat), needsLayout("Short one. Tap {BUTTON}."), needsLayout(flat.replace(". ✅", ".\n✅")), needsLayout(null)], [true, false, false, false]);
+    const byRule = breakBySentence(flat);
+    assert.equal(byRule.replace(/\s+/g, ""), flat.replace(/\s+/g, ""), "only spacing changes");
+    assert.ok(byRule.startsWith("LADIES in {AREA}, your time is now.\n\nOur ") && byRule.split("\n\n").length >= 3);
+    // The model's breaks are taken when the words are untouched; an answer that changes a word is not.
+    const good = flat.replace("now. Our", "now.\n\nOur").replace(/ ✅/g, "\n✅").replace(" Tap", "\n\nTap");
+    let asked = [];
+    let r = await layoutTexts([flat, flat], { ask: async (img, text, schema) => { asked.push(text); assert.equal(img, null); return { texts: [{ index: 0, text: good }, { index: 1, text: good.replace("confident", "amazing") }] }; } });
+    assert.deepEqual(r.map((x) => x.how), ["model", "rule"]); assert.equal(r[0].text, good); assert.equal(r[1].text, byRule);
+    assert.ok(asked[0].includes("TEXT 0\n" + flat) && /You may only turn spaces into line breaks/.test(asked[0]));
+    assert.deepEqual((await layoutTexts([flat], { ask: async () => { throw new Error("busy"); } })).map((x) => x.how), ["rule"], "a model that cannot be reached still leaves it readable");
+    assert.deepEqual((await layoutTexts([flat], { ask: async () => ({ texts: [{ index: 0, text: flat }] }) })).map((x) => x.how), ["rule"], "the same block back is no layout");
+    // Drafting: the block is laid out before it is stored and judged (one extra call, only when needed).
+    const kinds = [];
+    const ask = async (img, text, schema) => {
+      if (schema.properties.ratings) { kinds.push("judge"); assert.ok(text.includes("now.\n\nOur"), "the judge reads the laid-out text"); return { ratings: [...text.matchAll(/^ID (c-[0-9a-f]+)$/gm)].map((x) => ({ id: x[1], clarity: 8, why: "plain" })) }; }
+      if (schema.properties.texts) { kinds.push("layout"); return { texts: [{ index: 0, text: good }] }; }
+      kinds.push("draft"); return { drafts: [{ message: flat, angle: "call-out", from: 1 }, { message: `Ladies in {AREA}, start small.\n\nThe ${OFFER} gives you a coach.\n\nTap {BUTTON}.`, angle: "beginner", from: 1 }] };
+    };
+    mkdirSync(out, { recursive: true });
+    const res = await draftCopy({ brandDir: d, batchDir: out, kind: "copy", offer: OFFER, audience: "LADIES", locations: ["BISHAN"], count: 2, skeletons, ask });
+    assert.deepEqual([kinds, res.calls, res.added.length], [["draft", "layout", "judge"], 3, 2]);
+    let stored = readCopy(out).drafts;
+    assert.equal(stored[0].message, good); assert.ok(stored.every((x) => x.message.includes("\n")));
+    assert.deepEqual(flatCopies(out), []);
+    // Repairing a batch drafted before: drafts and kept ones, never an excluded one; nothing else about them changes.
+    const out2 = join(d, "outputs", "b9"); mkdirSync(out2, { recursive: true });
+    const old = (id, status, message) => ({ id, kind: "copy", message, headline: "", description: "", angle: "pain", from: "lib-1", source: "agent", status, drafted: "2026-10-04T00:00:00.000Z", edited: null, recommended: id === "c-1" ? { rank: 1, why: "x", clarity: 9 } : null, ...(status === "keep" ? { kept_at: "2026-10-04T01:00:00.000Z" } : {}) });
+    writeFileSync(join(out2, "copy.json"), JSON.stringify({ drafts: [old("c-1", "keep", flat), old("c-2", "draft", flat + " Again."), old("c-3", "exclude", flat + " No."), old("c-4", "draft", good), { id: "h-1", kind: "headline", message: "", headline: "x".repeat(40), description: "", status: "draft" }] }));
+    assert.deepEqual(flatCopies(out2).map((x) => x.id), ["c-1", "c-2"]);
+    let calls = 0;
+    const fix = await relayoutCopies(out2, { ask: async (img, text) => { calls++; assert.ok(!text.includes(" No.") && !text.includes("x".repeat(40))); return { texts: [{ index: 0, text: good }] }; } });
+    assert.deepEqual([fix, calls], [{ fixed: 2, by_model: 1, by_rule: 1, calls: 1 }, 1]);
+    stored = readCopy(out2).drafts;
+    assert.deepEqual(stored.map((x) => [x.id, x.status, x.message.includes("\n")]), [["c-1", "keep", true], ["c-2", "draft", true], ["c-3", "exclude", false], ["c-4", "draft", true], ["h-1", "draft", false]]);
+    assert.deepEqual([stored[0].recommended.rank, stored[0].kept_at, stored[0].message], [1, "2026-10-04T01:00:00.000Z", good]);
+    assert.deepEqual(await relayoutCopies(out2, { ask: async () => { throw new Error("no call when nothing is left to do"); } }), { fixed: 0, by_model: 0, by_rule: 0, calls: 0 });
+    // The area's name is matched literally, whatever characters it holds (the escape was once corrupted in this file).
+    assert.equal(areaPlaceholder("Hello ST. GEORGE (EAST) ladies", ["ST. GEORGE (EAST)"]), "Hello {AREA} ladies");
+    assert.equal(areaPlaceholder("Hello STX GEORGE ladies", ["ST. GEORGE"]), "Hello STX GEORGE ladies", "a dot is a dot, not any character");
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });

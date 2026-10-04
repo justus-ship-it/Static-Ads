@@ -48,10 +48,45 @@ export const buttonPlaceholder = (v) => (typeof v === "string" ? v.replace(/\{BU
  */
 export function areaPlaceholder(v, locations = []) {
   if (typeof v !== "string" || !v || !locations?.length) return v;
-  const named = locations.filter((l) => l && new RegExp(`(^|[^a-z])${String(l).replace(/[.*+?^${}()|[\]\\]/g, "\\/** {BUTTON} as the chosen call to action's name; any other placeholder stays as it is. */")}([^a-z]|$)`, "i").test(v));
+  const named = locations.filter((l) => l && new RegExp(`(^|[^a-z])${String(l).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`, "i").test(v));
   if (named.length !== 1) return v;
-  return v.replace(new RegExp(`(^|[^a-z])(${String(named[0]).replace(/[.*+?^${}()|[\]\\]/g, "\\/** {BUTTON} as the chosen call to action's name; any other placeholder stays as it is. */")})([^a-z]|$)`, "gi"), "$1{AREA}$3");
+  return v.replace(new RegExp(`(^|[^a-z])(${String(named[0]).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})([^a-z]|$)`, "gi"), "$1{AREA}$3");
 }
+// ── line breaks ───────────────────────────────────────────────────────────────
+/** A primary text that came as one block: long, and not a single line break in it. */
+export const needsLayout = (message) => typeof message === "string" && message.length >= 220 && !message.includes("\n");
+const squash = (t) => String(t || "").replace(/\s+/g, "");
+/** Line breaks by rule, when the model's cannot be used: the opening sentence alone, then two sentences a
+ *  paragraph. Only the spaces between sentences change. */
+export function breakBySentence(text) {
+  const parts = String(text || "").trim().split(/(?<=[.!?…])\s+(?=\S)/);
+  if (parts.length < 3) return String(text || "").trim();
+  const paras = [parts[0]];
+  for (let i = 1; i < parts.length; i += 2) paras.push(parts.slice(i, i + 2).join(" "));
+  return paras.join("\n\n");
+}
+const LAYOUT_SCHEMA = { type: "OBJECT", properties: { texts: { type: "ARRAY", items: { type: "OBJECT", properties: { index: { type: "INTEGER" }, text: { type: "STRING" } }, required: ["index", "text"] } } }, required: ["texts"] };
+export const buildLayoutPrompt = (texts) => [
+  `Each advert text below was written as one block. Give each one back with line breaks put in, so it reads well on a phone: short paragraphs with an empty line between them, and each item of a list (a line starting with a tick, a bullet, an emoji or a number) on a line of its own.`,
+  `Change NOTHING else: every word, emoji, punctuation mark and placeholder in braces stays exactly as it is, in the same order. You may only turn spaces into line breaks.`,
+  texts.map((t, i) => `TEXT ${i}\n${t}`).join("\n\n"),
+].join("\n\n");
+/**
+ * Line breaks for texts that came as one block. One text call for them all; an answer is used only when it is
+ * the same text with nothing but the spacing changed (checked here, character by character with all spacing
+ * removed) — otherwise that text is broken by rule (breakBySentence). Returns the texts in order, each with
+ * `how`: "model" | "rule".
+ */
+export async function layoutTexts(texts, { ask = callVision, model = COPY_MODEL } = {}) {
+  let answer = null;
+  try { answer = await ask(null, buildLayoutPrompt(texts), LAYOUT_SCHEMA, { model }); } catch {}
+  return texts.map((t, i) => {
+    const got = (answer?.texts || []).find((x) => x.index === i)?.text;
+    const laid = typeof got === "string" ? got.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim() : "";
+    return laid.includes("\n") && squash(laid) === squash(t) ? { text: laid, how: "model" } : { text: breakBySentence(t), how: "rule" };
+  });
+}
+
 /** {BUTTON} as the chosen call to action's name; any other placeholder stays as it is. */
 export const fillButton = (v, label) => (typeof v === "string" && label ? v.replace(/\{BUTTON\}/g, label) : v);
 const idOf = (d) => createHash("sha256").update(`${d.message}\n${d.headline}\n${d.description}`).digest("hex").slice(0, 10);
@@ -165,7 +200,10 @@ export function buildDraftPrompt({ profile, kind = "copy", offer, audience, loca
     `THE OFFER: "${offer}". ${kind === "headline" ? "Where a headline names the offer, name it exactly like that; a headline may instead carry the promise." : "Name it exactly like that in every primary text."} Never invent what it includes, its price, its length beyond the name, or any guarantee. Where the gym is named, name it "${gym}".`,
     audience ? `WHO IT IS FOR: the ad says "${audience}". Speak to them.` : `WHO IT IS FOR: everyone near the gym.`,
     locations?.length ? `WHERE: the ads run in ${locations.join(", ")}, one ad set per area. Where you address the reader by area, write the placeholder {AREA} (it becomes each ad set's own area), as in "Ladies in {AREA}". Never write an area's name yourself.` : "",
-    `SKELETONS - ${what} that have worked, with the parts that change as placeholders in braces. Each one you write follows ONE skeleton: its opening move, its line pattern and list style, its contrasts, its rhythm and the way it closes - with new words for this gym, this offer and this audience. Never copy a skeleton's sentences, never blend two, and say which skeleton (its number) each one follows:\n${skeletons.map((s, i) => `${i + 1}. [${s.angle || "-"}] ${String(s.text).replace(/\n+/g, " / ").slice(0, kind === "headline" ? 200 : 900)}`).join("\n")}`,
+    `SKELETONS - ${what} that have worked, with the parts that change as placeholders in braces. Each one you write follows ONE skeleton: its opening move, its line pattern and list style, its contrasts, its rhythm and the way it closes - with new words for this gym, this offer and this audience. Never copy a skeleton's sentences, never blend two, and say which skeleton (its number) each one follows:\n${skeletons.map((s, i) => (kind === "headline" ? `${i + 1}. [${s.angle || "-"}] ${String(s.text).replace(/\n+/g, " / ").slice(0, 200)}` : `--- SKELETON ${i + 1} [${s.angle || "-"}]\n${String(s.text).replace(/\n{3,}/g, "\n\n").slice(0, 900)}`)).join(kind === "headline" ? "\n" : "\n\n")}`,
+    // The layout is part of what worked: shown flattened (" / " for every line break) and never asked for, the model
+    // wrote one block a draft (F45 Lower Peirce 2026-09-28, BFIT 2026-10-04).
+    kind === "headline" ? "" : `LAYOUT: set each primary text out the way its skeleton is set out above - short paragraphs with an empty line between them, and each list item on a line of its own. Put real line breaks in the text. Never write a primary text as one block.`,
     `VOICE: ${rules.adjectives.length ? rules.adjectives.join(", ") : "direct, warm, confident"}. Plain Singapore English. Short lines. No hype.`,
     `NEVER write any of these words or ideas: ${rules.never.join("; ")}. No prices. No before-and-after claims. No weight-loss numbers. No em dashes or en dashes; use a plain hyphen. No emoji in headlines. No other placeholder than {AREA} and {BUTTON}.`,
     rules.must_say.length ? `ALWAYS work in: ${rules.must_say.join("; ")}.` : "",
@@ -221,6 +259,13 @@ export async function draftCopy({ brandDir, batchDir, kind = "copy", offer, audi
     }
     log(`  ${kind}: ${added.length} kept of the model's ${answer?.drafts?.length || 0}${dropped.length ? `, ${dropped.length} dropped` : ""} (round ${round + 1})`);
   }
+  // A primary text that still came as one block gets its line breaks here (one call for them all, words untouched).
+  const flat = kind === "copy" ? added.filter((d) => needsLayout(d.message)) : [];
+  if (flat.length) {
+    const laid = await layoutTexts(flat.map((d) => d.message), { ask, model }); calls++;
+    flat.forEach((d, i) => { d.message = laid[i].text; });
+    log(`  ${kind}: ${flat.length} came as one block; line breaks put in (${laid.filter((x) => x.how === "model").length} by the model, ${laid.filter((x) => x.how === "rule").length} by rule)`);
+  }
   data.drafted = new Date().toISOString(); data.offer = offer; data.audience = audience; data.locations = locations;
   writeCopy(batchDir, data);
   let recommended = [];
@@ -229,6 +274,22 @@ export async function draftCopy({ brandDir, batchDir, kind = "copy", offer, audi
     catch (e) { log(`  ${kind}: the drafts could not be judged (${e.message})`); }
   }
   return { added, dropped, calls, skeletons: skel.length, total: data.drafts.length, recommended };
+}
+
+/** How many of a batch's primary texts (not excluded) came as one block. */
+export const flatCopies = (batchDir) => readCopy(batchDir).drafts.filter((d) => kindOf(d) === "copy" && d.status !== "exclude" && needsLayout(d.message));
+/**
+ * Put line breaks into a batch's primary texts that came as one block (drafts and kept ones; never an excluded
+ * one). Words untouched (layoutTexts verifies it); ids, status, the judge's rating and the order kept all stay.
+ * One text call, none when there is nothing to do.
+ */
+export async function relayoutCopies(batchDir, { ask = callVision, model = COPY_MODEL } = {}) {
+  const data = readCopy(batchDir), flat = data.drafts.filter((d) => kindOf(d) === "copy" && d.status !== "exclude" && needsLayout(d.message));
+  if (!flat.length) return { fixed: 0, by_model: 0, by_rule: 0, calls: 0 };
+  const laid = await layoutTexts(flat.map((d) => d.message), { ask, model });
+  flat.forEach((d, i) => { d.message = laid[i].text; d.laid_out = new Date().toISOString(); });
+  writeCopy(batchDir, data);
+  return { fixed: flat.length, by_model: laid.filter((x) => x.how === "model").length, by_rule: laid.filter((x) => x.how === "rule").length, calls: 1 };
 }
 
 // ── the judge and the recommendation ─────────────────────────────────────────

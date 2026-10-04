@@ -1815,6 +1815,7 @@ function copyCard(D, P, sw){
     <p class="hint">${isH
       ? `The headline beside each ad, its own list: Meta combines each ad's ${nh} headline${nh===1?'':'s'} with its text options. Drafted from the copy library's ${have||0} headline skeleton${have===1?'':'s'}, judged for clarity, the top five recommended. Until a headline is kept, the ads carry the copies' own headlines or a placeholder.`
       : `The primary text beside each ad. Drafted from the copy library's ${have||0} copy skeleton${have===1?'':'s'} (their structure and voice, never a gym's own past ads), the offer's exact words, the audience and the areas; the rules are checked in code: the offer named exactly, nothing from the never-list, no price, no free trial, no before-and-after. A judge rates each draft's clarity for the audience and the agent recommends five, one per angle first. Where a copy addresses the area it says {AREA} (each ad set's own area, shown here as ${esc(area)}); where it names the button it says {BUTTON}, which becomes the button chosen above ("${esc(btn)}"). Each ad carries up to ${n} of the kept copies as Meta text options; Meta reports which text wins.`}</p>
+    ${!isH && (C.flat||[]).length?`<div class="msg warn" id="cpFlat">${C.flat.length} primary text${C.flat.length===1?'':'s'} came as one block, with no line breaks. <button class="sm" style="margin-left:8px" ${PB.cpbusy?'disabled':''} onclick="cpLayout()">Add line breaks</button> <span class="hint" style="margin:0">One text call; only the spacing changes, never a word.</span></div>`:''}
     ${recs.length?`<div class="row" style="margin:6px 0;gap:8px"><span class="hint"><b>${recs.length} recommended</b> by the agent, one per angle first, then the clearest read for the audience.</span><div class="spacer"></div><button class="sm ok" onclick="cpKeepRecommended('${kind}')">Keep the ${recs.length} recommended</button></div>`:''}
     ${kept.length?`<div class="hint" style="margin:8px 0 4px"><b>Kept · ${kept.length}</b></div>${kept.map(card).join('')}`:''}
     ${open.length?`<div class="hint" style="margin:8px 0 4px"><b>Drafts · ${open.length}</b></div>${open.map(card).join('')}`:''}
@@ -1830,6 +1831,12 @@ async function cpDraft(kind){ const noun = kind==='headline'?'headlines':'copies
   catch(e){ PB.cpmsg = 'Drafting failed: ' + e.message; }
   PB.busy = false; paintPublish($('#view')); }
 async function cpKeepRecommended(kind){ try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/recommended`, { method:'POST', body:{ kind } }); PB.cpmsg = `Kept the ${r.kept_now.length} recommended ${kind==='headline'?'headlines':'copies'}.`; await cpReload(); } catch(e){ PB.cpmsg = 'Could not keep: ' + e.message; } paintPublish($('#view')); }
+async function cpLayout(){
+  PB.cpbusy = true; PB.cpmsg = 'Adding line breaks…'; paintPublish($('#view'));
+  try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/layout`, { method:'POST', body:{} }); await cpReload(); PB.cpmsg = `Line breaks added to ${r.layout.fixed} primary text${r.layout.fixed===1?'':'s'}${r.layout.by_rule?` (${r.layout.by_rule} by rule: the model's answer changed a word, so it was not used)`:''}.`; }
+  catch(e){ PB.cpmsg = 'Not done: ' + e.message; }
+  PB.cpbusy = false; paintPublish($('#view'));
+}
 async function cpDecide(id, status){ try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${id}`, { method:'PUT', body:{ status } }); await cpReload(); } catch(e){ PB.cpmsg = e.message; } paintPublish($('#view')); }
 /** Edit a draft in a modal: the primary text in a multi-line box, so its paragraphs survive (2026-09-28: a
  *  browser prompt is one line and saved every edited copy as a single block). Kept open with the reason on a refusal. */
