@@ -38,15 +38,32 @@ const say = (line) => console.log(`[keeper ${stamp()}] ${line}`);
 const portAnswers = () => new Promise((res) => { const s = connect({ port: PORT, host: "127.0.0.1" }); s.once("connect", () => { s.destroy(); res(true); }); s.once("error", () => res(false)); s.setTimeout(1500, () => { s.destroy(); res(false); }); });
 const openBrowser = () => { if (process.platform === "darwin") spawn("open", [URL_], { stdio: "ignore", detached: true }).unref(); else say(`open ${URL_} in your browser`); };
 
-let child = null, stopping = false, quick = 0, opened = false;
+let child = null, stopping = false, quick = 0, opened = false, starts = 0;
+/** What the Terminal shows once the panel answers: where it is, on which port, and how to stop it. */
+function banner(pid) {
+  starts++;
+  console.log([
+    "",
+    `  Gym Ads panel is running${starts > 1 ? " again" : ""}`,
+    `  Address:  ${URL_}`,
+    `  Port:     ${PORT}`,
+    `  Stop:     Ctrl+C in this window`,
+    `  (panel process ${pid}; to load new code: kill ${pid})`,
+    "",
+  ].join("\n"));
+}
 
 function start() {
   const began = Date.now();
   child = spawn(process.execPath, [SERVER, "--port", String(PORT)], { cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
-  say(`panel started (process ${child.pid}) → ${URL_}   ·   to load new code: kill ${child.pid}   ·   to stop: Ctrl+C`);
+  const pid = child.pid;
+  let up = false;
   child.stdout.on("data", (d) => {
-    process.stdout.write(d);
-    if (argv.open && !opened && /http:\/\/localhost:\d+/.test(String(d))) { opened = true; openBrowser(); }
+    // The panel's own "it is up" line becomes the banner below: the address and the port, plainly.
+    const text = String(d), ready = /control panel → http:\/\/localhost:\d+/.test(text);
+    const rest = text.split("\n").filter((l) => l && !/control panel → http:\/\/localhost:\d+/.test(l)).join("\n");
+    if (rest) process.stdout.write(rest + "\n");
+    if (ready && !up) { up = true; banner(pid); if (argv.open && !opened) { opened = true; openBrowser(); } }
   });
   child.stderr.on("data", (d) => process.stderr.write(d));
   child.on("exit", (code, signal) => {
@@ -73,7 +90,7 @@ function stop() {
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, stop);
 
 if (await portAnswers()) {
-  say(`something already answers on ${URL_}: a panel is running elsewhere (the Claude app's Browser pane, or another Terminal). Nothing started here. Stop that one first if you want this keeper to own it.`);
+  say(`port ${PORT} is already in use: something answers on ${URL_}, so a panel is running elsewhere (the Claude app's Browser pane, or another Terminal). Nothing started here. Stop that one first if you want this keeper to own it.`);
   if (argv.open) openBrowser();
   process.exit(0);
 }

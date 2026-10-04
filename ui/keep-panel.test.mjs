@@ -38,15 +38,17 @@ process.on("SIGTERM", () => process.exit(0));`);
   const starts = () => (existsSync(join(d, "starts.txt")) ? readFileSync(join(d, "starts.txt"), "utf8").trim().split("\n").map(Number) : []);
   const k = keep(script, port);
   try {
-    assert.ok(await until(() => /control panel → http:\/\/localhost/.test(k.out)), k.out);
+    assert.ok(await until(() => /Gym Ads panel is running/.test(k.out)), k.out);
     const first = starts()[0];
-    assert.match(k.out, new RegExp(`panel started \\(process ${first}\\) → http://localhost:${port}   ·   to load new code: kill ${first}`));
+    // The banner: the address and the port, plainly, and how to stop it.
+    assert.ok(k.out.includes(`  Gym Ads panel is running\n  Address:  http://localhost:${port}\n  Port:     ${port}\n  Stop:     Ctrl+C in this window\n  (panel process ${first}; to load new code: kill ${first})`), k.out);
     // A deliberate kill (how new code is loaded): a new panel, on the same port.
     process.kill(first, "SIGTERM");
     assert.ok(await until(() => starts().length === 2), "started again");
     assert.match(k.out, /the panel exited with code 0 after \d+ s; starting it again/);
     const second = starts()[1];
     assert.ok(await until(async () => { try { return (await fetch(`http://127.0.0.1:${port}/`)).ok; } catch { return false; } }), "the new one answers");
+    assert.ok(await until(() => k.out.includes(`  Gym Ads panel is running again\n  Address:  http://localhost:${port}\n  Port:     ${port}`)), "said again after a restart");
     // A crash: the same.
     process.kill(second, "SIGKILL");
     assert.ok(await until(() => starts().length === 3));
@@ -77,7 +79,7 @@ test("K2 a panel that keeps ending at once is not started for ever; a port that 
       rmSync(join(d, "tries.txt"));
       const k2 = keep(bad, port);
       assert.equal(await k2.exit, 0);
-      assert.match(k2.out, new RegExp(`something already answers on http://localhost:${port}: a panel is running elsewhere`));
+      assert.match(k2.out, new RegExp(`port ${port} is already in use: something answers on http://localhost:${port}, so a panel is running elsewhere`));
       assert.ok(!existsSync(join(d, "tries.txt")), "the panel was never started");
     } finally { other.close(); }
   } finally { rmSync(d, { recursive: true, force: true }); }
