@@ -288,7 +288,7 @@ test("U7 the New Batch tab: typing updates the preview, a bad word shows its err
   await cdp.send("Page.navigate", { url: panel.url + "/" }, sessionId);
   await loaded;
   await until(`typeof STATE!=='undefined' && STATE.sel==='${GYM}'`, "the panel to load");
-  assert.ok(await ev(`[...document.querySelectorAll('.tab')].some(t=>t.textContent.trim().endsWith('Templates (old)'))`), "the old tab is kept, under Client");
+  assert.ok(!(await ev(`[...document.querySelectorAll('.tab')].some(t=>/Templates \(old\)/.test(t.textContent))`)), "the old template tab is gone (2026-10-06)");
   assert.ok(await ev(`!!document.querySelector('.logo svg')`), "the Strategym mark is in the top bar");
   await ev(`STATE.tab='batch'; render(); true`);
   await until(`!!document.querySelector('#bOffer')`, "the New Batch form");

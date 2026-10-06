@@ -31,7 +31,7 @@ import { parseArgs } from "util";
 import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
-  loadClientConfig, writeResolved, scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
+  scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
   catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint,
 } from "../skills/references/client-config.mjs";
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
@@ -104,29 +104,6 @@ function tokenOk(req) {
 const brandDir = (gym) => join(BRANDS, gym);
 const briefPath = (gym, batch) => join(BRANDS, gym, "batches", batch, "brief.json");
 const RUNNABLE = {
-  validate: {
-    label: "Validate config",
-    argv: ({ gym, offer }) => ["skills/references/client-config.mjs", "--gym", gym, "--offer", offer],
-  },
-  prompts: {
-    label: "Generate prompts (Phase 2)",
-    argv: ({ gym, offer }) => ["skills/references/client-config.mjs", "--gym", gym, "--offer", offer, "--json"],
-    note: "Phase 2 prompt generation is still driven by the /static-ads skill; this resolves the brief it reads.",
-  },
-  images: {
-    label: "Generate images (Phase 3)",
-    argv: ({ gym, templates, numImages, ratios }) => {
-      const a = ["skills/references/generate_ads_gemini.mjs", "--brand-dir", brandDir(gym)];
-      if (templates) a.push("--templates", templates);
-      if (numImages) a.push("--num-images", String(numImages));
-      if (ratios) a.push("--ratios", ratios);
-      return a;
-    },
-  },
-  gallery: {
-    label: "Rebuild gallery",
-    argv: ({ gym, version }) => ["skills/references/gallery-selector.mjs", "--output-dir", join(brandDir(gym), "outputs", version)],
-  },
   checksync: { label: "Check skill/command sync", argv: () => ["skills/references/check-sync.mjs"] },
   // Offer-first batches (Step 6). Built from the gym and batch id only; the brief is the file on disk.
   "batch-plan": { label: "Plan batch (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--dry-run"] },
@@ -1565,27 +1542,11 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    if (p === "/api/validate" && req.method === "POST") {
-      const { gym, offer } = await readBody(req);
-      if (!okSlug(gym) || !okSlug(offer)) return json(res, 400, { error: "bad slug" });
-      try {
-        const { resolved, errors, warnings, gymDir } = loadClientConfig(gym, offer);
-        if (!errors.length) writeResolved(gymDir, offer, resolved);
-        return json(res, 200, { errors, warnings, resolved: errors.length ? null : resolved });
-      } catch (e) {
-        return json(res, 200, { errors: [e.message], warnings: [] });
-      }
-    }
-
     if (p === "/api/run" && req.method === "POST") {
       const body = await readBody(req);
       const { kind } = body;
       if (!RUNNABLE[kind]) return json(res, 400, { error: `unknown command "${kind}"` });
       for (const k of ["gym", "offer", "version", "batch"]) if (body[k] && !okSlug(body[k])) return json(res, 400, { error: `bad ${k}` });
-      // Free-form generator args are constrained to their expected shapes.
-      if (body.templates && !/^[0-9]+(,[0-9]+)*$/.test(body.templates)) return json(res, 400, { error: "templates must be comma-separated numbers" });
-      if (body.ratios && !/^(1x1|9x16)(,(1x1|9x16))*$/.test(body.ratios)) return json(res, 400, { error: "ratios must be 1x1 and/or 9x16" });
-      if (body.numImages && !/^[1-9][0-9]?$/.test(String(body.numImages))) return json(res, 400, { error: "numImages must be 1-99" });
       const spec = RUNNABLE[kind];
       if (kind === "scenes-refresh") {
         // A gym without a library yet: the first refresh starts it (the owner's first approval approves it).

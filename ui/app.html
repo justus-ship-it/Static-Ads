@@ -297,9 +297,9 @@ const NAV = [
   ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'], ['results','Results','▤'],
   ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'],
   ['sec','Profile'], ['overview','Overview','◎'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
-  ['sec','System'], ['setup','Setup','⚙'], ['generate','Templates (old)','·'],
+  ['sec','System'], ['setup','Setup','⚙'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup', generate:'Templates (old)' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -400,7 +400,6 @@ function render(){
   if (STATE.tab==='meta') return viewMeta(v, seq);
   if (STATE.tab==='targeting') return viewTargeting(v, seq);
   if (STATE.tab==='batch') return viewBatch(v, seq);
-  if (STATE.tab==='generate') return viewGenerate(v);
   if (STATE.tab==='review') return STATE.batch ? viewReview(v, seq) : viewReviewList(v, seq);
   if (STATE.tab==='generating') return viewGenerating(v, seq);
   if (STATE.tab==='exports') return viewExports(v, seq);
@@ -972,38 +971,6 @@ async function namePlace(i){
 }
 function pinFromHistory(i, k){ const h = (MT.link?.chosen?.history_pins||[])[+k]; if (!h) return; setPin(i,'place_key',h.key||''); setPin(i,'place_name',h.name||''); if (Number.isFinite(h.lat)){ setPin(i,'lat',h.lat); setPin(i,'lng',h.lng); } if (h.radius_km) setPin(i,'radius_km',h.radius_km); if (h.location_types) setPin(i,'location_types',h.location_types); if (!STATE.profile.targeting_defaults.geo.radius_pins[i].label) setPin(i,'label',(h.name||'').slice(0,40)); viewTargeting($('#view')); }
 async function loadHistory(){ try { const r = await api(`/api/client/${STATE.sel}/meta-link`); if (r.configured){ MT.link = r; MT.gym = STATE.sel; } else alert('The Meta link is not set up yet (Meta link page).'); } catch(e){ alert(e.message); } viewTargeting($('#view')); }
-
-// ── Templates (old) ──────────────────────────────────────────────────────────
-function viewGenerate(v){
-  const gemini = STATE.status.checks.find(c=>c.key==='GEMINI_KEY');
-  v.innerHTML = `
-  <h1>Templates (old)</h1><p class="sub">The original template-library generation. The offer-first Create screen is the current path.</p>
-  <div class="card">
-    <h3>Validate</h3>
-    <p class="hint">Merges the profile and offer, checks every compliance gate, and writes the resolved brief the later phases read.</p>
-    <div class="row"><button class="primary" onclick="validate()">Validate ${esc(STATE.sel)} / ${esc(STATE.offer||'—')}</button></div>
-    <div id="valout" style="margin-top:12px"></div>
-  </div>
-  <div class="card">
-    <h3>Generate images (Phase 3)</h3>
-    ${gemini.ok?'':`<div class="msg err">Blocked: no Gemini API key. ${esc(gemini.fix)}</div>`}
-    <div class="grid">
-      <div><label>Templates (comma-separated)</label><input class="mono" id="gTpl" placeholder="51,3,2" value="51,3,2"></div>
-      <div><label>Images per prompt</label><input type="number" id="gNum" value="1" min="1" max="99"></div>
-      <div><label>Ratios</label><select id="gRatio">
-        <option value="1x1">1x1 only (cheap test)</option>
-        <option value="9x16">9x16 only</option>
-        <option value="1x1,9x16">both</option>
-      </select></div>
-    </div>
-    <div class="row" style="margin-top:12px">
-      <button class="primary" ${gemini.ok?'':'disabled'} onclick="run({kind:'images',gym:STATE.sel,templates:$('#gTpl').value,numImages:$('#gNum').value,ratios:$('#gRatio').value})">Run generation</button>
-      <span style="font-size:12px;color:var(--dim)">Costs API credits. Start small.</span>
-    </div>
-  </div>
-  <div id="runbox"></div>`;
-  renderRunBox();
-}
 
 // ── Create (offer-first batches) ─────────────────────────────────────────────
 // The form is painted once; typing only updates the parts that depend on it (errors, summary,
@@ -2409,17 +2376,6 @@ async function save(which){
     await loadClients(); render();
     if (said.length) toast(said.join(' · '), (SAVE_NOTES.warnings||[]).length ? 'warn' : '');
   }catch(e){ btn.disabled=false; btn.textContent='Save changes'; msg.innerHTML=`<span style="color:var(--err)">${esc(e.message)}</span>`; }
-}
-
-async function validate(){
-  const out=$('#valout'); out.innerHTML='<div class="msg">Validating…</div>';
-  try{
-    const r = await api('/api/validate',{method:'POST',body:{gym:STATE.sel,offer:STATE.offer}});
-    out.innerHTML =
-      r.errors.map(e=>`<div class="msg err">${esc(e)}</div>`).join('') +
-      r.warnings.map(w=>`<div class="msg warn">${esc(w)}</div>`).join('') +
-      (r.errors.length?'':`<div class="msg ok">Valid. Resolved brief written — budget ${esc(r.resolved?.campaign?.budget?.amount??'—')} ${esc(r.resolved?.campaign?.budget?.currency??'')}, radius ${esc(r.resolved?.targeting?.geo?.radius_pins?.[0]?.radius_km??'—')}km.</div>`);
-  }catch(e){ out.innerHTML=`<div class="msg err">${esc(e.message)}</div>`; }
 }
 
 // ── Runs ─────────────────────────────────────────────────────────────────────

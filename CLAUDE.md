@@ -4,21 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Automated static ad generator: Claude Code + Google Gemini (primary) / FAL.ai Nano Banana 2 (backup). Takes brand name + URL, researches the brand, generates 50 ad prompts, fires them to the image generation API, downloads images, and builds an HTML gallery. Based on Alex Cooper's framework.
+Strategym's app for Meta lead ads for Singapore gyms (the owner: Justus, justus@strategym.sg). One folder per gym under `brands/{gym}/` (gitignored) holds its profile, scenes, photos, batches and outputs. The panel (`ui/`) takes a batch brief — the owner's exact offer, locations and audience — then **Gemini makes pictures only and software sets every word** (the two layers below); the kept ads are published to the gym's ad account through Strategym's own Meta app, every object PAUSED, and the results come back per ad. Clients so far: Sculpt Society, F45 Lower Peirce, F45 Jurong West, BFIT.
+
+The template-library generator this repo started from (Alex Cooper's 50 templates, `generate_ads_gemini.mjs` as a CLI, the ad-copy-builder CSV) is no longer the path; what survives of it is `skills/references/generate_ads_gemini.mjs` as **the Gemini image call** every image step uses (`generateImage`, `loadGeminiKey`) and `gallery-selector.mjs`, which builds each batch's `gallery.html`. See "Older material" at the end.
+
+## Standing rules (the owner's — keep them)
+
+- **The words are the owner's.** The offer, locations and audience come from the brief, never from an offer file or the model. No free trial in any ad, no price shown, no before-and-after photos. People and member photos are references only.
+- **Reference ads** (`Reference-Sep-10/`, `swipe/`, other operators' ads) are analysis only: never republished, never attached to an image call.
+- **Never committed:** `brands/`, `swipe/`, `Reference-Sep-10/`, `library/` — the repo is public. Tokens live in `.env` only, never in a profile (enforced); never print a token's value.
+- **Meta:** everything created is PAUSED; never Advantage+ audience; never multi-advertiser ads; writing to a client's ad account is the owner's action (the Publish screen's button or the CLI), never the agent's.
+- **Retire, never delete:** scenes, presets, copy references, library entries (a reason is required); photos go to `_trash` or `_discarded`.
+- **Check with the owner before executing anything** that spends, writes to Meta or changes a client's data; commit only on explicit approval. Never press Keep / Exclude / Use it anyway / Add line breaks or a create button on the owner's real batches during a check.
+- **Tests:** the full suite runs with `--test-concurrency=1` (three Chromes at once starved a real batch, 2026-10-02), and never while the owner is generating.
 
 ## Key Files
 
-- `.claude/skills/static-ads/SKILL.md` — Canonical skill definition (3-phase pipeline + 50 prompt templates)
-- `.claude/commands/static-ads.md` — Synced copy of SKILL.md for slash command invocation
-- `skills/references/generate_ads_gemini.mjs` — **Primary** Node.js generation script (Google Gemini API)
-- `skills/references/generate_ads.mjs` — **Backup** Node.js generation script (FAL.ai API)
-- `skills/references/gallery-selector.mjs` — Standalone script: scans output folder → builds gallery.html with radio-button image selection UI → exports `selections.json`
-- `.claude/skills/ad-copy-builder/SKILL.md` — Ad copy skill: reads selections.json + brand-dna.md + hook-bank.md → writes Ads Uploader CSV
-- `.claude/commands/ad-copy-builder.md` — Slash command copy of ad-copy-builder skill
-- `hook-bank.md` — 100 hook frameworks from Hook Bank (D-Double-U Media), tagged by type/awareness/goal
-- `brands/{name}/` — Per-brand workspace: `product-images/`, `brand-images/`, `brand-dna.md`, `prompts.json`, `outputs/`
+The panel: `ui/server.mjs` (every rule server-side; the runs it may start are `RUNNABLE`), `ui/app.html` (one page, hash-routed), `ui/keep-panel.mjs` (the keeper), `Start Panel.command`. The pipeline lives in `skills/references/*.mjs`, each file described below with its tests; the catalogues in `.claude/skills/static-ads/references/offer-{treatments,styles,palettes}.json`. Gym data: `brands/{gym}/gym-profile.json` (schema 3), `scenes.json`, `ad-wordings.json`, `targeting-presets.json`, `copy-references.json`, `brand-assets/`, `references/`, `onboarding/`, `batches/{id}/brief.json`, `outputs/{id}/`. Shared: `library/copy-library.json`, `library/reference-shots.json`, `library/shot-guide.{json,md}`.
 
-### Offer-first creative (two layers — being built step by step)
+### The pipeline (two layers)
 
 Gemini makes **pictures only**; software sets every word. The offer, location and audience are always user-supplied.
 
@@ -86,120 +90,18 @@ node skills/references/plan-offer-batch.mjs --brand-dir brands/{name} --brief ba
 node skills/references/plan-offer-batch.mjs --brand-dir brands/{name} --brief batches/{id}/brief.json --approve-scenes
 ```
 
-## 4-Phase Pipeline
+## Environment
 
-1. **Phase 1 (Brand DNA)**: Firecrawl scrapes brand site + screenshots → Claude visually inspects screenshots (primary color source) → web research → `brand-dna.md` + `brand-images/`
-2. **Phase 2 (Prompts)**: Fill 50 templates from SKILL.md with brand details → `prompts.json`
-3. **Phase 3 (Images)**: `node generate_ads_gemini.mjs` → Gemini API → `outputs/{date}-V{n}/` + `gallery.html` (with image selection UI)
-4. **Phase 4 (Ad Copy)**: Open `gallery.html` → pick best image per group → Save Selections → drop `selections.json` in output folder → `create copy for [brand] [version]` → `upload.csv` + `upload-2.xlsx` + `copy-summary.md` → upload to Ads Uploader → publish paused
+- macOS, Node 18+ (built-in `fetch`, `parseArgs`, `WebSocket`); no build step and no framework. The one npm dependency, `xlsx`, belongs to the old CSV/XLSX export; nothing on the offer-first path needs it. Chrome is installed on the Mac and driven over the DevTools protocol by `render-composites.mjs` (rendering, the website reader, the panel tests) — no browser download.
+- `.env` (see `.env.example`): `GEMINI_KEY`; `META_ACCESS_TOKEN` / `META_APP_ID` / `META_APP_SECRET` (Strategym's Live app, "Strategym Ads - Main"; a gym's own suffixed names win when present); `APIFY_TOKEN` (swipe-intel); `FAL_KEY` (the unused backup generator).
+- Gemini models: images `gemini-3-pro-image-preview` (`pro`, the default) or `gemini-3.1-flash-image-preview` (`flash`, `IMAGE_MODELS` in client-config.mjs; the clean-up edit keeps `GEMINI_MODEL`); every vision and text check `CHECK_MODEL` = `gemini-3.6-flash` (the copy drafter and the quality check follow it); the shot guide `SHOT_MODEL` = `gemini-3.1-pro-preview`. Every call waits out a busy answer through `gemini-busy.mjs`.
+- **Meta's 9:16 safe zone** is Meta's unified Stories/Reels zone (March 2026): the top 14%, the bottom 35% and 6% each side stay clear of text and logos; the live area is x 6–94%, y 14–65%. One source: `offer-treatments.json → safe_area`; the renderer fails any 9:16 render that leaves it.
+- The panel: `npm run panel` (or double-click `Start Panel.command`) keeps it running from Terminal on port 4310; the Claude app's Browser pane can start it too (`gym-ads-ui` in `.claude/launch.json`) or attach to a running one (`gym-ads-ui-attach`). A panel the pane started stops when the pane closes.
 
-## Commands
+## Brand facts: precedence
 
-```bash
-# === PRIMARY: Google Gemini ===
+`gym-profile.json → brand_lock` (the owner's, `locked: true` is final) → what the owner sets on the panel → what the website reader measured (`source: "website"`, never over a locked colour) → anything inferred. Ad palettes come from the reference catalogue by default (`creative_defaults.palettes`: `reference` · `brand` · `both`).
 
-# Full run (all 50 templates, 4 images each, both aspect ratios)
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/{name}
+## Older material still in the repo (not maintained)
 
-# Cheap test run
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/{name} --templates 1,7,13 --num-images 1 --ratios 1x1
-
-# Specific templates
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/{name} --templates 1,4,7,9,13 --num-images 4
-
-# Control parallelism (default: 2, recommended: 5)
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/{name} --max-concurrent 5
-
-# === BACKUP: FAL.ai (if Gemini is down) ===
-
-# Full run (~$48.00)
-node skills/references/generate_ads.mjs --brand-dir brands/{name}
-
-# Cheap test run
-node skills/references/generate_ads.mjs --brand-dir brands/{name} --templates 1,7,13 --num-images 1 --resolution 1K
-```
-
-## Google Gemini API (Primary)
-
-- **Model**: `gemini-3.1-flash-image-preview` — image editing model, accepts reference images as base64 inline
-- **Endpoint**: `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent`
-- **Auth**: `x-goog-api-key` query param or header — GEMINI_KEY stored in `.env`
-- **Input**: prompt as text part + reference images as `inline_data` (base64) parts, `responseModalities: ["TEXT", "IMAGE"]`
-- **Output**: Response `candidates[0].content.parts` — look for `inlineData` with base64 image
-- Reference images from `product-images/` are loaded as base64 at startup (no CDN upload needed)
-- Per-prompt `reference_images` array in prompts.json selects specific files; if empty, all images sent
-- Aspect ratio controlled via prompt text (no explicit API parameter)
-- One image per API call — script loops for `num-images`
-
-## FAL API (Backup)
-
-- **Model**: `fal-ai/nano-banana-2/edit` — always use `/edit` so reference images are passed
-- **Queue URL**: `POST https://queue.fal.run/fal-ai/nano-banana-2/edit`
-- **Auth**: `Authorization: Key {FAL_KEY}` — FAL_KEY stored in `.env`
-- Product images uploaded to FAL CDN at startup, URLs passed with every request
-- Cost: ~$0.08/img at 1K, ~$0.12 at 2K, ~$0.16 at 4K (doubled for dual aspect ratios)
-
-## Script Behavior (both scripts)
-
-- Generates **both 1:1 and 9:16** aspect ratios for every prompt automatically
-- **9:16 Meta safe zones**: Meta's unified Stories/Reels safe zone (March 2026) — the top 14%, the bottom 35% and 6% each side stay clear of text and logos, because the app covers them. The live area is x 6–94%, y 14–65%. The Gemini script appends this to every 9:16 prompt; the offer-first text layer (`render-composites.mjs`) enforces it and fails any 9:16 render that leaves it. One source: `offer-treatments.json → safe_area`.
-- Parallel job execution with semaphore-based concurrency limiter (`--max-concurrent`)
-- Outputs organized as `outputs/{date}-V{n}/{num}-{template-name}/{1x1,9x16}/`
-- Builds `gallery.html` with dark-theme image selection UI (radio buttons, expand icon, Save Selections button → `selections.json`)
-- `prompts.json` supports per-prompt `reference_images` array (filenames from `product-images/`)
-
-## Gallery Selector (Rebuild / Fix Empty Gallery)
-
-If `gallery.html` is missing or empty for an existing output folder, rebuild it:
-
-```bash
-node skills/references/gallery-selector.mjs --output-dir brands/{name}/outputs/{version} --open
-```
-
-## Ad Copy Commands
-
-```bash
-# Rebuild gallery.html for an existing output folder
-node skills/references/gallery-selector.mjs --output-dir brands/{name}/outputs/{version} --open
-
-# After saving selections.json into the output folder:
-# "create copy for {brand} {version}"
-# Outputs: brands/{name}/outputs/{version}/upload.csv + copy-summary.md
-```
-
-## Ad-uploads Image Naming Rule
-
-**Always strip `_v#` from image filenames** when copying to `Ad-uploads/`. The version suffix from image generation (e.g., `_v2`, `_v3`) causes 1x1 and 9x16 variants to have mismatched names, which prevents Meta/Ads Uploader from pairing them as placement variants on the same ad.
-
-- `headline_1x1_v2.jpg` → `headline_1x1.jpg`
-- `headline_9x16_v3.jpg` → `headline_9x16.jpg`
-
-Strip with: `filename.replace(/_v\d+(?=\.\w+$)/, '')`
-
-Also: `rebuild-upload-csv.mjs` expects the old dual-row CSV format — do NOT use it with the current funnel CSV (3 rows per template with both image columns). Build `Ad-uploads/`, `upload-3.csv`, and `upload-2.xlsx` inline instead. See ad-copy-builder SKILL.md Phase 5 for the correct workflow.
-
-## ~~Telehealth Compliance (All Brands)~~ — EXAMPLE: modify or remove for your brand
-
-~~All brands are telehealth businesses with licensed medical providers. Ad copy must:~~
-~~- Never reference brand-name medications (Wegovy, Ozempic, Mounjaro, etc.)~~
-~~- Use "compounded medication" language + "compounded in the USA at FDA-regulated facilities"~~
-~~- Never guarantee outcomes or use "rapid/effortless" weight loss language~~
-~~- Matrix Reformed pricing: always "starting at $99/mo" — never flat monthly (annual plan, $1,188/year upfront)~~
-~~- Full rules: `.claude/skills/ad-copy-builder/references/compliance.md`~~
-
-> **How to customize:** Replace the section above with your own brand's compliance rules, pricing disclaimers, and ad copy constraints. The compliance.md reference file should also be updated. If your brand has no special compliance requirements, delete this section entirely.
-
-## Environment Constraints
-
-- Node.js 18+ required (uses built-in `fetch`, `parseArgs`)
-- ~~**Python is NOT installed** — always use Node.js for scripts~~ — modify based on your environment
-- ~~No npm packages — script is zero-dependency~~ — one dependency: `xlsx` (install with `npm install`)
-- ~~Windows 11, running inside VS Code with Claude Code~~ — modify based on your environment
-
-## Brand Research Rules
-
-- **Source-of-truth precedence** (highest wins): `gym_profile.brand_lock` (client-declared, `locked: true` is final) → client-supplied brand guidelines → screenshots → scraped CSS → web research.
-- **Screenshots beat scraped CSS** for anything *not* locked — rendered colours often differ from CSS.
-- Anything in `brand_lock.hard_overrides.ignore_auto_detected` is off-limits to detection entirely.
-- Use Firecrawl for site scraping and screenshots
-- Always visually inspect downloaded screenshots with Claude's multimodal capability before writing brand-dna.md
+`.claude/skills/static-ads` and `.claude/commands/static-ads.md` (the 50-template generator), `.claude/skills/ad-copy-builder` (the Ads Uploader CSV; `rebuild-upload-csv.mjs` expects its old dual-row format), `hook-bank.md`, `generate_ads.mjs` (the FAL backup), `README.md` and `SETUP-GUIDE.md` (Firecrawl is not used; the website is read by `read-website.mjs`) all describe the template-library generator this started from. `swipe-intel` (Phase 0: the Meta Ad Library through Apify, patterns into templates 51+) is kept. None of it runs from the panel since the Templates (old) tab was removed (2026-10-06).
