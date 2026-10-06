@@ -14,7 +14,7 @@
  * gitignored: the entries come from other operators' ads as well as our own, and are analysis material.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
@@ -105,6 +105,28 @@ export function restoreEntry(dir, id) {
   const data = readLibrary(dir), e = data.entries.find((x) => x.id === id);
   if (!e) throw new Error(`no entry ${id}`);
   e.retired = null; writeLibrary(dir, data); return e;
+}
+
+/**
+ * What every gym's batches made from each entry: the drafts that followed it (`from` on a draft) and how many
+ * of those the owner kept, by entry id — `{ [id]: { drafts, kept, gyms } }`. Read from `brands/{gym}/outputs/{batch}/copy.json`.
+ */
+export function usesIn(brandsDir) {
+  const uses = {};
+  if (!brandsDir || !existsSync(brandsDir)) return uses;
+  for (const gym of readdirSync(brandsDir)) {
+    const outs = join(brandsDir, gym, "outputs");
+    if (gym.startsWith(".") || !existsSync(outs) || !statSync(outs).isDirectory()) continue;
+    for (const batch of readdirSync(outs)) {
+      const j = readJson(join(outs, batch, "copy.json"));
+      for (const d of Array.isArray(j?.drafts) ? j.drafts : []) {
+        if (!d.from) continue;
+        const u = (uses[d.from] ||= { drafts: 0, kept: 0, gyms: [] });
+        u.drafts++; if (d.status === "keep") u.kept++; if (!u.gyms.includes(gym)) u.gyms.push(gym);
+      }
+    }
+  }
+  return uses;
 }
 
 // ── fill ─────────────────────────────────────────────────────────────────────

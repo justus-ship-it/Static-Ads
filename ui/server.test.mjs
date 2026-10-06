@@ -1918,3 +1918,80 @@ test("U32 filled in for the owner: saving a profile places a pin that has a post
     assert.deepEqual([v.identity, asked], [null, n2]);
   } finally { await panel.stop(); panel = main; graph.close(); onemap.server.close(); writeFileSync(pf, before); }
 });
+
+test("U33 the copy library on Library → Copy (CL3): every entry listed with what the gyms' batches made from it; a skeleton written by hand is checked (known placeholders only, a headline on one line) and warned about; edit, retire with a reason (never deleted), restore; a gym's reference sent to the library on request; the page shows the library with its filters, the edit and retire dialogs, and Send to the library on a reference", async () => {
+  const g = join(brands, GYM), libFile = join(dirname(brands), "library", "copy-library.json"), usesDir = join(g, "outputs", "lib-uses-batch");
+  await linkTestGym();
+  rmSync(libFile, { force: true }); rmSync(usesDir, { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true });
+  try {
+    let r = await (await call("/api/library/copy")).json();
+    assert.deepEqual([r.entries, r.counts, r.uses, Object.keys(r.placeholders)], [[], { copy: 0, headline: 0, retired: 0 }, {}, ["GYM", "OFFER", "AREA", "AUDIENCE", "BUTTON", "DURATION"]]);
+    assert.equal((await call("/api/library/copy", { method: "POST", body: { kind: "copy", text: "x {OFFER}" }, token: null })).status, 403, "a write needs the panel's token");
+    // Written by hand: checked by the library's rules.
+    let bad = await call("/api/library/copy", { method: "POST", body: { kind: "copy", text: "Ask {COACH} about the {OFFER}" } });
+    assert.equal(bad.status, 400); assert.match((await bad.json()).error, /unknown placeholder \{COACH\}/);
+    bad = await call("/api/library/copy", { method: "POST", body: { kind: "headline", text: "Two\nlines {OFFER}" } });
+    assert.equal(bad.status, 400); assert.match((await bad.json()).error, /one line/);
+    const SK = "{AUDIENCE} in {AREA}: the {OFFER} starts soon.\n\n✔ Coach-led sessions\n✔ A plan that fits\n\nTap {BUTTON} to start.";
+    r = await (await call("/api/library/copy", { method: "POST", body: { kind: "copy", text: SK, angle: "call-out", note: "names who and where first" } })).json();
+    const id = r.entry.id;
+    assert.deepEqual([r.entry.kind, r.entry.text, r.entry.placeholders, r.entry.warnings, r.entry.origin, r.counts.copy], ["copy", SK, ["AUDIENCE", "AREA", "OFFER", "BUTTON"], [], { source: "owner" }, 1], "the line breaks kept; placeholders in order; yours");
+    r = await (await call("/api/library/copy", { method: "POST", body: { kind: "headline", text: "Free {DURATION} {OFFER} in {AREA}", description: "d" } })).json();
+    const hid = r.entry.id;
+    assert.deepEqual([r.entry.warnings, r.counts], [['says "free"'], { copy: 1, headline: 1, retired: 0 }], "what the rules forbid on an ad is a warning on the skeleton, not a refusal");
+    assert.equal((await call("/api/library/copy", { method: "POST", body: { kind: "copy", text: SK } })).status, 400, "the same skeleton is not added twice");
+    // Edit: re-checked; the id stays (drafts made from it still trace back).
+    bad = await call(`/api/library/copy/${id}`, { method: "PUT", body: { text: "{NOPE}" } }); assert.equal(bad.status, 400);
+    r = await (await call(`/api/library/copy/${id}`, { method: "PUT", body: { text: SK.replace("{AUDIENCE} in {AREA}", "{GYM} {AREA}"), angle: "", note: "edited" } })).json();
+    assert.deepEqual([r.entry.id, r.entry.placeholders, r.entry.angle, r.entry.note, !!r.entry.edited], [id, ["GYM", "AREA", "OFFER", "BUTTON"], null, "edited", true]);
+    // Retire needs a reason; the entry stays; restore brings it back.
+    bad = await call(`/api/library/copy/${id}`, { method: "PUT", body: { retired: true, reason: "  " } }); assert.equal(bad.status, 400); assert.match((await bad.json()).error, /reason is required/);
+    r = await (await call(`/api/library/copy/${id}`, { method: "PUT", body: { retired: true, reason: "too salesy" } })).json();
+    assert.deepEqual([r.entry.retired.reason, r.counts, r.entries.length], ["too salesy", { copy: 0, headline: 1, retired: 1 }, 2]);
+    assert.equal(JSON.parse(readFileSync(libFile, "utf-8")).entries.length, 2, "never deleted");
+    r = await (await call(`/api/library/copy/${id}`, { method: "PUT", body: { retired: false } })).json(); assert.deepEqual([r.entry.retired, r.counts.copy], [null, 1]);
+    assert.equal((await call("/api/library/copy/lib-nope", { method: "PUT", body: { note: "x" } })).status, 400);
+    // What the batches made from it: drafts that followed the skeleton, and how many the owner kept.
+    mkdirSync(usesDir, { recursive: true });
+    writeFileSync(join(usesDir, "copy.json"), JSON.stringify({ drafts: [{ id: "a", from: id, status: "keep" }, { id: "b", from: id, status: "exclude" }, { id: "c", from: id, status: "draft" }, { id: "d", from: null, status: "keep" }] }));
+    r = await (await call("/api/library/copy")).json();
+    assert.deepEqual(r.uses, { [id]: { drafts: 3, kept: 1, gyms: [GYM] } });
+    // A gym's reference sent to the library on request: the model cannot be reached in tests, so both parts are skipped with the reason and the reference stays.
+    const ref = (await (await call(`/api/client/${GYM}/copy-refs`, { method: "POST", body: { message: "Ladies in Bishan, the plan is the thing. Tap Sign up.", headline: "A plan that sticks" } })).json()).ref;
+    r = await (await call(`/api/client/${GYM}/copy-refs/${ref.id}/library`, { method: "POST" })).json();
+    assert.deepEqual([r.library.entries, r.library.skipped.map((s) => s.kind), r.refs.length, r.refs[0].in_library], [[], ["copy", "headline"], 1, undefined]);
+    assert.match(r.library.skipped[0].why, /network blocked|GEMINI_KEY/);
+    assert.equal((await call(`/api/client/${GYM}/copy-refs/own-nope/library`, { method: "POST" })).status, 400);
+    assert.equal((await call(`/api/client/${GYM}/copy-refs/${ref.id}/library`, { method: "POST", token: null })).status, 403);
+    // The page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u33#/${GYM}/copy` }, sessionId); await loaded;
+    const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!CR.lib && !!document.querySelector('#libCard')"))) await new Promise((x) => setTimeout(x, 120));
+    let text = await ev("document.querySelector('#libCard').textContent");
+    assert.match(text, /Copy library · 1 copy · 1 headline/); assert.match(text, /✔ Coach-led sessions/); assert.match(text, /drafted 3 times, 1 kept for testgym/); assert.match(text, /says "free"/); assert.match(text, /not drafted from yet/);
+    assert.equal(await ev("document.querySelectorAll('#libCard .lib-entry').length"), 2);
+    await ev("CR.filter='headline'; paintCopyRefs(document.querySelector('#view')); true");
+    assert.deepEqual(await ev("[...document.querySelectorAll('#libCard .lib-entry')].map(e=>e.dataset.id)"), [hid]);
+    await ev("CR.filter='retired'; paintCopyRefs(document.querySelector('#view')); true");
+    assert.match(await ev("document.querySelector('#libCard').textContent"), /Nothing retired/);
+    // Edit: the dialog shows the text with its line breaks; a bad save keeps the text and says why.
+    await ev(`libEdit('${id}'); true`);
+    assert.equal(await ev("document.querySelector('#libText').value"), SK.replace("{AUDIENCE} in {AREA}", "{GYM} {AREA}"));
+    await ev("document.querySelector('#libText').value = 'Only {WRONG}'; CR.libForm.text = 'Only {WRONG}'; true");
+    await ev("libEditSave()");
+    assert.match(await ev("document.querySelector('.modal .msg.err')?.textContent || ''"), /unknown placeholder/); assert.equal(await ev("document.querySelector('#libText').value"), "Only {WRONG}", "the text is kept in the dialog");
+    await ev("libClose(); true");
+    // Retire asks why and refuses an empty reason; with one the entry moves to Retired and can be restored.
+    await ev(`libRetire('${hid}'); true`); assert.ok(await ev("!!document.querySelector('#libReason')"));
+    await ev(`libRetireSave('${hid}')`); assert.match(await ev("document.querySelector('.modal .msg.err')?.textContent || ''"), /reason is required/);
+    await ev("document.querySelector('#libReason').value = 'free is never advertised'; true"); await ev(`libRetireSave('${hid}')`);
+    assert.ok(!(await ev("!!document.querySelector('.modal')")), "the dialog closed");
+    await ev("CR.filter='retired'; paintCopyRefs(document.querySelector('#view')); true");
+    text = await ev("document.querySelector('#libCard').textContent"); assert.match(text, /free is never advertised/); assert.match(text, /Restore/);
+    await ev(`libRestore('${hid}')`);
+    assert.equal(JSON.parse(readFileSync(libFile, "utf-8")).entries.find((e) => e.id === hid).retired, null);
+    // The reference offers Send to the library while it is not in it.
+    assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Send to the library/.test(b.textContent))"));
+  } finally { rmSync(libFile, { force: true }); rmSync(usesDir, { recursive: true, force: true }); }
+});

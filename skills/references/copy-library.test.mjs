@@ -7,10 +7,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readLibrary, liveEntries, placeholdersIn, entryProblems, entryWarnings, addEntry, editEntry, retireEntry, restoreEntry, fill, verifySkeleton, skeletonFrom, sendToLibrary, buildSkeletonPrompt, PLACEHOLDERS, KINDS, LIBRARY_FILE } from "./copy-library.mjs";
+import { readLibrary, liveEntries, placeholdersIn, entryProblems, entryWarnings, addEntry, editEntry, retireEntry, restoreEntry, fill, verifySkeleton, skeletonFrom, sendToLibrary, buildSkeletonPrompt, usesIn, PLACEHOLDERS, KINDS, LIBRARY_FILE } from "./copy-library.mjs";
 import { ANGLES, readCopyRefs } from "./draft-copy.mjs";
 
 const lib = () => mkdtempSync(join(tmpdir(), "copylib-"));
@@ -99,4 +99,15 @@ test("L3 the model's skeleton is verified in code: fragments word for word and i
   assert.deepEqual([one.entries.length, one.entries[0].kind, asked.length], [1, "headline", 8], "no primary text → the headline alone, one call");
   await assert.rejects(sendToLibrary(g, "own-9", { dir: d, ask }), /no reference own-9/);
   assert.equal(liveEntries(d).length, 3);
+});
+
+test("L4 what the gyms' batches made from each entry: drafts that followed it, how many the owner kept, which gyms — read from every gym's outputs; a draft from nothing, a gym without outputs and a missing folder count nothing", () => {
+  const brands = mkdtempSync(join(tmpdir(), "copylib-brands-"));
+  const put = (gym, batch, drafts) => { const d = join(brands, gym, "outputs", batch); mkdirSync(d, { recursive: true }); writeFileSync(join(d, "copy.json"), JSON.stringify({ drafts })); };
+  put("gym-a", "b1", [{ id: "1", from: "lib-x", status: "keep" }, { id: "2", from: "lib-x", status: "exclude" }, { id: "3", from: null, status: "keep" }]);
+  put("gym-a", "b2", [{ id: "4", from: "lib-y", status: "draft" }]);
+  put("gym-b", "b1", [{ id: "5", from: "lib-x", status: "keep" }]);
+  mkdirSync(join(brands, "gym-c"));
+  assert.deepEqual(usesIn(brands), { "lib-x": { drafts: 3, kept: 2, gyms: ["gym-a", "gym-b"] }, "lib-y": { drafts: 1, kept: 0, gyms: ["gym-a"] } });
+  assert.deepEqual(usesIn(join(brands, "nowhere")), {});
 });

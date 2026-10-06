@@ -41,8 +41,7 @@ import { buildPlan, keptAds, CTA_TYPES, findSingaporeIdentity, setSingaporeIdent
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy } from "../skills/references/draft-copy.mjs";
-import { liveEntries } from "../skills/references/copy-library.mjs";
-import { sendToLibrary } from "../skills/references/copy-library.mjs";
+import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
@@ -1362,6 +1361,37 @@ const server = createServer(async (req, res) => {
         if (!cid && req.method === "POST") { const { kind = "copy", message, headline, description } = await readBody(req); if (!kindOk(kind)) return json(res, 400, { error: "kind is copy or headline" }); mkdirSync(out, { recursive: true }); const d = addCopy(out, { kind, message, headline, description }, { offer: brief.offer, profile, offerDoc, locations: brief.locations || [] }); return view({ added: 1, draft: d }); }
         if (cid && req.method === "PUT") { const b = await readBody(req); const d = decideCopy(out, cid, { status: b.status, message: b.message, headline: b.headline, description: b.description }, { offer: brief.offer, profile, offerDoc, locations: brief.locations || [] }); return view({ draft: d }); }
       } catch (e) { return json(res, e.code === 190 || e.trace ? 502 : 400, { error: scrubTokens(e.message) }); }
+    }
+    // The central copy library (CL3): one file for every gym, read and changed from Library → Copy. GET lists every
+    // entry, live and retired, with what the gyms' batches made from each (`uses`); POST adds a skeleton the owner
+    // writes themselves (checked by the library's own rules: known placeholders only, Meta's lengths); PUT edits one,
+    // retires it with a reason (never deleted) or restores it. The answer is always the whole listing.
+    const lib = p.match(/^\/api\/library\/copy(?:\/([^/]+))?$/);
+    if (lib) {
+      const id = lib[1] ? decodeURIComponent(lib[1]) : null;
+      const view = (extra = {}) => { const L = readCopyLibrary(); return json(res, 200, { entries: L.entries, counts: { copy: L.entries.filter((e) => !e.retired && e.kind === "copy").length, headline: L.entries.filter((e) => !e.retired && e.kind === "headline").length, retired: L.entries.filter((e) => e.retired).length }, uses: usesIn(BRANDS), angles: ANGLES, placeholders: LIBRARY_PLACEHOLDERS, ...extra }); };
+      try {
+        if (!id && req.method === "GET") return view();
+        if (!id && req.method === "POST") { const { kind, text, description, angle, note } = await readBody(req); const e = addEntry(COPY_LIBRARY, { kind, text, description, angle, note }); return view({ entry: e }); }
+        if (id && req.method === "PUT") {
+          const b = await readBody(req);
+          if (b.retired === true) return view({ entry: retireEntry(COPY_LIBRARY, id, b.reason) });
+          if (b.retired === false) return view({ entry: restoreEntry(COPY_LIBRARY, id) });
+          return view({ entry: editEntry(COPY_LIBRARY, id, { text: b.text, description: b.description, angle: b.angle, note: b.note }) });
+        }
+      } catch (e) { return json(res, 400, { error: e.message }); }
+    }
+    // A gym's reference into the library on request: the account's imported ads are never sent on their own (only a
+    // paste is), and a paste whose reading failed can be sent again. Two text calls at most; the reference remembers its ids.
+    const crl = p.match(/^\/api\/client\/([^/]+)\/copy-refs\/([^/]+)\/library$/);
+    if (crl && req.method === "POST") {
+      const [, gym, rid] = crl;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym);
+      try {
+        const library = await sendToLibrary(dir, decodeURIComponent(rid), { gym });
+        return json(res, 200, { refs: liveRefs(dir), retired: readCopyRefs(dir).refs.filter((r) => r.retired).length, shown: referencesFor(dir).map((r) => r.id), library });
+      } catch (e) { return json(res, 400, { error: scrubTokens(String(e.message || e)).replace(/key=[^&\s]+/g, "key=…").slice(0, 300) }); }
     }
     const cr = p.match(/^\/api\/client\/([^/]+)\/copy-refs(?:\/([^/]+))?$/);
     if (cr) {
