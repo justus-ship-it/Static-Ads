@@ -89,10 +89,8 @@ function validate(profile, offer, resolved, gymDir) {
   // --- profile: locale. Singapore is the default market; anything else must be deliberate. ---
   const currency = get(profile, "locale.currency");
   if (!currency) E('gym-profile.json: missing "locale.currency"');
-  else if (currency !== "SGD" && !profile.locale.non_sg_intentional) {
-    E(`gym-profile.json: locale.currency is "${currency}", not SGD. If that is deliberate, set locale.non_sg_intentional = true`);
-  }
-  if (!get(profile, "locale.timezone")) W('gym-profile.json: no "locale.timezone" — defaulting to Asia/Singapore');
+  else { const cr = countryRules(get(profile, "locale.country")); if (cr.currency && currency !== cr.currency && !profile.locale.non_sg_intentional) W(`gym-profile.json: locale.currency is "${currency}" but ${cr.name} uses ${cr.currency}`); }
+  if (!get(profile, "locale.timezone")) W(`gym-profile.json: no "locale.timezone" — defaulting to ${countryRules(get(profile, "locale.country")).timezone || "Asia/Singapore"}`);
 
   // --- profile: locations. Radius targeting is the whole game for a gym. ---
   const locations = profile.locations || [];
@@ -345,6 +343,23 @@ const SECRET_KEY = /^(token|access_token|.*_access_token|.*_user_token|app_secre
 const SECRET_VALUE = /^(EAA[A-Za-z0-9]{30,}|AIza[0-9A-Za-z_-]{30,})$/;
 // singapore_*: the verified advertiser identity Meta requires on every ad set delivering in Singapore (beneficiary and payer).
 /** Meta's bid strategies, named as Ads Manager names them. */
+/**
+ * Countries a gym can be in (2026-10-07: F45 Xinyi is in Taipei, and every rule here had assumed Singapore).
+ * The profile's `locale.country` picks the row; a country not listed gets `OTHER`: no map, any postal code.
+ * `geocoder` names the free map the panel can place a postal code with (OneMap is Singapore's); elsewhere the
+ * point comes from the Facebook Page or a Meta place. `people` is the starter's line for who is in the photos.
+ */
+export const COUNTRIES = Object.freeze({
+  SG: { name: "Singapore", postal: /^\d{6}$/, postal_hint: "6 digits", phone: "+65", geocoder: "onemap", lat: [1.1, 1.5], lng: [103.5, 104.2], currency: "SGD", timezone: "Asia/Singapore", languages: ["en_SG"], spelling: "en-SG", people: "Singaporean / SEA mix, real training clothes, ages 20-65", tone: "Singaporean English, no Americanisms." },
+  TW: { name: "Taiwan", postal: /^\d{3}(\d{2,3})?$/, postal_hint: "3, 5 or 6 digits", phone: "+886", geocoder: null, lat: [21.5, 25.5], lng: [119.5, 122.5], currency: "TWD", timezone: "Asia/Taipei", languages: ["zh_TW"], spelling: "zh-TW", people: "Taiwanese, real training clothes, ages 25-55", tone: "Traditional Chinese as spoken in Taiwan." },
+  MY: { name: "Malaysia", postal: /^\d{5}$/, postal_hint: "5 digits", phone: "+60", geocoder: null, lat: [0.8, 7.5], lng: [99.5, 119.5], currency: "MYR", timezone: "Asia/Kuala_Lumpur", languages: ["en_MY"], spelling: "en-MY", people: "Malaysian, real training clothes, ages 20-60", tone: "Malaysian English." },
+  OTHER: { name: null, postal: /^[A-Za-z0-9 -]{3,10}$/, postal_hint: "3 to 10 letters or digits", phone: null, geocoder: null, lat: null, lng: null, currency: null, timezone: null, languages: [], spelling: "", people: "Local members, real training clothes, ages 20-60", tone: "" },
+});
+/** The rules for a country code (the profile's `locale.country`); unknown or missing → OTHER. */
+export const countryRules = (country) => COUNTRIES[String(country || "SG").toUpperCase()] || COUNTRIES.OTHER;
+export const postalOk = (country, code) => countryRules(country).postal.test(String(code ?? ""));
+export const profileCountry = (profile) => String(profile?.locale?.country || "SG").toUpperCase();
+
 export const BID_STRATEGIES = { LOWEST_COST_WITHOUT_CAP: "Highest volume", COST_CAP: "Cost per result goal", LOWEST_COST_WITH_BID_CAP: "Bid cap" };
 export const BUDGET_LEVELS = { adset: "Ad set budget", campaign: "Campaign budget (Advantage+ campaign budget)" };
 export const GENDER_CHOICES = ["men", "women", "all"];
@@ -370,7 +385,7 @@ export function pinFor(profile, callout) {
  * The pin in the profile is not changed here; the panel's save writes the point in (fillPinPoints in ui/server.mjs).
  */
 export function withPoint(profile, pin) {
-  if (!pin || pinUsable(pin) || !/^\d{6}$/.test(String(pin.postal_code || ""))) return pin;
+  if (!pin || pinUsable(pin) || !pin.postal_code || !postalOk(profileCountry(profile), pin.postal_code)) return pin;
   const loc = (profile?.locations || []).find((l) => String(l?.postal_code || "") === String(pin.postal_code) && Number.isFinite(l.lat) && Number.isFinite(l.lng));
   return loc ? { ...pin, lat: loc.lat, lng: loc.lng, point_from: "the gym's location at this postal code" } : pin;
 }
@@ -398,15 +413,16 @@ export function validateProfile(profile, { gymDir = null } = {}) {
   walk(profile, "");
   if (profile.gym_abbr && !/^[A-Z]{2,4}$/.test(profile.gym_abbr)) errors.push(`abbreviation "${profile.gym_abbr}" must be 2-4 capital letters (it goes into ad names)`);
   for (const [label, v] of [["display name", profile.display_name], ["legal entity", profile.legal_entity]]) if (hasEmDash(v)) errors.push(`${label} contains an em/en dash, which breaks the Ads Uploader import — use a plain hyphen`);
-  const currency = profile.locale?.currency;
-  if (currency && currency !== "SGD" && !profile.locale.non_sg_intentional) errors.push(`currency is "${currency}", not SGD — set locale.non_sg_intentional if that is deliberate`);
+  const currency = profile.locale?.currency, country = profileCountry(profile), cr = countryRules(country);
+  if (profile.locale?.country && !/^[A-Za-z]{2}$/.test(String(profile.locale.country))) errors.push(`country "${profile.locale.country}" must be a two-letter code (SG, TW, MY…)`);
+  if (currency && cr.currency && currency !== cr.currency && !profile.locale.non_sg_intentional) warnings.push(`currency is "${currency}" but ${cr.name} uses ${cr.currency}; the ad account's currency is what budgets are charged in`);
   if (profile.website && !/^https?:\/\/\S+\.\S+$/.test(profile.website)) errors.push(`website "${profile.website}" is not a web address (https://…)`);
   if (profile.locations != null && !Array.isArray(profile.locations)) errors.push("locations must be a list");
   (Array.isArray(profile.locations) ? profile.locations : []).forEach((l, i) => {
     const name = `location ${i + 1}${l?.label ? ` (${l.label})` : ""}`;
-    if (l?.postal_code && !/^\d{6}$/.test(String(l.postal_code))) errors.push(`${name}: postal code "${l.postal_code}" must be 6 digits`);
+    if (l?.postal_code && !postalOk(country, l.postal_code)) errors.push(`${name}: postal code "${l.postal_code}" must be ${cr.postal_hint}${cr.name ? ` (${cr.name})` : ""}`);
     for (const k of ["lat", "lng"]) if (l?.[k] != null && l[k] !== "" && !Number.isFinite(l[k])) errors.push(`${name}: ${k} must be a number`);
-    if (Number.isFinite(l?.lat) && (l.lat < 1.1 || l.lat > 1.5) && currency === "SGD") warnings.push(`${name}: latitude ${l.lat} is outside Singapore`);
+    if (Number.isFinite(l?.lat) && cr.lat && (l.lat < cr.lat[0] || l.lat > cr.lat[1])) warnings.push(`${name}: latitude ${l.lat} is outside ${cr.name}`);
   });
   // The gym's own social accounts (read from its website; the Instagram handle is what the Instagram import asks Meta for).
   const social = profile.social;
@@ -463,7 +479,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
   (Array.isArray(pins) ? pins : []).forEach((pin, i) => {
     const name = `pin ${i + 1}${pin?.label ? ` (${pin.label})` : ""}`;
     if (!isObj(pin)) { errors.push(`${name}: not a pin`); return; }
-    if (pin.postal_code && !/^\d{6}$/.test(String(pin.postal_code))) errors.push(`${name}: postal code "${pin.postal_code}" must be 6 digits`);
+    if (pin.postal_code && !postalOk(country, pin.postal_code)) errors.push(`${name}: postal code "${pin.postal_code}" must be ${cr.postal_hint}${cr.name ? ` (${cr.name})` : ""}`);
     if (pin.place_key && !/^\d{5,20}$/.test(String(pin.place_key))) errors.push(`${name}: place key "${pin.place_key}" is not a Meta place id (digits)`);
     for (const k of ["lat", "lng"]) if (pin[k] != null && pin[k] !== "" && !Number.isFinite(pin[k])) errors.push(`${name}: ${k} must be a number`);
     if (pin.radius_km != null && !(pin.radius_km >= RADIUS_KM.min && pin.radius_km <= RADIUS_KM.max)) errors.push(`${name}: radius must be ${RADIUS_KM.min}-${RADIUS_KM.max} km (Meta's range)`);
@@ -546,7 +562,7 @@ export function loadClientConfig(gym, offerSlug, { root = REPO_ROOT } = {}) {
       gym_abbr: profile.gym_abbr,
       display_name: profile.display_name,
       website: profile.website,
-      locale: { timezone: "Asia/Singapore", ...(profile.locale || {}) },
+      locale: { timezone: countryRules(profile.locale?.country).timezone || "Asia/Singapore", ...(profile.locale || {}) },
       locations: profile.locations || [],
       business: profile.business || {},
       proof_assets: profile.proof_assets || {},
@@ -573,13 +589,14 @@ export function writeResolved(gymDir, offerSlug, resolved) {
 }
 
 // ── Scaffolding ──────────────────────────────────────────────────────────────
-export const PROFILE_STARTER = (gym, displayName = "") => ({
+/** A new gym's profile. `country` (SG by default) sets the locale, the targeting country and locale, and the photos' people line. */
+export const PROFILE_STARTER = (gym, displayName = "", country = "SG") => ({
   schema_version: PROFILE_SCHEMA,
   gym_id: gym,
   gym_abbr: gym.replace(/[^a-z]/g, "").slice(0, 3).toUpperCase(),
   display_name: displayName,
   website: "",
-  locale: { country: "SG", currency: "SGD", timezone: "Asia/Singapore", languages: ["en_SG"], spelling: "en-SG" },
+  locale: { country: String(country || "SG").toUpperCase(), currency: countryRules(country).currency || "", timezone: countryRules(country).timezone || "", languages: [...countryRules(country).languages], spelling: countryRules(country).spelling },
   locations: [
     { label: "", address: "", postal_code: "", lat: null, lng: null, nearest_mrt: "", catchment: "", opening_hours: "" },
   ],
@@ -618,14 +635,14 @@ export const PROFILE_STARTER = (gym, displayName = "") => ({
     photography: {
       must: ["real facility", "real members and coaches", "natural light"],
       never: ["stock gym photos", "oiled fitness models", "body-part crops"],
-      people: "Singaporean / SEA mix, real training clothes, ages 20-65",
+      people: countryRules(country).people,
     },
     voice: { adjectives: [], never: ["hype", "emoji in headlines", "American slang", "fitspo language"] },
     hard_overrides: { ignore_auto_detected: [], notes: "" },
   },
   targeting_defaults: {
-    geo: { countries: ["SG"], mode: "radius", radius_pins: [], excluded_pins: [] },
-    demographics: { age_min: 25, age_max: 60, genders: "all", locales: ["en_SG"], callout_genders: {} },
+    geo: { countries: [String(country || "SG").toUpperCase()], mode: "radius", radius_pins: [], excluded_pins: [] },
+    demographics: { age_min: 25, age_max: 60, genders: "all", locales: [...countryRules(country).languages], callout_genders: {} },
     detailed_targeting: {
       strategy: "broad_first",
       interests: [],
@@ -692,7 +709,7 @@ export const OFFER_STARTER = (gym, slug) => ({
   campaign: {},
 });
 
-export function scaffold(gym, offerSlug, { brandsDir = join(REPO_ROOT, "brands"), displayName = "" } = {}) {
+export function scaffold(gym, offerSlug, { brandsDir = join(REPO_ROOT, "brands"), displayName = "", country = "SG" } = {}) {
   const gymDir = join(brandsDir, gym);
   const written = [];
   for (const d of ["", "offers", "brand-assets/logo", "brand-assets/facility", "brand-assets/coaches", "brand-assets/members", "brand-assets/brand"]) {
@@ -702,7 +719,7 @@ export function scaffold(gym, offerSlug, { brandsDir = join(REPO_ROOT, "brands")
   if (existsSync(pPath)) {
     console.log(`  exists   gym-profile.json (left alone)`);
   } else {
-    writeFileSync(pPath, JSON.stringify(PROFILE_STARTER(gym, displayName), null, 2) + "\n");
+    writeFileSync(pPath, JSON.stringify(PROFILE_STARTER(gym, displayName, country), null, 2) + "\n");
     written.push(pPath);
   }
   if (offerSlug) {

@@ -30,6 +30,10 @@ import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-t
 import { textOptionsFor, MAX_OPTIONS, fillButton } from "./draft-copy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+/** Currencies Meta counts in whole units (no subunits): a budget of 500 is 500 of them, not 5.00. Everything else is in hundredths. */
+export const WHOLE_UNIT_CURRENCIES = ["TWD", "JPY", "KRW", "VND", "CLP", "HUF", "ISK", "PYG", "UGX", "COP", "IDR"];
+export const budgetUnits = (currency) => (WHOLE_UNIT_CURRENCIES.includes(String(currency || "").toUpperCase()) ? 1 : 100);
+
 export const AD_STATUS = "PAUSED";
 const DEFAULT_RADIUS_KM = 5;
 const CTA = "SIGN_UP";
@@ -76,8 +80,11 @@ export function buildTestOne({ profile, batch, ad, words = null, storyFile = nul
   const level = budget.level === "campaign" ? "campaign" : "adset";
   const strategy = budget.bid_strategy || "LOWEST_COST_WITHOUT_CAP";
   if (!BID_STRATEGIES[strategy]) throw new Error(`bid strategy "${strategy}" is not one Meta knows (Targeting & budget)`);
-  const cents = Math.round((budget.amount || 50) * 100);
-  const capCents = strategy === "LOWEST_COST_WITHOUT_CAP" ? null : Math.round((budget.bid_cap || 0) * 100);
+  // Meta takes budgets in the currency's smallest unit: cents for SGD, whole dollars for TWD, JPY, KRW… (F45 Xinyi's
+  // ad sets run NT$100–3,000 a day as 100–3000; a ×100 would have made NT$120,000 of NT$1,200, 2026-10-07).
+  const units = budgetUnits(currency);
+  const cents = Math.round((budget.amount || 50) * units);
+  const capCents = strategy === "LOWEST_COST_WITHOUT_CAP" ? null : Math.round((budget.bid_cap || 0) * units);
   if (strategy !== "LOWEST_COST_WITHOUT_CAP" && !(capCents > 0)) throw new Error(`${BID_STRATEGIES[strategy]} needs an amount (Targeting & budget)`);
   const tg = profile.targeting_defaults || {}, dem = tg.demographics || {};
   const { pin, fallback } = pinFor(profile, w.location);
@@ -90,7 +97,7 @@ export function buildTestOne({ profile, batch, ad, words = null, storyFile = nul
   const campaignName = `${abbr} | TEST | Leads | ${w.offer || batch.batch_id} | ${tag}`;
   return {
     account, page_id: m.page_id, instagram_user_id: m.instagram_user_id || null, lead_form_id: m.lead_form_id, pixel_id: m.pixel_id || null,
-    budget: { level, daily: cents / 100, currency, bid_strategy: strategy, bid_cap: capCents ? capCents / 100 : null },
+    budget: { level, daily: cents / units, currency, bid_strategy: strategy, bid_cap: capCents ? capCents / units : null },
     pin: { ...pin, fallback, words: pinWords(pin, fallback) },
     image: { file: ad.file, name: `${batch.batch_id}__${basename(ad.file)}` },
     story: storyFile ? { file: storyFile, name: `${batch.batch_id}__${basename(storyFile)}` } : null,
@@ -244,7 +251,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
     name: clean1(sc.name, 120) || `${date} ${offer} | ${abbr} | ${kept[0]?.words?.audience ? titleCase(kept[0].words.audience) : "Leads"}`,
     objective: cd.objective || "OUTCOME_LEADS", status: AD_STATUS, special_ad_categories: cd.special_ad_categories || [], buying_type: cd.buying_type || "AUCTION",
     // Meta (2026-09-18): a campaign whose ad sets carry their own budgets must say whether they may share it; never (their house style).
-    ...(level === "campaign" ? { daily_budget: Math.round(daily * 100), bid_strategy: strategy } : { is_adset_budget_sharing_enabled: false }),
+    ...(level === "campaign" ? { daily_budget: Math.round(daily * budgetUnits(currency)), bid_strategy: strategy } : { is_adset_budget_sharing_enabled: false }),
   };
   if (!kept.length) problems.push("no ads kept: keep at least one on the Review screen");
   // One ad set per location callout, in the order the callouts appear.
@@ -283,7 +290,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
       budget: level === "adset" ? { daily: setDaily, currency, bid_strategy: strategy, bid_cap: cap } : null,
       payload: {
         name: name.slice(0, 400), status: AD_STATUS, optimization_goal: "LEAD_GENERATION", billing_event: "IMPRESSIONS", destination_type: "ON_AD",
-        ...(level === "adset" ? { daily_budget: Math.round(setDaily * 100), bid_strategy: strategy } : {}), ...(cap ? { bid_amount: Math.round(cap * 100) } : {}),
+        ...(level === "adset" ? { daily_budget: Math.round(setDaily * budgetUnits(currency)), bid_strategy: strategy } : {}), ...(cap ? { bid_amount: Math.round(cap * budgetUnits(currency)) } : {}),
         promoted_object: { page_id },
         ...(singapore ? { regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: m.singapore_beneficiary_id, singapore_universal_payer: m.singapore_payer_id } } : {}),
         targeting: { ...(pin && pinUsable(pin) ? { geo_locations: geoFor({ ...pin, radius_km }) } : {}), age_min, age_max, ...(genders ? { genders } : {}), ...spec, targeting_automation: { ...NEVER_ADVANTAGE } },

@@ -1995,3 +1995,58 @@ test("U33 the copy library on Library → Copy (CL3): every entry listed with wh
     assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Send to the library/.test(b.textContent))"));
   } finally { rmSync(libFile, { force: true }); rmSync(usesDir, { recursive: true, force: true }); }
 });
+
+test("U34 From the ad account (2026-10-07, the first non-Singapore gym): a new gym is scaffolded for its country; the Page and the ad account are read into a proposal (the address with its point, the locale, the pin as the Page's Meta place, ages, budget, offer names, the callout); accepting applies what was ticked to the profile and the wordings; a Taiwan postal code saves; the map refuses a country it has no map for; the page shows the proposal and adds it", async () => {
+  const gym = "tw-gym", g = join(brands, gym);
+  rmSync(g, { recursive: true, force: true });
+  const PAGE = { id: "105176144862096", name: "F45 Xinyi 信義", username: "f45xinyi", category: "Gym", phone: "+886980660800", website: "http://f45xinyi.com/6weekplan", location: { street: "台北市信義區信義路四段413號二樓", city: "Taipei", country: "Taiwan", zip: "110", latitude: 25.033241, longitude: 121.559067 }, single_line_address: "台北市信義區信義路四段413號二樓, Taipei, Taiwan 110", instagram_business_account: { id: "17841449500342630", username: "f45_xinyi" } };
+  const place = { geo_locations: { places: [{ key: "105176144862096", name: "F45 Xinyi 信義", latitude: 25.033241, longitude: 121.559067, radius: 2.5 }], location_types: ["home", "recent"] } };
+  const graph = http.createServer((req, res) => {
+    const u = new URL(req.url, "http://x"), path = u.pathname; res.writeHead(200, { "content-type": "application/json" });
+    if (/\/act_5595320690525032$/.test(path)) return res.end(JSON.stringify({ id: "act_5595320690525032", account_id: "5595320690525032", name: "F45 Xinyi", currency: "TWD", timezone_name: "Asia/Taipei", business_country_code: "TW" }));
+    if (/\/act_5595320690525032\/adsets$/.test(path)) return res.end(JSON.stringify({ data: [{ id: "1", name: "0713 6 Week 中年體態雕塑", daily_budget: "500", campaign: { name: "c", objective: "OUTCOME_LEADS" }, targeting: { age_min: 28, age_max: 50, genders: [1], ...place } }, { id: "2", name: "0713 6 Week 女生蜜桃臀", daily_budget: "300", campaign: { name: "c", objective: "OUTCOME_LEADS" }, targeting: { age_min: 28, age_max: 50, genders: [2], ...place } }] }));
+    if (/\/105176144862096$/.test(path)) return res.end(JSON.stringify(PAGE));
+    res.end(JSON.stringify({ data: [] }));
+  });
+  await new Promise((r) => graph.listen(0, "127.0.0.1", r));
+  const main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: `http://127.0.0.1:${graph.address().port}` });
+  try {
+    // A new gym for Taiwan: the starter follows the country.
+    assert.equal((await call("/api/clients", { method: "POST", body: { gym, display_name: "F45 Xinyi", country: "Taiwan" } })).status, 400);
+    assert.equal((await call("/api/clients", { method: "POST", body: { gym, display_name: "F45 Xinyi", country: "tw" } })).status, 200);
+    const pf = join(g, "gym-profile.json");
+    let p = JSON.parse(readFileSync(pf, "utf-8"));
+    assert.deepEqual([p.locale.country, p.locale.currency, p.targeting_defaults.demographics.locales, p.brand_lock.photography.people], ["TW", "TWD", ["zh_TW"], "Taiwanese, real training clothes, ages 25-55"]);
+    // Nothing to read until the Meta link names the ids.
+    let r = await (await call(`/api/client/${gym}/meta-facts`)).json();
+    assert.deepEqual([r.reading, r.configured, r.ids], [null, true, { ad_account_id: "", page_id: "" }]);
+    r = await call(`/api/client/${gym}/meta-facts/read`, { method: "POST" }); assert.equal(r.status, 400); assert.match((await r.json()).error, /Meta link page first/);
+    p.meta_assets.ad_account_id = "act_5595320690525032"; p.meta_assets.page_id = "105176144862096"; writeFileSync(pf, JSON.stringify(p, null, 2));
+    assert.equal((await call(`/api/client/${gym}/meta-facts/read`, { method: "POST", token: null })).status, 403);
+    r = await (await call(`/api/client/${gym}/meta-facts/read`, { method: "POST" })).json();
+    assert.deepEqual([r.reading.account.currency, r.reading.page.address.zip, r.reading.pin.key, r.reading.adsets.daily_budget.median, r.reading.offers.map((o) => o.text), r.reading.callouts], ["TWD", "110", "105176144862096", 500, ["6 Week 中年體態雕塑", "6 Week 女生蜜桃臀"], ["信義區"]]);
+    assert.ok(existsSync(join(g, "onboarding", "meta", "reading.json")));
+    // Accept: the profile and the wordings; the Taiwan postal code "110" saves (the Singapore rule would have refused it).
+    r = await (await call(`/api/client/${gym}/meta-facts/accept`, { method: "POST", body: { locale: true, address: true, phone: true, website: true, instagram: true, facebook: true, pin: { radius_km: 3 }, ages: { min: 28, max: 50 }, budget: 500, offers: ["6 Week 女生蜜桃臀"], callouts: ["信義區"] } })).json();
+    p = JSON.parse(readFileSync(pf, "utf-8"));
+    assert.deepEqual([p.locations[0].postal_code, p.locations[0].lat, p.website, p.social.instagram, p.targeting_defaults.geo.radius_pins[0].place_key, p.targeting_defaults.geo.radius_pins[0].callouts, p.campaign_defaults.budget, p.creative_defaults.locations], ["110", 25.033241, "http://f45xinyi.com/6weekplan", "f45_xinyi", "105176144862096", ["信義區"], { ...p.campaign_defaults.budget, amount: 500, currency: "TWD" }, ["信義區"]]);
+    assert.deepEqual([r.wordings_added, r.wordings.includes("6 Week 女生蜜桃臀"), r.profile.callouts], [["6 Week 女生蜜桃臀"], true, ["信義區"]]);
+    // The profile saves through the panel with its 3-digit code; the map refuses a country it has no map for.
+    const put = await call(`/api/client/${gym}`, { method: "PUT", body: p }); assert.equal(put.status, 200, await put.text());
+    r = await call(`/api/geocode?q=110&gym=${gym}`); assert.equal(r.status, 400); assert.match((await r.json()).error, /no map for Taiwan/);
+    // The plan would send TWD budgets in whole units: 500, not 50000.
+    const { buildPlan } = await import("../skills/references/meta-publish.mjs");
+    const mk = (await import("../skills/references/read-meta.mjs")).budgetUnits; assert.equal(mk("TWD"), 1);
+    // The page: the proposal with its boxes, and Add to the gym.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u34#/${gym}/metafacts` }, sessionId); await loaded;
+    const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!MF.data && !!MF.pick && /Where and who/.test(document.querySelector('#view')?.textContent||'')"))) await new Promise((x) => setTimeout(x, 120));
+    const text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /F45 Xinyi 信義/); assert.match(text, /already a location/); assert.match(text, /TW · TWD · Asia\/Taipei/); assert.match(text, /6 Week 中年體態雕塑/); assert.match(text, /a wording already/); assert.match(text, /on Ad defaults/);
+    assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Add to the gym/.test(b.textContent))"));
+    assert.equal(await ev("MF.pick.address"), false, "the address is already a location, so it is not ticked again");
+    void buildPlan;
+  } finally { await panel.stop(); panel = main; graph.close(); rmSync(g, { recursive: true, force: true }); }
+});

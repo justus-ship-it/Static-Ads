@@ -296,10 +296,10 @@ let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'
 const NAV = [
   ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'], ['results','Results','▤'],
   ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'],
-  ['sec','Profile'], ['overview','Overview','◎'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
+  ['sec','Profile'], ['overview','Overview','◎'], ['metafacts','From the ad account','◆'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -406,6 +406,7 @@ function render(){
   if (STATE.tab==='publish') return STATE.batch ? viewPublish(v, seq) : viewExports(v, seq);
   if (STATE.tab==='results') return viewResults(v, seq);
   if (STATE.tab==='copy') return viewCopyRefs(v, seq);
+  if (STATE.tab==='metafacts') return viewMetaFacts(v, seq);
   if (STATE.tab==='scenes') return viewScenes(v, seq);
   if (STATE.tab==='photos') return viewPhotos(v, seq);
   if (STATE.tab==='references') return viewReferences(v, seq);
@@ -472,9 +473,16 @@ function viewIdentity(v){
       <div><label>Abbreviation <span class="n">· 2-4 capitals</span></label><input class="mono" value="${esc(p.gym_abbr||'')}" oninput="setP('gym_abbr',this.value.toUpperCase())"></div>
       <div><label>Website</label><input value="${esc(p.website||'')}" placeholder="https://" oninput="setP('website',this.value)"></div>
       <div><label>Legal entity <span class="n">· optional</span></label><input value="${esc(p.legal_entity||'')}" oninput="setP('legal_entity',this.value)"></div>
-    </div></div>
+    </div>
+    <div class="grid" style="margin-top:10px">
+      <div><label>Country <span class="n">· two letters</span></label><input class="mono" value="${esc(p.locale?.country||'')}" placeholder="SG" maxlength="2" oninput="setP('locale.country',this.value.toUpperCase())"></div>
+      <div><label>Currency <span class="n">· the ad account's</span></label><input class="mono" value="${esc(p.locale?.currency||'')}" placeholder="SGD" maxlength="3" oninput="setP('locale.currency',this.value.toUpperCase())"></div>
+      <div><label>Time zone</label><input class="mono" value="${esc(p.locale?.timezone||'')}" placeholder="Asia/Singapore" oninput="setP('locale.timezone',this.value)"></div>
+      <div><label>Language <span class="n">· Meta locale, e.g. en_SG, zh_TW</span></label><input class="mono" value="${esc((p.locale?.languages||[])[0]||'')}" placeholder="en_SG" oninput="setP('locale.languages',this.value?[this.value]:[])"></div>
+    </div>
+    <p class="hint" style="margin:8px 0 0">From the ad account fills these from Meta (the account's currency and time zone, the Page's address). Singapore postal codes are placed on the map here; elsewhere the point comes from the Facebook Page.</p></div>
   ${locs.map((l,i)=>`<div class="card"><div class="row"><h3 style="margin:0">Location ${i+1}${l.label?` · ${esc(l.label)}`:''}</h3><div class="spacer"></div>${locs.length>1?`<button class="sm" onclick="locDel(${i})">Remove</button>`:''}</div>
-    <div class="grid" style="margin-top:10px">${f(i,'label','Name','e.g. Sin Ming')}${f(i,'address','Address')}${f(i,'postal_code','Postal code','6 digits','mono')}${f(i,'nearest_mrt','Nearest MRT')}${f(i,'lat','Latitude','1.35','mono')}${f(i,'lng','Longitude','103.83','mono')}</div>
+    <div class="grid" style="margin-top:10px">${f(i,'label','Name','e.g. Sin Ming')}${f(i,'address','Address')}${f(i,'postal_code','Postal code',(p.locale?.country||'SG')==='SG'?'6 digits':(p.locale?.country||'SG')==='TW'?'3, 5 or 6 digits':'',"mono")}${f(i,'nearest_mrt','Nearest MRT')}${f(i,'lat','Latitude','1.35','mono')}${f(i,'lng','Longitude','103.83','mono')}</div>
     <label>Catchment <span class="n">· the neighbourhoods its members come from</span></label><input value="${esc(l.catchment||'')}" oninput="setP('locations.${i}.catchment',this.value)"></div>`).join('')}
   <button onclick="locAdd()">+ Add a location</button>
   ${saveBar('profile')}`;
@@ -538,7 +546,7 @@ async function viewBrand(v, seq=VIEW_SEQ){
       <div><label>Must show <span class="n">· one per line</span></label><textarea rows="5" ${lines('brand_lock.photography.must', L.photography?.must)}</textarea></div>
       <div><label>Never show <span class="n">· one per line</span></label><textarea rows="5" ${lines('brand_lock.photography.never', L.photography?.never)}</textarea></div>
     </div>
-    <label>Who is in the photos</label><input value="${esc(L.photography?.people||'')}" placeholder="Singaporean / SEA mix, real training clothes, ages 20-65" oninput="setP('brand_lock.photography.people',this.value)">
+    <label>Who is in the photos</label><input value="${esc(L.photography?.people||'')}" placeholder="e.g. Singaporean / SEA mix, real training clothes, ages 20-65" oninput="setP('brand_lock.photography.people',this.value)">
   </div>
   <div class="card">
     <h3>Words never used</h3>
@@ -715,6 +723,7 @@ function newClient(){
     <p class="hint">Fill a gym in once; every batch reads it after that. You can switch between gyms from the top bar.</p>
     <label for="ncName">Gym name</label><input id="ncName" placeholder="e.g. IronHaus Strength" oninput="$('#ncSlug').value=slugify(this.value)">
     <label for="ncSlug">Folder name <span class="n">· lowercase, hyphens</span></label><input id="ncSlug" class="mono" placeholder="ironhaus-strength">
+    <label for="ncCountry">Country <span class="n">· sets the currency, time zone, language, postal-code shape and who is in the photos</span></label><select id="ncCountry"><option value="SG">Singapore</option><option value="TW">Taiwan</option><option value="MY">Malaysia</option></select>
     <div id="ncErr" style="margin-top:8px"></div>
     <div class="row" style="margin-top:12px"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" onclick="newClientGo()">Create profile</button></div></div></div>`;
   $('#ncName').focus();
@@ -724,7 +733,7 @@ async function newClientGo(){
   if (!name){ $('#ncErr').innerHTML = '<div class="msg err">Give the gym a name.</div>'; return; }
   if (STATE.clients.some(c=>c.gym===gym)){ $('#ncErr').innerHTML = '<div class="msg err">A gym with that folder name exists: pick it from the top bar.</div>'; return; }
   try {
-    await api('/api/clients', {method:'POST', body:{gym, display_name:name}});
+    await api('/api/clients', {method:'POST', body:{gym, display_name:name, country:$('#ncCountry').value}});
     $('#gModal').innerHTML = '';
     await loadClients(); await selectClient(gym, false); go('overview');
   } catch(e){ $('#ncErr').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
@@ -955,8 +964,8 @@ async function findPin(i){
   const q = $('#pinq_'+i)?.value.trim(); const out = $('#pinfind_'+i); if (!q){ out.textContent = 'Type a postal code or an address first.'; return; }
   out.textContent = 'Looking it up…';
   try {
-    const r = await api(`/api/geocode?q=${encodeURIComponent(q)}`);
-    if (!r.results.length){ out.textContent = 'OneMap knows no such place.'; return; }
+    const r = await api(`/api/geocode?q=${encodeURIComponent(q)}&gym=${encodeURIComponent(STATE.sel)}`);
+    if (!r.results.length){ out.textContent = 'The map knows no such place.'; return; }
     const pick = (k) => { const x = r.results[k]; setPin(i,'lat',x.lat); setPin(i,'lng',x.lng); if (x.postal_code) setPin(i,'postal_code',x.postal_code); if (!STATE.profile.targeting_defaults.geo.radius_pins[i].label) setPin(i,'label',x.address.split(' SINGAPORE')[0].slice(0,40)); viewTargeting($('#view')); };
     if (r.results.length===1) return pick(0);
     out.innerHTML = 'Which one? ' + r.results.map((x,k)=>`<a href="#" onclick="return false" data-k="${k}">${esc(x.address)}</a>`).join(' · ');
@@ -1604,6 +1613,75 @@ async function viewExports(v, seq=VIEW_SEQ){
       <button class="sm" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm primary" onclick="openPublish('${esc(b.id)}')">Publish…</button></div></div>`; }).join('') : '<div class="empty">No campaign has ads yet. Create one first.</div>'}`;
 }
 
+// ── From the ad account (onboarding, part three) ────────────────────────────
+// The gym's own Facebook Page and ad account know where it is, how to reach it, what it charges itself a day, the
+// radius and ages it targets and the offers it has run. Read once, proposed, applied only on Add to the gym.
+const MF = { data:null, pick:null, gym:null, busy:false, msg:null };
+async function loadMetaFacts(){ MF.data = await api(`/api/client/${STATE.sel}/meta-facts`); MF.gym = STATE.sel; mfDefaults(); return MF.data; }
+/** Ticked to begin with: what the profile lacks. Offer names are never ticked: a wording is the owner's choice. */
+function mfDefaults(){
+  const d = MF.data, r = d.reading; if (!r){ MF.pick = null; return; }
+  const pf = d.profile, a = r.page?.address, hasLoc = !!a && pf.locations.some(l => (a.zip && String(l.postal_code)===a.zip) || (l.address && l.address===a.line));
+  const localeDiff = !!r.account && (r.account.country !== (pf.locale.country||'SG') || r.account.currency !== pf.locale.currency || r.account.timezone !== pf.locale.timezone);
+  const pinHave = pf.pins.some(p => (r.pin?.key && p.place_key===r.pin.key) || (r.pin && p.lat!=null && Math.abs(p.lat-r.pin.lat)<0.0005 && Math.abs(p.lng-r.pin.lng)<0.0005));
+  const ages = r.adsets?.ages?.[0] || null;
+  MF.pick = { locale: localeDiff, address: !!a && !hasLoc, phone: !!r.page?.phone, hours: !!r.page?.hours, website: !!r.page?.website && !pf.website, instagram: !!r.page?.instagram?.username && !pf.social.instagram, facebook: !!r.page && !pf.social.facebook,
+    pin: !!r.pin && !pinHave, radius_km: r.pin?.radius_km ?? 5, ages: !!ages && (pf.ages.min !== ages.min || pf.ages.max !== ages.max), age_min: ages?.min ?? pf.ages.min, age_max: ages?.max ?? pf.ages.max,
+    budget: !!r.adsets?.daily_budget && (pf.budget.currency !== r.adsets.daily_budget.currency), amount: r.adsets?.daily_budget?.median ?? pf.budget.amount ?? '', offers: {}, callouts: Object.fromEntries((r.callouts||[]).map(c => [c, !pf.callouts.map(x=>x.toUpperCase()).includes(c.toUpperCase())])) };
+}
+async function viewMetaFacts(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>From the ad account</h1><p class="sub">Loading…</p>';
+  try { if (MF.gym !== STATE.sel || !MF.data) await loadMetaFacts(); } catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<h1>From the ad account</h1><div class="empty">${esc(e.message)}</div>`; return; }
+  if (seq !== VIEW_SEQ) return;
+  paintMetaFacts(v);
+}
+function mfCount(){ const k = MF.pick; if (!k) return []; return [k.locale&&'the country, currency and time zone', k.address&&'the address', k.phone&&k.address&&'the phone', k.hours&&k.address&&'the hours', k.website&&'the website', k.instagram&&'Instagram', k.facebook&&'Facebook', k.pin&&'the pin', k.ages&&'the ages', k.budget&&'the daily budget', Object.values(k.offers).filter(Boolean).length&&`${Object.values(k.offers).filter(Boolean).length} offer wording${Object.values(k.offers).filter(Boolean).length===1?'':'s'}`, Object.values(k.callouts).filter(Boolean).length&&'the location callout'].filter(Boolean); }
+function paintMetaFacts(v){
+  const d = MF.data, r = d.reading, pf = d.profile, k = MF.pick, cur = r?.account?.currency || pf.locale.currency || '';
+  const ids = d.ids.ad_account_id && d.ids.page_id;
+  const head = `<h1>From the ad account</h1><p class="sub">What the gym's own Facebook Page and ad account already know: where it is and how to reach it, the country and currency, the radius, ages and daily budget its ad sets run, the offers they named. Read once, proposed here; nothing changes until you add it.</p>
+  <div class="card"><h3>Read the ad account</h3>
+    ${!d.configured ? '<p class="hint">The Meta link is not set up yet: see <a href="#" onclick="go(\'meta\');return false">Meta link</a>.</p>' : !ids ? '<p class="hint">Pick the gym\'s ad account and Facebook Page on <a href="#" onclick="go(\'meta\');return false">Meta link</a> first (Check the link, then the lists), save, and come back.</p>' : `<p class="hint">Ad account ${esc(d.ids.ad_account_id)} · Page ${esc(d.ids.page_id)}. A few read-only calls, a few seconds; nothing is written to Meta.</p>`}
+    <div class="row" style="margin-top:8px"><button class="primary" ${!d.configured||!ids||MF.busy?'disabled':''} onclick="mfRead()">${MF.busy?'Reading…':r?'Read again':'Read the ad account'}</button>${r?`<span class="hint" style="margin:0 0 0 10px">Last read ${esc(new Date(r.read_at).toLocaleString())}${r.problems?.length?` · could not read: ${r.problems.map(esc).join('; ')}`:''}</span>`:''}</div></div>`;
+  if (!r || !k){ v.innerHTML = head + (MF.msg?`<div class="msg ${MF.msg.cls}">${MF.msg.html}</div>`:''); return; }
+  const box = (key, label, extra='') => `<label class="wrow" style="cursor:pointer"><input type="checkbox" style="width:auto" ${k[key]?'checked':''} onchange="MF.pick.${key}=this.checked;paintMetaFacts($('#view'))">${label}${extra}</label>`;
+  const a = r.page?.address, hasLoc = !!a && pf.locations.some(l => (a.zip && String(l.postal_code)===a.zip) || (l.address && l.address===a.line));
+  const who = `<div class="card"><h3>Where and who · ${esc(r.page?.name||'no Page')}</h3>
+    ${r.page ? `<p class="hint" style="margin-top:4px">${esc(r.page.category||'')}${r.page.fans!=null?` · ${r.page.fans} followers`:''}${r.page.about?` · “${esc(r.page.about.slice(0,120))}${r.page.about.length>120?'…':''}”`:''}</p>
+    ${a ? box('address', `<span>${esc(a.line)}${a.lat!=null?`<br><span class="hint" style="margin:0">on the map: ${a.lat.toFixed(5)}, ${a.lng.toFixed(5)}${a.zip?` · postal code ${esc(a.zip)}`:''}</span>`:''}</span>`, hasLoc?' <span class="pill on">already a location</span>':'') : '<p class="hint" style="margin:0">The Page has no address.</p>'}
+    ${r.page.phone ? box('phone', `<span>phone ${esc(r.page.phone)}</span>`, a?'':' <span class="hint" style="margin:0">(with the address)</span>') : ''}
+    ${r.page.hours ? box('hours', `<span>hours ${esc(r.page.hours)}</span>`) : ''}
+    ${r.page.website ? box('website', `<span>website ${esc(r.page.website)}</span>`, pf.website?` <span class="hint" style="margin:0">now ${esc(pf.website)}</span>`:'') : ''}
+    ${r.page.instagram?.username ? box('instagram', `<span>Instagram @${esc(r.page.instagram.username)}</span>`, pf.social.instagram===r.page.instagram.username?' <span class="pill on">in the profile</span>':pf.social.instagram?` <span class="hint" style="margin:0">now @${esc(pf.social.instagram)}</span>`:'') : ''}
+    ${box('facebook', `<span>Facebook facebook.com/${esc(r.page.username||r.page.id)}</span>`, pf.social.facebook?` <span class="hint" style="margin:0">now ${esc(pf.social.facebook)}</span>`:'')}` : '<p class="hint" style="margin:0">No Page picked, or it could not be read.</p>'}</div>`;
+  const locale = r.account ? `<div class="card"><h3>Country and currency · ${esc(r.account.name||'')}</h3>
+    ${box('locale', `<span>${esc(r.account.country||'?')} · ${esc(r.account.currency||'?')} · ${esc(r.account.timezone||'?')}</span>`, ` <span class="hint" style="margin:0">now ${esc(pf.locale.country||'SG')} · ${esc(pf.locale.currency||'')} · ${esc(pf.locale.timezone||'')}${k.locale&&(pf.people===''||/^Singaporean/.test(pf.people))&&(r.account.country||'SG')!=='SG'?'; who is in the photos follows the country':''}</span>`)}</div>` : '';
+  const ad = r.adsets, pin = r.pin;
+  const targeting = `<div class="card"><h3>Targeting and budget · ${ad?`${ad.count} ad sets in the account`:'no ad sets'}</h3>
+    ${pin ? box('pin', `<span>pin ${esc(pin.name||'the gym')} ${pin.kind==='place'?'<span class="pill navy">Meta place</span>':'<span class="pill">point</span>'} · radius <input type="number" min="1" max="80" step="0.5" value="${esc(k.radius_km)}" style="width:70px" onclick="event.stopPropagation()" oninput="MF.pick.radius_km=Number(this.value)"> km</span>`, ad?.radius_km?.length?` <span class="hint" style="margin:0">they run ${ad.radius_km.slice(0,3).map(x=>`${x.km} km (${x.adsets})`).join(', ')}</span>`:'') : '<p class="hint" style="margin:0">No pin: the Page has no map point and the ad sets name no place.</p>'}
+    ${ad?.ages?.length ? box('ages', `<span>ages <input type="number" min="13" max="65" value="${esc(k.age_min)}" style="width:60px" onclick="event.stopPropagation()" oninput="MF.pick.age_min=Number(this.value)"> to <input type="number" min="13" max="65" value="${esc(k.age_max)}" style="width:60px" onclick="event.stopPropagation()" oninput="MF.pick.age_max=Number(this.value)"></span>`, ` <span class="hint" style="margin:0">they run ${ad.ages.slice(0,3).map(x=>`${x.min}-${x.max} (${x.adsets})`).join(', ')} · ${ad.genders.men} men's, ${ad.genders.women} women's, ${ad.genders.all} for all · now ${esc(pf.ages.min)}-${esc(pf.ages.max)}</span>`) : ''}
+    ${ad?.daily_budget ? box('budget', `<span>daily budget ${esc(cur)} <input type="number" min="1" value="${esc(k.amount)}" style="width:90px" onclick="event.stopPropagation()" oninput="MF.pick.amount=Number(this.value)"> an ad set</span>`, ` <span class="hint" style="margin:0">their ad sets: median ${esc(cur)} ${ad.daily_budget.median}, from ${ad.daily_budget.min} to ${ad.daily_budget.max} · now ${esc(pf.budget.currency||'')} ${esc(pf.budget.amount??'')}</span>`) : ''}</div>`;
+  const offers = `<div class="card"><h3>Offers their ad sets named</h3><p class="hint" style="margin-top:4px">Ticked ones become offer wordings (chips on Create). None is ticked to begin with: the words on an ad are yours to choose. Edit them on Offer wording afterwards.</p>
+    ${r.offers.length ? r.offers.map(o => `<label class="wrow" style="cursor:pointer"><input type="checkbox" style="width:auto" ${k.offers[o.text]?'checked':''} ${o.problems.length?'disabled':''} onchange="MF.pick.offers[${JSON.stringify(o.text)}]=this.checked;paintMetaFacts($('#view'))"><span>${esc(o.text)}</span> <span class="hint" style="margin:0">${o.adsets} ad set${o.adsets===1?'':'s'}${d.wordings.includes(o.text)?' · <span class="pill on">a wording already</span>':''}${o.problems.length?` · ${esc(o.problems.join('; '))}`:''}</span></label>`).join('') : '<p class="hint" style="margin:0">None found in the ad set names.</p>'}</div>`;
+  const callouts = r.callouts.length ? `<div class="card"><h3>Location callout</h3><p class="hint" style="margin-top:4px">The place the ads call out, from the Page's address; it goes on Ad defaults and on the pin.</p>
+    ${r.callouts.map(c => `<label class="wrow" style="cursor:pointer"><input type="checkbox" style="width:auto" ${k.callouts[c]?'checked':''} onchange="MF.pick.callouts[${JSON.stringify(c)}]=this.checked;paintMetaFacts($('#view'))"><span>${esc(c)}</span>${pf.callouts.map(x=>x.toUpperCase()).includes(c.toUpperCase())?' <span class="pill on">on Ad defaults</span>':''}</label>`).join('')}</div>` : '';
+  const parts = mfCount();
+  v.innerHTML = head + (MF.msg?`<div class="msg ${MF.msg.cls}">${MF.msg.html}</div>`:'') + who + locale + targeting + offers + callouts +
+    `<div class="wfoot"><span>${parts.length?`Add ${esc(parts.join(', '))}.`:'Nothing ticked.'}</span><div class="spacer"></div><button class="primary" ${parts.length&&!MF.busy?'':'disabled'} onclick="mfAccept()">Add to the gym</button></div>`;
+}
+async function mfRead(){ MF.busy = true; MF.msg = null; paintMetaFacts($('#view'));
+  try { MF.data = await api(`/api/client/${STATE.sel}/meta-facts/read`, { method:'POST' }); mfDefaults(); } catch(e){ MF.msg = { cls:'err', html: esc(e.message) }; }
+  MF.busy = false; paintMetaFacts($('#view')); }
+async function mfAccept(){
+  const k = MF.pick; if (!k) return; MF.busy = true; MF.msg = null; paintMetaFacts($('#view'));
+  const body = { locale:k.locale, address:k.address, phone:k.address&&k.phone, hours:k.address&&k.hours, website:k.website, instagram:k.instagram, facebook:k.facebook, pin:k.pin?{ radius_km:k.radius_km }:null, ages:k.ages?{ min:k.age_min, max:k.age_max }:null, budget:k.budget?k.amount:null, offers:Object.entries(k.offers).filter(([,on])=>on).map(([t])=>t), callouts:Object.entries(k.callouts).filter(([,on])=>on).map(([t])=>t) };
+  try { MF.data = await api(`/api/client/${STATE.sel}/meta-facts/accept`, { method:'POST', body }); mfDefaults();
+    const sk = (MF.data.wordings_skipped||[]).map(x=>`${x.text}: ${x.why}`);
+    MF.msg = { cls:'ok', html: `Added: ${esc((MF.data.changes||[]).join('; ')||'nothing')}.${sk.length?` Not added: ${esc(sk.join('; '))}.`:''} <a href="#" onclick="go('overview');return false">Overview</a> shows what is still missing.` };
+    STATE.profile = null; await selectClient(STATE.sel, false, false); STATE.tab = 'metafacts'; }
+  catch(e){ MF.msg = { cls:'err', html: esc(e.message) }; }
+  MF.busy = false; paintMetaFacts($('#view')); }
+
 // ── Copy (Library) ───────────────────────────────────────────────────────────
 // Two things on one page. The CENTRAL COPY LIBRARY (CL3): one library for every gym — skeletons of proven copies and
 // headlines with the gym, offer, area, audience, button and duration as placeholders — the only thing the drafter
@@ -2099,7 +2177,7 @@ function paintWebsite(v){
   const radio = (name, val, cur, label, extra='') => `<label class="wrow" style="cursor:pointer"><input type="radio" name="${name}" ${cur===val?'checked':''} onchange="WS.pick.${name}=${val==null?'null':`'${esc(val)}'`};paintWebsite($('#view'))" style="width:auto">${label}${extra}</label>`;
   const identity = `<div class="card"><h3>Where and who</h3>
     <p class="hint" style="margin-top:4px">The site calls itself <b>${esc(r.site.name_seen || id.names[0] || '—')}</b>${id.phones.length?` · phone ${id.phones.map(esc).join(', ')}`:''}.</p>
-    <h4 style="margin:12px 0 2px">Address</h4>${id.addresses.length ? id.addresses.map(a=>radio('address', a.postal_code, k.address, `<span>${esc(a.address)}${a.onemap_address?`<br><span class="hint" style="margin:0">on the map: ${esc(a.onemap_address)}</span>`:''}</span>`, locs.has(a.postal_code)?' <span class="pill on">already a location</span>':'')).join('') + radio('address', null, k.address, '<span class="hint" style="margin:0">None of these</span>') : '<p class="hint" style="margin:0">The site shows no Singapore address. Add it on Identity & locations.</p>'}
+    <h4 style="margin:12px 0 2px">Address</h4>${id.addresses.length ? id.addresses.map(a=>radio('address', a.postal_code, k.address, `<span>${esc(a.address)}${a.onemap_address?`<br><span class="hint" style="margin:0">on the map: ${esc(a.onemap_address)}</span>`:''}</span>`, locs.has(a.postal_code)?' <span class="pill on">already a location</span>':'')).join('') + radio('address', null, k.address, '<span class="hint" style="margin:0">None of these</span>') : '<p class="hint" style="margin:0">The site shows no address with a postal code. From the ad account takes it from the Facebook Page; or add it on Identity & locations.</p>'}
     <h4 style="margin:12px 0 2px">Instagram</h4>${id.instagram.length ? id.instagram.map(x=>radio('instagram', x.value, k.instagram, `<a href="https://www.instagram.com/${esc(x.value)}/" target="_blank" rel="noopener">@${esc(x.value)}</a>`, ` <span class="hint" style="margin:0">linked ${x.seen} time${x.seen===1?'':'s'}</span>${prof.social?.instagram===x.value?' <span class="pill on">in the profile</span>':''}`)).join('') + radio('instagram', null, k.instagram, '<span class="hint" style="margin:0">None of these</span>') : '<p class="hint" style="margin:0">No Instagram link on the site.</p>'}
     <p class="hint" style="margin:4px 0 0"><a href="#" onclick="go('instagram');return false">From Instagram</a> reads this account's photos. A franchise site links the brand's global account too: pick the studio's own.</p>
     <h4 style="margin:12px 0 2px">Facebook</h4>${id.facebook.length ? id.facebook.map(x=>radio('facebook', x.value, k.facebook, `<a href="${esc(x.value)}" target="_blank" rel="noopener">${esc(x.value.replace('https://www.facebook.com/',''))}</a>`, ` <span class="hint" style="margin:0">linked ${x.seen} time${x.seen===1?'':'s'}</span>${prof.social?.facebook===x.value?' <span class="pill on">in the profile</span>':''}`)).join('') + radio('facebook', null, k.facebook, '<span class="hint" style="margin:0">None of these</span>') : '<p class="hint" style="margin:0">No Facebook link on the site.</p>'}

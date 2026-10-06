@@ -130,6 +130,10 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
     businesses: () => list("me/businesses", { fields: "id,name" }),
     adAccount: (id) => get(actId(id), { fields: "id,account_id,name,currency,account_status,timezone_name,business{id,name}" }),
     page: (id) => get(id, { fields: "id,name,category,instagram_business_account{id,username}" }),
+    /** What a Page says about the gym (public fields, no Page token): where it is, how to reach it, its hours and accounts. */
+    pageFacts: (id) => get(id, { fields: "id,name,username,category,location,single_line_address,phone,emails,website,hours,about,instagram_business_account{id,username},fan_count" }),
+    /** The ad account's own facts: currency, time zone and the country it is billed in. */
+    accountFacts: (id) => get(actId(id), { fields: "id,account_id,name,currency,timezone_name,business_country_code,account_status,business{id,name}" }),
     /** A Page's own token, for the edges that need one (its lead forms). Never stored. */
     pageToken: async (id) => (await get(id, { fields: "access_token" })).access_token,
     leadForms: async (pageId) => { const token = await get(pageId, { fields: "access_token" }).then((r) => r.access_token); return list(`${pageId}/leadgen_forms`, { fields: "id,name,status,created_time,leads_count" }, { token }); },

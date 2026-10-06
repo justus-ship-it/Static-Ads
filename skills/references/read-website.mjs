@@ -38,6 +38,7 @@ import { parseArgs } from "util";
 import { fileURLToPath } from "url";
 import { launchBrowser } from "./render-composites.mjs";
 import { callVision, imageSize } from "./check-visual.mjs";
+import { countryRules } from "./client-config.mjs";
 
 /** A photo's long side must reach this to be filed without the owner's override: an ad is 1080 px square,
  *  and 1080 is also the widest Instagram serves, so a photo from either source can pass. */
@@ -157,17 +158,18 @@ const oneLine = (s) => String(s || "").replace(/\s+/g, " ").trim();
  * text (a Singapore postal code and the line it sits on, +65 numbers), then the links (Instagram, Facebook).
  * `pages` are the collector's answers: { url, title, site_name, jsonld[], text, links[{href,text}] }.
  */
-export function identityFrom(pages) {
+export function identityFrom(pages, { country = "SG" } = {}) {
+  const cr = countryRules(country), sg = String(country || "SG").toUpperCase() === "SG";
   const addresses = [], phones = new Set(), instagram = new Map(), facebook = new Map(), hours = new Set(), names = new Set();
-  const addAddress = (a) => { if (!a.postal_code || !/^\d{6}$/.test(a.postal_code)) return; const had = addresses.find((x) => x.postal_code === a.postal_code); if (had) { if (!had.lat && a.lat) Object.assign(had, { lat: a.lat, lng: a.lng }); if (a.from === "schema.org" && had.from !== "schema.org") Object.assign(had, a); return; } addresses.push(a); };
+  const addAddress = (a) => { if (!a.postal_code || !cr.postal.test(a.postal_code)) return; const had = addresses.find((x) => x.postal_code === a.postal_code); if (had) { if (!had.lat && a.lat) Object.assign(had, { lat: a.lat, lng: a.lng }); if (a.from === "schema.org" && had.from !== "schema.org") Object.assign(had, a); return; } addresses.push(a); };
   for (const pg of pages) {
     for (const o of ldObjects(pg.jsonld)) {
       const t = [o["@type"]].flat().join(" ");
       if (!GYM_TYPES.test(t)) continue;
       if (o.name && typeof o.name === "string") names.add(oneLine(o.name));
       for (const a of [o.address].flat().filter(Boolean)) {
-        if (typeof a === "string") { const m = a.match(/\b(\d{6})\b/); if (m) addAddress({ address: oneLine(a), postal_code: m[1], from: "schema.org", page: pg.url }); continue; }
-        const pc = String(a.postalCode || "").match(/\d{6}/)?.[0];
+        if (typeof a === "string") { const m = a.match(/\b(\d{3,6})\b/); if (m && cr.postal.test(m[1])) addAddress({ address: oneLine(a), postal_code: m[1], from: "schema.org", page: pg.url }); continue; }
+        const pc = String(a.postalCode || "").trim().match(/^[A-Za-z0-9 -]{3,10}$/)?.[0];
         let line = "";
         for (const part of [a.streetAddress, a.addressLocality, a.postalCode].filter(Boolean).map(oneLine)) if (!line.toLowerCase().includes(part.toLowerCase())) line = line ? `${line}, ${part}` : part;
         const geo = o.geo && Number.isFinite(Number(o.geo.latitude)) ? { lat: Number(o.geo.latitude), lng: Number(o.geo.longitude) } : {};
@@ -179,13 +181,15 @@ export function identityFrom(pages) {
     }
     const lines = String(pg.text || "").split(/\n+/).map(oneLine).filter(Boolean);
     for (let i = 0; i < lines.length; i++) {
-      for (const m of lines[i].matchAll(/(?:Singapore|S)\s*\(?(\d{6})\)?/g)) {
+      // The text's postal codes: Singapore's six digits after "Singapore" or "S"; elsewhere only schema.org data is trusted (a bare number is anything).
+      for (const m of sg ? lines[i].matchAll(/(?:Singapore|S)\s*\(?(\d{6})\)?/g) : []) {
         // The address is the line with the postal code, and the line before it when that one is short.
         let line = lines[i].length > 160 ? lines[i].slice(Math.max(0, m.index - 110), m.index + 20) : lines[i];
         if (line.length < 30 && i > 0 && lines[i - 1].length < 90) line = `${lines[i - 1]}, ${line}`;
         addAddress({ address: oneLine(line), postal_code: m[1], from: "text", page: pg.url });
       }
-      for (const m of lines[i].matchAll(/(?:\+65[\s-]?)?(?<![\d])([689]\d{3})[\s-]?(\d{4})(?![\d])/g)) if (/\+65|tel|call|phone|whatsapp|contact|hp|mobile/i.test(lines[i]) || m[0].startsWith("+65")) phones.add(`+65 ${m[1]} ${m[2]}`);
+      if (sg) { for (const m of lines[i].matchAll(/(?:\+65[\s-]?)?(?<![\d])([689]\d{3})[\s-]?(\d{4})(?![\d])/g)) if (/\+65|tel|call|phone|whatsapp|contact|hp|mobile/i.test(lines[i]) || m[0].startsWith("+65")) phones.add(`+65 ${m[1]} ${m[2]}`); }
+      else if (cr.phone) { for (const m of lines[i].matchAll(new RegExp(`\\${cr.phone}[\\s-]?(\\d[\\d\\s-]{6,12}\\d)`, "g"))) phones.add(`${cr.phone} ${m[1].replace(/[\s-]+/g, " ").trim()}`); }
     }
     for (const l of pg.links || []) {
       const ig = instagramHandle(l.href); if (ig) instagram.set(ig, (instagram.get(ig) || 0) + 1);
@@ -433,8 +437,8 @@ export async function readWebsite({ url, gymDir, maxPages = MAX_PAGES, vision = 
     log(`  ${pages.length} page${pages.length === 1 ? "" : "s"} read`);
 
     // Identity, with the postal code placed on the map when the site gave no coordinates.
-    const identity = identityFrom(pages);
-    for (const a of identity.addresses) if (!Number.isFinite(a.lat) && geocode) { try { const g = await geocode(a.postal_code, { fetchImpl }); if (g) Object.assign(a, g); } catch {} }
+    const identity = identityFrom(pages, { country: profile?.locale?.country || "SG" });
+    for (const a of identity.addresses) if (!Number.isFinite(a.lat) && geocode && countryRules(profile?.locale?.country).geocoder === "onemap") { try { const g = await geocode(a.postal_code, { fetchImpl }); if (g) Object.assign(a, g); } catch {} }
 
     // Photos: every candidate URL of every image, the original tried first; downloaded once each. Images in
     // the header, linking home or named logo are logo candidates, never photos.

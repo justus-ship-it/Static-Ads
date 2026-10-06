@@ -32,8 +32,7 @@ import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
   scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
-  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint,
-} from "../skills/references/client-config.mjs";
+  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES } from "../skills/references/client-config.mjs";
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
@@ -49,6 +48,7 @@ import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 import { readReading, checkUrl as checkSiteUrl, MIN_PHOTO_PX, ONBOARDING_DIR } from "../skills/references/read-website.mjs";
 import { readInstagramReading, cleanHandle, INSTAGRAM_DIR, DEFAULT_POSTS, MAX_POSTS } from "../skills/references/read-instagram.mjs";
+import { readMetaFacts, writeMetaReading, readMetaReading, acceptMetaFacts } from "../skills/references/read-meta.mjs";
 
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(UI_DIR, "..");
@@ -828,13 +828,15 @@ async function geocodePostal(postal) {
  * was refused for "no usable pin" (2026-10-04). Changes `profile`; returns what was placed and what could not be.
  */
 async function fillPinPoints(profile, { geocode = geocodePostal } = {}) {
-  const placed = [], warnings = [];
+  const placed = [], warnings = [], cr = countryRules(profileCountry(profile));
   for (const [i, pin] of (profile?.targeting_defaults?.geo?.radius_pins || []).entries()) {
     if (!pin || typeof pin !== "object" || pinUsable(pin)) continue;
     const name = pin.label || `pin ${i + 1}`;
-    if (!/^\d{6}$/.test(String(pin.postal_code || ""))) { warnings.push(`${name} has no place yet: give it a postal code, or pick a Meta place`); continue; }
+    if (!pin.postal_code || !postalOk(profileCountry(profile), pin.postal_code)) { warnings.push(`${name} has no place yet: give it a postal code, or pick a Meta place`); continue; }
     const own = withPoint(profile, pin);
     if (pinUsable(own)) { pin.lat = own.lat; pin.lng = own.lng; placed.push(`${name}: placed at the gym's location for ${pin.postal_code}`); continue; }
+    // Only Singapore has a free map here (OneMap); elsewhere the point comes from the gym's location or a Meta place.
+    if (cr.geocoder !== "onemap") { warnings.push(`${name}: no map places a ${cr.name || "foreign"} postal code; give the gym's location its point (From the ad account fills it from the Facebook Page), or pick a Meta place`); continue; }
     try {
       const g = await geocode(String(pin.postal_code));
       if (g) { pin.lat = g.lat; pin.lng = g.lng; placed.push(`${name}: placed at ${g.address || pin.postal_code}`); }
@@ -1045,8 +1047,13 @@ const server = createServer(async (req, res) => {
     }
     // A Singapore address or postal code → points on the map, from OneMap (the government's geocoder; no key needed).
     if (p === "/api/geocode") {
-      const q = (url.searchParams.get("q") || "").trim();
-      if (!q || q.length > 120 || /[\r\n]/.test(q)) return json(res, 400, { error: "give an address or a 6-digit postal code" });
+      const q = (url.searchParams.get("q") || "").trim(), gq = url.searchParams.get("gym");
+      if (!q || q.length > 120 || /[\r\n]/.test(q)) return json(res, 400, { error: "give an address or a postal code" });
+      if (gq) {
+        if (!okSlug(gq)) return json(res, 400, { error: "bad gym" });
+        const cr = countryRules(profileCountry(readJsonFile(join(brandDir(gq), "gym-profile.json")) || {}));
+        if (cr.geocoder !== "onemap") return json(res, 400, { error: `no map for ${cr.name || "this country"} here: the gym's point comes from its Facebook Page (From the ad account) or a Meta place key` });
+      }
       try {
         const r = await fetch(`${ONEMAP_URL}/api/common/elastic/search?${new URLSearchParams({ searchVal: q, returnGeom: "Y", getAddrDetails: "Y", pageNum: "1" })}`, { headers: { accept: "application/json" } });
         const b = await r.json();
@@ -1143,12 +1150,13 @@ const server = createServer(async (req, res) => {
     if (p === "/api/clients" && req.method === "GET") return json(res, 200, { clients: listClients() });
 
     if (p === "/api/clients" && req.method === "POST") {
-      const { gym, offer, display_name = "" } = await readBody(req);
+      const { gym, offer, display_name = "", country = "SG" } = await readBody(req);
       if (!okSlug(gym)) return json(res, 400, { error: "the folder name must be lowercase letters, numbers and hyphens" });
+      if (!/^[A-Za-z]{2}$/.test(String(country))) return json(res, 400, { error: "the country is a two-letter code (SG, TW, MY…)" });
       if (offer && !okSlug(offer)) return json(res, 400, { error: "offer slug must be lowercase letters, numbers and hyphens" });
       if (typeof display_name !== "string" || display_name.length > 80 || /[—–\r\n]/.test(display_name)) return json(res, 400, { error: "the gym's name must be one line, without em/en dashes" });
       const fresh = !existsSync(join(brandDir(gym), "gym-profile.json"));
-      scaffold(gym, offer || null, { brandsDir: BRANDS, displayName: display_name.trim() });
+      scaffold(gym, offer || null, { brandsDir: BRANDS, displayName: display_name.trim(), country: String(country).toUpperCase() });
       return json(res, 200, { ok: true, gym, offer: offer || null, created: fresh });
     }
 
@@ -1189,6 +1197,32 @@ const server = createServer(async (req, res) => {
     }
 
     // /api/client/{gym}/website · /website/accept — the website's reading, and filing what the owner ticked.
+    // /api/client/{gym}/meta-facts — onboarding from the gym's own Facebook Page and ad account (read-meta.mjs):
+    // GET the last reading with the profile's state; POST /read reads Meta now (a few calls, seconds); POST /accept
+    // applies what the owner ticked to the profile (on a copy, validated first) and the offer names to the wordings.
+    const mf = p.match(/^\/api\/client\/([^/]+)\/meta-facts(\/read|\/accept)?$/);
+    if (mf) {
+      const [, gym, what] = mf;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym), pf = join(dir, "gym-profile.json");
+      const view = (extra = {}) => { const profile = readJsonFile(pf) || {}, cfg = metaConfig({ gym }); return json(res, 200, { reading: readMetaReading(dir), configured: !!cfg.token, ids: { ad_account_id: profile.meta_assets?.ad_account_id || "", page_id: profile.meta_assets?.page_id || "" }, profile: { locale: profile.locale || {}, locations: profile.locations || [], website: profile.website || "", social: profile.social || {}, pins: profile.targeting_defaults?.geo?.radius_pins || [], ages: { min: profile.targeting_defaults?.demographics?.age_min ?? null, max: profile.targeting_defaults?.demographics?.age_max ?? null }, budget: profile.campaign_defaults?.budget || {}, callouts: profile.creative_defaults?.locations || [], people: profile.brand_lock?.photography?.people || "" }, wordings: readWordings(dir).map((w) => w.text), ...extra }); };
+      try {
+        if (!what && req.method === "GET") return view();
+        if (what === "/read" && req.method === "POST") {
+          const cfg = metaConfig({ gym });
+          if (!cfg.token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+          const profile = readJsonFile(pf) || {};
+          const reading = await readMetaFacts({ client: graphClient({ config: cfg }), profile });
+          writeMetaReading(dir, reading);
+          return view();
+        }
+        if (what === "/accept" && req.method === "POST") {
+          const r = acceptMetaFacts(dir, await readBody(req));
+          writeWhole(pf, JSON.stringify({ ...r.profile, schema_version: Math.max(PROFILE_SCHEMA, Number(r.profile.schema_version) || 0) }, null, 2) + "\n");
+          return view({ changes: r.changes, wordings_added: r.wordings.added, wordings_skipped: r.wordings.skipped });
+        }
+      } catch (e) { return json(res, e.status || (e.code === 190 || e.trace ? 502 : 400), { error: scrubTokens(String(e.message || e)), ...(e.errors ? { errors: e.errors } : {}) }); }
+    }
     const webm = p.match(/^\/api\/client\/([^/]+)\/website(\/accept)?$/);
     if (webm) {
       const [, gym, accept] = webm;

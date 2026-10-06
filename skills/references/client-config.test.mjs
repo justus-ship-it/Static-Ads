@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES, IMAGE_MODELS, imageModelFor } from "./client-config.mjs";
+import { countryRules, postalOk, profileCountry, COUNTRIES, validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES, IMAGE_MODELS, imageModelFor } from "./client-config.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems, MAX_WORDINGS } from "./ad-wordings.mjs";
 
@@ -45,7 +45,7 @@ test("P1 a profile's format is checked before it is saved: bad ids, colours, cal
     bad((x) => ({ ...x, gym_abbr: "Iron" }), /2-4 capital letters/);
     bad((x) => ({ ...x, display_name: "IronHaus — Strength" }), /display name contains an em\/en dash/);
     bad((x) => ({ ...x, website: "ironhaus" }), /not a web address/);
-    bad((x) => { x.locations[0].postal_code = "5344"; return x; }, /postal code "5344" must be 6 digits/);
+    bad((x) => { x.locations[0].postal_code = "5344"; return x; }, /postal code "5344" must be 6 digits \(Singapore\)/);
     bad((x) => { x.locations[0].lat = "north"; return x; }, /lat must be a number/);
     bad((x) => { x.brand_lock.colors.secondary.hex = "red"; return x; }, /not a 6-digit hex/);
     bad((x) => { x.creative_defaults.locations = ["A", "B", "C", "D", "E"]; return x; }, /up to 4 location callouts/);
@@ -271,4 +271,20 @@ test("P8 a pin saved with a postal code and no point takes the point of the gym'
   assert.equal(withPoint(profile, pins[3]), pins[3]); assert.equal(withPoint(profile, pins[4]), pins[4]); assert.equal(withPoint(profile, null), null);
   assert.deepEqual([pinFor(profile, "KATONG").pin.lat, pinFor(profile, "KATONG").fallback], [1.3073, false]);
   assert.deepEqual([pinFor(profile, "BEDOK").pin.lat, pinFor(profile, "BEDOK").fallback], [1.3073, true], "the first pin, placed the same way");
+});
+
+test("P19 countries (2026-10-07: F45 Xinyi is in Taipei): the profile's country picks the postal-code shape, the map, the currency, the time zone, the language and the people line; an unknown country gets no map and any short code; a Taiwan profile with a 3-digit code is valid and a 6-digit one is refused; the starter follows the country", () => {
+  assert.deepEqual([countryRules("SG").geocoder, countryRules("tw").currency, countryRules("TW").geocoder, countryRules("XX").name, countryRules(undefined).currency], ["onemap", "TWD", null, null, "SGD"]);
+  assert.deepEqual([postalOk("SG", "534407"), postalOk("SG", "110"), postalOk("TW", "110"), postalOk("TW", "11051"), postalOk("TW", "5344"), postalOk("MY", "50450"), postalOk("XX", "SW1A 1AA"), postalOk("XX", "x")], [true, false, true, true, false, true, true, false]);
+  const d = mkdtempSync(join(tmpdir(), "cc-"));
+  const tw = PROFILE_STARTER("f45-xinyi", "F45 Xinyi", "TW");
+  assert.deepEqual([tw.locale, tw.targeting_defaults.geo.countries, tw.targeting_defaults.demographics.locales, tw.brand_lock.photography.people], [{ country: "TW", currency: "TWD", timezone: "Asia/Taipei", languages: ["zh_TW"], spelling: "zh-TW" }, ["TW"], ["zh_TW"], COUNTRIES.TW.people]);
+  assert.equal(profileCountry(tw), "TW");
+  tw.locations = [{ label: "Xinyi", address: "台北市信義區信義路四段413號二樓", postal_code: "110", lat: 25.0332, lng: 121.5591 }];
+  let r = validateProfile(tw, { gymDir: d });
+  assert.deepEqual([r.errors, r.warnings.filter((w) => /latitude|currency/.test(w))], [[], []], "a Taiwan address with its 3-digit code and a Taipei point is fine");
+  tw.locations[0].postal_code = "5344"; r = validateProfile(tw, { gymDir: d }); assert.match(r.errors[0], /must be 3, 5 or 6 digits \(Taiwan\)/);
+  tw.locations[0].postal_code = "110"; tw.locations[0].lat = 1.35; r = validateProfile(tw, { gymDir: d }); assert.match(r.warnings.find((w) => /latitude/.test(w)), /outside Taiwan/);
+  tw.locations[0].lat = 25.0332; tw.locale.currency = "SGD"; r = validateProfile(tw, { gymDir: d }); assert.match(r.warnings.find((w) => /currency/.test(w)), /Taiwan uses TWD/);
+  const sg = PROFILE_STARTER("gym", "Gym"); assert.deepEqual([sg.locale.country, sg.locale.currency, sg.brand_lock.photography.people], ["SG", "SGD", COUNTRIES.SG.people]);
 });

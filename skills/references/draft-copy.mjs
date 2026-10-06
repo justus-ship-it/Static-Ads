@@ -19,6 +19,7 @@ import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { createHash } from "crypto";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
+import { countryRules } from "./client-config.mjs";
 import { readCopyRefs } from "./meta-results.mjs";
 
 export const COPY_MODEL = process.env.COPY_MODEL || CHECK_MODEL;
@@ -196,7 +197,7 @@ const schemaFor = (kind) => ({ type: "OBJECT", properties: { drafts: { type: "AR
 export function buildDraftPrompt({ profile, kind = "copy", offer, audience, locations, rules, skeletons, count, avoid = [], button = "Sign up" }) {
   const gym = profile.display_name || "the gym", what = kind === "headline" ? "headlines" : "primary texts";
   const lines = [
-    `You write Meta lead ads for ${gym}, a gym in Singapore. Write ${count} different ${what} for one campaign.`,
+    `You write Meta lead ads for ${gym}, a gym in ${countryRules(profile?.locale?.country).name || "its city"}. Write ${count} different ${what} for one campaign.`,
     `THE OFFER: "${offer}". ${kind === "headline" ? "Where a headline names the offer, name it exactly like that; a headline may instead carry the promise." : "Name it exactly like that in every primary text."} Never invent what it includes, its price, its length beyond the name, or any guarantee. Where the gym is named, name it "${gym}".`,
     audience ? `WHO IT IS FOR: the ad says "${audience}". Speak to them.` : `WHO IT IS FOR: everyone near the gym.`,
     locations?.length ? `WHERE: the ads run in ${locations.join(", ")}, one ad set per area. Where you address the reader by area, write the placeholder {AREA} (it becomes each ad set's own area), as in "Ladies in {AREA}". Never write an area's name yourself.` : "",
@@ -204,7 +205,7 @@ export function buildDraftPrompt({ profile, kind = "copy", offer, audience, loca
     // The layout is part of what worked: shown flattened (" / " for every line break) and never asked for, the model
     // wrote one block a draft (F45 Lower Peirce 2026-09-28, BFIT 2026-10-04).
     kind === "headline" ? "" : `LAYOUT: set each primary text out the way its skeleton is set out above - short paragraphs with an empty line between them, and each list item on a line of its own. Put real line breaks in the text. Never write a primary text as one block.`,
-    `VOICE: ${rules.adjectives.length ? rules.adjectives.join(", ") : "direct, warm, confident"}. Plain Singapore English. Short lines. No hype.`,
+    `VOICE: ${rules.adjectives.length ? rules.adjectives.join(", ") : "direct, warm, confident"}. ${countryRules(profile?.locale?.country).tone || "Plain English."} Short lines. No hype.`,
     `NEVER write any of these words or ideas: ${rules.never.join("; ")}. No prices. No before-and-after claims. No weight-loss numbers. No em dashes or en dashes; use a plain hyphen. No emoji in headlines. No other placeholder than {AREA} and {BUTTON}.`,
     rules.must_say.length ? `ALWAYS work in: ${rules.must_say.join("; ")}.` : "",
     avoid.length ? `ALREADY WRITTEN (do not repeat these): ${avoid.map((a) => (kindOf(a) === "headline" ? a.headline : a.message.split("\n")[0].slice(0, 80))).join(" | ")}` : "",
