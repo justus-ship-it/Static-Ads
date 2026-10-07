@@ -288,3 +288,15 @@ test("P19 countries (2026-10-07: F45 Xinyi is in Taipei): the profile's country 
   tw.locations[0].lat = 25.0332; tw.locale.currency = "SGD"; r = validateProfile(tw, { gymDir: d }); assert.match(r.warnings.find((w) => /currency/.test(w)), /Taiwan uses TWD/);
   const sg = PROFILE_STARTER("gym", "Gym"); assert.deepEqual([sg.locale.country, sg.locale.currency, sg.brand_lock.photography.people], ["SG", "SGD", COUNTRIES.SG.people]);
 });
+
+test("P20 the room reference: creative_defaults.room_reference must be one of the cleaned photos (a -clean folder, present in brand-assets); the photos section of the Overview is satisfied by a cleaned premises photo or a room reference", () => {
+  const d = mkdtempSync(join(tmpdir(), "cc-rr-")); mkdirSync(join(d, "brand-assets", "reference-clean"), { recursive: true }); writeFileSync(join(d, "brand-assets", "reference-clean", "floor.png"), "x");
+  mkdirSync(join(d, "brand-assets", "members"), { recursive: true }); writeFileSync(join(d, "brand-assets", "members", "raw.png"), "x");
+  const p = PROFILE_STARTER("gym-rr", "Gym"); p.creative_defaults.room_reference = "reference-clean/floor.png";
+  assert.deepEqual(validateProfile(p, { gymDir: d }).errors, []);
+  for (const bad of ["members/raw.png", "reference-clean/missing.png", "../x.png", 3]) { p.creative_defaults.room_reference = bad; assert.match(validateProfile(p, { gymDir: d }).errors[0] || "", /room_reference/, String(bad)); }
+  p.creative_defaults.room_reference = null;
+  const photos = (opts) => profileCompleteness(p, { gymDir: d, ...opts }).sections.find((s) => s.id === "photos").status;
+  assert.deepEqual([photos({ cleanPhotos: 0 }), photos({ cleanPhotos: 0, roomReference: true }), photos({ cleanPhotos: 1 })], ["missing", "done", "done"]);
+  p.creative_defaults.room_reference = "reference-clean/floor.png"; assert.equal(photos({ cleanPhotos: 0 }), "done");
+});

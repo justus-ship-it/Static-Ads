@@ -253,7 +253,8 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
   if (hasReference) {
     // With a shot guide the room is matched but not its light: a flat fluorescent reference made flat photos (F45 Lower Peirce, 2026-09-26).
     lines.push(`${anchor ? "The second attached photo" : "The attached reference photo"} is the real gym. Match its room: wall colour, ceiling, ${shotGuide ? "" : "lighting, "}floor and equipment.${shotGuide ? " Light the people as SHOT says, keeping the room recognisable." : ""} ` +
-      "Do NOT copy any sign, lettering or neon words from it — none may appear in your image.");
+      "Do NOT copy any sign, lettering or neon words from it — none may appear in your image. " +
+      "Any people in the reference photo are only there to show the room: they are not in your image, and nobody in your image looks like them.");
   }
   lines.push(
     "",

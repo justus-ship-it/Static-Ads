@@ -2322,27 +2322,32 @@ async function wAccept(){
 // premises photos are surveyed (free) and cleaned (image calls) from here; the cleaned copies are what
 // batches use. Reference ads live on their own page: they are for analysis, never the gym's assets.
 const A = { kind:'facility', sel:new Set(), data:null };
+/** Photos that can be surveyed and cleaned: premises photos become real-photo ads; coach and member photos only ever a room reference. */
+const A_CLEANABLE = new Set(['facility','coaches','members']);
 async function loadAssets(){ A.data = await api(`/api/client/${STATE.sel}/assets`); return A.data; }
 async function viewPhotos(v, seq=VIEW_SEQ){
   v.innerHTML = '<h1>Photos & brand assets</h1><p class="sub">Loading…</p>';
   try { await loadAssets(); } catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<h1>Photos & brand assets</h1><div class="empty">${esc(e.message)}</div>`; return; }
   if (seq !== VIEW_SEQ) return;
-  A.sel = new Set([...A.sel].filter(n => A.data.assets.some(a=>a.kind==='facility'&&a.name===n)));
+  A.sel = new Set([...A.sel].filter(n => A.data.assets.some(a=>A_CLEANABLE.has(a.kind)&&a.path===n)));
   paintAssets(v);
 }
 function paintAssets(v){
   const d = A.data, by = k => d.assets.filter(a=>a.kind===k);
   const running = STATE.run && !STATE.run.done && /^photo-/.test(STATE.run.id||'');
-  const card = (a) => `<div class="asset ${a.kind==='logo'?'is-logo':''} ${A.sel.has(a.name)&&a.kind==='facility'?'sel':''}">
-      <div class="im" ${a.kind==='facility'?`onclick="aToggle('${esc(a.name)}')"`:''}><img src="${esc(a.url)}" alt="" loading="lazy"></div>
-      ${a.kind==='facility'?`<span class="tick">${A.sel.has(a.name)?'✓':''}</span>`:''}
-      ${a.kind==='facility'&&a.cleaned?'<span class="pill on tag">cleaned</span>':''}${a.kind==='logo'&&a.in_use?'<span class="pill on tag">in use</span>':''}
+  const card = (a) => `<div class="asset ${a.kind==='logo'?'is-logo':''} ${A.sel.has(a.path)&&A_CLEANABLE.has(a.kind)?'sel':''}">
+      <div class="im" ${A_CLEANABLE.has(a.kind)?`onclick="aToggle('${esc(a.path)}')"`:''}><img src="${esc(a.url)}" alt="" loading="lazy"></div>
+      ${A_CLEANABLE.has(a.kind)?`<span class="tick">${A.sel.has(a.path)?'✓':''}</span>`:''}
+      ${A_CLEANABLE.has(a.kind)&&a.cleaned?'<span class="pill on tag">cleaned</span>':''}${a.kind==='logo'&&a.in_use?'<span class="pill on tag">in use</span>':''}
       <div class="m"><b title="${esc(a.original_name||a.name)}">${esc(a.name)}</b>${a.size?`${a.size[0]}×${a.size[1]} · `:''}${a.bytes>=1048576?(a.bytes/1048576).toFixed(1)+' MB':Math.round(a.bytes/1024)+' KB'} · ${esc(a.source)} ${esc(a.added)}
         <div class="row">${a.kind==='logo'&&!a.in_use?`<button class="sm" onclick="aUseLogo('${esc(a.path)}')">Use as logo</button>`:''}<button class="sm" onclick="aRemove('${esc(a.kind)}','${esc(a.name)}')">Remove</button></div></div>
     </div>`;
   const section = (k, hint, extra='') => { const xs = by(k.id); return `<div class="card"><div class="row"><h3 style="margin:0">${esc(k.label)} <span class="pill">${xs.length}</span></h3><div class="spacer"></div>${extra}</div>
       ${hint?`<p class="hint" style="margin-top:8px">${hint}</p>`:''}${xs.length?`<div class="assets" style="margin-top:10px">${xs.map(card).join('')}</div>`:`<div class="hint" style="margin:8px 0 0">Nothing yet — drop files above with <b>${esc(k.label)}</b> chosen.</div>`}</div>`; };
-  const fac = d.kinds.find(k=>k.id==='facility'), n = A.sel.size;
+  const fac = d.kinds.find(k=>k.id==='facility'), n = A.sel.size, nPrem = [...A.sel].filter(p=>p.startsWith('facility/')).length, nPeople = n - nPrem;
+  const cleanBtns = (kind) => { const mine = kind==='facility' ? nPrem : nPeople, other = kind==='facility' ? nPeople : nPrem, mixed = mine && other; return `<button class="sm" ${mine&&!other&&!running?'':'disabled'} title="${mixed?'select premises photos or people photos, not both':''}" onclick="aSurvey()">Survey ${mine||''} (free)</button><button class="sm primary" ${mine&&!other&&!running?'':'disabled'} title="${mixed?'select premises photos or people photos, not both':''}" onclick="aClean()">Clean ${mine||''}…</button>`; };
+  const premClean = d.clean.filter(p=>!p.people), peopleClean = d.clean.filter(p=>p.people), rr = d.room_reference;
+  const cleanThumb = (p) => { const nm = p.path.split('/').pop(); return `<label style="max-width:168px"><a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="" style="width:168px;height:112px"></a><span style="font-size:11.5px">${esc(nm)}</span>${p.kept?`<span class="pill warn tag" title="kept on your word, with: ${esc((p.kept_with||[]).join('; '))}">kept anyway</span>`:''}${rr===p.path?'<span class="pill on tag">room reference</span>':`<button class="sm" style="margin-top:4px" onclick="aRoomRef('${esc(p.path)}')">Use as room reference</button>`}<button class="sm" style="margin-top:4px" onclick="aDiscardClean('${esc(nm)}')">Remove</button></label>`; };
   v.innerHTML = `<h1>Photos & brand assets</h1><p class="sub">The gym's own files, kept with its profile: drop them here and they are filed and remembered. Premises photos are cleaned from here before a batch can use them.</p>
   <div class="card"><h3>Add files</h3>
     <div class="chips" id="aKinds">${d.kinds.map(k=>`<span class="chip ${A.kind===k.id?'sel':''}" onclick="A.kind='${k.id}';paintAssets($('#view'))">${esc(k.label)}</span>`).join('')}</div>
@@ -2352,9 +2357,15 @@ function paintAssets(v){
     </div>
     <div id="aMsgs"></div>
   </div>
-  <div class="card"><div class="row"><h3 style="margin:0">Cleaned premises photos <span class="pill">${d.clean.length}</span></h3></div>
-    <p class="hint" style="margin-top:8px">What batches use as real photos and as the room reference: old marks and lettering removed, checked. Made from the premises photos below.</p>
-    ${d.clean.length?`<div class="thumbs">${d.clean.map(p=>{ const nm = p.path.split('/').pop(); return `<label style="max-width:168px"><a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="" style="width:168px;height:112px"></a><span style="font-size:11.5px">${esc(nm)}</span>${p.kept?`<span class="pill warn" title="${esc((p.kept_with||[]).join(' · '))}">kept by you ${esc(p.kept)}</span>`:''}${p.path.startsWith('facility-clean/')?`<button class="sm" onclick="aDiscardClean('${esc(nm)}')">Remove</button>`:''}</label>`; }).join('')}</div>`:'<div class="hint" style="margin:0">None yet — select premises photos below and clean them.</div>'}
+  ${!premClean.length?`<div class="card"><h3>Photos of the room: what to ask the gym for</h3>
+    <p class="hint" style="margin-top:8px">${peopleClean.length?'The room reference is a coach or member photo for now. ':''}Generated pictures match their room to a real photo of the gym; without premises photos they are made from nothing. The website and Instagram rarely have them (F45 Xinyi: 0 of 80). Ask the gym for 5–10 photos of the room, with this list:</p>
+    <ul class="hint" id="aAskList" style="margin:6px 0 8px 18px;line-height:1.5"><li>The training floor from a few spots, and the one view members see as they walk in.</li><li>Phone is fine: landscape, lights on, no filters, no people needed (a coach in the frame is fine).</li><li>Originals, not screenshots and not sent through WhatsApp or a chat app (they shrink photos). AirDrop, Google Drive or email at full size.</li><li>At least 1080 px on the long side; sharp, not blurry.</li><li>Posters, screens and signs with words will be edited out; no need to tidy them first.</li></ul>
+    <div class="row"><button class="sm" onclick="aCopyAsk()">Copy the request</button><span class="hint" style="margin:0" id="aAskMsg"></span></div></div>`:''}
+  <div class="card"><div class="row"><h3 style="margin:0">Cleaned photos <span class="pill">${d.clean.length}</span></h3></div>
+    <p class="hint" style="margin-top:8px">Old marks and lettering removed, checked. <b>Premises photos</b> are what batches use as real photos and as the room reference. <b>Coach and member photos</b> are only ever the room reference: the generated picture matches the room, never the people. ${rr?`Room reference now: <b>${esc(rr.split('/').pop())}</b>.`:premClean.length?'No room reference chosen: a batch takes its first real photo.':'No room reference yet.'}</p>
+    ${premClean.length?`<h4 style="margin:10px 0 4px">Premises <span class="pill">${premClean.length}</span></h4><div class="thumbs">${premClean.map(cleanThumb).join('')}</div>`:''}
+    ${peopleClean.length?`<h4 style="margin:10px 0 4px">Coaches and members · room reference only <span class="pill">${peopleClean.length}</span></h4><div class="thumbs">${peopleClean.map(cleanThumb).join('')}</div>`:''}
+    ${!d.clean.length?'<div class="hint" style="margin:8px 0 0">None yet. Select photos below and clean them.</div>':''}
     ${(d.flagged||[]).length?`<h4 style="margin:16px 0 4px">Flagged by the check <span class="pill warn">${d.flagged.length}</span></h4>
     <p class="hint" style="margin:0 0 8px">The edit was made, but the check found something it would not pass. Compare the original with the edit; if it is fine by you, use it anyway. Small leftover marks (a far-off sign, a maker's logo, a sticker) no longer fail a photo on their own.</p>
     ${d.flagged.map(f=>`<div class="flagrow">
@@ -2364,9 +2375,8 @@ function paintAssets(v){
         <div class="row" style="margin-top:8px"><button class="sm primary" onclick="aKeepFlagged('${esc(f.id)}')">Use it anyway</button><span class="hint" style="margin:0">or select the photo below and clean it again</span></div></div>
     </div>`).join('')}`:''}
   </div>
-  ${section(fac, 'Click photos to select them, then survey what a clean-up would remove (free) or clean them (about 4 image calls each). Cleaned copies keep the same name.',
-    `<button class="sm" ${n&&!running?'':'disabled'} onclick="aSurvey()">Survey ${n||''} (free)</button><button class="sm primary" ${n&&!running?'':'disabled'} onclick="aClean()">Clean ${n||''}…</button>`)}
-  ${d.kinds.filter(k=>k.id!=='facility').map(k=>section(k, k.id==='logo'?'The profile\'s logo file is marked in use; it is kept for later and never drawn on the offer-first ads.':k.id==='brand'?'Screenshots of the website, brand guidelines, past ads the gym made itself.':'')).join('')}
+  ${section(fac, 'Click photos to select them, then survey what a clean-up would remove (free) or clean them (about 4 image calls each). Cleaned copies keep the same name.', cleanBtns('facility'))}
+  ${d.kinds.filter(k=>k.id!=='facility').map(k=>section(k, k.id==='logo'?'The profile\'s logo file is marked in use; it is kept for later and never drawn on the offer-first ads.':k.id==='brand'?'Screenshots of the website, brand guidelines, past ads the gym made itself.':k.id==='coaches'||k.id==='members'?'References only, never in an ad. One that shows the room well can be cleaned and used as the room reference: select it, clean it, then "Use as room reference" above.':'', (k.id==='coaches'||k.id==='members')?cleanBtns(k.id):'')).join('')}
   <div id="runbox"></div>`;
   renderRunBox();
 }
@@ -2411,9 +2421,11 @@ async function aDiscardClean(name){
   await loadAssets(); paintAssets($('#view'));
 }
 function aSurvey(){ run({kind:'photo-survey', gym:STATE.sel, photos:[...A.sel]}, async()=>{ await loadAssets(); paintAssets($('#view')); }); }
+async function aRoomRef(path){ try { await api(`/api/client/${STATE.sel}/room-reference`, {method:'POST', body:{path}}); await loadAssets(); paintAssets($('#view')); } catch(e){ alert(e.message); } }
+async function aCopyAsk(){ const items = [...document.querySelectorAll('#aAskList li')].map(l=>'- '+l.textContent); const text = `Could you send us 5-10 photos of the gym's training floor for the ads?\n${items.join('\n')}`; try { await navigator.clipboard.writeText(text); $('#aAskMsg').textContent = 'Copied.'; } catch { $('#aAskMsg').textContent = text; } }
 function aClean(){
-  const photos = [...A.sel];
-  const cap = prompt(`Clean ${photos.length} premises photo${photos.length===1?'':'s'} with Gemini edits: old marks, signage and web controls removed, checked afterwards. Most image calls to spend (about 4 per photo):`, String(photos.length*4));
+  const photos = [...A.sel], people = photos.some(p=>!p.startsWith('facility/'));
+  const cap = prompt(`Clean ${photos.length} ${people?'people':'premises'} photo${photos.length===1?'':'s'} with Gemini edits: old marks, signage and web controls removed, checked afterwards${people?'. A cleaned people photo is only ever a room reference, never an ad':''}. Most image calls to spend (about 4 per photo):`, String(photos.length*4));
   if (cap == null) return;
   const n = parseInt(cap, 10);
   if (!(n >= photos.length)) return alert(`At least one call per photo (${photos.length}).`);

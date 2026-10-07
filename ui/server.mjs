@@ -123,14 +123,16 @@ const RUNNABLE = {
   // The premises photos' clean-up (Step 5): a free survey of what an edit would remove, and the edit
   // itself under a confirmed call cap. Photos are names in brand-assets/facility, checked before they
   // become arguments; the clean copies land in brand-assets/facility-clean as the CLI's do.
-  "photo-survey": { label: "Survey premises photos (free)", argv: ({ gym, photos }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--survey-only", ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", "facility", p)])] },
+  // Photos are "kind/name" under brand-assets (facility, coaches or members; a bare name is a premises photo). Coach and
+  // member photos are cleaned into reference-clean/ — a room reference only, never an ad — so one run takes one kind of folder.
+  "photo-survey": { label: "Survey photos (free)", argv: ({ gym, photos }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--survey-only", ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", p.includes("/") ? p : `facility/${p}`)])] },
   // Onboarding, part one: read the gym's website into a proposal (model calls for the sort and the colours;
   // no image generation). The address is checked for shape before it becomes an argument.
   "website-read": { label: "Read the website", argv: ({ gym, url }) => [READ_SCRIPT, "--brand-dir", brandDir(gym), "--url", url] },
   // Onboarding, part two: a gym's Instagram photos through Meta's Business Discovery (read-only; model calls
   // for the sort). The handle is checked for shape before it becomes an argument.
   "instagram-read": { label: "Read Instagram", argv: ({ gym, handle, posts }) => [IG_SCRIPT, "--brand-dir", brandDir(gym), "--handle", handle, "--posts", String(posts)] },
-  "photo-clean": { label: "Clean premises photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", "facility", p)])] },
+  "photo-clean": { label: "Clean photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...(photos.some((p) => p.includes("/") && !p.startsWith("facility/")) ? ["--clean-dir", join(brandDir(gym), "brand-assets", "reference-clean")] : []), ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", p.includes("/") ? p : `facility/${p}`)])] },
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -207,7 +209,7 @@ function listAssets(gym) {
       const path = `${k.folder}/${f}`, row = rows.find((r) => r.path === path && !r.removed) || {};
       const st = statSync(join(dir, f));
       out.push({ path, name: f, kind: k.id, url: `/files/brands/${gym}/brand-assets/${path}`, bytes: st.size, size: row.size || null, source: row.source || "folder", original_name: row.original_name || null, added: row.added || st.mtime.toISOString().slice(0, 10),
-        ...(k.id === "facility" ? { cleaned: cleanStems.has(stem(f)) } : {}), ...(k.id === "logo" ? { in_use: logo === path || logo === f } : {}) });
+        ...(PHOTO_KIND_IDS.has(k.id) ? { cleaned: cleanStems.has(stem(f)) } : {}), ...(k.id === "logo" ? { in_use: logo === path || logo === f } : {}) });
     }
   }
   return out;
@@ -451,7 +453,7 @@ function listClients() {
         display_name: profile?.display_name || "",
         gym_abbr: profile?.gym_abbr || "",
         has_profile: !!profile,
-        to_do: profile ? profileCompleteness(profile, { gymDir: dir, cleanPhotos: cleanPhotos(gym).length, scenes: sceneStatus(gym), wordings: readWordings(dir).length }).to_do : null,
+        to_do: profile ? profileCompleteness(profile, { gymDir: dir, cleanPhotos: cleanPhotos(gym).filter((x) => !x.people).length, roomReference: !!profile?.creative_defaults?.room_reference, scenes: sceneStatus(gym), wordings: readWordings(dir).length }).to_do : null,
         offers,
         outputs,
         asset_counts: countAssets(dir),
@@ -462,7 +464,7 @@ function listClients() {
 /** A profile as the panel shows it: the file, how finished it is, and its Create defaults filled in. */
 function profileView(gym) {
   const dir = brandDir(gym), profile = readJsonFile(join(dir, "gym-profile.json"));
-  const completeness = profileCompleteness(profile, { gymDir: dir, cleanPhotos: cleanPhotos(gym).length, scenes: sceneStatus(gym), wordings: readWordings(dir).length });
+  const completeness = profileCompleteness(profile, { gymDir: dir, cleanPhotos: cleanPhotos(gym).filter((x) => !x.people).length, roomReference: !!profile?.creative_defaults?.room_reference, scenes: sceneStatus(gym), wordings: readWordings(dir).length });
   return { profile, assets: countAssets(dir), completeness, creative_defaults: { ...CREATIVE_DEFAULTS, ...(profile?.creative_defaults || {}) }, logo: logoUrl(gym, profile), brand_palettes: brandPalettes(profile), palette_modes: PALETTE_MODES };
 }
 function logoUrl(gym, profile) {
@@ -519,7 +521,8 @@ function cleanPhotos(gym) {
   if (!existsSync(base)) return [];
   return readdirSync(base).filter((d) => d.endsWith("-clean") && statSync(join(base, d)).isDirectory())
     .flatMap((d) => readdirSync(join(base, d)).filter((f) => IMAGE_EXT.has(extname(f).toLowerCase())).map((f) => `${d}/${f}`))
-    .map((path) => { const kept = ownerKept(join(base, path)); return { path, url: `/files/brands/${gym}/brand-assets/${path}`, ...(kept ? { kept: kept.kept_on, kept_with: kept.left || [] } : {}) }; });
+    // reference-clean/ holds cleaned coach and member photos: a room reference only, never an ad (people photos are references only).
+    .map((path) => { const kept = ownerKept(join(base, path)); return { path, url: `/files/brands/${gym}/brand-assets/${path}`, people: path.startsWith(`${REFERENCE_CLEAN}/`), ...(kept ? { kept: kept.kept_on, kept_with: kept.left || [] } : {}) }; });
 }
 
 // ── The clean-up's flagged photos, and the owner's word on them ──────────────
@@ -528,6 +531,9 @@ function cleanPhotos(gym) {
 // (the file's name and its contents' hash), which the batch's checks honour (ownerKept in check-visual.mjs).
 const CLEAN_ID = /^[a-z0-9][a-z0-9-]{0,80}$/;
 const cleanDirOf = (gym) => join(brandDir(gym), "brand-assets", "facility-clean");
+/** Cleaned coach and member photos land here: the room reference a gym without premises photos can still have (2026-10-07, F45 Xinyi). */
+const REFERENCE_CLEAN = "reference-clean";
+const CLEAN_KINDS = new Set(["facility", "coaches", "members"]);
 function cleanRuns(gym) {
   const out = join(brandDir(gym), "outputs");
   if (!existsSync(out)) return [];
@@ -540,11 +546,12 @@ function flaggedCleans(gym) {
   for (const { run, dir, report } of cleanRuns(gym)) for (const r of report?.results || []) {
     if (!r?.id || seen.has(r.id)) continue;
     seen.add(r.id);
-    if (r.status !== "flagged" || existsSync(join(cleanDirOf(gym), `${r.id}.png`))) continue;
+    const people = /\/(coaches|members)\//.test(String(r.photo || "")), cleanDir = people ? join(brandDir(gym), "brand-assets", REFERENCE_CLEAN) : cleanDirOf(gym);
+    if (r.status !== "flagged" || existsSync(join(cleanDir, `${r.id}.png`))) continue;
     const a = [...(r.attempts || [])].reverse().find((x) => x.file && existsSync(join(dir, basename(x.file))));
     if (!a) continue;
     const base = `/files/brands/${gym}/outputs/${run}`;
-    out.push({ id: r.id, photo: basename(r.photo || ""), run, attempt: a.attempt, failures: r.failures || [], notes: r.notes || [], after_url: `${base}/${basename(a.file)}`, before_url: existsSync(join(dir, `${r.id}.source.png`)) ? `${base}/${r.id}.source.png` : null });
+    out.push({ people, id: r.id, photo: basename(r.photo || ""), run, attempt: a.attempt, failures: r.failures || [], notes: r.notes || [], after_url: `${base}/${basename(a.file)}`, before_url: existsSync(join(dir, `${r.id}.source.png`)) ? `${base}/${r.id}.source.png` : null });
   }
   return out;
 }
@@ -554,12 +561,14 @@ function keepFlagged(gym, id) {
   if (!f) throw fail(404, "no flagged photo of that name is waiting (it may be clean already, or was never edited)");
   const { dir } = cleanRuns(gym).find((r) => r.run === f.run);
   const buf = readFileSync(join(dir, basename(f.after_url)));
-  mkdirSync(cleanDirOf(gym), { recursive: true });
-  const name = `${id}.png`, recPath = join(cleanDirOf(gym), OWNER_KEPT), rec = readJsonFile(recPath) || {};
-  writeFileSync(join(cleanDirOf(gym), name), buf);
+  // A cleaned people photo is kept as a room reference only (reference-clean), never where the real-photo ads come from.
+  const cleanDir = f.people ? join(brandDir(gym), "brand-assets", REFERENCE_CLEAN) : cleanDirOf(gym);
+  mkdirSync(cleanDir, { recursive: true });
+  const name = `${id}.png`, recPath = join(cleanDir, OWNER_KEPT), rec = readJsonFile(recPath) || {};
+  writeFileSync(join(cleanDir, name), buf);
   rec[name] = { sha256: createHash("sha256").update(buf).digest("hex"), kept_on: new Date().toISOString().slice(0, 10), from: `${f.run}, attempt ${f.attempt}`, left: f.failures };
   writeWhole(recPath, JSON.stringify(rec, null, 2) + "\n");
-  return { ok: true, kept: `facility-clean/${name}` };
+  return { ok: true, kept: `${basename(cleanDir)}/${name}` };
 }
 /** A cleaned copy the owner no longer wants: moved to _trash (never deleted), its kept line dropped. */
 function discardClean(gym, name) {
@@ -629,6 +638,10 @@ function resolveSpread(gym, brief) {
 }
 function checkBrief(gym, raw) {
   const { brief, spread } = resolveSpread(gym, raw);
+  // The room reference: the brief's own, else the gym's (Ad defaults → Room reference: a cleaned premises photo, or a
+  // cleaned coach/member photo that is only ever a reference). Without one, a gym without premises photos generated
+  // rooms from nothing (F45 Xinyi, 2026-10-07). A real photo in the batch still stands in when the gym names none.
+  if (brief && typeof brief === "object" && brief.reference == null) { const rr = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference; if (typeof rr === "string" && rr && !rr.includes("..") && existsSync(join(brandDir(gym), "brand-assets", rr))) brief.reference = rr; }
   const errors = validateBrief(brief, { brandDir: brandDir(gym) });
   const g = brief?.generated ?? 0, real = Array.isArray(brief?.real) ? brief.real : [];
   const scenes = sceneStatus(gym);
@@ -1256,6 +1269,21 @@ const server = createServer(async (req, res) => {
     }
 
     // /api/client/{gym}/clean/keep {id} · /clean/discard {name} — the owner's word on the clean-up's photos.
+    // /api/client/{gym}/room-reference { path | null } — the photo every generated picture matches its room to: one of the
+    // cleaned photos (premises, or a coach/member photo from reference-clean, which is never an ad). Kept on the profile.
+    const rrm = p.match(/^\/api\/client\/([^/]+)\/room-reference$/);
+    if (rrm && req.method === "POST") {
+      const gym = rrm[1];
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const { path: want } = await readBody(req);
+      if (want != null && !cleanPhotos(gym).some((x) => x.path === want)) return json(res, 400, { error: "the room reference must be one of the cleaned photos" });
+      const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
+      (profile.creative_defaults ||= {}).room_reference = want || null;
+      const { errors } = validateProfile(profile, { gymDir: brandDir(gym) });
+      if (errors.length) return json(res, 400, { error: errors[0] });
+      writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+      return json(res, 200, { ok: true, room_reference: profile.creative_defaults.room_reference });
+    }
     const ckm = p.match(/^\/api\/client\/([^/]+)\/clean\/(keep|discard)$/);
     if (ckm && req.method === "POST") {
       const [, gym, act] = ckm;
@@ -1281,7 +1309,7 @@ const server = createServer(async (req, res) => {
     if (am) {
       const [, gym, what, kind, name] = am;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "assets" && req.method === "GET") return json(res, 200, { kinds: ASSET_KINDS, assets: listAssets(gym), clean: cleanPhotos(gym), flagged: flaggedCleans(gym), heic: hasSips(), max_bytes: MAX_ASSET_BYTES, max_clean: MAX_CLEAN_PHOTOS });
+      if (what === "assets" && req.method === "GET") return json(res, 200, { kinds: ASSET_KINDS, assets: listAssets(gym), clean: cleanPhotos(gym), flagged: flaggedCleans(gym), room_reference: (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference || null, heic: hasSips(), max_bytes: MAX_ASSET_BYTES, max_clean: MAX_CLEAN_PHOTOS });
       if (kind && req.method === "PUT") {
         let buf;
         try { buf = await readRaw(req, MAX_ASSET_BYTES); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
@@ -1504,7 +1532,7 @@ const server = createServer(async (req, res) => {
     if (bm) {
       const [, gym, what, id] = bm;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
+      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym).filter((x) => !x.people), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
       if (what === "batch/check" && req.method === "POST") { const { brief } = await readBody(req); return json(res, 200, checkBrief(gym, brief)); }
       if (what === "batch" && req.method === "POST") {
         const { brief: raw, replace = false } = await readBody(req);
@@ -1624,8 +1652,14 @@ const server = createServer(async (req, res) => {
       if (kind === "photo-survey" || kind === "photo-clean") {
         if (!okSlug(body.gym) || !existsSync(brandDir(body.gym))) return json(res, 400, { error: "bad gym" });
         const photos = Array.isArray(body.photos) ? body.photos : [];
-        if (!photos.length || photos.length > MAX_CLEAN_PHOTOS) return json(res, 400, { error: `choose 1 to ${MAX_CLEAN_PHOTOS} premises photos` });
-        for (const ph of photos) if (typeof ph !== "string" || !ASSET_FILE.test(ph) || !ASSET_NAME.test(ph) || !existsSync(join(assetsDir(body.gym), "facility", ph))) return json(res, 400, { error: `${JSON.stringify(ph)} is not one of the premises photos` });
+        if (!photos.length || photos.length > MAX_CLEAN_PHOTOS) return json(res, 400, { error: `choose 1 to ${MAX_CLEAN_PHOTOS} photos` });
+        const kinds = new Set();
+        for (const ph of photos) {
+          const [kind, name] = typeof ph === "string" && ph.includes("/") ? ph.split("/") : ["facility", ph];
+          if (typeof name !== "string" || !CLEAN_KINDS.has(kind) || !ASSET_FILE.test(name) || !ASSET_NAME.test(name) || ph.split("/").length > 2 || !existsSync(join(assetsDir(body.gym), kind, name))) return json(res, 400, { error: `${JSON.stringify(ph)} is not one of the premises, coach or member photos` });
+          kinds.add(kind === "facility" ? "premises" : "people");
+        }
+        if (kinds.size > 1) return json(res, 400, { error: "clean premises photos and people photos in separate runs: cleaned premises photos become real-photo ads, cleaned people photos only a room reference" });
         const params = { gym: body.gym, photos };
         if (kind === "photo-clean") {
           const cap = body.confirm?.max_calls;

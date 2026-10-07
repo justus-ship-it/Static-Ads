@@ -930,13 +930,13 @@ test("U15 the page: a file dropped on Photos & assets is filed by kind and liste
   await cdp.send("Page.navigate", { url: `${panel.url}/?u15#/${GYM}/photos` }, sessionId);
   await loaded;
   await until("!!document.querySelector('#aDrop') && document.querySelectorAll('.asset').length>0", "the assets page");
-  assert.match(await ev("document.querySelector('#view').textContent"), /Cleaned premises photos/);
+  assert.match(await ev("document.querySelector('#view').textContent"), /Cleaned photos/);
   // Upload through the page's own code: a File (the served photo, one byte changed so it is new), as a coach photo.
   await ev(`(async()=>{ const b = await (await fetch('/files/brands/${GYM}/brand-assets/facility-clean/r2.png')).blob(); const bytes = new Uint8Array(await b.arrayBuffer()); bytes[bytes.length-1] ^= 1;
     const f = new File([bytes], 'Coach Viki HEAD.png', {type:'image/png'}); await aUploadKind([f], 'coaches', async()=>{ await loadAssets(); paintAssets(document.querySelector('#view')); }); return true })()`);
   await until("[...document.querySelectorAll('.asset .m b')].some(b=>b.textContent==='coach-viki-head.png')", "the coach photo listed");
   assert.ok(existsSync(join(brands, GYM, "brand-assets", "coaches", "coach-viki-head.png")), "filed under coaches");
-  await ev("aToggle('room-one.png'); true");
+  await ev("aToggle('facility/room-one.png'); true");
   await until("[...document.querySelectorAll('button')].some(b=>/Survey 1/.test(b.textContent) && !b.disabled)", "the survey button enabled by a selection");
   assert.ok(await ev("[...document.querySelectorAll('.asset.is-logo .tag')].some(p=>/in use/.test(p.textContent))"), "the profile's logo is marked in use on the assets page");
   assert.ok(await ev("[...document.querySelectorAll('.asset.is-logo button')].every(b=>!/Use as logo/.test(b.textContent))"), "and not offered as a choice");
@@ -2087,4 +2087,61 @@ test("U35 a new gym's scenes from a sibling's library: the Scenes answer lists t
       assert.match(text, new RegExp(`${sib.live} scenes? copied as drafts`)); assert.match(text, /not approved yet/); assert.match(text, /Approve all/);
     } finally { rmSync(join(brands, gym2), { recursive: true, force: true }); }
   } finally { rmSync(g, { recursive: true, force: true }); }
+});
+
+test("U36 the room reference (2026-10-07): coach and member photos can be surveyed and cleaned (into reference-clean, never with premises photos in one run); a cleaned people photo is a room reference only — listed as such, never among Create's real photos; the owner picks the room reference from the cleaned photos and every brief without one gets it; a photo that is not cleaned is refused", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8");
+  await linkTestGym();
+  // Distinct bytes per upload (the same content is never filed twice): a PNG keeps working with bytes after IEND.
+  const base = readFileSync(join(g, "brand-assets", "facility-clean", "r2.png")), png = Buffer.concat([base, Buffer.from("u36-members")]), png2 = Buffer.concat([base, Buffer.from("u36-facility")]);
+  const up = (kind, name, body = png) => raw(`/api/client/${GYM}/asset/${kind}/${name}`, { method: "PUT", headers: { "content-type": "application/octet-stream", "x-panel-token": panel.token, "x-keep-low-res": "1" }, body });
+  const refClean = join(g, "brand-assets", "reference-clean");
+  try {
+    let u = await up("members", "floor-u36.png"); assert.equal(u.status, 200, u.body); u = await up("facility", "room-u36.png", png2); assert.equal(u.status, 200, u.body);
+    const post = (body) => call("/api/run", { method: "POST", body });
+    let r = await post({ kind: "photo-survey", gym: GYM, photos: ["members/floor-u36.png", "room-u36.png"] });
+    assert.equal(r.status, 400); assert.match((await r.json()).error, /separate runs/);
+    assert.equal((await post({ kind: "photo-survey", gym: GYM, photos: ["logo/x.png"] })).status, 400);
+    assert.equal((await post({ kind: "photo-survey", gym: GYM, photos: ["members/../facility/room-u36.png"] })).status, 400);
+    let ran = await runAndWait({ kind: "photo-survey", gym: GYM, photos: ["members/floor-u36.png"] });
+    assert.match(ran.lines[0], /--survey-only --photo \S+brand-assets\/members\/floor-u36\.png$/, ran.lines[0]);
+    ran = await runAndWait({ kind: "photo-clean", gym: GYM, photos: ["members/floor-u36.png"], confirm: { max_calls: 4 } });
+    assert.match(ran.lines[0], /--attempts 2 --clean-dir \S+brand-assets\/reference-clean --photo \S+members\/floor-u36\.png$/, "a people photo cleans into reference-clean");
+    ran = await runAndWait({ kind: "photo-clean", gym: GYM, photos: ["room-u36.png"], confirm: { max_calls: 4 } });
+    assert.ok(!/--clean-dir/.test(ran.lines[0]), "a premises photo cleans where it always did");
+    // A cleaned people photo (as the clean-up would leave it): a room reference only.
+    mkdirSync(refClean, { recursive: true }); writeFileSync(join(refClean, "floor-u36.png"), png);
+    let a = await (await call(`/api/client/${GYM}/assets`)).json();
+    const mine = a.clean.find((x) => x.path === "reference-clean/floor-u36.png");
+    assert.deepEqual([mine?.people, a.clean.find((x) => x.path === "facility-clean/r1.png")?.people, a.room_reference, a.assets.find((x) => x.path === "members/floor-u36.png")?.cleaned], [true, false, null, true]);
+    const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
+    assert.ok(setup.photos.some((p) => p.path === "facility-clean/r1.png") && !setup.photos.some((p) => p.people || p.path.startsWith("reference-clean/")), "never offered as a real photo");
+    // The owner's pick, kept on the profile; only a cleaned photo.
+    r = await call(`/api/client/${GYM}/room-reference`, { method: "POST", body: { path: "members/floor-u36.png" } }); assert.equal(r.status, 400); assert.match((await r.json()).error, /cleaned photos/);
+    assert.equal((await call(`/api/client/${GYM}/room-reference`, { method: "POST", body: { path: "reference-clean/floor-u36.png" }, token: null })).status, 403);
+    r = await (await call(`/api/client/${GYM}/room-reference`, { method: "POST", body: { path: "reference-clean/floor-u36.png" } })).json();
+    assert.equal(r.room_reference, "reference-clean/floor-u36.png");
+    assert.equal(JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.room_reference, "reference-clean/floor-u36.png");
+    a = await (await call(`/api/client/${GYM}/assets`)).json(); assert.equal(a.room_reference, "reference-clean/floor-u36.png");
+    // Every brief without a reference gets the gym's; one that names its own keeps it.
+    const brief = { ...BRIEF, batch_id: "u36-ref", generated: 0, real: ["facility-clean/r1.png"] };
+    let c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief } })).json();
+    assert.deepEqual([c.errors, c.brief.reference], [[], "reference-clean/floor-u36.png"]);
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...brief, reference: "facility-clean/r2.png" } } })).json();
+    assert.equal(c.brief.reference, "facility-clean/r2.png");
+    // Cleared.
+    r = await (await call(`/api/client/${GYM}/room-reference`, { method: "POST", body: { path: null } })).json(); assert.equal(r.room_reference, null);
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief } })).json(); assert.equal(c.brief.reference, undefined);
+    // The page: the people photo listed apart as a room reference, the ask-the-gym card absent (there are cleaned premises photos), Survey on the members section.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u36#/${GYM}/photos` }, sessionId); await loaded;
+    const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!A.data && /Cleaned photos/.test(document.querySelector('#view')?.textContent||'')"))) await new Promise((x) => setTimeout(x, 120));
+    const text = await ev("document.querySelector('#view').textContent");
+    assert.match(text, /Coaches and members · room reference only/); assert.match(text, /Use as room reference/); assert.doesNotMatch(text, /what to ask the gym for/);
+    await ev("aToggle('members/floor-u36.png'); true");
+    assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/^Survey 1/.test(b.textContent.trim()) && !b.disabled)"), "Survey offered for the selected member photo");
+    await ev("aToggle('facility/room-u36.png'); true");
+    assert.ok(await ev("[...document.querySelectorAll('#view button')].filter(b=>/^Survey/.test(b.textContent.trim())).every(b=>b.disabled)"), "a mixed selection cannot run");
+  } finally { writeFileSync(pf, before); rmSync(refClean, { recursive: true, force: true }); for (const f of ["members/floor-u36.png", "facility/room-u36.png"]) rmSync(join(g, "brand-assets", f), { force: true }); }
 });

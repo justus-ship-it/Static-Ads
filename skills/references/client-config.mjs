@@ -453,6 +453,9 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       for (const l of locs) for (const e of validateInputs({ location: l, audience: null, offer: "x" })) if (e.startsWith("location")) errors.push(`location callout ${JSON.stringify(l)}: ${e.replace(/^location /, "")}`);
       for (const a of list("audiences")) for (const e of validateInputs({ location: "X", audience: a, offer: "x" })) if (e.startsWith("audience")) errors.push(`audience callout ${JSON.stringify(a)}: ${e.replace(/^audience /, "")}`);
       for (const p of list("real_photos")) if (typeof p !== "string" || p.includes("..") || (gymDir && !existsSync(join(gymDir, "brand-assets", p)))) errors.push(`real photo ${JSON.stringify(p)} is not in brand-assets`);
+      // The room reference: a cleaned premises photo, or a cleaned coach/member photo (reference-clean), never a raw one.
+      const rr = cd.room_reference;
+      if (rr != null && rr !== "" && (typeof rr !== "string" || rr.includes("..") || !/^[a-z0-9-]+-clean\//.test(rr) || (gymDir && !existsSync(join(gymDir, "brand-assets", rr))))) errors.push(`creative_defaults.room_reference ${JSON.stringify(rr)} must be one of the cleaned photos (facility-clean or reference-clean)`);
       const int = (k, lo, hi) => { if (cd[k] != null && !(Number.isInteger(cd[k]) && cd[k] >= lo && cd[k] <= hi)) errors.push(`creative_defaults.${k} must be a whole number from ${lo} to ${hi}`); };
       int("generated", 0, 12); int("looks_per_photo", 1, 6); int("attempts", 1, 5); int("max_calls", 0, 40);
       if (Number.isInteger(cd.max_calls) && Number.isInteger(cd.generated) && cd.max_calls < cd.generated) errors.push(`creative_defaults.max_calls (${cd.max_calls}) must cover one call per new photo (${cd.generated})`);
@@ -502,7 +505,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
  * `have` carries what the panel knows beyond the profile file: cleaned photos, the scene library's
  * status, the number of offer wordings.
  */
-export function profileCompleteness(profile, { gymDir = null, cleanPhotos = 0, scenes = null, wordings = 0 } = {}) {
+export function profileCompleteness(profile, { gymDir = null, cleanPhotos = 0, roomReference = false, scenes = null, wordings = 0 } = {}) {
   const p = profile || {}, loc = (p.locations || [])[0] || {}, lock = p.brand_lock || {}, ph = lock.photography || {}, cd = p.creative_defaults || {};
   const logo = lock.logo?.files?.primary;
   const logoFound = !!logo && !!gymDir && ["brand-assets", "reference-images", "product-images", ""].some((r) => existsSync(join(gymDir, r, logo)));
@@ -520,7 +523,7 @@ export function profileCompleteness(profile, { gymDir = null, cleanPhotos = 0, s
       { tips: loc.postal_code && (loc.lat == null || loc.lng == null) ? ["add the location's latitude and longitude for radius targeting"] : [] }),
     S("brand", "Brand & photography", "brand", [["a primary colour", !!lock.colors?.primary?.hex], ["what photos must show", (ph.must || []).length > 0], ["what photos must never show", (ph.never || []).length > 0], ["who is in the photos", !!ph.people]],
       { tips: logoFound ? [] : ["add the logo file (brand-assets/logo) — kept for later, not drawn on the ads"] }),
-    S("photos", "Real photos", "photos", [["at least one cleaned photo of the premises", cleanPhotos > 0]]),
+    S("photos", "Real photos", "photos", [["a cleaned photo of the premises, or a room reference", cleanPhotos > 0 || !!roomReference || !!profile.creative_defaults?.room_reference]]),
     S("scenes", "Scene library", "scenes", [["an approved scene library", !!scenes?.exists && !!scenes?.approved], ...audiences.filter((a, i, all) => all.indexOf(a) === i && a !== "any").map((a) => [`scenes for ${a}`, sceneFor(a)])]),
     S("offers", "Offer wording", "offer", [["at least one offer wording", wordings > 0]]),
     S("defaults", "Ad defaults", "defaults", [["at least one location callout", (cd.locations || []).length > 0]]),
