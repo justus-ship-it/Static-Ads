@@ -34,7 +34,7 @@ function startPanel(env = {}) {
   return new Promise((res, rej) => {
     const child = spawn(process.execPath, [join(ROOT, "ui", "server.mjs"), "--port", "0"], {
       // No Meta keys unless a test gives them: whatever this machine's .env holds, the panel under test has none.
-      cwd: ROOT, env: { ...process.env, PANEL_BRANDS_DIR: brands, COPY_LIBRARY_DIR: join(dirname(brands), "library"), NODE_OPTIONS: `--import=${stub}`, META_ACCESS_TOKEN: "", META_APP_ID: "", META_APP_SECRET: "", META_GRAPH_URL: "", ...env },
+      cwd: ROOT, env: { ...process.env, PANEL_BRANDS_DIR: brands, COPY_LIBRARY_DIR: join(dirname(brands), "library"), TARGETING_LIBRARY_DIR: join(dirname(brands), "library"), NODE_OPTIONS: `--import=${stub}`, META_ACCESS_TOKEN: "", META_APP_ID: "", META_APP_SECRET: "", META_GRAPH_URL: "", ...env },
     });
     let out = "", err = "";
     child.stdout.on("data", async (d) => {
@@ -2207,7 +2207,7 @@ test("U40 lead forms through the panel: the Page's forms listed in full; one set
   panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
   try {
     const profile = JSON.parse(readFileSync(pf, "utf-8"));
-    profile.meta_assets = { ...(profile.meta_assets || {}), page_id: "770000000007", labels: { page: "Test Gym" } };
+    profile.meta_assets = { ...(profile.meta_assets || {}), page_id: "770000000007", ad_account_id: "act_111000000001", labels: { page: "Test Gym" } };
     profile.creative_defaults = { ...(profile.creative_defaults || {}), locations: ["BISHAN"] };
     writeFileSync(pf, JSON.stringify(profile, null, 2));
     r = await (await call(`/api/client/${GYM}/lead-forms`)).json();
@@ -2233,7 +2233,7 @@ test("U40 lead forms through the panel: the Page's forms listed in full; one set
     assert.deepEqual([made.made.id, made.made.name, made.made.offer, made.made.from_template, made.made.questions], ["400100000009", r.spec.name, "6 Week Shred", "400100000001", 4]);
     const sent = graph.made.form.body;
     assert.equal(sent.access_token, "PAGE-TOKEN", "through the Page's own token");
-    assert.deepEqual(JSON.parse(sent.questions)[0], { type: "CUSTOM", label: "Do you live or work near THOMSON?", options: [{ value: "Yes" }, { value: "No" }] });
+    assert.deepEqual(JSON.parse(sent.questions)[0], { type: "CUSTOM", label: "Do you live or work near THOMSON?", key: "q1", options: [{ key: "y", value: "Yes" }, { key: "n", value: "No" }] }, "the form's own keys kept, every option with one");
     assert.deepEqual(JSON.parse(sent.privacy_policy), { url: "https://testgym.sg/privacy", link_text: "Privacy" });
     assert.deepEqual(JSON.parse(sent.thank_you_page).button_type, "CALL_BUSINESS");
     assert.equal(sent.locale, "en_GB");
@@ -2247,5 +2247,63 @@ test("U40 lead forms through the panel: the Page's forms listed in full; one set
     assert.deepEqual([p2.meta_assets.lead_form_id, p2.meta_assets.labels.form], ["400100000009", specName]);
     r = await (await call(`/api/client/${GYM}/lead-forms`)).json();
     assert.equal(r.default_form_id, "400100000009");
+    // A gym whose targeting was never imported: the Publish screen imports it from the account the first time (2026-10-07).
+    rmSync(join(g, "targeting-presets.json"), { force: true });
+    const pub = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+    assert.equal(pub.presets_import?.imported, true, JSON.stringify(pub.presets_import));
+    assert.ok(pub.presets.length >= 1 && existsSync(join(g, "targeting-presets.json")), "the account's presets are listed and on disk");
+    const again = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+    assert.equal(again.presets_import, null, "imported once, not on every open");
   } finally { await panel.stop(); panel = main; graph.server.close(); }
+});
+
+
+// ── U41 the shared targeting library (2026-10-07) ───────────────────────────
+
+test("U41 the shared targeting library through the panel: read once, the curated drafts are there unapproved and nothing applies; approving one makes it the default on the Publish screen for a gym whose default mode is shared, listed under Shared defaults with the account's own below; a campaign may pick a library preset; retire needs a reason; the gym's targeting view carries the library; an entry of the owner's needs Meta ids", async () => {
+  const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
+  assert.ok(existsSync(join(out, "batch.json")), "U5 made the batch");
+  let lib = await (await call("/api/library/targeting")).json();
+  assert.deepEqual([lib.entries.length, lib.approved, lib.drafts, lib.entries.map((e) => e.name)], [3, 0, 3, ["Fitness core", "Fitness core · women", "Affluent × fitness"]]);
+  assert.ok(lib.entries[0].preset_id.startsWith("lib:") && lib.entries[0].summary.length, "a library id for the plan and a summary of the interests");
+  // Nothing applies until approved: the plan's ad sets say so.
+  let pub = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+  assert.ok(pub.plan.adsets.every((a) => !a.preset.id.startsWith("lib:")), "no library preset before approval");
+  assert.ok(pub.presets.every((p) => p.group === "account"), "only the account's presets listed");
+  // Approve the core: every ad set (men / everyone here) gets it; the list leads with the shared defaults.
+  const core = lib.entries[0];
+  assert.equal((await call(`/api/library/targeting/${core.id}/retire`, { method: "POST", body: {} })).status, 400, "retire needs a reason");
+  lib = await (await call(`/api/library/targeting/${core.id}/approve`, { method: "POST", body: {} })).json();
+  assert.deepEqual([lib.approved, lib.drafts], [1, 2]);
+  pub = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+  assert.ok(pub.plan.adsets.length >= 1);
+  for (const a of pub.plan.adsets) assert.deepEqual([a.preset.id, a.preset.name, a.preset.how], [`lib:${core.id}`, "Fitness core", `the shared default for ${a.gender === "women" ? "women" : a.gender === "men" ? "men" : "everyone"}: Fitness core`]);
+  assert.deepEqual(pub.presets.filter((p) => p.group === "shared").map((p) => p.name), ["Fitness core"], "approved shared defaults listed first");
+  const set = pub.plan.adsets[0];
+  assert.equal(set.payload.targeting.flexible_spec[0].interests.length, 7, "the seven interests on the ad set's targeting");
+  // A campaign's own pick of a library preset, and a gym whose default mode is broad.
+  const women = lib.entries[1];
+  await call(`/api/library/targeting/${women.id}/approve`, { method: "POST", body: {} });
+  const settings = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { ...pub.settings, adsets: { [set.callout]: { preset: `lib:${women.id}` } } } })).json();
+  assert.deepEqual([settings.plan.adsets[0].preset.name, settings.plan.adsets[0].preset.how], ["Fitness core · women", "chosen for this campaign, from the shared library"]);
+  await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { ...pub.settings, adsets: {} } });
+  const pf = join(g, "gym-profile.json"), profile = JSON.parse(readFileSync(pf, "utf-8"));
+  profile.targeting_defaults = { ...(profile.targeting_defaults || {}), detailed_targeting: { default: "broad" } };
+  writeFileSync(pf, JSON.stringify(profile, null, 2));
+  pub = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+  assert.deepEqual([pub.plan.adsets[0].preset.id, pub.plan.adsets[0].preset.how], ["broad", "the gym's default: Broad"]);
+  profile.targeting_defaults.detailed_targeting = { default: "nonsense" };
+  assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: profile })).status, 400, "the default mode is checked");
+  profile.targeting_defaults.detailed_targeting = {};
+  writeFileSync(pf, JSON.stringify(profile, null, 2));
+  // The gym's targeting view carries the library; retire with a reason; the owner's own entry.
+  const tg = await (await call(`/api/client/${GYM}/targeting`)).json();
+  assert.equal(tg.library.approved, 2);
+  lib = await (await call(`/api/library/targeting/${women.id}/retire`, { method: "POST", body: { reason: "too narrow" } })).json();
+  assert.deepEqual([lib.approved, lib.entries[1].retired.reason], [1, "too narrow"]);
+  lib = await (await call(`/api/library/targeting/${women.id}/restore`, { method: "POST", body: {} })).json();
+  assert.equal(lib.approved, 2);
+  assert.equal((await call("/api/library/targeting", { method: "POST", body: { name: "x", groups: [[{ id: "nope", name: "x" }]] } })).status, 400);
+  lib = await (await call("/api/library/targeting", { method: "POST", body: { name: "Runners", role: "option", groups: [[{ id: "6003107634035", name: "healthy habits" }]] } })).json();
+  assert.deepEqual([lib.entries.length, lib.drafts], [4, 2]);
 });

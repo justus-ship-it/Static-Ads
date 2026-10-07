@@ -38,6 +38,10 @@ import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS,
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
 import { buildPlan, keptAds, CTA_TYPES, findSingaporeIdentity, setSingaporeIdentity, findPin } from "../skills/references/meta-publish.mjs";
 import { readForms, templateFrom, proposeForm, formProblems, createForm, readLeadForms, writeLeadForms } from "../skills/references/lead-forms.mjs";
+import { TARGETING_LIBRARY_DIR, readLibrary as readTargetingLibrary, seedDrafts as seedTargetingDrafts, liveEntries as liveTargeting, approveEntry as approveTargeting, retireEntry as retireTargeting, restoreEntry as restoreTargeting, addEntry as addTargeting, asPreset as libraryPreset } from "../skills/references/targeting-library.mjs";
+/** The shared targeting library, the curated drafts seeded the first time it is read. */
+const targetingLibrary = () => seedTargetingDrafts(TARGETING_LIBRARY_DIR).data;
+const targetingLibraryView = () => { const d = targetingLibrary(); return { entries: d.entries.map((e) => ({ ...e, preset_id: `lib:${e.id}`, summary: summarise(e.spec) })), approved: d.entries.filter((e) => e.approved_on && !e.retired).length, drafts: d.entries.filter((e) => !e.approved_on && !e.retired).length }; };
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -867,6 +871,23 @@ async function fillPinPoints(profile, { geocode = geocodePostal } = {}) {
 }
 // The identity lookup is one Meta call; an account with none or several is not asked again for a minute.
 const identityMemo = new Map();
+/** A gym whose targeting presets were never imported (2026-10-07): the Publish screen's Detailed targeting list
+ *  showed nothing but Broad for F45 Xinyi while its account had run 31 distinct targetings. Imported once from the
+ *  account when the Publish screen opens (a few read-only calls); a failure is not tried again for a minute. */
+const importMemo = new Map();
+async function presetsAutoImport(gym) {
+  const dir = brandDir(gym), profile = readJsonFile(join(dir, "gym-profile.json")) || {};
+  if (readPresets(dir).imported || !profile.meta_assets?.ad_account_id) return null;
+  const cfg = metaConfig({ gym });
+  if (!cfg.token) return null;
+  const memo = importMemo.get(gym);
+  if (memo && Date.now() - memo.at < 60000) return memo.value;
+  let value;
+  try { const r = await importPresets({ client: graphClient({ config: cfg }), accountId: profile.meta_assets.ad_account_id, gymDir: dir }); value = { imported: true, added: r.added, adsets: r.adsets }; importMemo.delete(gym); return value; }
+  catch (e) { value = { imported: false, reason: `the account's targeting could not be imported: ${scrubTokens(e.message)}` }; }
+  importMemo.set(gym, { at: Date.now(), value });
+  return value;
+}
 /** A callout with no pin, filled from the ad account's most-used pin (GET only; the owner's rule, 2026-10-07). */
 const pinMemo = new Map();
 async function pinFillFor(gym, callouts) {
@@ -1166,12 +1187,29 @@ const server = createServer(async (req, res) => {
     }
     // /api/client/{gym}/targeting[/{id}] — the detailed-targeting presets: imported from the account's own ad sets
     // (with what they cost and brought), its saved audiences, or built by the owner from Meta's search.
+    // ── The shared targeting library (2026-10-07): curated across every gym's results, the owner's to approve ──
+    const tl = p.match(/^\/api\/library\/targeting(?:\/([0-9a-f]{12})\/(approve|retire|restore))?$/);
+    if (tl) {
+      const id = tl[1] || null, action = tl[2] || null;
+      try {
+        if (!id && req.method === "GET") return json(res, 200, targetingLibraryView());
+        if (!id && req.method === "POST") { const body = await readBody(req); const e = addTargeting(TARGETING_LIBRARY_DIR, { name: body.name, audience: body.audience || "all", role: body.role || "default", note: body.note || "", groups: body.groups, evidence: [] }); return json(res, 200, { ...targetingLibraryView(), added: e.id }); }
+        if (id && req.method === "POST") {
+          const body = action === "retire" ? await readBody(req) : {};
+          if (action === "approve") approveTargeting(TARGETING_LIBRARY_DIR, id);
+          else if (action === "retire") retireTargeting(TARGETING_LIBRARY_DIR, id, body.reason);
+          else restoreTargeting(TARGETING_LIBRARY_DIR, id);
+          return json(res, 200, targetingLibraryView());
+        }
+      } catch (e) { return json(res, 400, { error: e.message }); }
+      return json(res, 405, { error: "method not allowed" });
+    }
     const tg = p.match(/^\/api\/client\/([^/]+)\/targeting(?:\/([^/]+))?$/);
     if (tg) {
       const gym = tg[1], id = tg[2] ? decodeURIComponent(tg[2]) : null;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
       const dir = brandDir(gym);
-      const view = (extra = {}) => { const d = readPresets(dir); return { account: d.account, imported: d.imported, presets: livePresets(d), retired: d.presets.filter((x) => x.retired), ...extra }; };
+      const view = (extra = {}) => { const d = readPresets(dir); return { account: d.account, imported: d.imported, presets: livePresets(d), retired: d.presets.filter((x) => x.retired), library: targetingLibraryView(), ...extra }; };
       try {
         if (!id && req.method === "GET") {
           const q = url.searchParams;
@@ -1587,15 +1625,17 @@ const server = createServer(async (req, res) => {
         }
         // The Singapore identity: read from the account's own ad sets when the profile has none (GET only).
         const identity = req.method === "GET" ? await singaporeIdentityFor(gym) : null;
+        const presets_import = req.method === "GET" ? await presetsAutoImport(gym) : null;
         const batch = readJsonFile(join(out, "batch.json")), presets = readPresets(dir);
         const kept = keptAds(out);
         // A callout with no pin: filled from the ad account's most-used pin before the plan is built (GET only).
         const pin_fill = req.method === "GET" ? await pinFillFor(gym, [...new Set(kept.map((a) => a.location).filter(Boolean))]) : null;
         const profile = readJsonFile(join(dir, "gym-profile.json")) || {};
         let plan;
-        try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline") }); } catch (e) { return json(res, 400, { error: e.message }); }
+        const library = targetingLibrary();
+        try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline"), library }); } catch (e) { return json(res, 400, { error: e.message }); }
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, settings, thumbs, identity, pin_fill, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
+        return json(res, 200, { plan, settings, thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
       }
       if (what === "results" && req.method === "GET") return json(res, 200, { results: readJsonFile(join(out, "results.json")), rows: batchRows(dir, id), record: readJsonFile(join(out, "publish.json")) });
       if (what === "results/pull" && req.method === "POST") {
@@ -1797,7 +1837,7 @@ const server = createServer(async (req, res) => {
           const cfg = metaConfig({ gym: body.gym });
           if (!cfg.token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
           let plan;
-          try { plan = buildPlan({ profile: readJsonFile(join(brandDir(body.gym), "gym-profile.json")) || {}, batch: readJsonFile(join(out, "batch.json")), kept: keptAds(out), presets: readPresets(brandDir(body.gym)), settings: readJsonFile(join(out, "publish-settings.json")) || {}, copies: keptCopies(out), headlines: keptCopies(out, "headline") }); }
+          try { plan = buildPlan({ library: targetingLibrary(), profile: readJsonFile(join(brandDir(body.gym), "gym-profile.json")) || {}, batch: readJsonFile(join(out, "batch.json")), kept: keptAds(out), presets: readPresets(brandDir(body.gym)), settings: readJsonFile(join(out, "publish-settings.json")) || {}, copies: keptCopies(out), headlines: keptCopies(out, "headline") }); }
           catch (e) { return json(res, 400, { error: e.message }); }
           if (!plan.ready) return json(res, 409, { error: `the plan has problems: ${plan.problems.join("; ")}` });
           const agreed = c.ads === plan.counts.ads && c.adsets === plan.counts.adsets && c.per_day === plan.budget.per_day_total;

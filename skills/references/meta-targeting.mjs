@@ -28,6 +28,7 @@ import { join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { createHash } from "crypto";
+import { defaultFor as libraryDefault, asPreset as libraryPreset, libraryEntry } from "./targeting-library.mjs";
 import { metaConfig, graphClient, actId, scrubTokens } from "./meta-api.mjs";
 import { calloutGender } from "./client-config.mjs";
 
@@ -256,15 +257,33 @@ export function rankPresets(data, { gender = "all", words: text = "", minLeads =
   scored.sort((a, b) => (b.ranFor > 0) - (a.ranFor > 0) || b.overlap - a.overlap || (a.cpl ?? 1e9) - (b.cpl ?? 1e9) || (b.preset.stats?.adsets || 0) - (a.preset.stats?.adsets || 0));
   return scored.map((s) => ({ id: s.preset.id, name: s.preset.name, why: s.why.join(" · ") || "no record yet" }));
 }
-/** The preset for an audience callout: the profile's own choice, else the best suggestion, else Broad. */
-export function presetFor(data, profile, { audience, offer } = {}) {
+/** How a gym's ad sets are targeted when the callout has no choice of its own (`detailed_targeting.default`). */
+export const DEFAULT_MODES = ["shared", "account", "broad"];
+/**
+ * The preset for an audience callout: the profile's own choice for the callout (an account preset, a library
+ * preset `lib:…`, "shared", "suggest" or "broad"), else the gym's default mode — **the shared library's approved
+ * default for the callout's gender** (2026-10-07, the owner's rule: fitness ads target much the same people),
+ * or the account's best suggestion, or Broad — then the suggestion when the shared library has nothing approved.
+ */
+export function presetFor(data, profile, { audience, offer, library = null } = {}) {
   const map = profile?.targeting_defaults?.detailed_targeting?.callout_presets || {};
   const key = Object.keys(map).find((k) => k.trim().toUpperCase() === String(audience || "").trim().toUpperCase());
-  const chosen = key ? map[key] : "suggest";
-  if (chosen && chosen !== "suggest") { const p = livePresets(data).find((x) => x.id === chosen); if (p) return { preset: p, how: "the profile's choice" }; }
-  const ranked = rankPresets(data, { gender: calloutGender(audience, profile), words: `${offer || ""} ${audience || ""}` });
+  const chosen = key ? map[key] : null, gender = calloutGender(audience, profile);
+  if (chosen && !["suggest", "shared", "broad"].includes(chosen)) {
+    const p = livePresets(data).find((x) => x.id === chosen); if (p) return { preset: p, how: "the profile's choice" };
+    const e = library && libraryEntry(library, chosen); if (e) return { preset: libraryPreset(e), how: `the profile's choice from the shared library: ${e.name}` };
+    const gone = rankPresets(data, { gender, words: `${offer || ""} ${audience || ""}` }), goneTop = gone[0] && livePresets(data).find((p) => p.id === gone[0].id);
+    return goneTop ? { preset: goneTop, how: "the profile's choice is gone; suggested instead" } : { preset: broadPreset(), how: "the profile's choice is gone, and there is nothing to suggest yet" };
+  }
+  if (chosen === "broad") return { preset: broadPreset(), how: "the profile's choice: Broad" };
+  const mode0 = chosen === "suggest" ? "account" : chosen === "shared" ? "shared" : DEFAULT_MODES.includes(profile?.targeting_defaults?.detailed_targeting?.default) ? profile.targeting_defaults.detailed_targeting.default : "shared";
+  const mode = mode0 === "shared" && !library ? "account" : mode0; // no library given (the CLI's tests): the account's suggestion as before
+  if (mode === "shared" && library) { const e = libraryDefault(library, gender); if (e) return { preset: libraryPreset(e), how: `the shared default for ${gender === "all" ? "everyone" : gender}: ${e.name}` }; }
+  if (mode === "broad") return { preset: broadPreset(), how: "the gym's default: Broad" };
+  const ranked = rankPresets(data, { gender, words: `${offer || ""} ${audience || ""}` });
   const top = ranked[0] && livePresets(data).find((p) => p.id === ranked[0].id);
-  return top ? { preset: top, how: chosen === "suggest" ? `suggested: ${ranked[0].why}` : "the profile's choice is gone; suggested instead" } : { preset: broadPreset(), how: "nothing to suggest yet" };
+  const why = mode === "shared" ? "nothing approved in the shared library yet; suggested from the account" : "suggested";
+  return top ? { preset: top, how: `${why}: ${ranked[0].why}` } : { preset: broadPreset(), how: mode === "shared" ? "nothing approved in the shared library yet, and nothing to suggest" : "nothing to suggest yet" };
 }
 /** A preset's spec as it goes into an ad set's targeting (a copy, ids and names only). */
 export const specForAdset = (preset) => structuredClone(normaliseSpec(preset?.spec || {}));

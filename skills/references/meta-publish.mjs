@@ -27,6 +27,7 @@ import { parseArgs } from "util";
 import { metaConfig, graphClient, actId, scrubTokens, MetaError } from "./meta-api.mjs";
 import { calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
 import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
+import { readLibrary as readTargetingLibrary, libraryEntry, asPreset as libraryPreset } from "./targeting-library.mjs";
 import { textOptionsFor, MAX_OPTIONS, fillButton, ctaLabel, gymLanguage } from "./draft-copy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -211,7 +212,7 @@ export function creativeFor({ name, page_id, instagram_user_id, website, form_id
  *   kept:    [{ folder, file, location, words, story: file|null }]
  *   settings: { campaign: { name, level, daily, bid_strategy, bid_cap }, adsets: { [CALLOUT]: { pin, radius_km, age_min, age_max, gender, preset, daily } }, words: { message, headline, description, cta }, destination: { lead_form_id, instagram_user_id } }
  */
-export function buildPlan({ profile, batch, kept, presets = { presets: [] }, settings = {}, copies = [], headlines = [], tag = today() }) {
+export function buildPlan({ profile, batch, kept, presets = { presets: [] }, settings = {}, copies = [], headlines = [], tag = today(), library = null }) {
   const problems = [], warnings = [];
   const m = profile.meta_assets || {}, dest = settings.destination || {};
   const singapore = (profile.locale?.country || "SG") === "SG";
@@ -277,8 +278,9 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
     // Detailed targeting: the owner's pick for this ad set, else the profile's per-callout choice, else the suggestion.
     let preset, how;
     const live = livePresets(presets);
-    if (own.preset && (own.preset === BROAD || live.some((p) => p.id === own.preset))) { preset = live.find((p) => p.id === own.preset) || { id: BROAD, name: "Broad", spec: {}, summary: summarise({}) }; how = "chosen for this ad set"; }
-    else ({ preset, how } = presetFor(presets, profile, { audience, offer }));
+    if (own.preset && library && libraryEntry(library, own.preset)) { preset = libraryPreset(libraryEntry(library, own.preset)); how = "chosen for this campaign, from the shared library"; }
+    else if (own.preset && (own.preset === BROAD || live.some((p) => p.id === own.preset))) { preset = live.find((p) => p.id === own.preset) || { id: BROAD, name: "Broad", spec: {}, summary: summarise({}) }; how = "chosen for this ad set"; }
+    else ({ preset, how } = presetFor(presets, profile, { audience, offer, library }));
     const spec = specForAdset(preset);
     const setDaily = num(own.daily, 1, 100000) ?? daily;
     if (ads.length > ADS_PER_ADSET_CAP) problems.push(`${callout}: ${ads.length} ads in one ad set; Meta allows ${ADS_PER_ADSET_CAP} — exclude some, or split the callout`);
@@ -563,7 +565,7 @@ if (isMain) {
       const { readPresets } = await import("./meta-targeting.mjs");
       const settings = existsSync(join(out, "publish-settings.json")) ? JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")) : {};
       const { keptCopies } = await import("./draft-copy.mjs");
-      const plan = buildPlan({ profile, batch, kept: keptAds(out), presets: readPresets(brandDir), settings, copies: keptCopies(out), headlines: keptCopies(out, "headline") });
+      const plan = buildPlan({ library: readTargetingLibrary(), profile, batch, kept: keptAds(out), presets: readPresets(brandDir), settings, copies: keptCopies(out), headlines: keptCopies(out, "headline") });
       const first = v.first ? parseInt(v.first, 10) : null;
       if (v.first && !(Number.isInteger(first) && first >= 1)) throw new Error("--first takes a whole number of ads");
       console.log(`plan: ${plan.campaign.name} · ${plan.counts.adsets} ad set(s) · ${plan.counts.ads} ad(s), ${plan.counts.with_story} with a Stories version · ${plan.copy.kept ? `${plan.copy.kept} copies kept, ${plan.copy.per_ad} per ad${plan.copy.rotating ? " (rotating)" : ""}` : "placeholder words"} · ${plan.budget.per_day_total} ${plan.currency}/day in all · every object ${AD_STATUS}${first ? ` · this run: the first ${first} ad(s)` : ""}`);

@@ -154,3 +154,34 @@ test("T5 an ad set reaching outside the gym's country is counted apart: its lead
     assert.match(why, /10 leads at 30.00 each over 1 ad set · \(2 ad sets reaching BD left out: 600 leads there\)/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+test("T5 the shared library in presetFor (2026-10-07): the gym's default mode is shared, so an approved library default for the callout's gender wins over the account's suggestion; with nothing approved the suggestion stands and says so; the callout's own choice of a library preset, of 'shared', of 'suggest' or of 'broad' wins over the mode; an unknown choice falls back to the suggestion", async () => {
+  const { presetFor } = await import("./meta-targeting.mjs");
+  const { curatedDrafts } = await import("./targeting-library.mjs");
+  const data = { presets: [{ id: "a1b2c3d4e5f6", name: "Fitness · Beauty", source: "account", spec: { flexible_spec: [{ interests: [{ id: "6003277229371", name: "Physical fitness" }] }] }, stats: { adsets: 3, leads: 50, cost_per_lead: 20, genders: { women: 3, men: 0, all: 0 } } }] };
+  const profile = (over = {}) => ({ targeting_defaults: { demographics: { callout_genders: { "LADIES": "women", "MEN": "men" } }, detailed_targeting: {}, ...over } });
+  const drafts = curatedDrafts("2026-10-07T00:00:00.000Z"), approved = (names) => ({ entries: drafts.map((e) => ({ ...e, approved_on: names.includes(e.name) ? "2026-10-07T00:00:00.000Z" : null })) });
+  let r = presetFor(data, profile(), { audience: "LADIES", library: approved([]) });
+  assert.deepEqual([r.preset.id, /nothing approved in the shared library yet/.test(r.how)], ["a1b2c3d4e5f6", true]);
+  r = presetFor(data, profile(), { audience: "LADIES", library: approved(["Fitness core", "Fitness core · women"]) });
+  assert.deepEqual([r.preset.name, r.preset.id.startsWith("lib:"), r.how], ["Fitness core · women", true, "the shared default for women: Fitness core · women"]);
+  r = presetFor(data, profile(), { audience: "MEN", library: approved(["Fitness core", "Fitness core · women"]) });
+  assert.equal(r.preset.name, "Fitness core");
+  r = presetFor(data, profile({ detailed_targeting: { default: "account" } }), { audience: "LADIES", library: approved(["Fitness core"]) });
+  assert.deepEqual([r.preset.id, r.how.startsWith("suggested")], ["a1b2c3d4e5f6", true], "the gym's default mode: the account's best");
+  r = presetFor(data, profile({ detailed_targeting: { default: "broad" } }), { audience: "LADIES", library: approved(["Fitness core"]) });
+  assert.equal(r.preset.id, "broad");
+  const lib = approved(["Fitness core", "Affluent × fitness"]), affluent = lib.entries.find((e) => e.name === "Affluent × fitness");
+  r = presetFor(data, profile({ detailed_targeting: { default: "broad", callout_presets: { "LADIES": `lib:${affluent.id}` } } }), { audience: "LADIES", library: lib });
+  assert.deepEqual([r.preset.name, r.how], ["Affluent × fitness", "the profile's choice from the shared library: Affluent × fitness"]);
+  r = presetFor(data, profile({ detailed_targeting: { default: "broad", callout_presets: { "LADIES": "shared" } } }), { audience: "LADIES", library: lib });
+  assert.equal(r.preset.name, "Fitness core");
+  r = presetFor(data, profile({ detailed_targeting: { callout_presets: { "LADIES": "suggest" } } }), { audience: "LADIES", library: lib });
+  assert.equal(r.preset.id, "a1b2c3d4e5f6");
+  r = presetFor(data, profile({ detailed_targeting: { callout_presets: { "LADIES": "broad" } } }), { audience: "LADIES", library: lib });
+  assert.equal(r.preset.id, "broad");
+  r = presetFor(data, profile({ detailed_targeting: { default: "broad", callout_presets: { "LADIES": "lib:000000000000" } } }), { audience: "LADIES", library: lib });
+  assert.deepEqual([r.preset.id, /choice is gone/.test(r.how)], ["a1b2c3d4e5f6", true]);
+  r = presetFor(data, profile(), { audience: "LADIES" });
+  assert.equal(r.preset.id, "a1b2c3d4e5f6", "no library given (the tests' plans): the suggestion as before");
+});
