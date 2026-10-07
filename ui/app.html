@@ -2538,7 +2538,7 @@ function lfPaintModal(){
   const S = P?.spec;
   const q = (x,i) => `<div class="wrow" style="align-items:flex-start;gap:8px"><span class="mono hint" style="width:22px">${i+1}</span><div style="flex:1">
       <div class="row" style="gap:8px"><select onchange="lfQ(${i},'type',this.value)" style="width:auto">${QUESTION_TYPES.map(k=>`<option value="${k}" ${x.type===k?'selected':''}>${qWords[k]}</option>`).join('')}</select>
-      <input value="${esc(x.label||'')}" onchange="lfQ(${i},'label',this.value)" placeholder="${x.type==='CUSTOM'?'the question':'label (optional)'}" style="flex:1"></div>
+      ${(x.type==='CUSTOM'||x.type==='DATE_TIME')?`<input value="${esc(x.label||'')}" onchange="lfQ(${i},'label',this.value)" placeholder="the question" style="flex:1">`:`<span class="hint" style="margin:0;flex:1">Meta's own wording for this field (a label is not allowed on it)</span>`}</div>
       ${x.type==='CUSTOM'?`<textarea rows="2" style="margin-top:6px" placeholder="options, one per line — leave empty for a free answer" onchange="lfQ(${i},'options',this.value)">${esc((x.options||[]).map(o=>o.value).join('\n'))}</textarea>`:''}</div>
       <div class="row" style="gap:4px"><button class="sm" onclick="lfQMove(${i},-1)" ${i?'':'disabled'}>↑</button><button class="sm" onclick="lfQMove(${i},1)" ${i<S.questions.length-1?'':'disabled'}>↓</button><button class="sm" onclick="lfQDel(${i})">✕</button></div></div>`;
   const prop = S ? `<hr><h3>${esc(S.name)}</h3>
@@ -2574,11 +2574,12 @@ function lfQMove(i, d){ const a = LF.proposal.spec.questions, j = i + d; if (j<0
 function lfQDel(i){ LF.proposal.spec.questions.splice(i,1); lfPaintModal(); }
 function lfQAdd(){ LF.proposal.spec.questions.push({ type:'CUSTOM', label:'' }); lfPaintModal(); }
 function lfCreateAsk(){
+  // The confirmation takes the modal's place (a second overlay would sit under this one, unseen — 2026-10-07).
   const S = LF.proposal.spec, page = LF.data.page_name || 'the gym\'s Page';
-  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h2>Create this form on ${esc(page)}?</h2>
+  $('#lfModal').innerHTML = `<div class="modal" onclick="if(event.target===this)lfPaintModal()"><div class="card"><h2>Create this form on ${esc(page)}?</h2>
     <div class="summary"><b>${esc(S.name)}</b> · ${S.questions.length} question${S.questions.length===1?'':'s'}</div>
     <p class="hint">One call to Meta. The form goes live on the Page but is used by nothing until an ad points to it. It cannot be edited afterwards, only archived.</p>
-    <div class="row" style="margin-top:12px"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" onclick="$('#gModal').innerHTML='';lfCreate()">Yes, create it</button></div></div></div>`;
+    <div class="row" style="margin-top:12px"><button onclick="lfPaintModal()">Back</button><div class="spacer"></div><button class="primary" onclick="lfCreate()">Yes, create it</button></div></div></div>`;
 }
 async function lfCreate(){
   LF.busy = true; lfPaintModal();

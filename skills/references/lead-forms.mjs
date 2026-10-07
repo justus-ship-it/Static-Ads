@@ -39,11 +39,14 @@ export async function readForms(client, pageId) {
 }
 const summarise = (f) => ({ ...f, question_count: (f.questions || []).length });
 
-/** The question as the create call takes it: a standard type alone, a CUSTOM one with its label and options. */
+/** The question as the create call takes it: a standard type alone — Meta refuses a label on a non-custom
+ *  question ("無法為非自訂問題指定參數標籤", F45 Xinyi's first create, 2026-10-07) — a CUSTOM or DATE_TIME one
+ *  with its wording, a multiple-choice one with its options. */
+export const LABELLED_TYPES = ["CUSTOM", "DATE_TIME"];
 export function questionSpec(q) {
   const type = String(q.type || "CUSTOM").toUpperCase();
   const out = { type };
-  if (type === "CUSTOM" || type === "DATE_TIME" || q.label) out.label = String(q.label || "").trim();
+  if (LABELLED_TYPES.includes(type)) out.label = String(q.label || "").trim();
   if (Array.isArray(q.options) && q.options.length) out.options = q.options.map((o) => ({ value: String(typeof o === "string" ? o : o.value ?? o.key ?? "").trim() })).filter((o) => o.value);
   return out;
 }

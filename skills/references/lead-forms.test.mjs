@@ -37,7 +37,7 @@ test("LF1 a form read back becomes a template: every question as the create call
   assert.deepEqual(t.phrases, { offer: "六週中年體態雕塑計畫", district: "信義區" });
   assert.deepEqual(t.spec.questions[0], { type: "CUSTOM", label: "你在信義區附近工作或居住嗎？", options: [{ value: "是" }, { value: "否" }] });
   assert.deepEqual(t.spec.questions[3], { type: "DATE_TIME", label: "請預約時間與我們見面以開始！" });
-  assert.deepEqual(t.spec.questions[4], { type: "EMAIL", label: "Email" });
+  assert.deepEqual(t.spec.questions[4], { type: "EMAIL" }, "a standard question goes up by type alone: Meta refuses a label on it");
   assert.deepEqual(t.spec.context_card, { title: "六週中年體態雕塑計畫", content: ["幫助我們多認識你！"], style: "PARAGRAPH_STYLE" });
   assert.deepEqual(t.spec.thank_you_page, { title: "最後一步", body: XINYI.thank_you_page.body, button_type: "CALL_BUSINESS", button_text: "聯絡我們", business_phone_number: "+886980660800" });
   assert.deepEqual(t.spec.privacy_policy, { url: "https://f45training.com/privacy", link_text: "瀏覽 F45 Xinyi 信義的隱私政策。" });
@@ -83,7 +83,8 @@ test("LF3 the rules in code and creation: no name, no questions, too many, an un
   assert.match(p({ thank_you_page: { title: "", body: "b", button_type: "NONE" } }).join(), /thank-you page needs a title/);
   const body = createPayload(ok);
   assert.deepEqual(Object.keys(body).sort(), ["allow_organic_lead", "block_display_for_non_targeted_viewer", "context_card", "is_optimized_for_quality", "locale", "name", "privacy_policy", "question_page_custom_headline", "questions", "thank_you_page"]);
-  assert.deepEqual(body.questions[4], { type: "EMAIL", label: "Email" });
+  assert.deepEqual(body.questions[4], { type: "EMAIL" });
+  assert.deepEqual(questionSpec({ type: "PHONE", label: "Phone number" }), { type: "PHONE" });
   const dir = mkdtempSync(join(tmpdir(), "leadforms-")), c = client();
   try {
     await assert.rejects(createForm(c, "105", { ...ok, name: "" }, { gymDir: dir }), /not ready: the form needs a name/);
