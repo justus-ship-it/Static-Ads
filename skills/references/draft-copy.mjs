@@ -146,7 +146,9 @@ export function copyProblems(d, { offer, rules, kind = null }) {
   return e;
 }
 /** Two drafts that read the same (after case and punctuation) count once. */
-const shape = (d) => `${d.headline} ${d.message}`.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim().slice(0, 160);
+// The shape keeps Han characters as well as Latin: an all-Chinese draft shaped to "" and every one after
+// the first was dropped as "reads like one already here" (F45 Xinyi's headlines, 2026-10-07: 3 kept of 17).
+const shape = (d) => `${d.headline} ${d.message}`.toLowerCase().replace(/[^a-z0-9 \p{Script=Han}]/gu, "").replace(/\s+/g, " ").trim().slice(0, 160);
 
 // ── the references ───────────────────────────────────────────────────────────
 export { readCopyRefs };

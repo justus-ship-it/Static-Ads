@@ -268,3 +268,21 @@ test("C9 Chinese copy (2026-10-07, F45 Xinyi): the standing rules in Chinese (�
   const bd = join(d, "outputs", "b"); mkdirSync(bd, { recursive: true });
   await assert.rejects(m.draftCopy({ brandDir: d, batchDir: bd, kind: "headline", offer: "x", libraryDir: lib, ask: async () => ({ drafts: [] }) }), /no headline skeletons yet in Traditional Chinese.*send this gym's own references/);
 });
+
+test("C10 Chinese drafts are told apart (2026-10-07): the duplicate rule shaped an all-Chinese draft to nothing, so every headline after the first was dropped as one already here (F45 Xinyi: 3 kept of 17); now distinct Chinese headlines are all kept and a real repeat is still dropped", async () => {
+  const m = await import("./draft-copy.mjs");
+  const lib = mkdtempSync(join(tmpdir(), "copylib-zh10-"));
+  writeFileSync(join(lib, "copy-library.json"), JSON.stringify({ schema: 1, entries: [{ id: "zh-h", kind: "headline", language: "zh", text: "{AREA}女性 - {OFFER}，現在開始" }] }));
+  const d = gym(); const pf = join(d, "gym-profile.json"); writeFileSync(pf, JSON.stringify({ ...JSON.parse(readFileSync(pf, "utf-8")), locale: { country: "TW", languages: ["zh_TW"] } }));
+  const bd = join(d, "outputs", "b"); mkdirSync(bd, { recursive: true });
+  const headlines = ["信義區女性 - 六週全身體態改造計畫，現在開始報名", "六週後成功達成體態目標，報名開始", "每次都想打造好線條，這六週全身體態改造計畫讓妳真的開始", "信義區女性 - 六週全身體態改造計畫，現在開始報名"];
+  let n = 0;
+  const ask = async (_i, prompt) => {
+    if (/clarity/i.test(prompt) && !/drafts?\b.*headline/i.test(prompt.slice(0, 200))) return { ratings: [] };
+    if (n++ === 0) return { drafts: headlines.map((h) => ({ headline: h, description: "專為女性打造", angle: "call-out", from: 1 })) };
+    return { drafts: [] };
+  };
+  const r = await m.draftCopy({ brandDir: d, batchDir: bd, kind: "headline", offer: "六週全身體態改造計畫", audience: "女性", locations: ["信義區"], count: 4, libraryDir: lib, ask });
+  assert.equal(r.added.length, 3, `three distinct Chinese headlines kept (dropped: ${r.dropped.map((x) => x.why).join("; ")})`);
+  assert.deepEqual(r.dropped.map((x) => x.why), ["reads like one already here"], "the one real repeat is dropped");
+});
