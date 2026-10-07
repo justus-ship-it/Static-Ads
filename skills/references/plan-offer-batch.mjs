@@ -63,10 +63,18 @@ const CHECK_LOOK = { style: "s1-heavy-sans", palette: "white-on-dark" };
 export function sceneAudience(audience, override = null) {
   if (override) return override;
   const a = String(audience || "");
-  if (/\b(men|man|guys|dads?|gents|gentlemen|males?|brothers)\b/i.test(a)) return "men";
-  if (/\b(ladies|women|woman|mums?|moms?|girls|females?|sisters)\b/i.test(a)) return "women";
+  // English words at word boundaries; Chinese words anywhere (2026-10-07: "女性" was read as "anyone" and F45 Xinyi's
+  // women's batch planned men's scenes). A callout naming both (男女, "men and women") is for anyone.
+  const men = /\b(men|man|guys|dads?|gents|gentlemen|males?|brothers)\b/i.test(a) || MEN_ZH.test(a);
+  const women = /\b(ladies|women|woman|mums?|moms?|girls|females?|sisters)\b/i.test(a) || WOMEN_ZH.test(a);
+  if (men && women) return "any";
+  if (men) return "men";
+  if (women) return "women";
   return "any";
 }
+/** Chinese words for women and for men in an audience callout (the "women" ones first so 男女 is seen as both). */
+export const WOMEN_ZH = /女性|女生|女士|女人|女孩|女子|媽媽|妈妈|姐妹|辣妹|辣台妹|人妻|姊妹/;
+export const MEN_ZH = /男性|男生|男士|男人|男孩|男子|爸爸|老爸|兄弟|型男/;
 
 /** Every problem with a brief, as messages. Empty = runnable. */
 export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogue() } = {}) {
@@ -258,9 +266,12 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
   const seen = Object.fromEntries(Object.keys(VARIETY_WEIGHTS).map((k) => [k, new Set()]));
   const uses = Object.fromEntries(Object.keys(VARIETY_WEIGHTS).map((k) => [k, new Map()]));
   // What the brief asked to see, still missing. Covering one outranks any amount of general variety.
-  const wanted = Object.entries(mustShow || {}).flatMap(([tag, values]) => (values || []).map((value) => ({ tag, value })));
+  // A wish no scene of this audience can show is left out, not refused (2026-10-07: a Spread cut for the "anyone"
+  // pool asked a women's batch for a lunge no women's scene shows): the plan says what was left out (`notShown`).
   const missing = unshowable(mustShow, suits);
-  if (missing.length) throw new Error(`must_show asks for ${missing.join(", ")}, which no ${audience === "any" ? "" : audience + "'s "}scene in the library shows`);
+  const leftOut = missing.map((m) => `${m} (no ${audience === "any" ? "" : audience + "'s "}scene in the library shows it)`);
+  const canShow = Object.fromEntries(Object.entries(mustShow || {}).map(([tag, values]) => [tag, (values || []).filter((v) => !missing.includes(`${tag} "${v}"`))]));
+  const wanted = Object.entries(canShow).flatMap(([tag, values]) => values.map((value) => ({ tag, value })));
   const out = [];
   // What was asked for stays even: adding to a must_show value that is already ahead of the others
   // on its tag costs a scene more than any general variety is worth, so young and older men (or solo,
@@ -298,8 +309,8 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
     out.push({ id: `g${String(i + 1).padStart(2, "0")}`, treatment: pick.la, scene: pick.s.scene, scene_id: pick.s.id || null, pose: pick.s.pose, people: pick.s.people, tags, ...(ages ? { age: ages[i] } : {}), look: CHECK_LOOK });
     Object.defineProperty(out.at(-1), "src", { value: pick.s, enumerable: false }); // for the even-spread rule; not written out
   }
-  const notShown = wanted.filter((w) => !w.done).map((w) => `${w.tag} "${w.value}"`);
-  if (notShown.length) out.notShown = notShown; // too few photos for everything asked
+  const notShown = [...leftOut, ...wanted.filter((w) => !w.done).map((w) => `${w.tag} "${w.value}"`)];
+  if (notShown.length) out.notShown = notShown; // no scene shows it, or too few photos for everything asked
   return out;
 }
 
@@ -415,7 +426,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   if (directed && brief.must_show && Object.keys(brief.must_show).length) log("· must_show is ignored for a directed batch: its reference or words decide what the photos show");
   if (renderOnly && existsSync(plannedPath)) visuals = JSON.parse(readFileSync(plannedPath, "utf-8")).visuals;
   else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: directed ? {} : brief.must_show, catalogue, ratio, exclude, ages: ageTargets({ range: brief.age_range, count: g, seed }) });
-  if (visuals.notShown) log(`  note: too few photos to show everything asked — not shown: ${visuals.notShown.join(", ")}`);
+  if (visuals.notShown) log(`  note: not everything asked for is shown — left out: ${visuals.notShown.join(", ")}`);
   for (const v of visuals) for (const w of sceneWarnings({ scene: v.scene, people: v.people, setting: v.tags?.setting })) log(`  warning: ${v.id} (${v.scene_id || "brief scene"}): ${w}`);
   for (const v of visuals) { const p = poseProblem(v.treatment, v.pose, catalogue); if (p) throw new Error(`${v.id}: ${p}`); }
   const reference = brief.reference || brief.real?.[0] || null;

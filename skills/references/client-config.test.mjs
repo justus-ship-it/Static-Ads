@@ -300,3 +300,8 @@ test("P20 the room reference: creative_defaults.room_reference must be one of th
   assert.deepEqual([photos({ cleanPhotos: 0 }), photos({ cleanPhotos: 0, roomReference: true }), photos({ cleanPhotos: 1 })], ["missing", "done", "done"]);
   p.creative_defaults.room_reference = "reference-clean/floor.png"; assert.equal(photos({ cleanPhotos: 0 }), "done");
 });
+
+test("P21 the ad set's gender from a Chinese callout (2026-10-07): 女性 / 女生 / 媽媽 are women, 男士 / 男生 are men, both or neither is all; English as before; the owner's map still wins", () => {
+  for (const [a, want] of [["女性", "women"], ["女生限定", "women"], ["信義區媽媽", "women"], ["男士", "men"], ["信義區男生", "men"], ["男女皆可", "all"], ["忙碌上班族", "all"], ["LADIES WANTED", "women"], ["MEN WANTED", "men"]]) assert.equal(calloutGender(a), want, a);
+  assert.equal(calloutGender("女性", { targeting_defaults: { demographics: { callout_genders: { "女性": "all" } } } }), "all", "the owner's map wins");
+});

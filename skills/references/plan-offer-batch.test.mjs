@@ -101,6 +101,8 @@ test("B1b scenes suit the audience callout; an unapproved library is refused for
   assert.equal(sceneAudience("MUMS OF BISHAN"), "women");
   assert.equal(sceneAudience(null), "any");
   assert.equal(sceneAudience("NEW TO THE GYM?"), "any");
+  // Chinese callouts (2026-10-07: "女性" had been read as "anyone", and a women's batch planned men's scenes).
+  for (const [a, want] of [["女性", "women"], ["女生限定", "women"], ["信義區媽媽", "women"], ["辣台妹挑戰", "women"], ["男士", "men"], ["信義區男生", "men"], ["男女皆可", "any"], ["忙碌上班族", "any"]]) assert.equal(sceneAudience(a), want, a);
   assert.equal(sceneAudience("MEN", "any"), "any", "the brief can say outright");
   const dir = mkdtempSync(join(tmpdir(), "scenes-"));
   try {
@@ -144,7 +146,8 @@ test("B1c the spread a gym's library can deliver: the wished values its pool for
   // What it gives, the planner accepts: planning with it never refuses for a missing value.
   const full = spreadFor({ scenes: lib, audience: "women", count: 5 });
   assert.equal(planVisuals({ count: 3, scenes: lib, audience: "women", seed: "b1c", mustShow: full.must_show }).length, 3);
-  assert.throws(() => planVisuals({ count: 3, scenes: lib, audience: "women", seed: "b1c", mustShow: SPREAD_WISH }), /bench-press/, "the whole wish is what used to refuse");
+  const whole = planVisuals({ count: 3, scenes: lib, audience: "women", seed: "b1c", mustShow: SPREAD_WISH });
+  assert.ok(whole.length === 3 && whole.notShown.some((x) => /bench-press.*no women's scene in the library shows it/.test(x)), "the whole wish used to refuse the plan; now what no scene shows is left out and said (2026-10-07)");
 });
 
 test("B1d ages on a bell curve over the owner's range (2026-09-27): seeded, inside the range, most near the middle; the planner picks a scene of each photo's age band first and the photo carries its age; the brief's range is checked", () => {
@@ -229,7 +232,8 @@ test("B2b ten photos spread across exercise, age, setting and equipment — not 
       assert.ok(Math.min(...n) >= 1 && Math.max(...n) - Math.min(...n) <= 3, `${seed}: ${k} close to even: ${n}`);
     }
   }
-  assert.throws(() => planVisuals({ count: 3, scenes: LIB, audience: "men", mustShow: { exercise: ["snatch"] } }), /must_show asks for exercise "snatch", which no men's scene in the library shows/);
+  const snatch = planVisuals({ count: 3, scenes: LIB, audience: "men", mustShow: { exercise: ["snatch"] } });
+  assert.deepEqual([snatch.length, snatch.notShown], [3, ['exercise "snatch" (no men\'s scene in the library shows it)']], "a wish no scene shows is left out and said, not refused (2026-10-07)");
   const few = planVisuals({ count: 1, scenes: LIB, audience: "men", mustShow: must });
   assert.ok(few.notShown?.length > 0, "too few photos: the plan says what could not be shown");
   assert.match(validateBrief({ ...BRIEF, must_show: { hair: ["long"] } }).join(), /unknown tag "hair"/);

@@ -370,7 +370,10 @@ export function calloutGender(callout, profile = null) {
   const key = Object.keys(map).find((k) => k.trim().toUpperCase() === String(callout || "").trim().toUpperCase());
   if (key && GENDER_CHOICES.includes(map[key])) return map[key];
   const a = String(callout || "");
-  return /\b(men|man|guys|dads?|fathers?|gents|males?)\b/i.test(a) ? "men" : /\b(ladies|women|woman|mums?|moms?|mothers?|girls|females?)\b/i.test(a) ? "women" : "all";
+  // English at word boundaries, Chinese anywhere (2026-10-07: "女性" had meant "all genders" on the ad set).
+  const men = /\b(men|man|guys|dads?|fathers?|gents|males?)\b/i.test(a) || /男性|男生|男士|男人|男孩|男子|爸爸|老爸|兄弟|型男/.test(a);
+  const women = /\b(ladies|women|woman|mums?|moms?|mothers?|girls|females?)\b/i.test(a) || /女性|女生|女士|女人|女孩|女子|媽媽|妈妈|姐妹|辣妹|辣台妹|人妻|姊妹/.test(a);
+  return men && women ? "all" : men ? "men" : women ? "women" : "all";
 }
 /** The radius pin a location callout targets: the pin naming it, else the gym's first pin (a fallback the plan says so). */
 export function pinFor(profile, callout) {
