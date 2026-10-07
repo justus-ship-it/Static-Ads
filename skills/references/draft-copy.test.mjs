@@ -236,3 +236,35 @@ test("C8 line breaks: the prompt shows each skeleton laid out as it is and asks 
     assert.equal(areaPlaceholder("Hello STX GEORGE ladies", ["ST. GEORGE"]), "Hello STX GEORGE ladies", "a dot is a dot, not any character");
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+test("C9 Chinese copy (2026-10-07, F45 Xinyi): the standing rules in Chinese (免費, 試用, 保證…), NT$ and 元 prices, weight and body-fat numbers; an em dash inside Chinese becomes a Chinese comma; a one-block Chinese text is broken on 。！？; the button named in Chinese becomes {BUTTON} and is filled in the gym's language; the gym's language from its locale; the prompts say zh-TW and the skeletons come from the library's Chinese entries only", async () => {
+  const m = await import("./draft-copy.mjs");
+  const rules = m.copyRules({ brand_lock: { voice: { never: [] } } });
+  const probs = (message) => m.copyProblems({ message, headline: "", description: "" }, { offer: "六週中年體態雕塑計畫", rules, kind: "copy" });
+  assert.deepEqual(probs("信義區的你，六週中年體態雕塑計畫現在開始。點擊 {BUTTON}。"), []);
+  assert.deepEqual([probs("獲得免費的六週中年體態雕塑計畫。"), probs("六週中年體態雕塑計畫，先試用一週。"), probs("六週中年體態雕塑計畫，保證有效。")], [['says "免費"'], ['says "試用"'], ['says "保證"']]);
+  assert.deepEqual([probs("六週中年體態雕塑計畫只要 NT$1,990。"), probs("六週中年體態雕塑計畫 3,000元起"), probs("六週中年體態雕塑計畫，瘦5公斤。"), probs("六週中年體態雕塑計畫，體脂降5%。"), probs("六週中年體態雕塑計畫，減掉3公斤")], [["a price"], ["a price"], ["a weight-loss number"], ["a weight-loss number"], ["a weight-loss number"]]);
+  assert.equal(m.plainDashes("有些人的精緻——是手錶、車子。目標很簡單——腰線更緊實。"), "有些人的精緻，是手錶、車子。目標很簡單，腰線更緊實。");
+  assert.equal(m.plainDashes("Bishan — the plan"), "Bishan - the plan", "English keeps the hyphen");
+  const block = "準備好終於看到你應得的效果了嗎？我們正在尋找12位來自信義區的男生。如果你想在6週內改變體態，這就是你的機會。名額有限。點擊{BUTTON}。現在就開始。";
+  assert.ok(m.needsLayout(block) && !m.needsLayout("短句。") && !m.needsLayout("A".repeat(200)));
+  assert.equal(m.breakBySentence(block), "準備好終於看到你應得的效果了嗎？\n\n我們正在尋找12位來自信義區的男生。如果你想在6週內改變體態，這就是你的機會。\n\n名額有限。點擊{BUTTON}。\n\n現在就開始。");
+  assert.equal(m.buttonPlaceholder("想參加？點擊「立即報名」。或按下了解更多按鈕。『馬上報名』"), "想參加？點擊{BUTTON}。或按下{BUTTON}。{BUTTON}");
+  assert.deepEqual([m.ctaLabel("SIGN_UP", "zh"), m.ctaLabel("LEARN_MORE", "zh"), m.ctaLabel("SIGN_UP", "en"), m.ctaLabel("NOPE", "zh")], ["立即報名", "了解更多", "Sign up", "Sign up"]);
+  assert.equal(m.fillButton("點擊{BUTTON}", m.ctaLabel("SIGN_UP", "zh")), "點擊立即報名");
+  assert.deepEqual([m.gymLanguage({ locale: { country: "TW", languages: ["zh_TW"] } }), m.gymLanguage({ locale: { country: "TW", languages: [] } }), m.gymLanguage({ locale: { country: "SG", languages: ["en_SG"] } }), m.gymLanguage({})], ["zh", "zh", "en", "en"]);
+  assert.deepEqual([m.languageOf("六週"), m.languageOf("12 Week")], ["zh", "en"]);
+  const zhProfile = { display_name: "F45 Xinyi", locale: { country: "TW", languages: ["zh_TW"] }, brand_lock: { voice: { never: [] } } };
+  const { prompt } = m.buildDraftPrompt({ profile: zhProfile, kind: "copy", offer: "六週中年體態雕塑計畫", audience: "女生限定", locations: ["信義區"], rules, skeletons: [{ id: "lib-zh", angle: "call-out", text: "{AREA}的{AUDIENCE}，{OFFER}開始了。點擊{BUTTON}。" }], count: 3, button: "立即報名" });
+  assert.match(prompt, /LANGUAGE: Traditional Chinese as written in Taiwan/); assert.match(prompt, /a gym in Taiwan/); assert.match(prompt, /80-260 characters/);
+  assert.match(m.buildJudgePrompt({ drafts: [{ id: "a", message: "信義區的你" }], kind: "copy", offer: "x", audience: null }), /Traditional Chinese/);
+  // The library by language: a Chinese gym drafts from Chinese skeletons only, and is told so when there are none.
+  const lib = mkdtempSync(join(tmpdir(), "copylib-zh-"));
+  writeFileSync(join(lib, "copy-library.json"), JSON.stringify({ schema: 1, entries: [{ id: "en1", kind: "copy", text: "{AUDIENCE} in {AREA}: the {OFFER}. Tap {BUTTON}." }, { id: "zh1", kind: "copy", language: "zh", text: "{AREA}的{AUDIENCE}，{OFFER}開始了。點擊{BUTTON}。" }, { id: "zh2", kind: "copy", text: "六週{OFFER}，{AREA}限定。" }] }));
+  assert.deepEqual(m.librarySkeletons(lib, "copy", { language: "zh" }).map((e) => e.id), ["zh1", "zh2"], "an entry without a language is read by its text");
+  assert.deepEqual(m.librarySkeletons(lib, "copy", { language: "en" }).map((e) => e.id), ["en1"]);
+  assert.deepEqual(m.librarySkeletons(lib, "copy").map((e) => e.id), ["en1", "zh1", "zh2"]);
+  const d = gym(); const pf = join(d, "gym-profile.json"); writeFileSync(pf, JSON.stringify({ ...JSON.parse(readFileSync(pf, "utf-8")), locale: { country: "TW", languages: ["zh_TW"] } }));
+  const bd = join(d, "outputs", "b"); mkdirSync(bd, { recursive: true });
+  await assert.rejects(m.draftCopy({ brandDir: d, batchDir: bd, kind: "headline", offer: "x", libraryDir: lib, ask: async () => ({ drafts: [] }) }), /no headline skeletons yet in Traditional Chinese.*send this gym's own references/);
+});

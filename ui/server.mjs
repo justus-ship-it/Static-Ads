@@ -39,7 +39,7 @@ import { readWordings, addWording, editWording, deleteWording, recordUse, wordin
 import { buildPlan, keptAds, CTA_TYPES, findSingaporeIdentity, setSingaporeIdentity } from "../skills/references/meta-publish.mjs";
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
-import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy } from "../skills/references/draft-copy.mjs";
+import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
@@ -1391,7 +1391,7 @@ const server = createServer(async (req, res) => {
       const out = outDirOf(gym, id), dir = brandDir(gym), brief = readJsonFile(briefPath(gym, id)) || {};
       const profile = readJsonFile(join(dir, "gym-profile.json")) || {};
       const offerDoc = (() => { const od = join(dir, "offers"); if (!existsSync(od)) return null; for (const f of readdirSync(od).filter((x) => x.endsWith(".json"))) { const o = readJsonFile(join(od, f)); if (o?.name && String(o.name).toLowerCase() === String(brief.offer || "").toLowerCase()) return o; } return null; })();
-      const view = (extra = {}) => json(res, 200, { ...readCopy(out), flat: flatCopies(out).map((d) => d.id), kept: keptCopies(out).map((d) => d.id), kept_headlines: keptCopies(out, "headline").map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, angles: ANGLES, max_options: MAX_OPTIONS, ...extra });
+      const view = (extra = {}) => json(res, 200, { ...readCopy(out), flat: flatCopies(out).map((d) => d.id), kept: keptCopies(out).map((d) => d.id), kept_headlines: keptCopies(out, "headline").map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy", { language: gymLanguage(profile) }).length, headline: liveEntries(undefined, "headline", { language: gymLanguage(profile) }).length, language: gymLanguage(profile) }, angles: ANGLES, max_options: MAX_OPTIONS, ...extra });
       const kindOk = (k) => COPY_KINDS.includes(k);
       try {
         if (!cid && req.method === "GET") return view();
@@ -1400,7 +1400,7 @@ const server = createServer(async (req, res) => {
           if (!Number.isInteger(count) || count < 1 || count > 20) return json(res, 400, { error: "count must be 1 to 20" });
           if (!kindOk(kind)) return json(res, 400, { error: "kind is copy or headline" });
           mkdirSync(out, { recursive: true });
-          const cta = (readJsonFile(join(out, "publish-settings.json")) || {}).words?.cta, button = CTA_TYPES[cta] || CTA_TYPES.SIGN_UP;
+          const cta = (readJsonFile(join(out, "publish-settings.json")) || {}).words?.cta, button = ctaLabel(CTA_TYPES[cta] ? cta : "SIGN_UP", gymLanguage(profile));
           const r = await draftCopy({ brandDir: dir, batchDir: out, kind, offer: brief.offer, audience: brief.audience || null, locations: brief.locations || [], count, button });
           return view({ added: r.added.length, dropped: r.dropped, calls: r.calls, recommended: r.recommended.length, skeletons: r.skeletons });
         }
@@ -1419,7 +1419,7 @@ const server = createServer(async (req, res) => {
     const lib = p.match(/^\/api\/library\/copy(?:\/([^/]+))?$/);
     if (lib) {
       const id = lib[1] ? decodeURIComponent(lib[1]) : null;
-      const view = (extra = {}) => { const L = readCopyLibrary(); return json(res, 200, { entries: L.entries, counts: { copy: L.entries.filter((e) => !e.retired && e.kind === "copy").length, headline: L.entries.filter((e) => !e.retired && e.kind === "headline").length, retired: L.entries.filter((e) => e.retired).length }, uses: usesIn(BRANDS), angles: ANGLES, placeholders: LIBRARY_PLACEHOLDERS, ...extra }); };
+      const view = (extra = {}) => { const L = readCopyLibrary(); return json(res, 200, { entries: L.entries, counts: { copy: L.entries.filter((e) => !e.retired && e.kind === "copy").length, headline: L.entries.filter((e) => !e.retired && e.kind === "headline").length, retired: L.entries.filter((e) => e.retired).length, zh: L.entries.filter((e) => !e.retired && (e.language || copyLanguageOf(e.text)) === "zh").length }, uses: usesIn(BRANDS), angles: ANGLES, placeholders: LIBRARY_PLACEHOLDERS, ...extra }); };
       try {
         if (!id && req.method === "GET") return view();
         if (!id && req.method === "POST") { const { kind, text, description, angle, note } = await readBody(req); const e = addEntry(COPY_LIBRARY, { kind, text, description, angle, note }); return view({ entry: e }); }
@@ -1503,7 +1503,7 @@ const server = createServer(async (req, res) => {
         let plan;
         try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline") }); } catch (e) { return json(res, 400, { error: e.message }); }
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, settings, thumbs, identity, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: CTA_TYPES, words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
+        return json(res, 200, { plan, settings, thumbs, identity, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
       }
       if (what === "results" && req.method === "GET") return json(res, 200, { results: readJsonFile(join(out, "results.json")), rows: batchRows(dir, id), record: readJsonFile(join(out, "publish.json")) });
       if (what === "results/pull" && req.method === "POST") {

@@ -27,7 +27,7 @@ import { parseArgs } from "util";
 import { metaConfig, graphClient, actId, scrubTokens, MetaError } from "./meta-api.mjs";
 import { calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
 import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
-import { textOptionsFor, MAX_OPTIONS, fillButton } from "./draft-copy.mjs";
+import { textOptionsFor, MAX_OPTIONS, fillButton, ctaLabel, gymLanguage } from "./draft-copy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 /** Currencies Meta counts in whole units (no subunits): a budget of 500 is 500 of them, not 5.00. Everything else is in hundredths. */
@@ -145,6 +145,8 @@ export function buildTestOne({ profile, batch, ad, words = null, storyFile = nul
 /** Meta's cap on ads in one ad set, and the point past which spreading budget gets thin. */
 export const ADS_PER_ADSET_CAP = 50, ADS_PER_ADSET_MANY = 6;
 export const CTA_TYPES = { SIGN_UP: "Sign up", APPLY_NOW: "Apply now", LEARN_MORE: "Learn more", GET_OFFER: "Get offer", BOOK_NOW: "Book now", CONTACT_US: "Contact us" };
+/** The button's name as the copy says it, in the gym's language (zh: 立即報名…); Meta shows the button itself in the viewer's language. */
+export const ctaLabelFor = (key, language = "en") => ctaLabel(key, language);
 const clean1 = (v, max) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
 const num = (v, lo, hi) => (Number.isFinite(v) && v >= lo && v <= hi ? v : null);
 const mmdd = (id) => { const m = String(id || "").match(/^\d{4}-(\d{2})-(\d{2})/); return m ? m[1] + m[2] : today().slice(5).replace("-", ""); };
@@ -233,7 +235,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   // the settings' single words, else placeholders that say so.
   const maxOptions = Math.max(1, Math.min(MAX_OPTIONS, Number.isInteger(settings.copy?.max_options) ? settings.copy.max_options : MAX_OPTIONS));
   // The copy names the button as {BUTTON}; here it becomes the chosen call to action's name, so the words and the button never disagree.
-  const ctaKey = settings.words?.cta && CTA_TYPES[settings.words.cta] ? settings.words.cta : CTA, ctaLabel = CTA_TYPES[ctaKey];
+  const ctaKey = settings.words?.cta && CTA_TYPES[settings.words.cta] ? settings.words.cta : CTA, ctaLabel = ctaLabelFor(ctaKey, gymLanguage(profile));
   const keptCopy = (copies || []).filter((c) => c && c.message).map((c) => ({ id: c.id, message: fillButton(c.message, ctaLabel), headline: fillButton(c.headline || "", ctaLabel), description: fillButton(c.description || "", ctaLabel), cta: ctaKey }));
   // Headlines are their own list (Meta combines bodies and titles); a batch with none kept falls back to the copies' own headlines (drafts of the old shape carried one), else the placeholder headline.
   const keptHead = (headlines || []).filter((h) => h && h.headline).map((h) => ({ id: h.id, headline: fillButton(h.headline, ctaLabel), description: fillButton(h.description || "", ctaLabel) }));

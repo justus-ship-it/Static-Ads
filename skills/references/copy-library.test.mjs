@@ -111,3 +111,18 @@ test("L4 what the gyms' batches made from each entry: drafts that followed it, h
   assert.deepEqual(usesIn(brands), { "lib-x": { drafts: 3, kept: 2, gyms: ["gym-a", "gym-b"] }, "lib-y": { drafts: 1, kept: 0, gyms: ["gym-a"] } });
   assert.deepEqual(usesIn(join(brands, "nowhere")), {});
 });
+
+test("L5 the library by language (2026-10-07): an entry carries the language of its text (zh for Chinese), set again on edit; liveEntries can be asked for one language; a Chinese reference goes to the library as a Chinese skeleton with 信義區 as {AREA}", async () => {
+  const d = lib();
+  const zh = addEntry(d, { kind: "copy", text: "{AREA}的{AUDIENCE}，{OFFER}現在開始。點擊{BUTTON}。", angle: "call-out" });
+  const en = addEntry(d, { kind: "copy", text: "{AUDIENCE} in {AREA}: the {OFFER}. Tap {BUTTON}." });
+  assert.deepEqual([zh.language, en.language], ["zh", "en"]);
+  assert.deepEqual([liveEntries(d, "copy", { language: "zh" }).map((e) => e.id), liveEntries(d, "copy", { language: "en" }).map((e) => e.id), liveEntries(d, "copy").length], [[zh.id], [en.id], 2]);
+  assert.equal(editEntry(d, en.id, { text: "{AREA}限定：{OFFER}。" }).language, "zh", "an edit that makes it Chinese says so");
+  const g = mkdtempSync(join(tmpdir(), "copylib-gym-"));
+  writeFileSync(join(g, "copy-references.json"), JSON.stringify({ refs: [{ id: "meta-1", source: "account", message: "🔥🔥🔥信義區女生🔥🔥🔥\n我們正在尋找10位希望透過我們的6週精實體態計畫成為健康和結實的女生。\n點擊「立即報名」。", headline: "加入我們的6週精實體態計畫！", results: { leads: 98 } }] }));
+  const ask = async (img, prompt) => (/headline/.test(prompt) ? { skeleton: "加入我們的{DURATION}{OFFER}！", angle: "structure", note: "n", replaced: [] } : { skeleton: "🔥🔥🔥{AREA}{AUDIENCE}🔥🔥🔥\n我們正在尋找10位希望透過我們的{DURATION}{OFFER}成為健康和結實的{AUDIENCE}。\n點擊「立即報名」。", angle: "call-out", note: "呼叫在地讀者", replaced: [{ placeholder: "AREA", was: "信義區" }] });
+  const r = await sendToLibrary(g, "meta-1", { dir: d, ask, gym: "f45-xinyi" });
+  assert.deepEqual([r.entries.length, r.skipped, r.entries.map((e) => e.language), r.entries[0].placeholders], [2, [], ["zh", "zh"], ["AREA", "AUDIENCE", "DURATION", "OFFER"]]);
+  assert.equal(r.entries[0].origin.gym, "f45-xinyi");
+});

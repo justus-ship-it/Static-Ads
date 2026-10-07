@@ -33,7 +33,24 @@ const writeWhole = (p, text) => { writeFileSync(p + ".tmp", text); renameSync(p 
 const today = () => new Date().toISOString().slice(0, 10);
 const clean = (v, max) => (typeof v === "string" ? v.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim().slice(0, max) : "");
 /** An em or en dash pasted or written by the model becomes a plain hyphen (the ads' rule), never a refusal. */
-export const plainDashes = (v) => (typeof v === "string" ? v.replace(/\s*—\s*/g, " - ").replace(/–/g, "-").replace(/[ \t]{2,}/g, " ") : v);
+// ── language ─────────────────────────────────────────────────────────────────
+/** A Chinese, Japanese or Korean character (the renderer's hasCJK; kept here so this module never imports the renderer). */
+export const isCJK = (s) => /[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(String(s ?? ""));
+/** The language a text is written in, for the library: "zh" when it carries CJK characters, else "en". */
+export const languageOf = (text) => (isCJK(text) ? "zh" : "en");
+/** The language a gym's ads are written in: its Meta locale (zh_TW → "zh"), else its country's (TW → zh), else English. F45 Xinyi, 2026-10-07. */
+export function gymLanguage(profile) {
+  const l = String(profile?.locale?.languages?.[0] || "").toLowerCase();
+  if (l.startsWith("zh")) return "zh";
+  if (l) return "en";
+  return (countryRules(profile?.locale?.country).languages[0] || "en").startsWith("zh") ? "zh" : "en";
+}
+export const LANGUAGE_NAMES = { en: "English", zh: "Traditional Chinese (Taiwan)" };
+/** The button's name as the copy of each language says it; Meta shows the button in the viewer's language, the copy must match. */
+export const CTA_LABELS = { en: { SIGN_UP: "Sign up", APPLY_NOW: "Apply now", LEARN_MORE: "Learn more", GET_OFFER: "Get offer", BOOK_NOW: "Book now", CONTACT_US: "Contact us" }, zh: { SIGN_UP: "立即報名", APPLY_NOW: "立即申請", LEARN_MORE: "了解更多", GET_OFFER: "取得優惠", BOOK_NOW: "立即預約", CONTACT_US: "聯絡我們" } };
+export const ctaLabel = (key, language = "en") => CTA_LABELS[language]?.[key] || CTA_LABELS.en[key] || CTA_LABELS.en.SIGN_UP;
+/** An em dash inside Chinese becomes a Chinese comma (their copies write "——" as a pause); elsewhere a hyphen, as before. */
+export const plainDashes = (v) => (typeof v === "string" ? v.replace(/([\u3400-\u9fff\u3000-\u303f\uff00-\uffef])\s*[—–]+\s*(?=[\u3400-\u9fff\u3000-\u303f\uff00-\uffef（「『])/g, "$1，").replace(/\s*—+\s*/g, " - ").replace(/–/g, "-").replace(/[ \t]{2,}/g, " ") : v);
 /**
  * Every way a copy names the button, made one placeholder — the owner's rule (2026-09-18): the words must match
  * the call to action chosen for the ad, so the copy says {BUTTON} and the plan fills it from that choice.
@@ -42,7 +59,12 @@ const BUTTON_NAMES = ["learn more", "sign up", "signup", "apply now", "apply", "
 const NAME_RE = BUTTON_NAMES.map((n) => n.replace(/ /g, "\\s+")).join("|");
 const BUTTON_RE = new RegExp(`(\\b(?:tap|click|hit|press|smash)\\s+(?:on\\s+)?(?:the\\s+)?)(?:["“”'‘’]\\s*)?(?:${NAME_RE})(?:\\s*["“”'‘’])?(\\s+button)?`, "gi");
 const QUOTED_RE = new RegExp(`["“”]\\s*(?:${NAME_RE})\\s*["“”](\\s+button)?`, "gi");
-export const buttonPlaceholder = (v) => (typeof v === "string" ? v.replace(/\{BUTTON\}/g, "{BUTTON}").replace(BUTTON_RE, (m, lead) => `${lead}{BUTTON}`).replace(QUOTED_RE, "{BUTTON}") : v);
+// Chinese: 點擊「立即報名」 / 按下立即報名按鈕 / 「了解更多」 alone — every way of naming Meta's buttons in zh-TW.
+const BUTTON_NAMES_ZH = ["立即報名", "馬上報名", "立即申請", "了解更多", "取得優惠", "立即預約", "聯絡我們", "立即開始", "免費報名", "報名"];
+const NAME_RE_ZH = BUTTON_NAMES_ZH.join("|");
+const BUTTON_RE_ZH = new RegExp(`((?:點擊|點選|按下|按一下|點一下|點)\\s*)(?:[「『"“]\\s*)?(?:${NAME_RE_ZH})(?:\\s*[」』"”])?(?:\\s*(?:按鈕|鍵))?`, "g");
+const QUOTED_RE_ZH = new RegExp(`[「『]\\s*(?:${NAME_RE_ZH})\\s*[」』](?:\\s*(?:按鈕|鍵))?`, "g");
+export const buttonPlaceholder = (v) => (typeof v === "string" ? v.replace(/\{BUTTON\}/g, "{BUTTON}").replace(BUTTON_RE, (m, lead) => `${lead}{BUTTON}`).replace(QUOTED_RE, "{BUTTON}").replace(BUTTON_RE_ZH, (m, lead) => `${lead}{BUTTON}`).replace(QUOTED_RE_ZH, "{BUTTON}") : v);
 /**
  * A draft that names exactly one of the batch's areas (whatever the prompt said) gets {AREA} in its place, so the
  * plan can fill each ad set's own area; a draft naming several areas addresses the whole campaign and is left alone.
@@ -55,15 +77,17 @@ export function areaPlaceholder(v, locations = []) {
 }
 // ── line breaks ───────────────────────────────────────────────────────────────
 /** A primary text that came as one block: long, and not a single line break in it. */
-export const needsLayout = (message) => typeof message === "string" && message.length >= 220 && !message.includes("\n");
+export const needsLayout = (message) => typeof message === "string" && message.length >= (isCJK(message) ? 60 : 220) && !message.includes("\n");
 const squash = (t) => String(t || "").replace(/\s+/g, "");
 /** Line breaks by rule, when the model's cannot be used: the opening sentence alone, then two sentences a
  *  paragraph. Only the spaces between sentences change. */
 export function breakBySentence(text) {
-  const parts = String(text || "").trim().split(/(?<=[.!?…])\s+(?=\S)/);
+  // Chinese sentences end in 。！？ with no space after them, so they split there too and rejoin without one.
+  const cjk = isCJK(text), joiner = cjk ? "" : " ";
+  const parts = String(text || "").trim().split(cjk ? /(?<=[.!?…。！？])\s*(?=[^\s.!?…。！？])/ : /(?<=[.!?…])\s+(?=\S)/).filter(Boolean);
   if (parts.length < 3) return String(text || "").trim();
   const paras = [parts[0]];
-  for (let i = 1; i < parts.length; i += 2) paras.push(parts.slice(i, i + 2).join(" "));
+  for (let i = 1; i < parts.length; i += 2) paras.push(parts.slice(i, i + 2).join(joiner));
   return paras.join("\n\n");
 }
 const LAYOUT_SCHEMA = { type: "OBJECT", properties: { texts: { type: "ARRAY", items: { type: "OBJECT", properties: { index: { type: "INTEGER" }, text: { type: "STRING" } }, required: ["index", "text"] } } }, required: ["texts"] };
@@ -94,13 +118,17 @@ const idOf = (d) => createHash("sha256").update(`${d.message}\n${d.headline}\n${
 
 // ── the rules ────────────────────────────────────────────────────────────────
 /** Always, whatever the profile says: the owner's standing rules for every gym. */
-export const ALWAYS_NEVER = ["free trial", "trial", "before and after", "before & after", "before/after", "guaranteed", "guarantee"];
+export const ALWAYS_NEVER = ["free trial", "trial", "before and after", "before & after", "before/after", "guaranteed", "guarantee",
+  // the same rules in Chinese (2026-10-07): free, a trial, a trial class, before-and-after, a guarantee
+  "免費", "試用", "體驗課", "前後對比", "對比照", "保證"];
 /** What copy may not say for this gym and this offer: the voice's never-list, the offer's must-not-say, the standing rules. */
 export function copyRules(profile, offerDoc = null) {
   const never = [...new Set([...ALWAYS_NEVER, ...(profile?.brand_lock?.voice?.never || []), ...(offerDoc?.messaging?.must_not_say || [])].map((s) => String(s).trim().toLowerCase()).filter(Boolean))];
   return { never, adjectives: profile?.brand_lock?.voice?.adjectives || [], must_say: offerDoc?.messaging?.must_say || [] };
 }
-const PRICE = /(\$|S\$|SGD|USD)\s?\d|\b\d+(\.\d+)?\s?(dollars|bucks)\b|\bper (week|month|session)\b/i;
+const PRICE = /(\$|S\$|SGD|USD|NT\$|NTD|TWD|新台幣)\s?\d|\b\d+(\.\d+)?\s?(dollars|bucks)\b|\bper (week|month|session)\b|\d+(,\d{3})*(\.\d+)?\s?(元|塊)(?![a-z])/i;
+/** A weight-loss number, in English or Chinese: lose 5 kg; 瘦5公斤, 減掉3公斤, 瘦了2吋, 體脂降5%, 5%體脂. */
+const WEIGHT = /\b(lose|drop|shed)\s+\d+\s?(kg|lbs?|pounds|kilos)\b|(瘦|減|掉|甩|少)\s?(了|掉|下)?\s?\d+(\.\d+)?\s?(公斤|kg|斤|公分|吋|寸)|\d+(\.\d+)?\s?%\s?(的)?體脂|體脂[^。！？\n]{0,4}\d+(\.\d+)?\s?%/i;
 /** Why a draft cannot go on an ad. Empty = fine. */
 export function copyProblems(d, { offer, rules, kind = null }) {
   const k = kind || kindOf(d), e = [], all = `${d.message} ${d.headline} ${d.description}`;
@@ -113,7 +141,7 @@ export function copyProblems(d, { offer, rules, kind = null }) {
   if (PRICE.test(all)) e.push("a price");
   const low = all.toLowerCase();
   for (const n of rules.never) { const re = new RegExp(`(^|[^a-z])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`, "i"); if (re.test(low)) e.push(`says "${n}"`); }
-  if (/\b(lose|drop|shed)\s+\d+\s?(kg|lbs?|pounds|kilos)\b/i.test(all)) e.push("a weight-loss number");
+  if (WEIGHT.test(all)) e.push("a weight-loss number");
   for (const ph of new Set([...all.matchAll(/\{([A-Z_]+)\}/g)].map((m) => m[1]))) if (!DRAFT_PLACEHOLDERS.includes(ph)) e.push(`unknown placeholder {${ph}} (a draft may carry {AREA} and {BUTTON} only)`);
   return e;
 }
@@ -183,9 +211,10 @@ export const KINDS = ["copy", "headline"];
 export const DRAFT_PLACEHOLDERS = ["AREA", "BUTTON"];
 export const kindOf = (d) => (d?.kind === "headline" ? "headline" : "copy");
 /** The library's live skeletons of a kind, read straight from its file (copy-library.mjs imports this module, so it is not imported back). */
-export function librarySkeletons(dir = process.env.COPY_LIBRARY_DIR || join(REPO_ROOT, "library"), kind = "copy") {
+export function librarySkeletons(dir = process.env.COPY_LIBRARY_DIR || join(REPO_ROOT, "library"), kind = "copy", { language = null } = {}) {
   const j = readJson(join(dir, "copy-library.json"));
-  return (Array.isArray(j?.entries) ? j.entries : []).filter((e) => !e.retired && e.kind === kind);
+  // An entry without a language is English (every entry before 2026-10-07 was).
+  return (Array.isArray(j?.entries) ? j.entries : []).filter((e) => !e.retired && e.kind === kind && (!language || (e.language || languageOf(e.text)) === language));
 }
 const schemaFor = (kind) => ({ type: "OBJECT", properties: { drafts: { type: "ARRAY", items: { type: "OBJECT",
   properties: kind === "headline" ? { headline: { type: "STRING" }, description: { type: "STRING" }, angle: { type: "STRING", enum: ANGLES }, from: { type: "INTEGER" } } : { message: { type: "STRING" }, angle: { type: "STRING", enum: ANGLES }, from: { type: "INTEGER" } },
@@ -195,7 +224,7 @@ const schemaFor = (kind) => ({ type: "OBJECT", properties: { drafts: { type: "AR
  * this kind (the structure, rhythm and voice to follow — never a gym's own past ads), the shape wanted, the angles.
  */
 export function buildDraftPrompt({ profile, kind = "copy", offer, audience, locations, rules, skeletons, count, avoid = [], button = "Sign up" }) {
-  const gym = profile.display_name || "the gym", what = kind === "headline" ? "headlines" : "primary texts";
+  const gym = profile.display_name || "the gym", what = kind === "headline" ? "headlines" : "primary texts", zh = gymLanguage(profile) === "zh";
   const lines = [
     `You write Meta lead ads for ${gym}, a gym in ${countryRules(profile?.locale?.country).name || "its city"}. Write ${count} different ${what} for one campaign.`,
     `THE OFFER: "${offer}". ${kind === "headline" ? "Where a headline names the offer, name it exactly like that; a headline may instead carry the promise." : "Name it exactly like that in every primary text."} Never invent what it includes, its price, its length beyond the name, or any guarantee. Where the gym is named, name it "${gym}".`,
@@ -205,13 +234,14 @@ export function buildDraftPrompt({ profile, kind = "copy", offer, audience, loca
     // The layout is part of what worked: shown flattened (" / " for every line break) and never asked for, the model
     // wrote one block a draft (F45 Lower Peirce 2026-09-28, BFIT 2026-10-04).
     kind === "headline" ? "" : `LAYOUT: set each primary text out the way its skeleton is set out above - short paragraphs with an empty line between them, and each list item on a line of its own. Put real line breaks in the text. Never write a primary text as one block.`,
+    zh ? `LANGUAGE: Traditional Chinese as written in Taiwan (zh-TW): Taiwanese wording, full-width punctuation 。，！？, never simplified characters, digits for numbers. The placeholders {AREA} and {BUTTON} stay exactly as written, in braces. The skeletons below are in the same language: follow their structure, never translate them word for word.` : "",
     `VOICE: ${rules.adjectives.length ? rules.adjectives.join(", ") : "direct, warm, confident"}. ${countryRules(profile?.locale?.country).tone || "Plain English."} Short lines. No hype.`,
     `NEVER write any of these words or ideas: ${rules.never.join("; ")}. No prices. No before-and-after claims. No weight-loss numbers. No em dashes or en dashes; use a plain hyphen. No emoji in headlines. No other placeholder than {AREA} and {BUTTON}.`,
     rules.must_say.length ? `ALWAYS work in: ${rules.must_say.join("; ")}.` : "",
     avoid.length ? `ALREADY WRITTEN (do not repeat these): ${avoid.map((a) => (kindOf(a) === "headline" ? a.headline : a.message.split("\n")[0].slice(0, 80))).join(" | ")}` : "",
     kind === "headline"
       ? `SHAPE: one line, under ${LIMITS.headline_ideal} characters ideally and never over ${LIMITS.headline}, plus a description under ${LIMITS.description_ideal} characters or empty. Spread the ${count} across these angles and name each one's angle: ${ANGLES.join(", ")}.`
-      : `SHAPE: 60-160 words, opening with a hook before the offer; where the call to action names the button, write the placeholder {BUTTON} (the ad's button is "${button}": phrase the ask to fit it, never another button's name). Spread the ${count} across these angles and name each one's angle: ${ANGLES.join(", ")}.`,
+      : `SHAPE: ${zh ? "80-260 characters" : "60-160 words"}, opening with a hook before the offer; where the call to action names the button, write the placeholder {BUTTON} (the ad's button is "${button}": phrase the ask to fit it, never another button's name). Spread the ${count} across these angles and name each one's angle: ${ANGLES.join(", ")}.`,
   ].filter(Boolean);
   return { prompt: lines.join("\n\n"), schema: schemaFor(kind) };
 }
@@ -234,8 +264,9 @@ export async function draftCopy({ brandDir, batchDir, kind = "copy", offer, audi
   const profile = readJson(join(brandDir, "gym-profile.json")) || {};
   const offerDoc = offerDocFor(brandDir, offer);
   const rules = copyRules(profile, offerDoc);
-  const skel = skeletons || librarySkeletons(libraryDir, kind);
-  if (!skel.length) throw new Error(`the copy library has no ${kind === "headline" ? "headline" : "copy"} skeletons yet: paste a few on Library → Copy first`);
+  const language = gymLanguage(profile);
+  const skel = skeletons || librarySkeletons(libraryDir, kind, { language });
+  if (!skel.length) throw new Error(`the copy library has no ${kind === "headline" ? "headline" : "copy"} skeletons yet in ${LANGUAGE_NAMES[language] || language}: paste a few on Library → Copy first${language === "zh" ? ", or send this gym's own references to the library" : ""}`);
   const data = readCopy(batchDir);
   const have = new Set(data.drafts.map(shape)), dropped = [], added = [];
   let calls = 0;
@@ -296,7 +327,9 @@ export async function relayoutCopies(batchDir, { ask = callVision, model = COPY_
 // ── the judge and the recommendation ─────────────────────────────────────────
 const JUDGE_SCHEMA = { type: "OBJECT", properties: { ratings: { type: "ARRAY", items: { type: "OBJECT", properties: { id: { type: "STRING" }, clarity: { type: "INTEGER" }, why: { type: "STRING" } }, required: ["id", "clarity", "why"] } } }, required: ["ratings"] };
 export function buildJudgePrompt({ drafts, kind = "copy", offer, audience }) {
+  const zh = drafts.some((d) => isCJK(kind === "headline" ? d.headline : d.message));
   return [
+    zh ? "The drafts are in Traditional Chinese: judge them as a reader in Taipei would, on a phone." : "",
     `You judge Meta lead-ad ${kind === "headline" ? "headlines" : "primary texts"} for CLARITY as read on a phone by ${audience ? `the people the ad calls "${audience}"` : "people near the gym"}, for the offer "${offer}".`,
     `For each draft give clarity from 1 to 10 (10 = reads in one breath; what is offered and what to do next are plain by the second line; nothing to puzzle over; no clutter) and one short sentence why, at most 15 words. Judge the reading only, not the angle or the idea. Placeholders in braces stand for the area and the button; read them as filled.`,
     drafts.map((d) => `ID ${d.id}\n${kind === "headline" ? `${d.headline}${d.description ? ` / ${d.description}` : ""}` : d.message}`).join("\n\n"),

@@ -20,7 +20,7 @@ import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { createHash } from "crypto";
 import { callVision } from "./check-visual.mjs";
-import { ANGLES, COPY_MODEL, LIMITS, ALWAYS_NEVER, plainDashes, readCopyRefs, editCopyRef } from "./draft-copy.mjs";
+import { ANGLES, COPY_MODEL, LIMITS, ALWAYS_NEVER, plainDashes, readCopyRefs, editCopyRef, languageOf } from "./draft-copy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 /** Where the library lives; `COPY_LIBRARY_DIR` points tests elsewhere. */
@@ -47,7 +47,7 @@ const idOf = (e) => "lib-" + createHash("sha256").update(`${e.kind}\n${e.text}\n
 export const readLibrary = (dir = LIBRARY_DIR) => { const j = readJson(join(dir, LIBRARY_FILE)); return { schema: 1, entries: [], ...(j || {}), entries: Array.isArray(j?.entries) ? j.entries : [] }; };
 const writeLibrary = (dir, data) => writeWhole(join(dir, LIBRARY_FILE), JSON.stringify(data, null, 2) + "\n");
 /** The entries the drafter may use, optionally of one kind. */
-export const liveEntries = (dir = LIBRARY_DIR, kind = null) => readLibrary(dir).entries.filter((e) => !e.retired && (!kind || e.kind === kind));
+export const liveEntries = (dir = LIBRARY_DIR, kind = null, { language = null } = {}) => readLibrary(dir).entries.filter((e) => !e.retired && (!kind || e.kind === kind) && (!language || (e.language || languageOf(e.text)) === language));
 /** The placeholders a text uses, in order of first appearance. */
 export const placeholdersIn = (text) => [...new Set([...String(text || "").matchAll(PH)].map((m) => m[1]))];
 
@@ -83,7 +83,7 @@ export function addEntry(dir, { kind, text, description = "", angle = null, note
   const problems = entryProblems(e); if (problems.length) throw new Error(problems.join("; "));
   const data = readLibrary(dir), id = idOf(e);
   if (data.entries.some((x) => x.id === id)) throw new Error("that skeleton is already in the library");
-  const entry = { id, ...e, placeholders: placeholdersIn(e.text), warnings: entryWarnings(e), origin: origin || { source: "owner" }, dropped, replaced, added: today(), retired: null };
+  const entry = { id, ...e, language: languageOf(e.text), placeholders: placeholdersIn(e.text), warnings: entryWarnings(e), origin: origin || { source: "owner" }, dropped, replaced, added: today(), retired: null };
   data.entries.push(entry); writeLibrary(dir, data); return entry;
 }
 export function editEntry(dir, id, { text, description, angle, note } = {}) {
@@ -91,7 +91,7 @@ export function editEntry(dir, id, { text, description, angle, note } = {}) {
   if (!e) throw new Error(`no entry ${id}`);
   const next = { ...e, text: text != null ? clean(text, LIMITS.message + 200) : e.text, description: description != null ? clean(description, LIMITS.description) : e.description, angle: angle !== undefined ? angle || null : e.angle, note: note != null ? clean(note, 300) : e.note };
   const problems = entryProblems(next); if (problems.length) throw new Error(problems.join("; "));
-  Object.assign(e, next, { placeholders: placeholdersIn(next.text), warnings: entryWarnings(next), edited: new Date().toISOString() });
+  Object.assign(e, next, { language: languageOf(next.text), placeholders: placeholdersIn(next.text), warnings: entryWarnings(next), edited: new Date().toISOString() });
   writeLibrary(dir, data); return e;
 }
 /** Retired, never deleted: the reason is required; a draft made from it before still traces back. */

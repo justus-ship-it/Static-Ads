@@ -1535,7 +1535,7 @@ test("U24 copy in the panel: the gym's copy references (list, add, note, retire)
   bad = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/recommended`, { method: "POST", body: { kind: "copy" } });
   assert.equal(bad.status, 400); assert.match((await bad.json()).error, /nothing recommended/);
   const hd = (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`, { method: "POST", body: { kind: "headline", headline: "Your reset in {AREA}", description: "" } })).json());
-  assert.deepEqual([hd.draft.kind, hd.kept_headlines, hd.library], ["headline", [hd.draft.id], { copy: 0, headline: 0 }], "the owner's own headline, kept at once, its own list");
+  assert.deepEqual([hd.draft.kind, hd.kept_headlines, hd.library], ["headline", [hd.draft.id], { copy: 0, headline: 0, language: "en" }], "the owner's own headline, kept at once, its own list");
   assert.equal((await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/nope`, { method: "PUT", body: { status: "keep" } })).status, 400);
   // The plan carries the kept copy; the setting for text options is saved and bounded.
   r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
@@ -1925,7 +1925,7 @@ test("U33 the copy library on Library → Copy (CL3): every entry listed with wh
   rmSync(libFile, { force: true }); rmSync(usesDir, { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true });
   try {
     let r = await (await call("/api/library/copy")).json();
-    assert.deepEqual([r.entries, r.counts, r.uses, Object.keys(r.placeholders)], [[], { copy: 0, headline: 0, retired: 0 }, {}, ["GYM", "OFFER", "AREA", "AUDIENCE", "BUTTON", "DURATION"]]);
+    assert.deepEqual([r.entries, r.counts, r.uses, Object.keys(r.placeholders)], [[], { copy: 0, headline: 0, retired: 0, zh: 0 }, {}, ["GYM", "OFFER", "AREA", "AUDIENCE", "BUTTON", "DURATION"]]);
     assert.equal((await call("/api/library/copy", { method: "POST", body: { kind: "copy", text: "x {OFFER}" }, token: null })).status, 403, "a write needs the panel's token");
     // Written by hand: checked by the library's rules.
     let bad = await call("/api/library/copy", { method: "POST", body: { kind: "copy", text: "Ask {COACH} about the {OFFER}" } });
@@ -1938,7 +1938,7 @@ test("U33 the copy library on Library → Copy (CL3): every entry listed with wh
     assert.deepEqual([r.entry.kind, r.entry.text, r.entry.placeholders, r.entry.warnings, r.entry.origin, r.counts.copy], ["copy", SK, ["AUDIENCE", "AREA", "OFFER", "BUTTON"], [], { source: "owner" }, 1], "the line breaks kept; placeholders in order; yours");
     r = await (await call("/api/library/copy", { method: "POST", body: { kind: "headline", text: "Free {DURATION} {OFFER} in {AREA}", description: "d" } })).json();
     const hid = r.entry.id;
-    assert.deepEqual([r.entry.warnings, r.counts], [['says "free"'], { copy: 1, headline: 1, retired: 0 }], "what the rules forbid on an ad is a warning on the skeleton, not a refusal");
+    assert.deepEqual([r.entry.warnings, r.counts], [['says "free"'], { copy: 1, headline: 1, retired: 0, zh: 0 }], "what the rules forbid on an ad is a warning on the skeleton, not a refusal");
     assert.equal((await call("/api/library/copy", { method: "POST", body: { kind: "copy", text: SK } })).status, 400, "the same skeleton is not added twice");
     // Edit: re-checked; the id stays (drafts made from it still trace back).
     bad = await call(`/api/library/copy/${id}`, { method: "PUT", body: { text: "{NOPE}" } }); assert.equal(bad.status, 400);
@@ -1947,7 +1947,7 @@ test("U33 the copy library on Library → Copy (CL3): every entry listed with wh
     // Retire needs a reason; the entry stays; restore brings it back.
     bad = await call(`/api/library/copy/${id}`, { method: "PUT", body: { retired: true, reason: "  " } }); assert.equal(bad.status, 400); assert.match((await bad.json()).error, /reason is required/);
     r = await (await call(`/api/library/copy/${id}`, { method: "PUT", body: { retired: true, reason: "too salesy" } })).json();
-    assert.deepEqual([r.entry.retired.reason, r.counts, r.entries.length], ["too salesy", { copy: 0, headline: 1, retired: 1 }, 2]);
+    assert.deepEqual([r.entry.retired.reason, r.counts, r.entries.length], ["too salesy", { copy: 0, headline: 1, retired: 1, zh: 0 }, 2]);
     assert.equal(JSON.parse(readFileSync(libFile, "utf-8")).entries.length, 2, "never deleted");
     r = await (await call(`/api/library/copy/${id}`, { method: "PUT", body: { retired: false } })).json(); assert.deepEqual([r.entry.retired, r.counts.copy], [null, 1]);
     assert.equal((await call("/api/library/copy/lib-nope", { method: "PUT", body: { note: "x" } })).status, 400);
