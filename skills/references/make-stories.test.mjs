@@ -344,12 +344,15 @@ test("S6 a look the scene's pose cannot be composed for is skipped, not fatal; a
     // P's own look keeps its native 9:16; the refused look is served by P's band where it fits, else left out — never a crash.
     assert.deepEqual(r.stories.ads.find((a) => a.candidate === picked.ad.candidate && a.location === "BISHAN").photos, [`${P}-${RATIO}`]);
     const cx = r.stories.ads.find((a) => a.candidate === "cx");
-    // (The crafted look keeps the 1:1 ad's placement, so the band is tried for it; if its render cannot verify, it is recorded as failed.)
-    if (cx) assert.deepEqual(cx.photos, [`${P}-${RATIO}-band-${short(bad)}`]); else assert.ok(r.stories.left_out.some((l) => l.candidate === "cx") || r.stories.failed.some((f) => f.candidate === "cx"), JSON.stringify([r.stories.left_out, r.stories.failed]));
+    // (The crafted look keeps the 1:1 ad's placement, so the band is tried for it; if its render cannot verify, the ad takes
+    // a look its native 9:16 fits (S13, 2026-10-07) — its treatment changes and look_changed says so — else it is recorded as failed.)
+    if (cx && cx.treatment === bad) assert.deepEqual(cx.photos, [`${P}-${RATIO}-band-${short(bad)}`]);
+    else if (cx) { assert.deepEqual(cx.photos, [`${P}-${RATIO}`], "the native 9:16 serves the changed look"); assert.equal(cx.look_changed?.from, bad); assert.equal(cx.look_changed?.to, cx.treatment); }
+    else assert.ok(r.stories.left_out.some((l) => l.candidate === "cx") || r.stories.failed.some((f) => f.candidate === "cx"), JSON.stringify([r.stories.left_out, r.stories.failed]));
     // Q's looks come from its band; every one of Q's ads has a Stories version.
     const qAds = r.stories.ads.filter((a) => a.photos[0].startsWith(`${Q}-`));
     assert.equal(qAds.length, batch.ads.filter((a) => a.photos.length === 1 && a.photos[0] === Q).length);
-    for (const a of qAds) assert.deepEqual(a.photos, [`${Q}-${RATIO}-band-${short(a.treatment)}`]);
+    for (const a of qAds) assert.deepEqual(a.photos, [`${Q}-${RATIO}-band-${short(a.treatment)}`], JSON.stringify({ ad: a, logs: logs.filter((l) => l.includes(Q) || l.includes(a.candidate)) }));
     for (const id of [`${P}-${RATIO}-band-${short(bad)}`, `${Q}-${RATIO}-band-${short(other.treatment)}`]) {
       const rec = r.stories.photos[id];
       assert.equal(rec.kind, "band", id);
@@ -545,5 +548,52 @@ test("S12 one ad's Stories version (2026-10-07): `only` plans that ad alone and 
     assert.equal(r3.stories.ads.length, total1);
     assert.equal(r3.stories.image_calls, n1 + 1, "the batch's Stories calls carry on");
     for (const a of r3.stories.ads) assert.ok(existsSync(join(out, a.file)), `${a.folder} 9:16 on disk`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("S13 a look the 9:16 photo fits (2026-10-07): an ad whose own look will not work at 9:16 — the native photo and the band both put a word on a face — takes the first single-photo layout its 9:16 photo verifies with, same style, palette and words, and says so; the feed ad keeps its look", async () => {
+  const { fitLayouts } = await import("./check-visual.mjs");
+  const dir = brandSetup();
+  try {
+    const { out, batch } = await finishedBatch(dir);
+    const first = batch.photos.find((p) => p.kind === "generated").id;
+    const ad = batch.ads.find((a) => a.photos.length === 1 && a.photos[0] === first), own = ad.treatment;
+    // A 9:16 answer for the native photo: the people high (fits every layout by placement) and one face
+    // under the own layout's words — at its text region's anchor, at the region's edge, where a column's
+    // lines start — and clear of every region of some other single-photo layout, so the own look fails on
+    // the finished ad while another verifies. Boxes are the checker's: [y1, x1, y2, x2] on a 0–1000 scale.
+    const people_box = [250, 150, 800, 800];
+    const tr = T.treatments, single = Object.keys(tr).filter((la) => (layoutFor(tr[la], RATIO, T).background?.type || "single") === "single");
+    const regions = (la) => layoutFor(tr[la], RATIO, T).groups.map((g) => ({ r: g.region.map((v) => v * 10), anchor: g.anchor })); // [x, y, w, h] in ‰
+    const overlaps = (f, [x, y, w, h]) => f[1] < x + w && f[3] > x && f[0] < y + h && f[2] > y;
+    let answer = null;
+    const g0 = regions(own)[0], [rx, ry, rw, rh] = g0.r, fw = 80, fh = 110;
+    const fy = g0.anchor === "bottom" ? ry + rh - fh - 10 : g0.anchor === "top" ? ry + 10 : ry + rh / 2 - fh / 2;
+    for (const fx of [rx + 20, rx + rw - fw - 20, rx + rw / 2 - fw / 2]) {
+      const face = [Math.round(fy), Math.round(fx), Math.round(fy + fh), Math.round(fx + fw)];
+      const others = single.filter((la) => la !== own && regions(la).every((g) => !overlaps(face, g.r)));
+      if (others.length) { answer = { face, others }; break; }
+    }
+    assert.ok(answer, `a face under ${own}'s words that is clear of another layout's`);
+    const check = async (file, opts) => basename(file).startsWith(`${first}-${RATIO}`)
+      ? { ok: true, failures: [], notes: [], stray_text: [], excluded: [], dismissed: [], faces: [answer.face], focus: [0.5, 0.4], placement: { people_box, people_count: 1 } }
+      : check9(file, opts);
+    // The band of the 1:1 crop fails too: the 1:1 record's face fills the middle of the frame.
+    const picsPath = join(out, "pictures.json"), pics = JSON.parse(readFileSync(picsPath, "utf-8"));
+    pics[first].check.faces = [[150, 100, 950, 950]]; pics[first].check.placement.people_box = [100, 50, 980, 980];
+    writeFileSync(picsPath, JSON.stringify(pics));
+    const calls = [], logs = [];
+    const deps = { generate: generate(calls), check, sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser, gallery: () => {} };
+    const r = await runStories({ brandDir: dir, batchId: "test-batch", maxCalls: 12, deps, log: (m) => logs.push(m) });
+    const mine = r.stories.ads.find((a) => a.folder === ad.folder);
+    assert.ok(mine, `the ad has a Stories version (failed: ${JSON.stringify(r.stories.failed)}; left out: ${JSON.stringify(r.stories.left_out)})`);
+    assert.notEqual(mine.treatment, own, `a layout other than its own (${logs.filter((l) => l.includes(ad.candidate)).join(" | ")})`);
+    assert.ok(single.includes(mine.treatment), `a single-photo layout its 9:16 photo verified with (${mine.treatment})`);
+    assert.deepEqual([mine.style, mine.palette, mine.words], [ad.style, ad.palette, ad.words], "same style, palette and words");
+    assert.equal(mine.photos[0], `${first}-${RATIO}`, "the native 9:16 photo serves it");
+    assert.deepEqual([mine.look_changed.from, mine.look_changed.to], [own, mine.treatment]);
+    assert.ok(existsSync(join(out, mine.file)), "the 9:16 file is on disk");
+    assert.ok(logs.some((l) => l.includes(`${ad.candidate}: its own look ${short(own)} does not work at 9:16`)), logs.join("\n"));
+    assert.equal(JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).ads.find((a) => a.folder === ad.folder).treatment, own, "the feed ad keeps its look");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -403,6 +403,28 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
       await renderGroups(retry);
       for (const x of results.splice(before)) { results[[...retry.values()].flat().find((c) => c.id === x.id)._at] = x; }
     }
+    // ── a look the 9:16 photo fits (2026-10-07) ──
+    // An ad whose own look will not work at 9:16 — the native photo and the band both put a word on a
+    // face (F45 Xinyi's c11: a floor push-up group of three under the bottom stack's words, five tries) —
+    // takes the first single-photo layout one of its 9:16 photos verifies with, in the same style and
+    // palette with the same words; the feed ad keeps its own look. No image call.
+    const singleLayouts = Object.keys(T.treatments).filter((la) => (layoutFor(T.treatments[la], RATIO, T).background?.type || "single") === "single");
+    const photoAny = (pid, la) => [`${pid}-${RATIO}`, `${pid}-${RATIO}-${short(la)}`, ...Object.keys(prior).filter((id) => prior[id]?.kind === "band" && prior[id].for === pid)].find((id) => prior[id]?.status === "passed" && existsSync(prior[id].file) && (allowed[id] || []).includes(la)) || null;
+    for (const [i, r] of [...results.entries()]) {
+      const a0 = r.ads[0];
+      if (!r.failed || a0.background !== "single") continue;
+      const own = a0.treatment, pid = a0.photos[0], ownWhy = r.failed.join("; ");
+      for (const la of singleLayouts.filter((x) => x !== own)) {
+        const id = photoAny(pid, la); if (!id) continue;
+        const key = r.ads.map((a) => a.location).sort().join("|"), before = results.length;
+        await renderGroups(new Map([[key, [{ id: r.id, visual: id, images: [id], treatment: la, style: a0.style, palette: a0.palette, ads: r.ads }]]]));
+        const [x] = results.splice(before);
+        if (x.failed) { log(`- ${r.id}: ${short(la)} does not verify at 9:16 either (${x.failed.join("; ")})`); continue; }
+        results[i] = { ...x, look_changed: { from: own, to: la, why: ownWhy } };
+        log(`· ${r.id}: its own look ${short(own)} does not work at 9:16 (${ownWhy}) — the Stories version takes ${short(la)}, which its 9:16 photo fits, in the same style and palette with the same words; the feed ad keeps its look`);
+        break;
+      }
+    }
     const ads = [], failed = [];
     for (const r of results) {
       if (r.failed) { failed.push({ candidate: r.id, folders: r.ads.map((a) => a.folder), failures: r.failed }); continue; }
@@ -412,7 +434,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
         const file = storiesFile(ad.file);
         mkdirSync(dirname(join(out, file)), { recursive: true });
         writeFileSync(join(out, file), render.r.png);
-        ads.push({ folder: ad.folder, file, file_1x1: ad.file, candidate: r.id, location: ad.location, photos: r.images, photo_files: r.images.map((id) => basename(fileOf(id))), treatment: r.treatment, style: r.style, palette: r.palette, ratio: RATIO, crop: r.images.map((id) => focus[id]?.[r.treatment] || [0.5, 0.5]), words: ad.words });
+        ads.push({ folder: ad.folder, file, file_1x1: ad.file, candidate: r.id, location: ad.location, photos: r.images, photo_files: r.images.map((id) => basename(fileOf(id))), treatment: r.treatment, style: r.style, palette: r.palette, ratio: RATIO, crop: r.images.map((id) => focus[id]?.[r.treatment] || [0.5, 0.5]), words: ad.words, ...(r.look_changed ? { look_changed: r.look_changed } : {}) });
       }
     }
     // A run for some ads only keeps the rest of the record: the other ads' versions, failures and left-outs.
