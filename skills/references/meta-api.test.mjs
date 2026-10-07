@@ -701,3 +701,29 @@ test("M11 copy on the plan: the kept copies ride as Meta text options — up to 
   assert.ok(noHead.warnings.some((w) => /no headline kept: draft and keep headlines/.test(w)));
   assert.equal(buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: bodiesOnly, headlines: heads, settings: { copy: { max_headlines: 9 } } }).copy.headlines.max_options, 5);
 });
+
+test("M12 a Taiwan gym's plan (2026-10-07, F45 Xinyi): no Singapore identity asked for and no regulated category on the ad sets; the budget in whole TWD (500 is 500, not 50000); no locale targeting (their house style reaches everyone near the gym); the Chinese callout and offer in the names; {AREA} filled as 信義區 and {BUTTON} as 立即報名 in the kept copy and headline", async () => {
+  const { buildPlan } = await import("./meta-publish.mjs");
+  const d = mkdtempSync(join(tmpdir(), "meta-plan-tw-"));
+  const ad = { folder: "101-c01-信義區-t1-white-on-dark", file: "101-x/1x1/a.png", location: "信義區", photos: ["g01"], words: { location: "信義區", audience: "女生限定", offer: "六週中年體態雕塑計畫" } };
+  writeFileSync(join(d, "batch.json"), JSON.stringify({ batch_id: "2026-10-07-xinyi", ads: [ad] }));
+  const { keptAds } = await import("./meta-publish.mjs");
+  const kept = keptAds(d);
+  const profile = { display_name: "F45 Xinyi", gym_abbr: "FXI", website: "https://f45xinyi.com/6weekplan", locale: { country: "TW", currency: "TWD", timezone: "Asia/Taipei", languages: ["zh_TW"] },
+    meta_assets: { ad_account_id: "act_5595320690525032", page_id: "105176144862096", instagram_user_id: "17841449500342630", lead_form_id: "9001" },
+    campaign_defaults: { budget: { level: "adset", amount: 500, currency: "TWD", bid_strategy: "LOWEST_COST_WITHOUT_CAP" } },
+    targeting_defaults: { geo: { radius_pins: [{ label: "F45 Xinyi 信義", place_key: "105176144862096", place_name: "F45 Xinyi 信義", lat: 25.0332, lng: 121.5591, radius_km: 3, callouts: ["信義區"] }] }, demographics: { age_min: 28, age_max: 50, callout_genders: { "女生限定": "women" } } } };
+  const presets = { presets: [{ id: "broad", name: "Broad", spec: {}, summary: [], stats: { adsets: 0, leads: 0, genders: { men: 0, women: 0, all: 0 } } }] };
+  const copies = [{ id: "c1", message: "{AREA}的妳，六週中年體態雕塑計畫現在開始。\n點擊{BUTTON}。", headline: "", description: "" }];
+  const headlines = [{ id: "h1", headline: "{AREA}女生限定：六週中年體態雕塑計畫", description: "" }];
+  const p = buildPlan({ profile, batch: { batch_id: "2026-10-07-xinyi" }, kept, presets, copies, headlines, settings: { words: { cta: "SIGN_UP" } } });
+  assert.deepEqual([p.ready, p.problems], [true, []], p.problems.join(" | "));
+  const set = p.adsets[0];
+  assert.deepEqual([set.callout, set.gender, set.payload.daily_budget, set.payload.targeting.geo_locations.places[0].key, "regional_regulated_categories" in set.payload, "locales" in set.payload.targeting], ["信義區", "women", 500, "105176144862096", false, false]);
+  assert.match(set.payload.name, /信義區 \| 六週中年體態雕塑計畫 \| Audience: F45 Xinyi 信義 \+ 3KM, Female/);
+  assert.match(p.campaign.name, /六週中年體態雕塑計畫 \| FXI \| 女生限定/i);
+  assert.deepEqual([p.budget.daily, p.budget.level], [500, "adset"]);
+  const creative = p.ads[0].creative, bodies = creative.asset_feed_spec?.bodies?.map((b) => b.text) || [creative.object_story_spec.link_data.message], titles = creative.asset_feed_spec?.titles?.map((t) => t.text) || [creative.object_story_spec.link_data.name];
+  assert.equal(bodies[0], "信義區的妳，六週中年體態雕塑計畫現在開始。\n點擊立即報名。");
+  assert.equal(titles[0], "信義區女生限定：六週中年體態雕塑計畫");
+});
