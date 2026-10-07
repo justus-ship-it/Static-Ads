@@ -612,6 +612,9 @@ function listBatches(gym) {
       running: activeRun(gym, id),
       // A run the owner stopped before the batch was made: said on its card, with what it had spent.
       stopped: !batch && readJsonFile(join(out, "progress.json"))?.stage === "stopped" ? { image_calls: readJsonFile(join(out, "spend.json"))?.image_calls ?? 0 } : null,
+      // A run that ended on an error, or that is no longer running without finishing (a crash, a panel restart that
+      // took it with it): the card offers Run again, as it does for a stopped one.
+      failed: !batch && !activeRun(gym, id) && !orphanBatch(gym, id) && ["failed", "photos", "fit", "looks", "render", "gallery"].includes(readJsonFile(join(out, "progress.json"))?.stage) ? { stage: readJsonFile(join(out, "progress.json")).stage, error: readJsonFile(join(out, "progress.json")).error || null, image_calls: readJsonFile(join(out, "spend.json"))?.image_calls ?? 0 } : null,
     };
   });
 }

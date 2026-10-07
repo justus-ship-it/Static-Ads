@@ -2145,3 +2145,39 @@ test("U36 the room reference (2026-10-07): coach and member photos can be survey
     assert.ok(await ev("[...document.querySelectorAll('#view button')].filter(b=>/^Survey/.test(b.textContent.trim())).every(b=>b.disabled)"), "a mixed selection cannot run");
   } finally { writeFileSync(pf, before); rmSync(refClean, { recursive: true, force: true }); for (const f of ["members/floor-u36.png", "facility/room-u36.png"]) rmSync(join(g, "brand-assets", f), { force: true }); }
 });
+
+test("U37 Run again: a stopped batch's card offers it (and a run that ended on an error, or is no longer running without finishing); the confirmation shows the brief's own words and cap; confirming starts the batch run on that brief", async () => {
+  const g = join(brands, GYM), out = join(g, "outputs", "u37-stopped"), bdir = join(g, "batches", "u37-stopped");
+  rmSync(out, { recursive: true, force: true }); rmSync(bdir, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true }); mkdirSync(bdir, { recursive: true });
+  writeFileSync(join(bdir, "brief.json"), JSON.stringify({ ...BRIEF, batch_id: "u37-stopped", generated: 1, max_calls: 2 }));
+  writeFileSync(join(out, "progress.json"), JSON.stringify({ stage: "stopped", stopped_at: "photos", pid: 1, photos: {}, calls: 0 }));
+  writeFileSync(join(out, "spend.json"), JSON.stringify({ image_calls: 1 }));
+  try {
+    let bs = (await (await call(`/api/client/${GYM}/batch-setup`)).json()).batches;
+    let b = bs.find((x) => x.id === "u37-stopped"); assert.deepEqual([!!b.stopped, b.stopped.image_calls, b.failed, b.running], [true, 1, null, null]);
+    writeFileSync(join(out, "progress.json"), JSON.stringify({ stage: "failed", error: "boom", pid: 1, photos: {}, calls: 0 }));
+    bs = (await (await call(`/api/client/${GYM}/batch-setup`)).json()).batches; b = bs.find((x) => x.id === "u37-stopped");
+    assert.deepEqual([b.stopped, b.failed], [null, { stage: "failed", error: "boom", image_calls: 1 }]);
+    writeFileSync(join(out, "progress.json"), JSON.stringify({ stage: "photos", pid: 1, photos: {}, calls: 0 }));
+    b = (await (await call(`/api/client/${GYM}/batch-setup`)).json()).batches.find((x) => x.id === "u37-stopped"); assert.equal(b.failed.stage, "photos", "no longer running without finishing");
+    writeFileSync(join(out, "progress.json"), JSON.stringify({ stage: "stopped", stopped_at: "photos", pid: 1, photos: {}, calls: 0 }));
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u37#/${GYM}/batch` }, sessionId); await loaded;
+    const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("[...document.querySelectorAll('#bList .camp')].some(c=>/u37-stopped/.test(c.textContent))"))) await new Promise((x) => setTimeout(x, 120));
+    const card = await ev("[...document.querySelectorAll('#bList .camp')].find(c=>/u37-stopped/.test(c.textContent)).textContent");
+    assert.match(card, /stopped · 1 call used/); assert.match(card, /Run again…/);
+    await ev("bRunAgain('u37-stopped')");
+    const t1 = Date.now(); while (Date.now() - t1 < 10000 && !(await ev("!!document.querySelector('#bRunAgainGo')"))) await new Promise((x) => setTimeout(x, 100));
+    const modal = await ev("document.querySelector('#gModal').textContent");
+    assert.match(modal, /Run this batch again\?/); assert.match(modal, new RegExp(WORDS.offer)); assert.match(modal, /1 image call already used/); assert.match(modal, /up to 2 image calls/);
+    await ev("window.__bRunAgainGo(); true");
+    const t2 = Date.now(); while (Date.now() - t2 < 15000 && !(await ev("!!STATE.run && /^batch-/.test(STATE.run.id||'')"))) await new Promise((x) => setTimeout(x, 150));
+    assert.ok(await ev("/^batch-/.test(STATE.run?.id||'')"), "the batch run started");
+    assert.equal(await ev("STATE.tab"), "generating");
+    const t3 = Date.now(); while (Date.now() - t3 < 60000 && !(await ev("!!STATE.run?.done"))) await new Promise((x) => setTimeout(x, 300));
+    assert.ok(await ev("JSON.stringify(STATE.run).includes('u37-stopped/brief.json') || (document.querySelector('#view')?.textContent||'').includes('u37-stopped/brief.json')"), "the batch command on this brief");
+    assert.equal(await ev("STATE.batch"), "u37-stopped");
+  } finally { rmSync(out, { recursive: true, force: true }); rmSync(bdir, { recursive: true, force: true }); }
+});

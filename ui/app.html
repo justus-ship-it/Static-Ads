@@ -1134,8 +1134,8 @@ function paintList(){
   const bs = B.setup.batches, box = $('#bList'); if (!box) return;
   box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>{ const r = b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
-      <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':b.stopped?` · <span class="pill warn">stopped · ${b.stopped.image_calls} call${b.stopped.image_calls===1?'':'s'} used</span>`:' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}${b.published?` · <span class="pill ${b.published.status==='live'?'on':''}">on Facebook · ${esc(b.published.status)}${b.published.leads!=null?` · ${b.published.leads} leads${b.published.cost_per_lead!=null?` at ${b.published.cost_per_lead}`:''}`:''}</span>`:''}</div>
-      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm" onclick="bWords('${esc(b.id)}')">Change words</button>`:`${b.stopped?`<button class="sm" onclick="openGenerating('${esc(b.id)}')">Open</button>`:''}<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
+      <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':b.failed?` · <span class="pill warn">${b.failed.stage==='failed'?'stopped on an error':'did not finish'} · ${b.failed.image_calls} call${b.failed.image_calls===1?'':'s'} used</span>`:b.stopped?` · <span class="pill warn">stopped · ${b.stopped.image_calls} call${b.stopped.image_calls===1?'':'s'} used</span>`:' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}${b.published?` · <span class="pill ${b.published.status==='live'?'on':''}">on Facebook · ${esc(b.published.status)}${b.published.leads!=null?` · ${b.published.leads} leads${b.published.cost_per_lead!=null?` at ${b.published.cost_per_lead}`:''}`:''}</span>`:''}</div>
+      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm" onclick="bWords('${esc(b.id)}')">Change words</button>`:`${b.stopped||b.failed?`<button class="sm primary" onclick="bRunAgain('${esc(b.id)}')">Run again…</button><button class="sm" onclick="openGenerating('${esc(b.id)}')">Open</button>`:''}<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
     </div></div>`; }).join('')}</div>` : '<div class="hint">No campaigns yet. Fill in the brief above and press Generate.</div>';
 }
 
@@ -1267,6 +1267,25 @@ async function bConfirm(){
     <div class="row"><button onclick="bCancel()">Cancel</button><div class="spacer"></div>
       <button class="primary" id="bGo" onclick="bGo()">Yes, run — up to ${b.max_calls} image call${b.max_calls===1?'':'s'}</button></div></div></div>`;
   B.pending = b; B.pendingScenes = pending;
+}
+/**
+ * Run a stopped or unfinished batch again with its own brief (2026-10-07: a stopped card offered only Open and Discard,
+ * and "run it again from Create" would have made a new batch). The same confirmation as Create's: the words as they
+ * are on disk, the cap, the batch's drafted scenes; finished photos are reused and the calls already used count.
+ */
+async function bRunAgain(id){
+  let v; try { v = await api(`/api/client/${STATE.sel}/batch/${id}`); } catch(e){ alert(e.message); return; }
+  const b = v.brief, scenes = v.scenes || [], pending = scenes.filter(x=>x.draft).map(x=>x.id);
+  const card = (B.setup?.batches||[]).find(x=>x.id===id), used = card?.stopped?.image_calls ?? card?.failed?.image_calls ?? 0;
+  const go = () => { $('#gModal').innerHTML=''; run({kind:'batch', gym:STATE.sel, batch:id, confirm:{offer:b.offer, locations:b.locations, audience:b.audience??null, max_calls:b.max_calls, ...(pending.length?{scenes:pending}:{})}}, async()=>{ try { await reloadScenes(); } catch{} }); openGenerating(id); };
+  window.__bRunAgainGo = go;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card">
+    <h2>Run this batch again?</h2>
+    <p class="hint">The same brief: photos that already passed are reused, and the ${used} image call${used===1?'':'s'} already used count toward the cap. The run stops at the cap, whatever happens.</p>
+    <div class="words"><div><span>Offer</span>${esc(b.offer)}</div><div><span>Locations</span>${esc((b.locations||[]).join(' / '))}</div><div><span>Audience</span>${b.audience?esc(b.audience):'<i style="color:var(--dim)">none</i>'}</div></div>
+    ${pending.length?`<div class="words"><div style="color:var(--dim)">Scenes drafted for this batch — confirming approves them into the library</div>${scenes.filter(x=>x.draft).map(x=>`<div style="margin:6px 0"><b class="mono">${esc(x.id)}</b><br>${esc(x.scene)}</div>`).join('')}</div>`:''}
+    <div class="summary">${b.generated??0} new photo${(b.generated??0)===1?'':'s'} + ${(b.real||[]).length} real · up to <b>${b.max_calls} image call${b.max_calls===1?'':'s'}</b> in all</div>
+    <div class="row"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" id="bRunAgainGo" onclick="window.__bRunAgainGo()">Yes, run again — up to ${b.max_calls} image call${b.max_calls===1?'':'s'}</button></div></div></div>`;
 }
 function bClose(){ $('#bModal').innerHTML=''; B.pending=null; B.pendingScenes=null; }
 /** Cancel: nothing runs, and a brief that only the confirmation had saved is discarded again. */
@@ -1570,9 +1589,10 @@ function paintGenerating(){
   <h1>${esc(title)}</h1>
   <p class="sub">${failed ? '' : inPhotos ? 'Each photo appears as it passes its checks. ' : ''}${spent} image call${spent===1?'':'s'} used of ${p?.max_calls ?? '—'}${p?.real?` · plus ${p.real} real photo${p.real===1?'':'s'}`:''}${inAds?' · no image calls while rendering':''}</p>
   ${failed ? `<div class="msg err">${esc(p.error||'the run stopped')}</div>` : ''}
-  ${stopped ? `<div class="msg warn">You stopped this run while it was ${esc((STAGE_NOW[at]||at).toLowerCase())}. ${passed} photo${passed===1?'':'s'} had passed and ${spent} image call${spent===1?'':'s'} had been used; both are kept. Run the batch again from Create to continue (finished photos are reused, and the calls already used count toward the cap), or start a new batch.</div>` : ''}
+  ${stopped ? `<div class="msg warn">You stopped this run while it was ${esc((STAGE_NOW[at]||at).toLowerCase())}. ${passed} photo${passed===1?'':'s'} had passed and ${spent} image call${spent===1?'':'s'} had been used; both are kept. Finished photos are reused and the calls already used count toward the cap. <button class="sm primary" style="margin-left:8px" onclick="bRunAgain('${esc(STATE.batch)}')">Run again…</button></div>` : ''}
   ${d.orphan ? `<div class="msg">This run was started before the panel was last restarted, and it is still going. Its log is not shown here, but its progress is, and it can be stopped.</div>` : ''}
-  ${stale ? `<div class="msg warn">This run is not running any more; it stopped while ${esc((STAGE_NOW[stage]||stage).toLowerCase())}. Run the batch again from Create to finish it (photos already made are reused).</div>` : ''}
+  ${stale ? `<div class="msg warn">This run is not running any more; it stopped while ${esc((STAGE_NOW[stage]||stage).toLowerCase())}. Photos already made are reused. <button class="sm primary" style="margin-left:8px" onclick="bRunAgain('${esc(STATE.batch)}')">Run again…</button></div>` : ''}
+  ${failed ? `<div class="row" style="margin:6px 0"><button class="sm primary" onclick="bRunAgain('${esc(STATE.batch)}')">Run again…</button><span class="hint" style="margin:0">Photos that passed are reused; the calls already used count toward the cap.</span></div>` : ''}
   <div class="bar"><i style="width:${pct}%"></i></div>
   <div class="gen">${photos.map(([id,x])=>genCard(id,x)).join('') || '<div class="hint">No new photos in this batch: real photos only.</div>'}</div>
   <div class="row" style="margin-top:16px">
