@@ -257,7 +257,7 @@
   <nav class="rail" id="rail"></nav>
   <main class="main" id="main"><div id="view"></div></main>
 </div>
-<div id="gModal"></div>
+<div id="gModal"></div><div id="lfModal"></div>
 
 <script>
 const $ = (s,r=document)=>r.querySelector(s);
@@ -295,11 +295,11 @@ let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'
 // The rail: the daily path first (Create, Review, Exports), the library next, the client's setup last.
 const NAV = [
   ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'], ['results','Results','▤'],
-  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'],
+  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'], ['leadforms','Lead forms','▤'],
   ['sec','Profile'], ['overview','Overview','◎'], ['metafacts','From the ad account','◆'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', leadforms:'Lead forms', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -410,6 +410,7 @@ function render(){
   if (STATE.tab==='scenes') return viewScenes(v, seq);
   if (STATE.tab==='photos') return viewPhotos(v, seq);
   if (STATE.tab==='references') return viewReferences(v, seq);
+  if (STATE.tab==='leadforms') return viewLeadForms(v, seq);
 }
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -1926,6 +1927,8 @@ function paintPublish(v){
   <p class="sub">What will be created in ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account, every object paused. Every field below is this campaign's own; the profile's defaults filled it in. Nothing is created until the last button.</p>
   ${PB.error?`<div class="msg err">${esc(PB.error)}</div>`:''}
   ${P.problems.map(x=>`<div class="msg err">${esc(x)}</div>`).join('')}${P.warnings.map(x=>`<div class="msg warn">${esc(x)}</div>`).join('')}
+  ${(D.pin_fill?.filled||[]).map(f=>`<div class="msg ok">${esc(f.callout)}: no pin named this callout, so the one the ad account has used most was filled in from ${esc(f.from)} — <b>${esc(f.pin.place_name||f.pin.label)}</b>${f.pin.place_key?' (Meta place)':''} · ${esc(String(f.pin.radius_km))} km${f.adsets?`, on ${f.adsets} ad set${f.adsets===1?'':'s'}`:''}${f.example?`, e.g. ${esc(f.example)}`:''}. ${(f.others||[]).length?`Also run: ${f.others.map(o=>`${esc(o.name)} · ${esc(String(o.radius_km))} km (${o.adsets})`).join('; ')}. `:''}Change it on Targeting & budget, or below for this campaign.</div>`).join('')}
+  ${D.pin_fill && !D.pin_fill.filled?.length && D.pin_fill.reason ? `<div class="msg warn">The pin could not be filled in from the ad account: ${esc(D.pin_fill.reason)}.</div>` : ''}
   ${D.identity?.set ? `<div class="msg ok">Singapore advertiser identity ${esc(D.identity.set.beneficiary)} read from the ad account's ${D.identity.set.adsets} existing ad set${D.identity.set.adsets===1?'':'s'} and saved to the profile.</div>` : ''}
   ${D.identity && !D.identity.set ? `<div class="card" id="pbIdentity"><h3>Singapore advertiser identity</h3><p class="hint" style="margin-top:4px">Every ad delivered in Singapore names a verified advertiser as beneficiary and payer. ${esc(D.identity.reason||'')}.</p>
     ${(D.identity.choices||[]).map(c=>`<div class="wrow"><span>Beneficiary <b class="mono">${esc(c.beneficiary)}</b> · payer <b class="mono">${esc(c.payer)}</b><br><span class="hint" style="margin:0">on ${c.adsets} ad set${c.adsets===1?'':'s'}, e.g. ${esc(c.example||'')}</span></span><div class="spacer"></div><button class="sm primary" onclick="pbIdentity('${esc(c.beneficiary)}','${esc(c.payer)}')">Use this one</button></div>`).join('')}</div>` : ''}
@@ -1943,7 +1946,7 @@ function paintPublish(v){
   ${copyCard(D, P, sw)}
   <div class="card"><div class="row"><h3 style="margin:0">Destination and identity</h3><div class="spacer"></div><button class="sm" onclick="pbLoadLink()" ${PB.busy?'disabled':''}>${PB.link?'Reload the lists':'Load the Page\'s forms and Instagram accounts'}</button></div>
     <div class="grid" style="margin-top:10px">
-      <div><label>Instant form</label>${PB.link?`<select onchange="pbSet('destination.lead_form_id',this.value||null)">${(PB.link.chosen?.forms||[]).map(f=>`<option value="${esc(f.id)}" ${f.id===P.lead_form_id?'selected':''}>${esc(f.name)} · ${(f.status||'').toLowerCase()}${f.leads_count!=null?` · ${f.leads_count} leads`:''}</option>`).join('')}</select>`:`<div class="mono">${esc(P.lead_form_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.form||'the profile\'s form')}</div>`}</div>
+      <div><label>Instant form <span class="n">· <a href="#" onclick="pbNewForm();return false">new form from the template…</a></span></label>${PB.link?`<select onchange="pbSet('destination.lead_form_id',this.value||null)">${(PB.link.chosen?.forms||[]).map(f=>`<option value="${esc(f.id)}" ${f.id===P.lead_form_id?'selected':''}>${esc(f.name)} · ${(f.status||'').toLowerCase()}${f.leads_count!=null?` · ${f.leads_count} leads`:''}</option>`).join('')}</select>`:`<div class="mono">${esc(P.lead_form_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.form||'the profile\'s form')}</div>`}</div>
       <div><label>Facebook Page</label><div class="mono">${esc(P.page_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.page||'')}</div></div>
       <div><label>Instagram account</label>${PB.link?`<select onchange="pbSet('destination.instagram_user_id',this.value)"><option value="" ${!P.instagram_user_id?'selected':''}>none · a Page-backed identity</option>${igList(PB.link).map(x=>`<option value="${esc(x.id)}" ${x.id===P.instagram_user_id?'selected':''}>@${esc(x.username||x.id)}</option>`).join('')}</select>`:`<div class="mono">${esc(P.instagram_user_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.instagram||'')}</div>`}</div>
       <div><label>Link</label><div class="mono">${esc(P.website||'none')}</div></div>
@@ -2095,6 +2098,12 @@ async function pbIdentity(beneficiary, payer){
   try { await api(`/api/client/${PB.gym}/singapore-identity`, { method:'POST', body:{ beneficiary, payer } }); PB.data = await api(`/api/client/${PB.gym}/batch/${PB.id}/publish`); PB.error = null; await refreshProfile(); }
   catch(e){ PB.error = 'Not saved: ' + e.message; }
   paintPublish($('#view'));
+}
+/** A form for this campaign's offer, from the gym's template (Library → Lead forms); once made on the Page it becomes this campaign's destination. */
+async function pbNewForm(){
+  if (LF.gym !== PB.gym || !LF.data){ try { LF.data = await api(`/api/client/${PB.gym}/lead-forms`); LF.gym = PB.gym; } catch(e){ toast(e.message, 'err'); return; } }
+  const P = PB.data.plan;
+  lfNew({ offer: PB.data.offer || '', callout: (P.adsets||[])[0]?.callout || '', onCreated: async (made) => { await pbSet('destination.lead_form_id', made.id); if (PB.link) await pbLoadLink(); toast(`Form "${made.name}" created on the Page and set as this campaign's form.`); } });
 }
 async function pbLoadLink(){ PB.busy = true; paintPublish($('#view')); try { const r = await api(`/api/client/${PB.gym}/meta-link`); PB.link = r.configured ? r : null; if (!r.configured) PB.error = 'The Meta link is not set up yet (Meta link page).'; } catch(e){ PB.error = e.message; } PB.busy = false; paintPublish($('#view')); }
 async function pbEstimate(callout){ const a = PB.data.plan.adsets.find(x=>x.callout===callout); if (!a) return; PB.busy = true; paintPublish($('#view'));
@@ -2479,6 +2488,107 @@ async function viewReferences(v, seq=VIEW_SEQ){
   v.innerHTML = `<h1>Reference images</h1><p class="sub">Images you supply for direction. Each is read once into words (activity, people, framing, mood); the words on it are kept out, and the image itself never goes into a generated photo.</p>
     <div class="card">${refs.length ? `<div class="thumbs">${refs.map(r=>`<label><img src="${esc(r.url)}" alt="" style="width:220px;height:146px"><span style="font-size:12px">${esc(r.name)}${r.read?' · read':''}</span></label>`).join('')}</div>` : '<div class="hint">No reference images yet.</div>'}
       <div class="row" style="margin-top:12px"><input type="file" id="bRefFile" accept="image/png,image/jpeg,image/webp" style="width:auto" onchange="bUpload(this)"><span id="bRefMsg" class="hint" style="margin:0"></span></div></div>`;
+}
+
+// ── Lead forms (2026-10-07): the Page's instant forms, the gym's template, a new form for an offer ──────
+const LF = { gym:null, data:null, ask:null, proposal:null, busy:false, onCreated:null };
+const QUESTION_TYPES = ['CUSTOM','FULL_NAME','FIRST_NAME','LAST_NAME','EMAIL','PHONE','DATE_TIME','COUNTRY','DOB','GENDER','CITY','ZIP','POST_CODE','JOB_TITLE','COMPANY_NAME'];
+const BUTTON_TYPES = ['CALL_BUSINESS','VIEW_WEBSITE','MESSAGE_BUSINESS','WHATSAPP','BOOK_ON_WEBSITE','NONE'];
+const qWords = { CUSTOM:'Custom question', FULL_NAME:'Full name', FIRST_NAME:'First name', LAST_NAME:'Last name', EMAIL:'Email', PHONE:'Phone number', DATE_TIME:'Date and time', COUNTRY:'Country', DOB:'Date of birth', GENDER:'Gender', CITY:'City', ZIP:'ZIP', POST_CODE:'Postal code', JOB_TITLE:'Job title', COMPANY_NAME:'Company' };
+async function viewLeadForms(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>Lead forms</h1><p class="sub">Loading…</p>';
+  try { LF.data = await api(`/api/client/${STATE.sel}/lead-forms`); LF.gym = STATE.sel; } catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<h1>Lead forms</h1><div class="msg err">${esc(e.message)}</div>`; return; }
+  if (seq !== VIEW_SEQ) return;
+  paintLeadForms(v);
+}
+function paintLeadForms(v){
+  const D = LF.data, t = D.record?.template, made = new Set((D.record?.created||[]).map(x=>x.id));
+  const row = f => `<tr><td><b>${esc(f.name)}</b>${f.id===t?.source?.id?' <span class="pill on">template</span>':''}${f.id===D.default_form_id?' <span class="pill navy">default</span>':''}${made.has(f.id)?' <span class="pill">made here</span>':''}</td><td>${esc((f.created_time||'').slice(0,10))}</td><td>${f.question_count??''}</td><td>${f.leads_count??''}</td><td>${esc((f.status||'').toLowerCase())}</td><td class="row" style="gap:6px;justify-content:flex-end">${f.id===t?.source?.id?'':`<button class="sm" onclick="lfTemplate('${esc(f.id)}')">Use as template</button>`}${f.id===D.default_form_id?'':`<button class="sm" onclick="lfDefault('${esc(f.id)}','${esc(f.name)}')">Make default</button>`}</td></tr>`;
+  v.innerHTML = `<h1>Lead forms</h1><p class="sub">The instant forms on ${esc(D.page_name||'the gym\'s Page')}. Pick one as the <b>template</b>: a new form for a new offer is that form with the offer and the district swapped, and nothing else rewritten — Meta does not let a form be edited once made, only archived, so the version number stays in the name. The <b>default</b> form is the one every campaign made here points to unless its Publish screen picks another.</p>
+  ${D.reason?`<div class="msg warn">${esc(D.reason)}</div>`:''}
+  <div class="card"><div class="row"><h3 style="margin:0">Forms on the Page · ${(D.forms||[]).length}</h3><div class="spacer"></div><button class="sm" onclick="viewLeadForms($('#view'))">Reload</button><button class="sm primary" onclick="lfNew()" ${t?'':'disabled'} title="${t?'':'choose a template first'}">New form from the template…</button></div>
+    ${(D.forms||[]).length?`<table class="tbl" style="margin-top:10px"><thead><tr><th>Form</th><th>Created</th><th>Questions</th><th>Leads</th><th>Status</th><th></th></tr></thead><tbody>${D.forms.map(row).join('')}</tbody></table>`:'<p class="hint">No forms yet on this Page.</p>'}</div>
+  ${t?`<div class="card"><h3>Template · ${esc(t.source.name)}</h3><p class="hint" style="margin-top:4px">Read from the Page ${esc((t.set||'').slice(0,10))} · ${t.source.leads_count??0} leads · offer phrase: <b>${esc(t.phrases?.offer||'none found')}</b> · district: <b>${esc(t.phrases?.district||'none found')}</b></p>
+    <ol style="margin:8px 0 0 18px;line-height:1.6">${t.spec.questions.map(q=>`<li>${esc(q.label||qWords[q.type]||q.type)} <span class="hint" style="margin:0">· ${esc(qWords[q.type]||q.type)}${q.options?` · ${q.options.map(o=>esc(o.value)).join(' / ')}`:''}</span></li>`).join('')}</ol>
+    ${t.spec.context_card?`<p class="hint">Intro card: <b>${esc(t.spec.context_card.title)}</b> — ${esc((t.spec.context_card.content||[]).join(' '))}</p>`:''}
+    ${t.spec.thank_you_page?`<p class="hint">Thank-you page: <b>${esc(t.spec.thank_you_page.title)}</b> — ${esc(t.spec.thank_you_page.body||'')} · button ${esc(t.spec.thank_you_page.button_type)}${t.spec.thank_you_page.button_text?` "${esc(t.spec.thank_you_page.button_text)}"`:''}</p>`:''}
+    ${t.spec.privacy_policy?`<p class="hint">Privacy policy: ${esc(t.spec.privacy_policy.url)}</p>`:''}</div>`:'<div class="card"><p class="hint">No template yet: press Use as template on one of the forms above (the one your best ads ran on).</p></div>'}
+  ${(D.record?.created||[]).length?`<div class="card"><h3>Made here</h3><table class="tbl" style="margin-top:8px"><thead><tr><th>Form</th><th>Made</th><th>Offer</th><th>Questions</th></tr></thead><tbody>${D.record.created.map(x=>`<tr><td><b>${esc(x.name)}</b> <span class="mono hint">${esc(x.id)}</span></td><td>${esc(x.created.slice(0,10))}</td><td>${esc(x.offer||'')}</td><td>${x.questions}</td></tr>`).join('')}</tbody></table></div>`:''}`;
+}
+async function lfReload(){ try { LF.data = await api(`/api/client/${LF.gym||STATE.sel}/lead-forms`); } catch(e){ toast(e.message,'err'); } if (STATE.tab==='leadforms') paintLeadForms($('#view')); }
+async function lfTemplate(id){ try { await api(`/api/client/${STATE.sel}/lead-forms/template`, { method:'POST', body:{ id } }); toast('Template set.'); } catch(e){ toast(e.message,'err'); } await lfReload(); }
+async function lfDefault(id, name){ try { await api(`/api/client/${STATE.sel}/lead-forms/default`, { method:'POST', body:{ id, name } }); toast(`"${name}" is now the gym\'s default form.`); await refreshProfile(); } catch(e){ toast(e.message,'err'); } await lfReload(); }
+/** The new-form modal: the words to swap, then the proposal to edit, then Create on the Page. `opts`: offer, callout, onCreated(made). */
+function lfNew(opts={}){
+  const t = LF.data?.record?.template;
+  if (!t){ toast('Choose a template first: Library → Lead forms → Use as template.', 'err'); return; }
+  LF.onCreated = opts.onCreated || null; LF.proposal = null; LF.busy = false;
+  LF.ask = { offer: opts.offer || '', old_offer: t.phrases?.offer || '', callout: opts.callout || LF.data.district || '', old_district: t.phrases?.district || '', name: '' };
+  lfPaintModal();
+}
+function lfPaintModal(){
+  const t = LF.data.record.template, A = LF.ask, P = LF.proposal;
+  const ask = `<div class="grid">
+    <div><label>The offer, exact words</label><input value="${esc(A.offer)}" onchange="LF.ask.offer=this.value" placeholder="六週全身體態改造計畫"></div>
+    <div><label>The offer the template names</label><input value="${esc(A.old_offer)}" onchange="LF.ask.old_offer=this.value"><div class="hint">swapped for the new offer everywhere it appears</div></div>
+    <div><label>The district (location callout)</label><input value="${esc(A.callout)}" onchange="LF.ask.callout=this.value"></div>
+    <div><label>The district the template names</label><input value="${esc(A.old_district)}" onchange="LF.ask.old_district=this.value"></div>
+    <div style="grid-column:span 2"><label>Name <span class="n">· their scheme unless you type one</span></label><input value="${esc(A.name)}" onchange="LF.ask.name=this.value" placeholder="v9 - 10月 2026 …"></div></div>
+    <div class="row" style="margin-top:8px"><button class="primary" onclick="lfPropose()" ${LF.busy?'disabled':''}>${P?'Propose again':'Propose the form'}</button><span class="hint" style="margin:0">From the template "${esc(t.source.name)}". Nothing is sent to Meta until the last button.</span></div>`;
+  const S = P?.spec;
+  const q = (x,i) => `<div class="wrow" style="align-items:flex-start;gap:8px"><span class="mono hint" style="width:22px">${i+1}</span><div style="flex:1">
+      <div class="row" style="gap:8px"><select onchange="lfQ(${i},'type',this.value)" style="width:auto">${QUESTION_TYPES.map(k=>`<option value="${k}" ${x.type===k?'selected':''}>${qWords[k]}</option>`).join('')}</select>
+      <input value="${esc(x.label||'')}" onchange="lfQ(${i},'label',this.value)" placeholder="${x.type==='CUSTOM'?'the question':'label (optional)'}" style="flex:1"></div>
+      ${x.type==='CUSTOM'?`<textarea rows="2" style="margin-top:6px" placeholder="options, one per line — leave empty for a free answer" onchange="lfQ(${i},'options',this.value)">${esc((x.options||[]).map(o=>o.value).join('\n'))}</textarea>`:''}</div>
+      <div class="row" style="gap:4px"><button class="sm" onclick="lfQMove(${i},-1)" ${i?'':'disabled'}>↑</button><button class="sm" onclick="lfQMove(${i},1)" ${i<S.questions.length-1?'':'disabled'}>↓</button><button class="sm" onclick="lfQDel(${i})">✕</button></div></div>`;
+  const prop = S ? `<hr><h3>${esc(S.name)}</h3>
+    ${P.swapped?.length?`<p class="hint" style="margin-top:4px">Swapped: ${P.swapped.map(x=>`"${esc(x.from)}" → "${esc(x.to)}"`).join(' · ')} — changed: ${P.changed.length?esc(P.changed.join(', ')):'nothing'}.</p>`:'<p class="hint" style="margin-top:4px">Nothing swapped: the template names neither the old offer nor the old district as typed.</p>'}
+    ${(P.problems||[]).map(x=>`<div class="msg err">${esc(x)}</div>`).join('')}
+    <div class="grid"><div style="grid-column:span 2"><label>Name</label><input value="${esc(S.name)}" onchange="lfEdit('name',this.value)"></div>
+      <div><label>Intro card title</label><input value="${esc(S.context_card?.title||'')}" onchange="lfEdit('context_card.title',this.value)"></div>
+      <div><label>Intro card text</label><input value="${esc((S.context_card?.content||[]).join(' / '))}" onchange="lfEdit('context_card.content',this.value.split(' / ').map(x=>x.trim()).filter(Boolean))"></div></div>
+    <label style="margin-top:10px">Questions · ${S.questions.length}</label>${S.questions.map(q).join('')}<div class="row"><button class="sm" onclick="lfQAdd()">+ Add a question</button></div>
+    <div class="grid" style="margin-top:10px">
+      <div><label>Thank-you title</label><input value="${esc(S.thank_you_page?.title||'')}" onchange="lfEdit('thank_you_page.title',this.value)"></div>
+      <div><label>Thank-you button</label><select onchange="lfEdit('thank_you_page.button_type',this.value)">${BUTTON_TYPES.map(k=>`<option value="${k}" ${(S.thank_you_page?.button_type||'NONE')===k?'selected':''}>${k.replace(/_/g,' ').toLowerCase()}</option>`).join('')}</select></div>
+      <div style="grid-column:span 2"><label>Thank-you text</label><textarea rows="3" onchange="lfEdit('thank_you_page.body',this.value)">${esc(S.thank_you_page?.body||'')}</textarea></div>
+      <div><label>Button text</label><input value="${esc(S.thank_you_page?.button_text||'')}" onchange="lfEdit('thank_you_page.button_text',this.value)"></div>
+      <div><label>${(S.thank_you_page?.button_type==='CALL_BUSINESS')?'Phone number (with country code)':'Website address (for a website button)'}</label><input value="${esc((S.thank_you_page?.button_type==='CALL_BUSINESS')?(S.thank_you_page?.business_phone_number||''):(S.thank_you_page?.website_url||''))}" onchange="lfEdit(${(S.thank_you_page?.button_type==='CALL_BUSINESS')?"'thank_you_page.business_phone_number'":"'thank_you_page.website_url'"},this.value)"></div>
+      <div><label>Privacy policy address</label><input value="${esc(S.privacy_policy?.url||'')}" onchange="lfEdit('privacy_policy.url',this.value)"></div>
+      <div><label>Privacy link text</label><input value="${esc(S.privacy_policy?.link_text||'')}" onchange="lfEdit('privacy_policy.link_text',this.value)"></div>
+      <div style="grid-column:span 2"><label>Headline above the questions</label><input value="${esc(S.question_page_custom_headline||'')}" onchange="lfEdit('question_page_custom_headline',this.value)"></div></div>
+    <div class="row" style="margin-top:12px"><span class="hint" style="margin:0">Locale ${esc(S.locale||'default')}. Once made, a form cannot be edited on Meta — only archived.</span><div class="spacer"></div><button class="primary" onclick="lfCreateAsk()" ${LF.busy?'disabled':''}>Create on the Page…</button></div>` : '';
+  $('#lfModal').innerHTML = `<div class="modal" onclick="if(event.target===this)lfClose()"><div class="card" style="max-width:860px;max-height:92vh;overflow:auto">
+    <div class="row"><h2 style="margin:0">New instant form</h2><div class="spacer"></div><button onclick="lfClose()">Close</button></div>${ask}${prop}</div></div>`;
+}
+function lfClose(){ $('#lfModal').innerHTML = ''; }
+async function lfPropose(){
+  LF.busy = true; lfPaintModal();
+  try { LF.proposal = await api(`/api/client/${LF.gym}/lead-forms/propose`, { method:'POST', body:{ offer: LF.ask.offer, old_offer: LF.ask.old_offer||null, callout: LF.ask.callout||null, old_district: LF.ask.old_district||null, name: LF.ask.name||null } }); }
+  catch(e){ toast(e.message, 'err'); }
+  LF.busy = false; lfPaintModal();
+}
+function lfEdit(path, val){ setPath(LF.proposal.spec, path, val); LF.proposal.problems = []; }
+function lfQ(i, k, val){ const q = LF.proposal.spec.questions[i]; if (k==='options'){ const opts = val.split('\n').map(x=>x.trim()).filter(Boolean); if (opts.length) q.options = opts.map(value=>({ value })); else delete q.options; } else { q[k] = val; if (k==='type' && val!=='CUSTOM') delete q.options; } LF.proposal.problems = []; lfPaintModal(); }
+function lfQMove(i, d){ const a = LF.proposal.spec.questions, j = i + d; if (j<0||j>=a.length) return; [a[i],a[j]] = [a[j],a[i]]; lfPaintModal(); }
+function lfQDel(i){ LF.proposal.spec.questions.splice(i,1); lfPaintModal(); }
+function lfQAdd(){ LF.proposal.spec.questions.push({ type:'CUSTOM', label:'' }); lfPaintModal(); }
+function lfCreateAsk(){
+  const S = LF.proposal.spec, page = LF.data.page_name || 'the gym\'s Page';
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h2>Create this form on ${esc(page)}?</h2>
+    <div class="summary"><b>${esc(S.name)}</b> · ${S.questions.length} question${S.questions.length===1?'':'s'}</div>
+    <p class="hint">One call to Meta. The form goes live on the Page but is used by nothing until an ad points to it. It cannot be edited afterwards, only archived.</p>
+    <div class="row" style="margin-top:12px"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" onclick="$('#gModal').innerHTML='';lfCreate()">Yes, create it</button></div></div></div>`;
+}
+async function lfCreate(){
+  LF.busy = true; lfPaintModal();
+  try {
+    const r = await api(`/api/client/${LF.gym}/lead-forms/create`, { method:'POST', body:{ spec: LF.proposal.spec, offer: LF.ask.offer } });
+    toast(`Form "${r.made.name}" created on the Page.`); lfClose(); LF.proposal = null;
+    if (LF.onCreated) await LF.onCreated(r.made);
+    await lfReload();
+  } catch(e){ LF.busy = false; const probs = e.problems || null; if (LF.proposal){ LF.proposal.problems = probs || [e.message]; } lfPaintModal(); return; }
+  LF.busy = false;
 }
 
 // ── Edit + save ──────────────────────────────────────────────────────────────

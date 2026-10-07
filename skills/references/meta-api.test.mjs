@@ -727,3 +727,37 @@ test("M12 a Taiwan gym's plan (2026-10-07, F45 Xinyi): no Singapore identity ask
   assert.equal(bodies[0], "信義區的妳，六週中年體態雕塑計畫現在開始。\n點擊立即報名。");
   assert.equal(titles[0], "信義區女生限定：六週中年體態雕塑計畫");
 });
+
+test("M13 a callout with no pin takes the account's most-used pin (2026-10-07): from the reading when there is one, else from the ad sets; a place with its radius and name, the callout on it; a second callout gets the same; an account that never pinned takes the gym's location point; neither is said; nothing for a callout that has a pin", async () => {
+  const { findPin } = await import("./meta-publish.mjs");
+  const { pinFor, validateProfile } = await import("./client-config.mjs");
+  const fresh = () => ({ locale: { country: "SG" }, meta_assets: { ad_account_id: "act_111" }, locations: [{ label: "Sin Ming", postal_code: "575583", lat: 1.35, lng: 103.83 }], targeting_defaults: { geo: { countries: ["SG"], radius_pins: [] } } });
+  // The account's ad sets as the fixture first has them (earlier tests replace this answer): the Sin Ming place (2 ad sets) over the Bishan point (1).
+  const place = { key: "107327800879305", name: "6 Sin Ming Road, Tower 2", latitude: "1.353055", longitude: "103.836321", radius: 5, distance_unit: "kilometer" };
+  answers["act_111/adsets"] = () => ({ data: [
+    { id: "s1", name: "0715 Thomson | Fit Fathers", targeting: { geo_locations: { places: [place], location_types: ["home", "recent"] } } },
+    { id: "s2", name: "0331 Thomson | Abs", targeting: { geo_locations: { places: [place], location_types: ["home", "recent"] } } },
+    { id: "s3", name: "Bishan test", targeting: { geo_locations: { custom_locations: [{ latitude: 1.3524823, longitude: 103.835747, radius: 3, distance_unit: "kilometer" }], location_types: ["home"] } } },
+  ] });
+  let p = fresh(), r = await findPin(p, client(), { callouts: ["THOMSON", "BISHAN"] });
+  assert.equal(r.filled.length, 2);
+  assert.deepEqual([r.filled[0].callout, r.filled[0].pin.place_key, r.filled[0].pin.place_name, r.filled[0].pin.radius_km, r.filled[0].pin.callouts, r.filled[0].pin.source, r.filled[0].adsets, r.filled[0].from], ["THOMSON", "107327800879305", "6 Sin Ming Road, Tower 2", 5, ["THOMSON"], "account-history", 2, "the ad account's ad sets"]);
+  assert.equal(r.filled[1].pin.callouts[0], "BISHAN");
+  assert.equal(r.filled[0].others[0].adsets, 1, "the other pin the account ran is said");
+  assert.deepEqual((validateProfile(p).errors || []).filter((e) => /pin|callout/i.test(e)), [], "the filled pins pass the profile's pin rules");
+  assert.equal(pinFor(p, "THOMSON").pin.place_key, "107327800879305");
+  // From the reading, no call: the most-used pin there.
+  calls = [];
+  p = fresh(); r = await findPin(p, client(), { callouts: ["TAIPEI"], reading: { pins: [{ kind: "place", key: "234073976634411", name: "Taipei 101", lat: 25.03, lng: 121.56, radius_km: 2.5, location_types: ["home", "recent"], adsets: 28 }, { kind: "place", key: "107977882563092", name: "Taipei 101 (2)", lat: 25.03, lng: 121.56, radius_km: 4.5, location_types: ["home", "recent"], adsets: 50 }] } });
+  assert.deepEqual([r.filled[0].pin.place_key, r.filled[0].pin.radius_km, r.filled[0].from, calls.length], ["107977882563092", 4.5, "the From the ad account reading", 0], "the most used, whatever the order; no call");
+  // A callout that already has a pin: nothing.
+  r = await findPin(p, client(), { callouts: ["TAIPEI"] });
+  assert.deepEqual([r.needed, r.filled], [false, []]);
+  // No pin anywhere in the account: the gym's own location point.
+  p = fresh(); r = await findPin(p, client(), { callouts: ["THOMSON"], reading: { pins: [] } });
+  assert.deepEqual([r.filled[0].pin.lat, r.filled[0].pin.lng, r.filled[0].pin.source, r.filled[0].pin.postal_code], [1.35, 103.83, "gym-location", "575583"]);
+  // Neither: said, nothing written.
+  p = { ...fresh(), locations: [] }; r = await findPin(p, client(), { callouts: ["THOMSON"], reading: { pins: [] } });
+  assert.deepEqual(r.filled, []); assert.match(r.reason, /add a pin on Targeting & budget/);
+  assert.equal(p.targeting_defaults.geo.radius_pins.length, 0);
+});

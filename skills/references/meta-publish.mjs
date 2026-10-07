@@ -35,7 +35,7 @@ export const WHOLE_UNIT_CURRENCIES = ["TWD", "JPY", "KRW", "VND", "CLP", "HUF", 
 export const budgetUnits = (currency) => (WHOLE_UNIT_CURRENCIES.includes(String(currency || "").toUpperCase()) ? 1 : 100);
 
 export const AD_STATUS = "PAUSED";
-const DEFAULT_RADIUS_KM = 5;
+const DEFAULT_RADIUS_KM = 5, RADIUS_MIN = 1, RADIUS_MAX = 80;
 const CTA = "SIGN_UP";
 /** Meta's Advantage+ creative enhancements for a single-image link ad (v25 "Get started with Advantage+ creative");
  *  the blanket `standard_enhancements` switch was deprecated in v22, so each feature is opted out by name. */
@@ -344,6 +344,42 @@ export async function findSingaporeIdentity(profile, client) {
   const choices = (await client.regulationIdentities(m.ad_account_id)).filter((x) => x.category === "SINGAPORE_UNIVERSAL" && x.beneficiary && x.payer);
   if (choices.length === 1) { setSingaporeIdentity(profile, choices[0]); return { needed: true, set: choices[0], choices }; }
   return { needed: true, choices, reason: choices.length ? `the account's ad sets carry ${choices.length} different Singapore identities: choose the one this gym advertises as` : "no ad set in this ad account names a Singapore beneficiary and payer yet: publish one ad by hand in Ads Manager (it asks for the verified advertiser), then open this screen again" };
+}
+/**
+ * A callout with no pin gets one from the account (2026-10-07; the owner's rule: the most used). F45 Xinyi's
+ * first Publish screen said "信義區: no usable pin" while the account's 106 ad sets pin on three Meta places.
+ * The pin the account's ad sets have used most — from the From the ad account reading when there is one
+ * (no call), else read from the ad sets — is written into the profile for every callout without one, at the
+ * radius it ran with; an account that has never pinned anywhere takes the gym's own location point at the
+ * default radius; neither → said, nothing written. The owner changes it on Targeting & budget like any pin.
+ */
+export async function findPin(profile, client, { callouts = [], reading = null } = {}) {
+  const geo = ((profile.targeting_defaults ||= {}).geo ||= {}); geo.radius_pins ||= [];
+  const missing = [...new Set(callouts.map((c) => String(c || "").trim()).filter(Boolean))].filter((c) => !pinUsable(pinFor(profile, c).pin));
+  if (!missing.length) return { needed: false, filled: [] };
+  let pins = Array.isArray(reading?.pins) ? reading.pins : null, from = "the From the ad account reading";
+  if (!pins) {
+    if (!profile.meta_assets?.ad_account_id) return { needed: true, filled: [], reason: "pick the gym's ad account on the Meta link page first" };
+    pins = await client.historyPins(profile.meta_assets.ad_account_id); from = "the ad account's ad sets";
+  }
+  const usable = pins.filter((p) => (p.kind === "place" ? /^\d{5,20}$/.test(String(p.key || "")) : Number.isFinite(p.lat) && Number.isFinite(p.lng))).sort((a, b) => (b.adsets || 0) - (a.adsets || 0));
+  const best = usable[0], filled = [];
+  if (best) {
+    for (const c of missing) {
+      const pin = { label: best.name || `${c} (from the ad account)`, postal_code: "", lat: Number.isFinite(best.lat) ? best.lat : null, lng: Number.isFinite(best.lng) ? best.lng : null, radius_km: Number.isFinite(best.radius_km) ? Math.min(RADIUS_MAX, Math.max(RADIUS_MIN, best.radius_km)) : DEFAULT_RADIUS_KM, location_types: Array.isArray(best.location_types) && best.location_types.length ? best.location_types : ["home", "recent"], place_key: best.kind === "place" ? String(best.key) : "", place_name: best.kind === "place" ? best.name || "" : "", callouts: [c], source: "account-history" };
+      geo.radius_pins.push(pin);
+      filled.push({ callout: c, pin, from, adsets: best.adsets || 0, example: best.example || null, others: usable.slice(1, 4).map((p) => ({ name: p.name || `${p.lat}, ${p.lng}`, radius_km: p.radius_km, adsets: p.adsets || 0 })) });
+    }
+    return { needed: true, filled };
+  }
+  const loc = (profile.locations || []).find((l) => Number.isFinite(l?.lat) && Number.isFinite(l?.lng));
+  if (!loc) return { needed: true, filled: [], reason: "no ad set in this account has pinned anywhere yet, and the gym's location has no point on the map: add a pin on Targeting & budget" };
+  for (const c of missing) {
+    const pin = { label: loc.label || c, postal_code: loc.postal_code || "", lat: loc.lat, lng: loc.lng, radius_km: DEFAULT_RADIUS_KM, location_types: ["home", "recent"], place_key: "", place_name: "", callouts: [c], source: "gym-location" };
+    geo.radius_pins.push(pin);
+    filled.push({ callout: c, pin, from: "the gym's own location (no ad set in this account has pinned anywhere yet)", adsets: 0, example: null, others: [] });
+  }
+  return { needed: true, filled };
 }
 export function setSingaporeIdentity(profile, c) {
   const m = (profile.meta_assets ||= {});

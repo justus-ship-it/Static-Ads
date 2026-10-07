@@ -32,11 +32,12 @@ import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
   scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
-  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES } from "../skills/references/client-config.mjs";
+  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor } from "../skills/references/client-config.mjs";
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
-import { buildPlan, keptAds, CTA_TYPES, findSingaporeIdentity, setSingaporeIdentity } from "../skills/references/meta-publish.mjs";
+import { buildPlan, keptAds, CTA_TYPES, findSingaporeIdentity, setSingaporeIdentity, findPin } from "../skills/references/meta-publish.mjs";
+import { readForms, templateFrom, proposeForm, formProblems, createForm, readLeadForms, writeLeadForms } from "../skills/references/lead-forms.mjs";
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -866,6 +867,28 @@ async function fillPinPoints(profile, { geocode = geocodePostal } = {}) {
 }
 // The identity lookup is one Meta call; an account with none or several is not asked again for a minute.
 const identityMemo = new Map();
+/** A callout with no pin, filled from the ad account's most-used pin (GET only; the owner's rule, 2026-10-07). */
+const pinMemo = new Map();
+async function pinFillFor(gym, callouts) {
+  const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
+  if (!callouts.length || callouts.every((c) => pinUsable(pinFor(profile, c).pin))) return null;
+  const reading = readJsonFile(join(brandDir(gym), "onboarding", "meta", "reading.json"));
+  const cfg = metaConfig({ gym });
+  if (!reading?.pins && !cfg.token) return { filled: [], reason: "the Meta link is not set up yet (Meta link page)" };
+  const key = `${gym}|${callouts.join("|")}`, memo = pinMemo.get(key);
+  if (memo && Date.now() - memo.at < 60000) return memo.value;
+  let value;
+  try {
+    const r = await findPin(profile, cfg.token ? graphClient({ config: cfg }) : null, { callouts, reading });
+    if (r.filled.length) {
+      const problems = validateProfile(profile).errors || [];
+      if (problems.length) value = { filled: [], reason: `the pin from the account does not fit the profile: ${problems.join("; ")}` };
+      else { writeWhole(pf, JSON.stringify(profile, null, 2) + "\n"); pinMemo.delete(key); return { filled: r.filled }; }
+    } else value = { filled: [], reason: r.reason || null };
+  } catch (e) { value = { filled: [], reason: `the ad account's pins could not be read: ${scrubTokens(e.message)}` }; }
+  pinMemo.set(key, { at: Date.now(), value });
+  return value;
+}
 async function singaporeIdentityFor(gym) {
   const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
   const m = profile.meta_assets || {};
@@ -1047,6 +1070,67 @@ const server = createServer(async (req, res) => {
       if (gym && !okSlug(gym)) return json(res, 400, { error: "bad gym" });
       const c = metaConfig({ gym: gym || null });
       return json(res, 200, { configured: !!c.token, app_id: !!c.appId, app_secret: !!c.appSecret, version: META_API_VERSION, permissions: META_PERMISSIONS, keys: META_ENV_KEYS, names: c.names, used: c.used });
+    }
+    // ── Instant forms built here (2026-10-07): the Page's forms, the gym's template, a proposal for an offer, creation
+    //    on the Page (the owner's click), the gym's default form. Nothing is sent to Meta but the create.
+    const lf = p.match(/^\/api\/client\/([^/]+)\/lead-forms(?:\/(template|propose|create|default))?$/);
+    if (lf) {
+      const gym = lf[1], action = lf[2] || null;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym), pf = join(dir, "gym-profile.json"), profile = readJsonFile(pf) || {};
+      const pageId = profile.meta_assets?.page_id || null, cfg = metaConfig({ gym });
+      const data = readLeadForms(dir), base = { page_id: pageId, page_name: profile.meta_assets?.labels?.page || null, record: data, default_form_id: profile.meta_assets?.lead_form_id || null, district: profile.creative_defaults?.locations?.[0] || null };
+      const client = () => graphClient({ config: cfg });
+      if (!action && req.method === "GET") {
+        if (!cfg.token) return json(res, 200, { ...base, configured: false, forms: [], reason: "the Meta link is not set up yet (Meta link page)" });
+        if (!pageId) return json(res, 200, { ...base, configured: true, forms: [], reason: "pick the gym's Facebook Page on the Meta link page first" });
+        try { return json(res, 200, { ...base, configured: true, forms: await readForms(client(), pageId) }); }
+        catch (e) { return json(res, 502, { error: `the Page's forms could not be read: ${scrubTokens(e.message)}` }); }
+      }
+      if (action === "template" && req.method === "POST") {
+        const body = await readBody(req);
+        if (!/^\d{5,20}$/.test(String(body.id || ""))) return json(res, 400, { error: "id must be one of the Page's forms" });
+        if (!cfg.token || !pageId) return json(res, 409, { error: "the Meta link and the gym's Page are needed first (Meta link page)" });
+        let forms;
+        try { forms = await readForms(client(), pageId); } catch (e) { return json(res, 502, { error: `the Page's forms could not be read: ${scrubTokens(e.message)}` }); }
+        const form = forms.find((f) => String(f.id) === String(body.id));
+        if (!form) return json(res, 404, { error: "that form is not on the gym's Page" });
+        data.template = { ...templateFrom(form, { district: base.district }), set: new Date().toISOString() };
+        writeLeadForms(dir, data);
+        return json(res, 200, { template: data.template });
+      }
+      if (action === "propose" && req.method === "POST") {
+        const body = await readBody(req);
+        if (!data.template) return json(res, 409, { error: "choose one of the Page's forms as the template first" });
+        const str = (k, max = 300) => (body[k] == null || body[k] === "" ? null : typeof body[k] === "string" && body[k].length <= max ? body[k] : undefined);
+        for (const k of ["offer", "old_offer", "callout", "old_district", "name"]) if (str(k) === undefined) return json(res, 400, { error: `${k} must be text (up to 300 characters)` });
+        try {
+          const r = proposeForm(data.template, { offer: str("offer"), oldOffer: str("old_offer"), callout: str("callout"), oldDistrict: str("old_district"), name: str("name") });
+          return json(res, 200, { ...r, problems: formProblems(r.spec) });
+        } catch (e) { return json(res, 400, { error: e.message }); }
+      }
+      if (action === "create" && req.method === "POST") {
+        const body = await readBody(req);
+        if (!isPlainObject(body.spec)) return json(res, 400, { error: "spec must be the form as proposed" });
+        const problems = formProblems(body.spec);
+        if (problems.length) return json(res, 400, { error: `the form is not ready: ${problems.join("; ")}`, problems });
+        if (!cfg.token || !pageId) return json(res, 409, { error: "the Meta link and the gym's Page are needed first (Meta link page)" });
+        try {
+          const made = await createForm(client(), pageId, body.spec, { gymDir: dir, offer: typeof body.offer === "string" ? body.offer.slice(0, 300) : null, templateId: data.template?.source?.id || null });
+          return json(res, 200, { made });
+        } catch (e) { return json(res, 502, { error: `the form was not created: ${scrubTokens(e.message)}` }); }
+      }
+      if (action === "default" && req.method === "POST") {
+        const body = await readBody(req);
+        if (!/^\d{5,20}$/.test(String(body.id || ""))) return json(res, 400, { error: "id must be a form id" });
+        (profile.meta_assets ||= {}).lead_form_id = String(body.id);
+        if (typeof body.name === "string" && body.name) (profile.meta_assets.labels ||= {}).form = body.name.slice(0, 200);
+        const errors = validateProfile(profile).errors || [];
+        if (errors.length) return json(res, 400, { error: errors.join("; ") });
+        writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+        return json(res, 200, { default_form_id: profile.meta_assets.lead_form_id });
+      }
+      return json(res, 405, { error: "method not allowed" });
     }
     const ml = p.match(/^\/api\/client\/([^/]+)\/meta-link$/);
     if (ml && req.method === "GET") {
@@ -1503,13 +1587,15 @@ const server = createServer(async (req, res) => {
         }
         // The Singapore identity: read from the account's own ad sets when the profile has none (GET only).
         const identity = req.method === "GET" ? await singaporeIdentityFor(gym) : null;
-        const profile = readJsonFile(join(dir, "gym-profile.json")) || {};
         const batch = readJsonFile(join(out, "batch.json")), presets = readPresets(dir);
         const kept = keptAds(out);
+        // A callout with no pin: filled from the ad account's most-used pin before the plan is built (GET only).
+        const pin_fill = req.method === "GET" ? await pinFillFor(gym, [...new Set(kept.map((a) => a.location).filter(Boolean))]) : null;
+        const profile = readJsonFile(join(dir, "gym-profile.json")) || {};
         let plan;
         try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline") }); } catch (e) { return json(res, 400, { error: e.message }); }
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, settings, thumbs, identity, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
+        return json(res, 200, { plan, settings, thumbs, identity, pin_fill, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null })), cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))] }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
       }
       if (what === "results" && req.method === "GET") return json(res, 200, { results: readJsonFile(join(out, "results.json")), rows: batchRows(dir, id), record: readJsonFile(join(out, "publish.json")) });
       if (what === "results/pull" && req.method === "POST") {

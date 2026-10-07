@@ -79,6 +79,9 @@ const METAPERMS_TEXT = META_PERMISSIONS.join(", ");
  * token and appsecret_proof; paging is followed up to `maxPages`; errors become MetaError with the
  * explanation above and never carry the token.
  */
+/** Everything a form carries that a new one is built from. */
+export const LEAD_FORM_FIELDS = "id,name,status,created_time,leads_count,locale,questions{key,type,label,options},privacy_policy_url,legal_content,context_card{title,content,style,button_text},thank_you_page{title,body,button_type,button_text,website_url,business_phone_number},follow_up_action_url,question_page_custom_headline,block_display_for_non_targeted_viewer,is_optimized_for_quality,allow_organic_lead";
+
 export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch, maxPages = 10 } = {}) {
   if (!config.token) throw new MetaError("no META_ACCESS_TOKEN in .env — the Meta link is not set up yet");
   const base = `${config.graphUrl.replace(/\/$/, "")}/${META_API_VERSION}`;
@@ -137,6 +140,11 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
     /** A Page's own token, for the edges that need one (its lead forms). Never stored. */
     pageToken: async (id) => (await get(id, { fields: "access_token" })).access_token,
     leadForms: async (pageId) => { const token = await get(pageId, { fields: "access_token" }).then((r) => r.access_token); return list(`${pageId}/leadgen_forms`, { fields: "id,name,status,created_time,leads_count" }, { token }); },
+    /** The Page's forms in full — questions with their options, the intro card, the thank-you page, the privacy link,
+     *  the locale — the raw material of a form template (lead-forms.mjs). Through the Page's own token. */
+    leadFormDetails: async (pageId) => { const token = await get(pageId, { fields: "access_token" }).then((r) => r.access_token); return list(`${pageId}/leadgen_forms`, { fields: LEAD_FORM_FIELDS }, { token }); },
+    /** Create an instant form on the Page (the owner's action): the spec as lead-forms.mjs builds it. Answers { id }. */
+    createLeadForm: async (pageId, spec) => { const token = await get(pageId, { fields: "access_token" }).then((r) => r.access_token); return post(`${pageId}/leadgen_forms`, spec, { token }); },
     pixels: (adAccountId) => list(`${actId(adAccountId)}/adspixels`, { fields: "id,name,last_fired_time" }),
     /** The verified advertiser identities the account's ad sets already carry for regulated regions
      *  (Singapore: the beneficiary and payer of every ad). Meta has no listing edge for them that a

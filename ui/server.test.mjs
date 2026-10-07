@@ -1006,7 +1006,10 @@ function fakeGraph() {
     if (path === "me/businesses") return ok({ data: [{ id: "555000000005", name: "Test Gym Pte Ltd" }] });
     if (path === "770000000007" && u.searchParams.get("fields") === "access_token") return ok({ access_token: "PAGE-TOKEN" });
     if (path === "770000000007") return ok({ id: "770000000007", name: "Test Gym", instagram_business_account: { id: "880000000008", username: "testgym" } });
-    if (path === "770000000007/leadgen_forms") return ok({ data: [{ id: "400100000001", name: "12 Week Reset form", status: "ACTIVE", leads_count: 3 }] });
+    if (path === "770000000007/leadgen_forms" && req.method === "POST") { made.form = { id: "400100000009", body: Object.fromEntries(u.searchParams) }; return ok({ id: "400100000009" }); }
+    if (path === "770000000007/leadgen_forms") return ok({ data: [{ id: "400100000001", name: "12 Week Reset form", status: "ACTIVE", leads_count: 3, created_time: "2026-05-01T00:00:00+0000", locale: "en_GB",
+      questions: [{ key: "q1", type: "CUSTOM", label: "Do you live or work near Bishan?", options: [{ key: "y", value: "Yes" }, { key: "n", value: "No" }] }, { key: "q2", type: "CUSTOM", label: "Why the 12 Week Reset?" }, { key: "email", type: "EMAIL", label: "Email" }, { key: "full_name", type: "FULL_NAME", label: "Full name" }],
+      privacy_policy_url: "https://testgym.sg/privacy", legal_content: { privacy_policy: { url: "https://testgym.sg/privacy", link_text: "Privacy" } }, context_card: { title: "12 Week Reset", content: ["Tell us about you"], style: "PARAGRAPH_STYLE" }, thank_you_page: { title: "Last step", body: "We will call you", button_type: "CALL_BUSINESS", button_text: "Call", business_phone_number: "+6591234567" }, allow_organic_lead: true }] });
     if (path === "act_111000000001") return ok({ id: "act_111000000001", account_id: "111000000001", name: "Test Gym Ads", currency: "SGD", account_status: 1 });
     if (path === "act_111000000001/adspixels") return ok({ data: [{ id: "600100000001", name: "Test pixel" }] });
     if (path === "act_111000000001/instagram_accounts") return ok({ data: [{ id: "880000000008", username: "testgym" }] });
@@ -1023,7 +1026,7 @@ function fakeGraph() {
     if (path === "search" && u.searchParams.get("type") === "adgeolocationmeta") return ok({ data: { places: Object.fromEntries(JSON.parse(u.searchParams.get("places")).filter((k) => k === "107327800879305").map((k) => [k, { key: k, name: "6 Sin Ming Road, Tower 2", address_string: "Singapore, Singapore", latitude: "1.353055", longitude: "103.836321", country_code: "SG" }])) } });
     res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: `no ${path}`, code: 803 } }));
   });
-  return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ server, url: `http://127.0.0.1:${server.address().port}`, calls })));
+  return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ server, url: `http://127.0.0.1:${server.address().port}`, calls, made })));
 }
 
 test("U16 the Meta link API: without keys the panel says so and calls nothing; with them it lists what the token can act on and resolves the gym's ids — never letting the token out; Setup shows the check", async () => {
@@ -2191,4 +2194,58 @@ test("U37 Run again: a stopped batch's card offers it (and a run that ended on a
     assert.ok(await ev("JSON.stringify(STATE.run).includes('u37-stopped/brief.json') || (document.querySelector('#view')?.textContent||'').includes('u37-stopped/brief.json')"), "the batch command on this brief");
     assert.equal(await ev("STATE.batch"), "u37-stopped");
   } finally { rmSync(out, { recursive: true, force: true }); rmSync(bdir, { recursive: true, force: true }); }
+});
+
+// ── U40 instant forms built here (2026-10-07) ───────────────────────────────
+
+test("U40 lead forms through the panel: the Page's forms listed in full; one set as the template (its offer and district phrases read); a proposal for a new offer with their naming scheme and the words swapped; creation on the Page carries exactly the spec, is refused for a spec with problems before any call, and is recorded; the gym's default form set on the profile; nothing without the Meta link", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json");
+  let r = await (await call(`/api/client/${GYM}/lead-forms`)).json();
+  assert.deepEqual([r.configured, r.forms, !!r.reason], [false, [], true], "no keys: said, nothing read");
+  const graph = await fakeGraph();
+  const main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  try {
+    const profile = JSON.parse(readFileSync(pf, "utf-8"));
+    profile.meta_assets = { ...(profile.meta_assets || {}), page_id: "770000000007", labels: { page: "Test Gym" } };
+    profile.creative_defaults = { ...(profile.creative_defaults || {}), locations: ["BISHAN"] };
+    writeFileSync(pf, JSON.stringify(profile, null, 2));
+    r = await (await call(`/api/client/${GYM}/lead-forms`)).json();
+    assert.deepEqual([r.configured, r.page_id, r.forms.map((f) => f.id), r.forms[0].question_count, r.record.template], [true, "770000000007", ["400100000001"], 4, null]);
+    // The template.
+    assert.equal((await call(`/api/client/${GYM}/lead-forms/template`, { method: "POST", body: { id: "x" } })).status, 400);
+    assert.equal((await call(`/api/client/${GYM}/lead-forms/template`, { method: "POST", body: { id: "400100000099" } })).status, 404, "not on the Page");
+    r = await (await call(`/api/client/${GYM}/lead-forms/template`, { method: "POST", body: { id: "400100000001" } })).json();
+    assert.deepEqual([r.template.source.id, r.template.phrases.offer, r.template.spec.questions.length, r.template.spec.thank_you_page.business_phone_number], ["400100000001", "12 Week Reset", 4, "+6591234567"]);
+    // A proposal: nothing sent to Meta.
+    const before = graph.calls.length;
+    r = await (await call(`/api/client/${GYM}/lead-forms/propose`, { method: "POST", body: { offer: "6 Week Shred", callout: "THOMSON", old_district: "Bishan" } })).json();
+    assert.match(r.spec.name, /^\d{4} 6 Week Shred$/, "no version scheme in the template's name: the date and the offer");
+    assert.deepEqual([r.spec.questions[1].label, r.spec.questions[0].label, r.spec.context_card.title, r.problems], ["Why the 6 Week Shred?", "Do you live or work near THOMSON?", "6 Week Shred", []]);
+    assert.equal(graph.calls.length, before, "a proposal calls Meta for nothing");
+    const specName = r.spec.name;
+    assert.equal((await call(`/api/client/${GYM}/lead-forms/propose`, { method: "POST", body: { offer: "" } })).status, 400);
+    // Creation: a spec with problems is refused before any call; a good one is sent as it is and recorded.
+    const bad = await call(`/api/client/${GYM}/lead-forms/create`, { method: "POST", body: { spec: { ...r.spec, privacy_policy: null } } });
+    assert.equal(bad.status, 400); assert.match((await bad.json()).error, /privacy policy address is required/);
+    assert.equal(graph.made.form, undefined, "nothing created");
+    const made = await (await call(`/api/client/${GYM}/lead-forms/create`, { method: "POST", body: { spec: r.spec, offer: "6 Week Shred" } })).json();
+    assert.deepEqual([made.made.id, made.made.name, made.made.offer, made.made.from_template, made.made.questions], ["400100000009", r.spec.name, "6 Week Shred", "400100000001", 4]);
+    const sent = graph.made.form.body;
+    assert.equal(sent.access_token, "PAGE-TOKEN", "through the Page's own token");
+    assert.deepEqual(JSON.parse(sent.questions)[0], { type: "CUSTOM", label: "Do you live or work near THOMSON?", options: [{ value: "Yes" }, { value: "No" }] });
+    assert.deepEqual(JSON.parse(sent.privacy_policy), { url: "https://testgym.sg/privacy", link_text: "Privacy" });
+    assert.deepEqual(JSON.parse(sent.thank_you_page).button_type, "CALL_BUSINESS");
+    assert.equal(sent.locale, "en_GB");
+    const rec = JSON.parse(readFileSync(join(g, "lead-forms.json"), "utf-8"));
+    assert.deepEqual([rec.created.length, rec.created[0].id, rec.template.source.id], [1, "400100000009", "400100000001"]);
+    // The gym's default form, on the profile.
+    assert.equal((await call(`/api/client/${GYM}/lead-forms/default`, { method: "POST", body: { id: "nope" } })).status, 400);
+    r = await (await call(`/api/client/${GYM}/lead-forms/default`, { method: "POST", body: { id: "400100000009", name: specName } })).json();
+    assert.equal(r.default_form_id, "400100000009");
+    const p2 = JSON.parse(readFileSync(pf, "utf-8"));
+    assert.deepEqual([p2.meta_assets.lead_form_id, p2.meta_assets.labels.form], ["400100000009", specName]);
+    r = await (await call(`/api/client/${GYM}/lead-forms`)).json();
+    assert.equal(r.default_form_id, "400100000009");
+  } finally { await panel.stop(); panel = main; graph.server.close(); }
 });
