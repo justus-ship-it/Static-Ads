@@ -55,6 +55,8 @@ export const STORIES_CHECKS = `${CHECKS_VERSION}-s1`;
 const CHECK_LOOK = { style: "s1-heavy-sans", palette: "white-on-dark" };
 /** The fitted band for a wide real photo: the copy behind it is blurred and darkened, as T8's 9:16 backdrop. */
 export const BAND = { blur_pct: 4, darken: 0.45 };
+/** The stacked band (the photo above the words): the layout's text must leave this much of the canvas height above it, less a gap. */
+export const STACK_MIN_H = 0.3, STACK_GAP = 24;
 const short = (id) => id.split("-")[0];
 
 /**
@@ -107,7 +109,7 @@ export function cropWindow([iw, ih], [fx, fy] = [0.5, 0.5], [W, H] = [1080, 1080
  * the window `crop` of it, in photo pixels) sits across the live band (y 14–65%), fitted to its width
  * or height and centred. Returns where it landed, [x, y, w, h] in pixels.
  */
-export async function bandImage(browser, src, out, { canvas = [1080, 1920], live = [0.14, 0.65], crop = null, blur_pct = BAND.blur_pct, darken = BAND.darken } = {}) {
+export async function bandImage(browser, src, out, { canvas = [1080, 1920], live = [0.14, 0.65], crop = null, blur_pct = BAND.blur_pct, darken = BAND.darken, window: win = null } = {}) {
   const [W, H] = canvas;
   const r = await inPage(browser, `${LOAD}
 const im = await load(${JSON.stringify(imageDataUrl(src))});
@@ -120,10 +122,11 @@ ctx.save(); ctx.filter = "blur(" + blur + "px)";
 ctx.drawImage(im, sx, sy, sw, sh, -m + (W + 2 * m - dw) / 2, -m + (H + 2 * m - dh) / 2, dw, dh);
 ctx.restore();
 ctx.fillStyle = "rgba(0,0,0,${darken})"; ctx.fillRect(0, 0, W, H);
-const y0 = ${live[0]} * H, y1 = ${live[1]} * H, maxH = y1 - y0;
-let w = W, h = (W * sh) / sw;
+const win = ${JSON.stringify(win)};
+const y0 = win ? win[1] : ${live[0]} * H, y1 = win ? win[1] + win[3] : ${live[1]} * H, maxH = y1 - y0, maxW = win ? win[2] : W, x0 = win ? win[0] : 0;
+let w = maxW, h = (maxW * sh) / sw;
 if (h > maxH) { h = maxH; w = (h * sw) / sh; }
-const x = (W - w) / 2, y = y0 + (maxH - h) / 2;
+const x = x0 + (maxW - w) / 2, y = y0 + (maxH - h) / 2;
 ctx.drawImage(im, sx, sy, sw, sh, x, y, w, h);
 return { png: c.toDataURL("image/png").split(",")[1], band: [x, y, w, h] };`);
   mkdirSync(dirname(out), { recursive: true });
@@ -425,6 +428,50 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
         break;
       }
     }
+    // ── the photo above the words (2026-10-07) ──
+    // An ad no layout can carry at 9:16 with the photo under the words (c11 again: three faces across the
+    // frame at mid height, so every layout's duration or offer line lands on one) gets the stacked band:
+    // the 1:1 crop of the chosen photo fitted into the space above the layout's text, on the blurred
+    // backdrop, the words below it where no face can be. The own layout first, then any whose text leaves
+    // room above it (`STACK_MIN_H` of the canvas height). No image call.
+    const stackWindow = (la) => {
+      const top = Math.min(...layoutFor(T.treatments[la], RATIO, T).groups.map((g) => (g.region[1] / 100) * 1920));
+      return top >= STACK_MIN_H * 1920 ? [0, 0, 1080, Math.round(top - STACK_GAP)] : null;
+    };
+    const stackId = (pid, la) => `${pid}-${RATIO}-stack-${short(la)}`;
+    const stackFor = async (p, la, why) => {
+      const id = stackId(p.id, la), win = stackWindow(la);
+      if (!win) return null;
+      if (!(prior[id]?.status === "passed" && existsSync(prior[id].file))) {
+        const src = at(p.file), size = imageSize(readFileSync(src));
+        const ad = batch.ads.find((a) => a.photos[0] === p.id && a.photos.length === 1 && a.treatment === p.layouts?.[0]) || batch.ads.find((a) => a.photos[0] === p.id && a.photos.length === 1);
+        const crop = cropWindow(size, ad?.crop?.[0] || [0.5, 0.5]);
+        const file = join(visualsDir, `${id}.png`), band = await bandImage(browser, src, file, { crop, window: win }), pic = pictures[p.id]?.check;
+        const answer = inBand(pic?.placement ? { people_box: pic.placement.people_box, face_boxes: pic.faces, people_count: pic.placement.people_count } : null, band, { crop, size });
+        prior[id] = { status: "passed", kind: "band", stacked: true, for: p.id, treatment: la, file, band, crop, checks: STORIES_CHECKS, answer, notes: [`the 1:1 ad's crop of the chosen photo above the words, on the blurred backdrop: ${why}`], failures: [] };
+        log(`· ${p.id}: ${short(la)} with the chosen photo's 1:1 crop above the words (no image call)`);
+      }
+      admit(id, prior[id], visualsById[p.id]?.people ?? null);
+      // The words sit below the photo by construction, so the layout is allowed whatever its placement rule says of the photo above.
+      if (!allowed[id].includes(la)) { allowed[id].push(la); focus[id][la] = [0.5, 0.5]; }
+      return id;
+    };
+    for (const [i, r] of [...results.entries()]) {
+      const a0 = r.ads[0];
+      if (!r.failed || a0.background !== "single") continue;
+      const own = a0.treatment, pid = a0.photos[0], ownWhy = r.failed.join("; ");
+      const p = plan.photos.find((x) => x.id === pid); if (!p) continue;
+      for (const la of [own, ...singleLayouts.filter((x) => x !== own)]) {
+        const id = await stackFor(p, la, ownWhy); if (!id) continue;
+        const key = r.ads.map((a) => a.location).sort().join("|"), before = results.length;
+        await renderGroups(new Map([[key, [{ id: r.id, visual: id, images: [id], treatment: la, style: a0.style, palette: a0.palette, ads: r.ads }]]]));
+        const [x] = results.splice(before);
+        if (x.failed) { log(`- ${r.id}: ${short(la)} with the photo above the words does not verify either (${x.failed.join("; ")})`); continue; }
+        results[i] = { ...x, stacked: true, ...(la !== own ? { look_changed: { from: own, to: la, why: ownWhy } } : {}) };
+        log(`· ${r.id}: no layout carries the words over this photo at 9:16 (${ownWhy}) — the Stories version puts the photo above the words${la !== own ? ` in ${short(la)}` : ""}, same style, palette and words; the feed ad keeps its look`);
+        break;
+      }
+    }
     const ads = [], failed = [];
     for (const r of results) {
       if (r.failed) { failed.push({ candidate: r.id, folders: r.ads.map((a) => a.folder), failures: r.failed }); continue; }
@@ -434,7 +481,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
         const file = storiesFile(ad.file);
         mkdirSync(dirname(join(out, file)), { recursive: true });
         writeFileSync(join(out, file), render.r.png);
-        ads.push({ folder: ad.folder, file, file_1x1: ad.file, candidate: r.id, location: ad.location, photos: r.images, photo_files: r.images.map((id) => basename(fileOf(id))), treatment: r.treatment, style: r.style, palette: r.palette, ratio: RATIO, crop: r.images.map((id) => focus[id]?.[r.treatment] || [0.5, 0.5]), words: ad.words, ...(r.look_changed ? { look_changed: r.look_changed } : {}) });
+        ads.push({ folder: ad.folder, file, file_1x1: ad.file, candidate: r.id, location: ad.location, photos: r.images, photo_files: r.images.map((id) => basename(fileOf(id))), treatment: r.treatment, style: r.style, palette: r.palette, ratio: RATIO, crop: r.images.map((id) => focus[id]?.[r.treatment] || [0.5, 0.5]), words: ad.words, ...(r.look_changed ? { look_changed: r.look_changed } : {}), ...(r.stacked ? { stacked: true } : {}) });
       }
     }
     // A run for some ads only keeps the rest of the record: the other ads' versions, failures and left-outs.

@@ -18,7 +18,7 @@ import { runBatch } from "./plan-offer-batch.mjs";
 import { buildVisualPrompt, ANCHOR_CLAUSE } from "./visual-prompts.mjs";
 import { generateVisuals } from "./generate-visuals.mjs";
 import { judgeSibling } from "./check-quality.mjs";
-import { runStories, planStories, bandImage, storiesFile, STORIES_CHECKS, RATIO } from "./make-stories.mjs";
+import { runStories, planStories, bandImage, storiesFile, STORIES_CHECKS, RATIO, STACK_MIN_H, STACK_GAP } from "./make-stories.mjs";
 
 const CAT = loadCatalogue();
 const T = CAT.treatments;
@@ -594,6 +594,43 @@ test("S13 a look the 9:16 photo fits (2026-10-07): an ad whose own look will not
     assert.deepEqual([mine.look_changed.from, mine.look_changed.to], [own, mine.treatment]);
     assert.ok(existsSync(join(out, mine.file)), "the 9:16 file is on disk");
     assert.ok(logs.some((l) => l.includes(`${ad.candidate}: its own look ${short(own)} does not work at 9:16`)), logs.join("\n"));
+    assert.equal(JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).ads.find((a) => a.folder === ad.folder).treatment, own, "the feed ad keeps its look");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("S14 the photo above the words (2026-10-07): an ad no layout can carry at 9:16 — faces across the frame under every layout's lines, the band failing too — gets the stacked band: the 1:1 crop fitted above the layout's text on the blurred backdrop, the words below it, verified; the record says stacked", async () => {
+  const dir = brandSetup();
+  try {
+    const { out, batch } = await finishedBatch(dir);
+    const first = batch.photos.find((p) => p.kind === "generated").id;
+    const ad = batch.ads.find((a) => a.photos.length === 1 && a.photos[0] === first), own = ad.treatment;
+    // The native 9:16 answer: three faces across the whole live area at every height the layouts write at.
+    const faces = [[300, 60, 980, 340], [300, 360, 980, 640], [300, 660, 980, 940]]; // [y1, x1, y2, x2] ‰
+    const check = async (file, opts) => basename(file).startsWith(`${first}-${RATIO}`)
+      ? { ok: true, failures: [], notes: [], stray_text: [], excluded: [], dismissed: [], faces, focus: [0.5, 0.4], placement: { people_box: [250, 50, 980, 950], people_count: 3 } }
+      : check9(file, opts);
+    // The 1:1 record: the same three faces fill the frame, so every band under the words fails as well.
+    const picsPath = join(out, "pictures.json"), pics = JSON.parse(readFileSync(picsPath, "utf-8"));
+    pics[first].check.faces = [[100, 50, 950, 330], [100, 350, 950, 650], [100, 670, 950, 950]]; pics[first].check.placement.people_box = [50, 30, 980, 970]; pics[first].check.placement.people_count = 3;
+    writeFileSync(picsPath, JSON.stringify(pics));
+    const calls = [], logs = [];
+    const deps = { generate: generate(calls), check, sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser, gallery: () => {} };
+    const r = await runStories({ brandDir: dir, batchId: "test-batch", maxCalls: 12, deps, log: (m) => logs.push(m) });
+    const mine = r.stories.ads.find((a) => a.folder === ad.folder);
+    assert.ok(mine, `the ad has a Stories version (failed: ${JSON.stringify(r.stories.failed)}; logs: ${logs.filter((l) => l.includes(ad.candidate)).join(" | ")})`);
+    assert.equal(mine.stacked, true, "the stacked band");
+    assert.match(mine.photos[0], new RegExp(`^${first}-${RATIO}-stack-t\\d$`));
+    const rec = r.stories.photos[mine.photos[0]];
+    assert.deepEqual([rec.kind, rec.stacked, rec.treatment], ["band", true, mine.treatment]);
+    assert.match(rec.notes[0], /^the 1:1 ad's crop of the chosen photo above the words/);
+    // The photo sits above the layout's text: the band's bottom is above the topmost text region.
+    const top = Math.min(...layoutFor(T.treatments[mine.treatment], RATIO, T).groups.map((g) => (g.region[1] / 100) * 1920));
+    assert.ok(rec.band[1] + rec.band[3] <= top, `band ${rec.band} ends above the words at ${top}`);
+    assert.ok(rec.band[3] >= STACK_MIN_H * 1920 - STACK_GAP - 1, "the photo is not tiny");
+    assert.deepEqual(pngSize(readFileSync(rec.file)), [1080, 1920]);
+    assert.deepEqual([mine.style, mine.palette, mine.words], [ad.style, ad.palette, ad.words], "same style, palette and words");
+    assert.ok(existsSync(join(out, mine.file)), "the 9:16 file is on disk");
+    assert.ok(logs.some((l) => l.includes(`${ad.candidate}: no layout carries the words over this photo at 9:16`)), logs.join("\n"));
     assert.equal(JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).ads.find((a) => a.folder === ad.folder).treatment, own, "the feed ad keeps its look");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
