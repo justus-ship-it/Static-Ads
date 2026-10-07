@@ -38,6 +38,7 @@ import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS,
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
 import { buildPlan, keptAds, CTA_TYPES, findSingaporeIdentity, setSingaporeIdentity, findPin } from "../skills/references/meta-publish.mjs";
 import { readForms, templateFrom, proposeForm, formProblems, createForm, readLeadForms, writeLeadForms } from "../skills/references/lead-forms.mjs";
+import { runImport, importProposal, applyImport, readImport, STEPS as IMPORT_STEPS, HISTORY_TOP } from "../skills/references/import-gym.mjs";
 import { TARGETING_LIBRARY_DIR, readLibrary as readTargetingLibrary, seedDrafts as seedTargetingDrafts, liveEntries as liveTargeting, approveEntry as approveTargeting, retireEntry as retireTargeting, restoreEntry as restoreTargeting, addEntry as addTargeting, asPreset as libraryPreset } from "../skills/references/targeting-library.mjs";
 /** The shared targeting library, the curated drafts seeded the first time it is read. */
 const targetingLibrary = () => seedTargetingDrafts(TARGETING_LIBRARY_DIR).data;
@@ -60,6 +61,7 @@ const REPO_ROOT = resolve(UI_DIR, "..");
 const BRANDS = resolve(process.env.PANEL_BRANDS_DIR || join(REPO_ROOT, "brands"));
 const SWIPE = join(REPO_ROOT, "swipe");
 const BATCH_SCRIPT = join(REPO_ROOT, "skills", "references", "plan-offer-batch.mjs");
+const IMPORT_SCRIPT = join(REPO_ROOT, "skills", "references", "import-gym.mjs");
 const STORIES_SCRIPT = join(REPO_ROOT, "skills", "references", "make-stories.mjs");
 const REFRESH_SCRIPT = join(REPO_ROOT, "skills", "references", "refresh-scenes.mjs");
 const CLEAN_SCRIPT = join(REPO_ROOT, "skills", "references", "clean-photo.mjs");
@@ -134,6 +136,7 @@ const RUNNABLE = {
   // Onboarding, part one: read the gym's website into a proposal (model calls for the sort and the colours;
   // no image generation). The address is checked for shape before it becomes an argument.
   "website-read": { label: "Read the website", argv: ({ gym, url }) => [READ_SCRIPT, "--brand-dir", brandDir(gym), "--url", url] },
+  "profile-import": { label: "Import from Meta", argv: ({ gym, skip }) => [IMPORT_SCRIPT, "--brand-dir", brandDir(gym), ...(skip?.length ? ["--skip", skip.join(",")] : [])] },
   // Onboarding, part two: a gym's Instagram photos through Meta's Business Discovery (read-only; model calls
   // for the sort). The handle is checked for shape before it becomes an argument.
   "instagram-read": { label: "Read Instagram", argv: ({ gym, handle, posts }) => [IG_SCRIPT, "--brand-dir", brandDir(gym), "--handle", handle, "--posts", String(posts)] },
@@ -1092,6 +1095,54 @@ const server = createServer(async (req, res) => {
       const c = metaConfig({ gym: gym || null });
       return json(res, 200, { configured: !!c.token, app_id: !!c.appId, app_secret: !!c.appSecret, version: META_API_VERSION, permissions: META_PERMISSIONS, keys: META_ENV_KEYS, names: c.names, used: c.used });
     }
+    // ── The Strategym portfolio (2026-10-07): what the system user can act on, and which gym each is linked to ──
+    if (p === "/api/meta/portfolio" && req.method === "GET") {
+      const cfg = metaConfig();
+      if (!cfg.token) return json(res, 200, { configured: false, accounts: [], pages: [] });
+      try {
+        const c = graphClient({ config: cfg });
+        const [accounts, pages] = await Promise.all([c.adAccounts(), c.pages()]);
+        const gyms = listClients().map((g) => ({ gym: g.gym, name: g.display_name || g.gym, m: (readJsonFile(join(brandDir(g.gym), "gym-profile.json")) || {}).meta_assets || {} }));
+        const linked = (k, id) => gyms.find((g) => String(g.m[k] || "").replace(/^act_/, "") === String(id).replace(/^act_/, ""))?.gym || null;
+        return json(res, 200, { configured: true, accounts: accounts.map((a) => ({ id: a.id, account_id: a.account_id, name: a.name, currency: a.currency, timezone: a.timezone_name, status: a.account_status, business: a.business || null, linked_to: linked("ad_account_id", a.id) })), pages: pages.map((pg) => ({ id: pg.id, name: pg.name, category: pg.category || null, instagram: pg.instagram_business_account || null, linked_to: linked("page_id", pg.id) })) });
+      } catch (e) { return json(res, 502, { error: scrubTokens(e.message) }); }
+    }
+    // ── Importing a gym from the portfolio (2026-10-07): the run's state and proposal, and Add to the gym ──
+    const im = p.match(/^\/api\/client\/([^/]+)\/import(?:\/(accept))?$/);
+    if (im) {
+      const gym = im[1], action = im[2] || null;
+      if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym);
+      const summary = () => {
+        const w = websiteView(gym), ig = instagramView(gym);
+        const website = w.reading ? { url: w.reading.url, pages: w.reading.pages?.length ?? null, colours: w.reading.colours || null, fonts: w.reading.fonts || null, logos: (w.reading.logos || []).length, logo_id: w.reading.logos?.[0]?.id || null, logo_url: w.reading.logos?.[0]?.image_url || null, photos: (w.reading.photos || []).length, identity: w.reading.identity || null, address_postal: w.reading.identity?.addresses?.[0]?.postal_code || null } : null;
+        const instagram = ig.reading ? { handle: ig.reading.handle, posts: ig.reading.posts ?? null, photos: (ig.reading.photos || []).length } : null;
+        return { ...importProposal(dir, { websiteReading: website, instagramReading: instagram }), running: activeRun(gym, null), steps: IMPORT_STEPS, history_top: HISTORY_TOP, profile: { display_name: (readJsonFile(join(dir, "gym-profile.json")) || {}).display_name || gym, meta_assets: (readJsonFile(join(dir, "gym-profile.json")) || {}).meta_assets || {} } };
+      };
+      if (!action && req.method === "GET") return json(res, 200, summary());
+      if (action === "accept" && req.method === "POST") {
+        const body = await readBody(req);
+        const profile = readJsonFile(join(dir, "gym-profile.json")) || {}, cfg = metaConfig({ gym });
+        try {
+          const r = await applyImport(dir, body, { accept: {
+            writeProfile: (pf) => writeWhole(join(dir, "gym-profile.json"), JSON.stringify({ ...pf, schema_version: Math.max(PROFILE_SCHEMA, Number(pf.schema_version) || 0) }, null, 2) + "\n"),
+            website: (picks) => acceptWebsite(gym, picks),
+            history: async (ids) => {
+              if (!cfg.token || !profile.meta_assets?.ad_account_id) throw fail(409, "the Meta link is needed to bring ads into the library");
+              const top = ids || importProposal(dir).history.top.map((t) => t.ad_id);
+              if (!top.length) return { imported: 0 };
+              const done = await importFromAccount({ client: graphClient({ config: cfg }), accountId: profile.meta_assets.ad_account_id, gymDir: dir, adIds: top.map(String) });
+              // Each imported ad's copy to the shared library as skeletons, as Xinyi's were (two text calls each).
+              let sent = 0;
+              for (const ref of readCopyRefs(dir).refs.filter((x) => top.includes(String(x.ad_id)) && !x.in_library)) { try { await sendToLibrary(dir, ref.id, { gym }); sent++; } catch {} }
+              return { imported: done.imported?.length ?? done.added ?? top.length, sent };
+            },
+          } });
+          return json(res, 200, { ...r, ...summary() });
+        } catch (e) { return json(res, e.status || (e.code === 190 || e.trace ? 502 : 400), { error: scrubTokens(e.message) }); }
+      }
+      return json(res, 405, { error: "method not allowed" });
+    }
     // ── Instant forms built here (2026-10-07): the Page's forms, the gym's template, a proposal for an offer, creation
     //    on the Page (the owner's click), the gym's default form. Nothing is sent to Meta but the create.
     const lf = p.match(/^\/api\/client\/([^/]+)\/lead-forms(?:\/(template|propose|create|default))?$/);
@@ -1291,14 +1342,28 @@ const server = createServer(async (req, res) => {
     if (p === "/api/clients" && req.method === "GET") return json(res, 200, { clients: listClients() });
 
     if (p === "/api/clients" && req.method === "POST") {
-      const { gym, offer, display_name = "", country = "SG" } = await readBody(req);
+      const { gym, offer, display_name = "", country = "SG", meta = null } = await readBody(req);
       if (!okSlug(gym)) return json(res, 400, { error: "the folder name must be lowercase letters, numbers and hyphens" });
+      if (meta != null && (!isPlainObject(meta) || !/^(act_)?\d{5,20}$/.test(String(meta.ad_account_id || "")) || !/^\d{5,20}$/.test(String(meta.page_id || "")))) return json(res, 400, { error: "meta must carry the ad account id and the Page id from the portfolio" });
       if (!/^[A-Za-z]{2}$/.test(String(country))) return json(res, 400, { error: "the country is a two-letter code (SG, TW, MY…)" });
       if (offer && !okSlug(offer)) return json(res, 400, { error: "offer slug must be lowercase letters, numbers and hyphens" });
       if (typeof display_name !== "string" || display_name.length > 80 || /[—–\r\n]/.test(display_name)) return json(res, 400, { error: "the gym's name must be one line, without em/en dashes" });
       const fresh = !existsSync(join(brandDir(gym), "gym-profile.json"));
       scaffold(gym, offer || null, { brandsDir: BRANDS, displayName: display_name.trim(), country: String(country).toUpperCase() });
-      return json(res, 200, { ok: true, gym, offer: offer || null, created: fresh });
+      // From the portfolio (2026-10-07): the Meta ids and the account's currency and time zone go straight onto the new profile.
+      if (meta) {
+        const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
+        const m = (profile.meta_assets ||= {}), labels = (m.labels ||= {});
+        m.ad_account_id = String(meta.ad_account_id).startsWith("act_") ? String(meta.ad_account_id) : `act_${meta.ad_account_id}`; m.page_id = String(meta.page_id);
+        for (const k of ["business_id", "instagram_user_id", "pixel_id"]) if (/^\d{5,20}$/.test(String(meta[k] || ""))) m[k] = String(meta[k]);
+        for (const k of ["account", "page", "business", "instagram"]) if (typeof meta.labels?.[k] === "string") labels[k] = meta.labels[k].slice(0, 120);
+        if (typeof meta.currency === "string" && /^[A-Z]{3}$/.test(meta.currency)) { (profile.locale ||= {}).currency = meta.currency; ((profile.campaign_defaults ||= {}).budget ||= {}).currency = meta.currency; }
+        if (typeof meta.timezone === "string" && meta.timezone.length <= 64) (profile.locale ||= {}).timezone = meta.timezone;
+        const errors = validateProfile(profile).errors || [];
+        if (errors.length) return json(res, 400, { error: `the portfolio's ids do not fit the profile: ${errors.join("; ")}` });
+        writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+      }
+      return json(res, 200, { ok: true, gym, offer: offer || null, created: fresh, imported_ids: !!meta });
     }
 
     // /api/client/{gym}/wordings[/{id}] — the offer wordings, kept once, offered as chips.

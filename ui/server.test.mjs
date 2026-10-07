@@ -988,6 +988,7 @@ function fakeGraph() {
     if (!u.pathname.startsWith("/img/") && tok !== META_TOKEN && tok !== "PAGE-TOKEN") { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: { message: "Invalid OAuth access token", code: 190 } })); }
     if (req.method === "POST" && path === "act_111000000001/adimages") return ok({ images: { [u.searchParams.get("name")]: { hash: "hash" + (++n) } } });
     if (req.method === "POST" && ["act_111000000001/campaigns", "act_111000000001/adsets", "act_111000000001/adcreatives", "act_111000000001/ads"].includes(path)) { const id = path.split("/")[1].slice(0, 2) + (++n); made[path.split("/")[1]] = id; return ok({ id }); }
+    if (req.method === "POST" && /^(ca|ad)\d+$/.test(path)) return ok({ success: true }); // an update in place (a changed name, budget or targeting)
     if (/^ca\d+$/.test(path)) return ok({ id: path, name: "Test campaign", status: "PAUSED", effective_status: "PAUSED" });
     if (/^ca\d+\/adsets$/.test(path)) return ok({ data: [{ id: made.adsets, name: "set", status: "PAUSED", effective_status: "PAUSED", daily_budget: "5000" }] });
     if (/^ca\d+\/ads$/.test(path)) return ok({ data: [{ id: made.ads, name: "one", status: "PAUSED", effective_status: "PAUSED", adset_id: made.adsets }] });
@@ -1266,10 +1267,10 @@ test("U19 the targeting library in the panel: presets imported from the account'
     await until("document.querySelectorAll('table.tbl tbody tr').length===4", "the presets table");
     const text = await ev("document.querySelector('#view').textContent");
     assert.match(text, /Dads who train/); assert.match(text, /56\.24/); assert.match(text, /Yoga people/); assert.match(text, /Broad — no detailed targeting/);
-    await ev(`setCalloutPreset('MEN WANTED', '${dads.id}'); setCalloutPreset('LADIES WANTED', 'suggest'); document.querySelector('#saveBtn_profile').click(); true`);
+    await ev(`setCalloutPreset('MEN WANTED', '${dads.id}'); setCalloutPreset('LADIES WANTED', ''); document.querySelector('#saveBtn_profile').click(); true`);
     await until("DIRTY.profile===false", "saved");
     const saved = JSON.parse(readFileSync(join(brands, GYM, "gym-profile.json"), "utf-8"));
-    assert.deepEqual(saved.targeting_defaults.detailed_targeting.callout_presets, { "MEN WANTED": dads.id }, "'suggest' is the default and is not written");
+    assert.deepEqual(saved.targeting_defaults.detailed_targeting.callout_presets, { "MEN WANTED": dads.id }, "the gym's default is the default and is not written (2026-10-07: 'suggest' is now a choice of its own, the account's best each time)");
     const bad = structuredClone(saved); bad.targeting_defaults.detailed_targeting.callout_presets = { "MEN WANTED": "nope" };
     assert.equal((await call(`/api/client/${GYM}`, { method: "PUT", body: bad })).status, 400);
     await ev("presetNew(); document.querySelector('#npq').value='yoga'; true"); await ev("npSearch()");
@@ -2306,4 +2307,24 @@ test("U41 the shared targeting library through the panel: read once, the curated
   assert.equal((await call("/api/library/targeting", { method: "POST", body: { name: "x", groups: [[{ id: "nope", name: "x" }]] } })).status, 400);
   lib = await (await call("/api/library/targeting", { method: "POST", body: { name: "Runners", role: "option", groups: [[{ id: "6003107634035", name: "healthy habits" }]] } })).json();
   assert.deepEqual([lib.entries.length, lib.drafts], [4, 2]);
+});
+
+// ── U42 importing a gym from the portfolio (2026-10-07) ─────────────────────
+
+test("U42 the portfolio and the import through the panel: without keys the portfolio says so; a new gym from the portfolio gets its Meta ids, currency and time zone on the profile (bad ids refused); the import view says what was read (nothing yet) and which steps there are; the import run is built server-side; Add to the gym without a reading is refused in words", async () => {
+  let r = await (await call("/api/meta/portfolio")).json();
+  assert.deepEqual([r.configured, r.accounts, r.pages], [false, [], []]);
+  assert.equal((await call("/api/clients", { method: "POST", body: { gym: "portfolio-gym", display_name: "Portfolio Gym", country: "TW", meta: { ad_account_id: "nope", page_id: "770000000007" } } })).status, 400, "bad ids refused");
+  r = await (await call("/api/clients", { method: "POST", body: { gym: "portfolio-gym", display_name: "Portfolio Gym", country: "TW", meta: { ad_account_id: "111000000001", page_id: "770000000007", business_id: "555000000005", instagram_user_id: "880000000008", currency: "TWD", timezone: "Asia/Taipei", labels: { account: "Test Gym Ads (TWD)", page: "Test Gym" } } } })).json();
+  assert.deepEqual([r.created, r.imported_ids], [true, true]);
+  const p = JSON.parse(readFileSync(join(brands, "portfolio-gym", "gym-profile.json"), "utf-8"));
+  assert.deepEqual([p.meta_assets.ad_account_id, p.meta_assets.page_id, p.meta_assets.business_id, p.meta_assets.instagram_user_id, p.meta_assets.labels.page, p.locale.currency, p.locale.timezone, p.campaign_defaults.budget.currency, p.locale.country], ["act_111000000001", "770000000007", "555000000005", "880000000008", "Test Gym", "TWD", "Asia/Taipei", "TWD", "TW"]);
+  r = await (await call("/api/client/portfolio-gym/import")).json();
+  assert.deepEqual([r.state, r.meta, r.forms, r.website, r.history.top, r.presets.count, r.steps.length, r.history_top, r.profile.meta_assets.page_id], [null, null, null, null, [], 0, 7, 10, "770000000007"]);
+  const run = await runAndWait({ kind: "profile-import", gym: "portfolio-gym", skip: ["website", "instagram"] });
+  assert.match(run.lines[0], /^\$ node skills\/references\/import-gym\.mjs --brand-dir \S+portfolio-gym --skip website,instagram$/, "built server-side");
+  assert.notEqual(run.code, 0, "no Meta keys here: the run says so and ends");
+  const bad = await call("/api/client/portfolio-gym/import/accept", { method: "POST", body: { meta: true } });
+  const badBody = await bad.json();
+  assert.equal(bad.status, 409, JSON.stringify(badBody)); assert.match(badBody.error, /read the ad account first/);
 });

@@ -296,10 +296,10 @@ let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'
 const NAV = [
   ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'], ['results','Results','▤'],
   ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'], ['leadforms','Lead forms','▤'],
-  ['sec','Profile'], ['overview','Overview','◎'], ['metafacts','From the ad account','◆'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
+  ['sec','Profile'], ['overview','Overview','◎'], ['import','Import from Meta','⇣'], ['metafacts','From the ad account','◆'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', leadforms:'Lead forms', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', leadforms:'Lead forms', import:'Import from Meta', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -411,6 +411,7 @@ function render(){
   if (STATE.tab==='photos') return viewPhotos(v, seq);
   if (STATE.tab==='references') return viewReferences(v, seq);
   if (STATE.tab==='leadforms') return viewLeadForms(v, seq);
+  if (STATE.tab==='import') return viewImport(v, seq);
 }
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -455,7 +456,7 @@ async function viewOverview(v, seq=VIEW_SEQ){
   const create = c.sections.filter(s=>s.for!=='publishing'), publish = c.sections.filter(s=>s.for==='publishing');
   v.innerHTML = `<div class="row" style="margin-bottom:4px"><h1 style="margin:0">${esc(p.display_name||STATE.sel)}</h1>${d.logo?`<img src="${esc(d.logo)}" alt="" style="height:34px;margin-left:8px;background:#0a0a0a;border-radius:6px;padding:4px 8px">`:''}</div>
     <p class="sub">The gym's profile: filled in once, remembered, and used by every batch. Switch gyms from the top bar.</p>
-    ${c.ready_to_create ? '' : `<div class="msg">New gym? <a href="#" onclick="go('website');return false">Read its website</a>: the colours, fonts, logo, address, Instagram and photos, proposed for you to tick.</div>`}
+    ${c.ready_to_create ? '' : `<div class="msg">New gym? <a href="#" onclick="go('import');return false">Import from Meta</a> reads the Page, the ad account, its targeting, ads and forms, the website and Instagram in one run. Or piece by piece: <a href="#" onclick="go('website');return false">Read its website</a>: the colours, fonts, logo, address, Instagram and photos, proposed for you to tick.</div>`}
     ${c.ready_to_create ? `<div class="msg ok">Ready to create ads. <a href="#" onclick="go('batch');return false">Create →</a></div>` : `<div class="msg warn">${c.to_do} section${c.to_do===1?'':'s'} to finish before creating ads.</div>`}
     <h2 style="margin-top:16px">To create ads</h2><div class="ov">${create.map(card).join('')}</div>
     <h2 style="margin-top:20px">To publish to Meta <span class="pill">later</span></h2><p class="hint" style="margin-top:-4px">Publishing is not built yet. Filling these in now means it will work for this gym when it is.</p><div class="ov">${publish.map(card).join('')}</div>`;
@@ -725,19 +726,110 @@ function newClient(){
     <label for="ncName">Gym name</label><input id="ncName" placeholder="e.g. IronHaus Strength" oninput="$('#ncSlug').value=slugify(this.value)">
     <label for="ncSlug">Folder name <span class="n">· lowercase, hyphens</span></label><input id="ncSlug" class="mono" placeholder="ironhaus-strength">
     <label for="ncCountry">Country <span class="n">· sets the currency, time zone, language, postal-code shape and who is in the photos</span></label><select id="ncCountry"><option value="SG">Singapore</option><option value="TW">Taiwan</option><option value="MY">Malaysia</option></select>
+    <div id="ncPortfolio" style="margin-top:12px"><span class="hint">Looking up the Strategym portfolio…</span></div>
     <div id="ncErr" style="margin-top:8px"></div>
     <div class="row" style="margin-top:12px"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" onclick="newClientGo()">Create profile</button></div></div></div>`;
   $('#ncName').focus();
+  ncLoadPortfolio();
+}
+/** The Strategym portfolio (2026-10-07): the ad accounts and Pages the system user can act on. Picking one fills the name, folder, country and Meta ids; "Create and import" then reads everything. */
+const NC = { portfolio:null };
+const CURRENCY_COUNTRY = { TWD:'TW', SGD:'SG', MYR:'MY', HKD:'HK', JPY:'JP', AUD:'AU', GBP:'GB', USD:'US' };
+async function ncLoadPortfolio(){
+  try { NC.portfolio = await api('/api/meta/portfolio'); } catch(e){ $('#ncPortfolio').innerHTML = `<span class="hint">The portfolio could not be read: ${esc(e.message)}</span>`; return; }
+  const P = NC.portfolio; if (!$('#ncPortfolio')) return;
+  if (!P.configured){ $('#ncPortfolio').innerHTML = '<span class="hint">Set up the Meta link to pick a gym from the Strategym portfolio instead of typing it.</span>'; return; }
+  const free = P.accounts.filter(a=>!a.linked_to);
+  $('#ncPortfolio').innerHTML = `<label>From the Strategym portfolio <span class="n">· the ad account and Page assigned to strategym-ai</span></label>
+    <select id="ncAccount" onchange="ncPickAccount(this.value)"><option value="">— type the gym above, or pick its ad account —</option>${P.accounts.map(a=>`<option value="${esc(a.id)}" ${a.linked_to?'disabled':''}>${esc(a.name)} · ${esc(a.currency)}${a.linked_to?` · already ${esc(a.linked_to)}`:''}</option>`).join('')}</select>
+    <select id="ncPage" style="margin-top:6px"><option value="">— the Facebook Page —</option>${P.pages.map(pg=>`<option value="${esc(pg.id)}" ${pg.linked_to?'disabled':''}>${esc(pg.name)}${pg.instagram?` · @${esc(pg.instagram.username)}`:''}${pg.linked_to?` · already ${esc(pg.linked_to)}`:''}</option>`).join('')}</select>
+    <div class="hint" style="margin-top:6px">${free.length} ad account${free.length===1?'':'s'} not linked to a gym yet. With both picked, <b>Create and import</b> reads the Page, the account, its targeting, its ads, its forms, the website and Instagram in one run.</div>`;
+  const go = document.querySelector('#gModal .primary'); if (go) go.textContent = 'Create profile';
+}
+function ncPickAccount(id){
+  const a = (NC.portfolio?.accounts||[]).find(x=>x.id===id); if (!a) return;
+  if (!$('#ncName').value.trim()){ $('#ncName').value = a.name.replace(/\s*(ads?|ad account)\s*$/i,'').trim(); $('#ncSlug').value = slugify($('#ncName').value); }
+  const cc = CURRENCY_COUNTRY[a.currency]; if (cc && [...$('#ncCountry').options].some(o=>o.value===cc)) $('#ncCountry').value = cc;
+  // The Page whose name shares the most words with the account's.
+  const words = (t) => new Set(String(t).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w=>w.length>1));
+  const aw = words(a.name); let best = null, bestN = 0;
+  for (const pg of (NC.portfolio.pages||[]).filter(p=>!p.linked_to)){ const n = [...words(pg.name)].filter(w=>aw.has(w)).length; if (n>bestN){ best = pg; bestN = n; } }
+  if (best) $('#ncPage').value = best.id;
+  const go = document.querySelector('#gModal .primary'); if (go) go.textContent = 'Create and import';
 }
 async function newClientGo(){
   const name = $('#ncName').value.trim(), gym = $('#ncSlug').value.trim();
   if (!name){ $('#ncErr').innerHTML = '<div class="msg err">Give the gym a name.</div>'; return; }
   if (STATE.clients.some(c=>c.gym===gym)){ $('#ncErr').innerHTML = '<div class="msg err">A gym with that folder name exists: pick it from the top bar.</div>'; return; }
+  const accId = $('#ncAccount')?.value || '', pageId = $('#ncPage')?.value || '';
+  if ((accId && !pageId) || (!accId && pageId)){ $('#ncErr').innerHTML = '<div class="msg err">Pick both the ad account and the Facebook Page, or neither.</div>'; return; }
+  const acc = accId ? NC.portfolio.accounts.find(a=>a.id===accId) : null, pg = pageId ? NC.portfolio.pages.find(p=>p.id===pageId) : null;
+  const meta = acc ? { ad_account_id: acc.id, page_id: pg.id, business_id: acc.business?.id || null, instagram_user_id: pg.instagram?.id || null, currency: acc.currency, timezone: acc.timezone, labels: { account: `${acc.name} (${acc.currency})`, page: pg.name, business: acc.business?.name || '', instagram: pg.instagram ? `@${pg.instagram.username}` : '' } } : null;
   try {
-    await api('/api/clients', {method:'POST', body:{gym, display_name:name, country:$('#ncCountry').value}});
+    await api('/api/clients', {method:'POST', body:{gym, display_name:name, country:$('#ncCountry').value, ...(meta ? { meta } : {})}});
     $('#gModal').innerHTML = '';
-    await loadClients(); await selectClient(gym, false); go('overview');
+    await loadClients(); await selectClient(gym, false);
+    if (meta){ go('import'); setTimeout(()=>impStart(), 300); } else go('overview');
   } catch(e){ $('#ncErr').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+}
+
+// ── Import from Meta (2026-10-07): one run reads the Page, the account, its targeting, ads and forms, the website and Instagram; one proposal; Add to the gym ──
+const IMP = { gym:null, data:null, busy:false, ticks:null, result:null, error:null };
+async function viewImport(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>Import from Meta</h1><p class="sub">Loading…</p>';
+  try { IMP.data = await api(`/api/client/${STATE.sel}/import`); IMP.gym = STATE.sel; } catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<h1>Import from Meta</h1><div class="msg err">${esc(e.message)}</div>`; return; }
+  if (seq !== VIEW_SEQ) return;
+  if (!IMP.ticks || IMP.ticks.gym !== STATE.sel) IMP.ticks = impDefaultTicks();
+  paintImport(v);
+}
+function impDefaultTicks(){ const D = IMP.data; return { gym: STATE.sel, meta: !!D.meta, offers: new Set(), pin_radius: D.meta?.pin?.radius_km ?? null, forms: !!D.forms?.candidate, history: new Set((D.history?.top||[]).map(t=>t.ad_id)), website: !!D.website }; }
+function paintImport(v){
+  const D = IMP.data, T = IMP.ticks, st = D.state, m = D.profile?.meta_assets || {};
+  const running = D.running && /import/.test(D.running.kind||'');
+  const stepRow = (k) => { const x = st?.steps?.[k]; const words = { meta:'The Page and the ad account', presets:'The account\'s targeting, with results', history:'Every campaign, ad set and ad, with results', forms:'The Page\'s instant forms', identity:'The Singapore advertiser identity', website:'The website (colours, fonts, logo, photos)', instagram:'Instagram (photos)' }[k] || k; return `<div class="wrow"><span>${!x?'·':x.ok===true?'✓':x.skipped?'–':x.ok===false?'✗':'…'} <b>${esc(words)}</b></span><span class="hint" style="margin:0 0 0 auto;text-align:right">${esc(x?.note||x?.error||(x&&!x.finished?'reading…':''))}</span></div>`; };
+  const money = (n, c) => n==null ? '—' : `${c||''} ${Number(n).toLocaleString(undefined,{maximumFractionDigits:2})}`.trim();
+  v.innerHTML = `<h1>Import from Meta</h1>
+  <p class="sub">${esc(D.profile?.display_name||STATE.sel)}: everything the Strategym portfolio knows about this gym, read in one run (read-only on Meta) and proposed below. Everything is ticked except the offer names and the photos, which stay your choices. Nothing is written until <b>Add to the gym</b>.</p>
+  ${!m.ad_account_id || !m.page_id ? `<div class="msg warn">This gym has no ad account or Page yet: pick them on the <a href="#" onclick="go('meta');return false">Meta link</a> page first.</div>` : ''}
+  <div class="card"><div class="row"><h3 style="margin:0">The run</h3><div class="spacer"></div><button class="${st?'sm':'primary'}" onclick="impStart()" ${running||IMP.busy||!m.ad_account_id?'disabled':''}>${st?'Read again':'Import from Meta'}</button></div>
+    ${st?`<p class="hint" style="margin-top:4px">Started ${esc((st.started||'').slice(0,16).replace('T',' '))}${st.done?`, done ${esc(st.done.slice(11,16))}`:running?' · running':''}.</p>`:'<p class="hint" style="margin-top:4px">A few dozen read-only calls to Meta, the website read by our own browser, the photos sorted by the model. No image generation.</p>'}
+    ${(D.steps||[]).map(stepRow).join('')}<div id="runbox"></div></div>
+  ${st?.done ? impProposalHtml(D, T, money) : ''}
+  ${IMP.result ? `<div class="card"><h3>Added to the gym</h3><ul style="margin:6px 0 0 18px;line-height:1.6">${(IMP.result.changes||[]).map(c=>`<li>${esc(c)}</li>`).join('')||'<li>nothing changed</li>'}</ul>${(IMP.result.skipped||[]).length?`<p class="hint">Left out: ${esc(IMP.result.skipped.join(', '))}.</p>`:''}<p class="hint">Next: <a href="#" onclick="go('overview');return false">the Overview</a> shows what is left — scenes, premises photos, the room reference, the offer wording; photos from <a href="#" onclick="go('website');return false">the website</a> and <a href="#" onclick="go('instagram');return false">Instagram</a> are yours to pick.</p></div>` : ''}
+  ${IMP.error?`<div class="msg err">${esc(IMP.error)}</div>`:''}`;
+}
+function impProposalHtml(D, T, money){
+  const M = D.meta, cur = M?.account?.currency || '';
+  const tick = (k, label, extra='') => `<label class="row" style="gap:8px;align-items:flex-start"><input type="checkbox" ${T[k]?'checked':''} onchange="IMP.ticks.${k}=this.checked" style="width:auto;margin-top:4px"><span><b>${label}</b>${extra}</span></label>`;
+  return `<div class="card"><h3>What was read</h3>
+    ${M ? `<div style="margin-top:8px">${tick('meta', 'The Page and the ad account', `<div class="hint" style="margin:4px 0 0">${esc(M.page?.name||'')}${M.page?.address?.street?` · ${esc(M.page.address.street)}${M.page.address.zip?' '+esc(M.page.address.zip):''}`:''}${M.page?.phone?` · ${esc(M.page.phone)}`:''}${M.page?.website?` · ${esc(M.page.website)}`:''}${M.page?.instagram?.username?` · @${esc(M.page.instagram.username)}`:''}${M.page?.hours?` · ${esc(M.page.hours)}`:''}<br>${esc(M.account?.currency||'')} · ${esc(M.account?.timezone||'')} · ${esc(M.account?.country||'')}${M.adsets?` · ${M.adsets.count} ad sets, ages ${M.adsets.ages?.[0]?.min}–${M.adsets.ages?.[0]?.max}, ${money(M.adsets.daily_budget?.median, cur)} a day`:''}${M.callouts?.length?` · callout ${esc(M.callouts.join(', '))}`:''}</div>`)}
+      ${M.pin ? `<div class="row" style="margin:6px 0 0 26px;gap:8px"><span class="hint" style="margin:0">Pin: ${esc(M.pin.name||'the Page\'s point')}${M.pin.kind==='place'?' (Meta place)':''}, radius</span><input type="number" min="1" max="80" step="0.5" value="${T.pin_radius??M.pin.radius_km??5}" style="width:80px" onchange="IMP.ticks.pin_radius=parseFloat(this.value)||null"><span class="hint" style="margin:0">km · their ad sets ran ${esc(String(M.pin.radius_km))} km</span></div>` : ''}
+      ${(M.offers||[]).length ? `<div style="margin:8px 0 0 26px"><span class="hint">Offer names their ad sets ran — unticked: the words on your ads are yours</span>${M.offers.map(o=>`<label class="row" style="gap:8px"><input type="checkbox" ${T.offers.has(o.text)?'checked':''} onchange="this.checked?IMP.ticks.offers.add('${esc(o.text).replace(/'/g,"\\'")}'):IMP.ticks.offers.delete('${esc(o.text).replace(/'/g,"\\'")}')" style="width:auto"><span>${esc(o.text)}${o.adsets?` <span class="hint">· ${o.adsets} ad set${o.adsets===1?'':'s'}</span>`:''}</span></label>`).join('')}</div>` : ''}
+      ${(M.problems||[]).length?`<div class="msg warn" style="margin:8px 0 0 26px">${M.problems.map(x=>esc(x)).join('<br>')}</div>`:''}</div>` : '<p class="hint">The Page and the account were not read.</p>'}
+    <div style="margin-top:12px"><b>Targeting</b> <span class="hint">· ${D.presets?.count||0} preset${D.presets?.count===1?'':'s'} imported from the account's ad sets with their results — already in place; the shared defaults apply unless you choose otherwise on Targeting & budget.</span></div>
+    ${D.forms ? `<div style="margin-top:12px">${D.forms.candidate ? tick('forms', 'Lead-form template', ` <span class="hint">· "${esc(D.forms.candidate.name)}", ${D.forms.candidate.leads_count??0} leads, ${D.forms.candidate.questions??'?'} questions — new forms for new offers start from it. The default form stays yours to pick on Library → Lead forms.</span>`) : `<b>Lead forms</b> <span class="hint">· ${D.forms.count} on the Page, none fit to be a template.</span>`}</div>` : ''}
+    ${(D.history?.top||[]).length ? `<div style="margin-top:12px"><b>Their best ads into the library</b> <span class="hint">· the top ${D.history.top.length} by leads of ${D.history.ads} ads; each becomes a reference and a copy skeleton (two text calls each)</span>${D.history.top.map(t=>`<label class="row" style="gap:8px"><input type="checkbox" ${T.history.has(t.ad_id)?'checked':''} onchange="this.checked?IMP.ticks.history.add('${esc(t.ad_id)}'):IMP.ticks.history.delete('${esc(t.ad_id)}')" style="width:auto"><span>${esc(t.ad_name||t.ad_id)} <span class="hint">· ${t.leads} leads${t.cost_per_lead!=null?` at ${money(t.cost_per_lead, cur)}`:''}</span></span></label>`).join('')}</div>` : D.history?.ads ? `<div style="margin-top:12px"><b>Their ads</b> <span class="hint">· ${D.history.ads} read; none with leads left to import.</span></div>` : ''}
+    ${D.website ? `<div style="margin-top:12px">${tick('website', 'The website', ` <span class="hint">· ${esc(D.website.url||'')}: ${D.website.colours?.proposal?`colours ${['primary','secondary','accent'].filter(r=>D.website.colours.proposal[r]).map(r=>`${r} ${esc(D.website.colours.proposal[r])}`).join(', ')}`:'no colours'}${D.website.fonts?.headline?`; fonts ${esc(D.website.fonts.headline)} / ${esc(D.website.fonts.body||'')}`:''}${D.website.logos?`; ${D.website.logos} logo${D.website.logos===1?'':'s'}`:''}; ${D.website.photos} photos — ${esc(D.website.photos_note)}</span>`)}</div>` : ''}
+    ${D.instagram ? `<div style="margin-top:12px"><b>Instagram</b> <span class="hint">· @${esc(D.instagram.handle||'')}: ${D.instagram.photos} photos from the latest ${D.instagram.posts||''} posts — ${esc(D.instagram.photos_note)}</span></div>` : ''}
+    <div class="row" style="margin-top:14px"><span class="hint" style="margin:0">Applies through the same steps as the separate pages: the profile is validated first, nothing is filed twice.</span><div class="spacer"></div><button class="primary" onclick="impAccept()" ${IMP.busy?'disabled':''}>Add to the gym</button></div></div>`;
+}
+function impStart(){
+  IMP.error = null; IMP.result = null;
+  run({kind:'profile-import', gym:STATE.sel}, async()=>{ IMP.ticks = null; if (STATE.tab==='import') await viewImport($('#view')); });
+  paintImport($('#view'));
+}
+async function impAccept(){
+  const T = IMP.ticks; IMP.busy = true; IMP.error = null; paintImport($('#view'));
+  const W = IMP.data.website;
+  const body = {
+    meta: T.meta ? { pin: T.pin_radius ? { radius_km: T.pin_radius } : {}, offers: [...T.offers] } : false,
+    forms: !!T.forms,
+    history: T.history.size ? [...T.history] : false,
+    website: T.website && W ? { colours: Object.fromEntries(['primary','secondary','accent'].filter(r=>W.colours?.proposal?.[r]).map(r=>[r, W.colours.proposal[r]])), fonts: W.fonts?.headline ? { headline: W.fonts.headline, body: W.fonts.body||'' } : undefined, logo: W.logo_id || undefined, address: W.address_postal || undefined } : false,
+  };
+  try { IMP.result = await api(`/api/client/${STATE.sel}/import/accept`, { method:'POST', body }); await refreshProfile(); IMP.data = await api(`/api/client/${STATE.sel}/import`); }
+  catch(e){ IMP.error = e.message; }
+  IMP.busy = false; paintImport($('#view'));
 }
 
 // ── Offer ────────────────────────────────────────────────────────────────────
