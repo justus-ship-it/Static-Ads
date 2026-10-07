@@ -43,7 +43,7 @@ import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecomm
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
-import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
+import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 import { readReading, checkUrl as checkSiteUrl, MIN_PHOTO_PX, ONBOARDING_DIR } from "../skills/references/read-website.mjs";
@@ -1297,12 +1297,23 @@ const server = createServer(async (req, res) => {
     }
 
     // /api/client/{gym}/scenes · /scenes/approve · /scenes/reject · /reference/{name}
-    const sm = p.match(/^\/api\/client\/([^/]+)\/(scenes|scenes\/approve|scenes\/reject|reference\/([^/]+))$/);
+    const sm = p.match(/^\/api\/client\/([^/]+)\/(scenes|scenes\/approve|scenes\/reject|scenes\/copy|reference\/([^/]+))$/);
     if (sm) {
       const [, gym, what, name] = sm;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
       const scenesPath = join(brandDir(gym), "scenes.json");
-      if (what === "scenes" && req.method === "GET") return json(res, 200, { status: sceneStatus(gym), drafts: sceneDrafts(gym), references: listReferences(gym), audiences: AUDIENCES, maxCount: MAX_REFRESH_COUNT, maxWords: MAX_WORDS });
+      // The other gyms' libraries a new gym may start from: each with its live count (its own left out).
+      const siblings = () => listClients().filter((c) => c.gym !== gym).map((c) => { const st = sceneStatus(c.gym); return { gym: c.gym, name: c.display_name || c.gym, live: st.exists ? st.total : 0 }; }).filter((c) => c.live > 0);
+      if (what === "scenes" && req.method === "GET") return json(res, 200, { status: sceneStatus(gym), drafts: sceneDrafts(gym), references: listReferences(gym), audiences: AUDIENCES, maxCount: MAX_REFRESH_COUNT, maxWords: MAX_WORDS, siblings: siblings() });
+      // A new gym's first scenes from another gym's library, as drafts for approval; the people's country swapped in the words.
+      if (what === "scenes/copy" && req.method === "POST") {
+        const { from } = await readBody(req);
+        if (!okSlug(from) || from === gym || !existsSync(join(brandDir(from), "scenes.json"))) return json(res, 400, { error: "pick another gym that has a scene library" });
+        const me = readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}, them = readJsonFile(join(brandDir(from), "gym-profile.json")) || {};
+        const cf = countryRules(profileCountry(them)), ct = countryRules(profileCountry(me));
+        try { return json(res, 200, { ok: true, ...copyScenesFrom(scenesPath, join(brandDir(from), "scenes.json"), { fromGym: from, people: { from: { name: cf.name, demonym: cf.demonym }, to: { name: ct.name, demonym: ct.demonym } } }), status: sceneStatus(gym), drafts: sceneDrafts(gym) }); }
+        catch (e) { return json(res, 400, { error: e.message }); }
+      }
       if (!existsSync(scenesPath) && what.startsWith("scenes/")) return json(res, 404, { error: "no scene library for this client" });
       if (what === "scenes/approve" && req.method === "POST") {
         const { ids } = await readBody(req);

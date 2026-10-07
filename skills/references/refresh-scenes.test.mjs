@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sceneGaps, coverFromGaps, buildRefreshRequest, validateDrafts, nearDuplicate, draftScenes, readReference, normaliseDescription, layoutFromPosition, validateDirection, parseCover, referencePath, MAX_DRAFT_CALLS } from "./refresh-scenes.mjs";
-import { loadScenes, readLibrary, approveScenes, rejectScene, libraryStatus, sceneSummary, isRetired, isDraft } from "./scene-library.mjs";
+import { loadScenes, readLibrary, approveScenes, rejectScene, libraryStatus, sceneSummary, isRetired, isDraft, copyScenesFrom } from "./scene-library.mjs";
 import { planVisuals, validateBrief } from "./plan-offer-batch.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
 
@@ -363,4 +363,26 @@ test("R9 with a shot guide the drafter writes toward its shot types — close, e
   const withG = buildRefreshRequest({ audience: "women", count: 2, scenes: LIB, photography: PROFILE.brand_lock.photography, shotGuide: G }).prompt;
   assert.match(withG, /SHOT TYPES that perform best — write scenes a photographer could shoot as one of these, close and at eye level, caught mid-rep or at peak effort with a clear expression: The Partner Training Shot \(teamwork, classes or coaching\); The Focused Lifter \(individual strength training\)\. About half the scenes have two people: a coach or a training partner\./);
   assert.doesNotMatch(buildRefreshRequest({ audience: "women", count: 2, scenes: LIB, photography: PROFILE.brand_lock.photography }).prompt, /SHOT TYPES/);
+});
+
+test("R11 a new gym's first scenes from another gym's library (2026-10-07): every live scene comes in as a draft with its origin, never a draft or a retired one; the people's country is swapped in the words and nothing else; an id already there is skipped; a copied scene that breaks the rules is left out with the reason; the target library is created unapproved; a source with nothing live is refused", () => {
+  const d = mkdtempSync(join(tmpdir(), "copy-scenes-"));
+  const src = join(d, "lp.json"), dst = join(d, "xinyi.json");
+  const scene = (id, extra = {}) => ({ id, audience: "women", pose: "upright", people: 1, exercise: "goblet-squat", age: "young", setting: "solo", equipment: "dumbbells", muscles: "legs", scene: "A young Singaporean woman in Singapore pauses at the bottom of a goblet squat, focused.", source: "refresh", added: "2026-09-26", approved_on: "2026-09-26", ...extra });
+  writeFileSync(src, JSON.stringify({ schema_version: 1, approved: true, scenes: [scene("a-one"), scene("a-two", { scene: "A Singaporean man mid-rep of a deadlift, chalk on his hands." }), scene("a-draft", { draft: true }), scene("a-gone", { status: "retired", reason: "x" }), scene("a-bad", { people: 9 })] }));
+  const people = { from: { name: "Singapore", demonym: "Singaporean" }, to: { name: "Taiwan", demonym: "Taiwanese" } };
+  const r = copyScenesFrom(dst, src, { fromGym: "f45-lower-peirce", people, date: "2026-10-07" });
+  assert.deepEqual([r.added, r.skipped, r.problems.length], [["a-one", "a-two"], [], 1]);
+  assert.match(r.problems[0], /^a-bad: /);
+  const lib = readLibrary(dst);
+  assert.deepEqual([lib.approved, lib.scenes.length, lib.scenes.every(isDraft)], [false, 2, true], "created unapproved, every copy a draft");
+  assert.deepEqual([lib.scenes[0].scene, lib.scenes[0].source, lib.scenes[0].copied_from, lib.scenes[0].added, "approved_on" in lib.scenes[0]], ["A young Taiwanese woman in Taiwan pauses at the bottom of a goblet squat, focused.", "copied:f45-lower-peirce", { gym: "f45-lower-peirce", id: "a-one", source: "refresh" }, "2026-10-07", false]);
+  assert.equal(lib.scenes[1].scene, "A Taiwanese man mid-rep of a deadlift, chalk on his hands.");
+  assert.throws(() => loadScenes(dst), /not approved yet/, "nothing generates from the copies until the owner approves one");
+  const again = copyScenesFrom(dst, src, { fromGym: "f45-lower-peirce", people });
+  assert.deepEqual([again.added, again.skipped], [[], ["a-one", "a-two"]], "never doubled");
+  approveScenes(dst, ["a-one"]);
+  assert.deepEqual(loadScenes(dst).map((s) => s.id), ["a-one"]);
+  writeFileSync(join(d, "empty.json"), JSON.stringify({ schema_version: 1, approved: true, scenes: [scene("z", { draft: true })] }));
+  assert.throws(() => copyScenesFrom(dst, join(d, "empty.json"), { fromGym: "empty" }), /no live scenes to copy/);
 });

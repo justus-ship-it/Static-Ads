@@ -88,6 +88,40 @@ export function loadScenes(path, { allowDraft = false } = {}) {
   return lib.scenes.filter((x) => !isRetired(x) && (allowDraft || x.draft !== true));
 }
 
+/**
+ * A new gym's first scenes from another gym's library (2026-10-07: F45 Xinyi, the same format as F45 Lower Peirce,
+ * had none): every live scene of the source — never a draft, never a retired one — becomes a draft in the target,
+ * `source: "copied:{gym}"` with `copied_from`, for the owner to approve or reject as usual. The people's country is
+ * swapped in the words (`people: { from: { name, demonym }, to: { name, demonym } }`: "Singaporean" → "Taiwanese",
+ * "Singapore" → "Taiwan"); nothing else is rewritten. A scene whose id the target already has is skipped. Returns
+ * { added, skipped, problems } — a copied scene that fails the library's rules is left out with the reason.
+ */
+export function copyScenesFrom(targetPath, sourcePath, { fromGym = null, people = null, date = today() } = {}) {
+  const src = readLibrary(sourcePath);
+  const live = src.scenes.filter((x) => !isRetired(x) && x.draft !== true);
+  if (!live.length) throw new Error(`${fromGym || sourcePath} has no live scenes to copy`);
+  const lib = readLibrary(targetPath, { create: true });
+  const have = new Set(lib.scenes.map((x) => x.id));
+  const swap = (text) => {
+    if (!people?.from || !people?.to) return text;
+    let t = String(text || "");
+    if (people.from.demonym && people.to.demonym) t = t.replace(new RegExp(`\\b${people.from.demonym}\\b`, "g"), people.to.demonym);
+    if (people.from.name && people.to.name) t = t.replace(new RegExp(`\\b${people.from.name}\\b`, "g"), people.to.name);
+    return t;
+  };
+  const added = [], skipped = [], problems = [];
+  for (const x of live) {
+    if (have.has(x.id)) { skipped.push(x.id); continue; }
+    const { approved_on, approved_via, approved_note, history, ...rest } = x;
+    const s = { ...rest, scene: swap(x.scene), draft: true, source: `copied:${fromGym || "another gym"}`, copied_from: { gym: fromGym || null, id: x.id, source: x.source || null }, added: date };
+    const bad = sceneProblems(s);
+    if (bad.length) { problems.push(`${x.id}: ${bad.join("; ")}`); continue; }
+    lib.scenes.push(s); have.add(s.id); added.push(s.id);
+  }
+  writeLibrary(targetPath, lib);
+  return { added, skipped, problems };
+}
+
 /** One line per scene, for the drafter's "do not repeat" list and the panel. */
 export function sceneSummary(s) {
   const tags = [s.audience || "any", s.setting, s.people != null ? `${s.people} ${s.people === 1 ? "person" : "people"}` : null, s.exercise, s.age, s.equipment].filter(Boolean).join(", ");

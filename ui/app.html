@@ -2077,7 +2077,8 @@ async function viewScenes(v, seq=VIEW_SEQ){
 function paintScenes(){
   const box = $('#bSceneCard'); if (!box) return;
   const sc = B.scenes, st = sc?.status;
-  if (!st?.exists){ const busy0 = STATE.run && !STATE.run.done; box.innerHTML = `<div class="row"><h3 style="margin:0">Scene library</h3><div class="spacer"></div><button class="primary sm" onclick="bRefreshConfirm()" ${busy0?'disabled':''}>Draft the first scenes…</button></div>
+  if (!st?.exists){ const busy0 = STATE.run && !STATE.run.done, sibs = sc?.siblings || []; box.innerHTML = `<div class="row"><h3 style="margin:0">Scene library</h3><div class="spacer"></div><button class="primary sm" onclick="bRefreshConfirm()" ${busy0?'disabled':''}>Draft the first scenes…</button></div>
+    ${sibs.length?`<div class="row" style="margin-top:10px;gap:8px"><span>Or start from another gym's library:</span><select id="bCopyFrom">${sibs.map(x=>`<option value="${esc(x.gym)}">${esc(x.name)} · ${x.live} scenes</option>`).join('')}</select><button class="sm" onclick="bCopyScenes()" ${busy0?'disabled':''}>Copy its scenes as drafts</button></div><p class="hint" style="margin:6px 0 0">Every live scene of that gym comes in as a draft for you to approve or reject, with the people's country swapped in the words (a scene is an exercise and a pose, so the same format carries over). No model calls.</p>`:''}
     <p class="hint" style="margin-top:8px">This gym has no scenes yet. A scene is one photo idea in words: who is in it, the exercise, solo, coached or group, and roughly the pose. Generated photos are only ever made from scenes you approve; your real premises photos need none.</p>
     <p class="hint">Draft the first scenes: pick the audience and how many, and the agent writes them to this gym's photography rules (text calls only, no image calls). Read them, approve the good ones, reject the rest with a reason. Your first approval approves the library, and batches can then generate from it.</p>`; return; }
   const drafts = sc.drafts || [];
@@ -2093,6 +2094,15 @@ function paintScenes(){
       <div class="row"><button class="sm ok" onclick="bApprove(['${esc(d.id)}'])" ${busy?'disabled':''}>Approve</button><button class="sm danger" onclick="bReject('${esc(d.id)}')" ${busy?'disabled':''}>Reject…</button></div>
     </div></div>`).join('')}
     <div id="bSceneMsg" class="hint" style="margin-top:8px"></div>`;
+}
+async function bCopyScenes(){
+  const from = $('#bCopyFrom')?.value; if (!from) return;
+  let msg;
+  try { const r = await api(`/api/client/${STATE.sel}/scenes/copy`, {method:'POST', body:{from}}); msg = esc(`${r.added.length} scene${r.added.length===1?'':'s'} copied as drafts${r.skipped.length?`, ${r.skipped.length} already here`:''}${r.problems.length?`; left out: ${r.problems.join('; ')}`:''}. Approve the good ones below.`); }
+  catch(e){ msg = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+  try { await reloadScenes(); } catch(e){ console.error(e); }
+  const m=$('#bSceneMsg'); if (m) m.innerHTML = msg;
+  scheduleCheck(0);
 }
 async function reloadScenes(){ B.scenes = await api(`/api/client/${STATE.sel}/scenes`); B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); paintScenes(); paintRefs(); paintDerived(); paintList(); }
 async function bApprove(ids){

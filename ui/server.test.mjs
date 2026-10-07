@@ -2050,3 +2050,41 @@ test("U34 From the ad account (2026-10-07, the first non-Singapore gym): a new g
     void buildPlan;
   } finally { await panel.stop(); panel = main; graph.close(); rmSync(g, { recursive: true, force: true }); }
 });
+
+test("U35 a new gym's scenes from a sibling's library: the Scenes answer lists the other gyms with live scenes; copying brings them in as drafts with the country swapped (the Singapore source into a Taiwan gym), nothing generates until one is approved, a second copy adds nothing; a gym without a library or the gym itself is refused; the page offers it when the gym has no scenes", async () => {
+  const gym = "tw-scenes", g = join(brands, gym);
+  rmSync(g, { recursive: true, force: true });
+  assert.equal((await call("/api/clients", { method: "POST", body: { gym, display_name: "TW Scenes", country: "TW" } })).status, 200);
+  try {
+    let r = await (await call(`/api/client/${gym}/scenes`)).json();
+    const sib = r.siblings.find((s) => s.gym === GYM);
+    assert.ok(sib && sib.live > 0, "the test gym's approved library is offered");
+    assert.ok(!r.siblings.some((s) => s.gym === gym));
+    assert.equal((await call(`/api/client/${gym}/scenes/copy`, { method: "POST", body: { from: gym } })).status, 400);
+    assert.equal((await call(`/api/client/${gym}/scenes/copy`, { method: "POST", body: { from: "no-such-gym" } })).status, 400);
+    assert.equal((await call(`/api/client/${gym}/scenes/copy`, { method: "POST", body: { from: GYM }, token: null })).status, 403);
+    r = await (await call(`/api/client/${gym}/scenes/copy`, { method: "POST", body: { from: GYM } })).json();
+    assert.deepEqual([r.added.length, r.skipped, r.status.exists, r.status.approved, r.drafts.length], [sib.live, [], true, false, sib.live]);
+    assert.ok(r.drafts.every((d) => d.source === `copied:${GYM}`));
+    const lib = JSON.parse(readFileSync(join(g, "scenes.json"), "utf-8"));
+    const srcSG = JSON.parse(readFileSync(join(brands, GYM, "scenes.json"), "utf-8")).scenes.some((s) => /Singaporean/.test(s.scene));
+    assert.ok(!lib.scenes.some((s) => /Singaporean/.test(s.scene)) && (!srcSG || lib.scenes.some((s) => /Taiwanese/.test(s.scene))), "the people's country followed the gym");
+    r = await (await call(`/api/client/${gym}/scenes/copy`, { method: "POST", body: { from: GYM } })).json();
+    assert.deepEqual([r.added, r.skipped.length], [[], sib.live]);
+    // The page: a gym with no scenes offers the sibling; after the copy the drafts are listed for approval.
+    const gym2 = "tw-scenes-2"; rmSync(join(brands, gym2), { recursive: true, force: true });
+    assert.equal((await call("/api/clients", { method: "POST", body: { gym: gym2, display_name: "TW Scenes 2", country: "TW" } })).status, 200);
+    try {
+      const { cdp, sessionId } = browser;
+      const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+      const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u35#/${gym2}/scenes` }, sessionId); await loaded;
+      const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!document.querySelector('#bCopyFrom')"))) await new Promise((x) => setTimeout(x, 120));
+      assert.ok(await ev("[...document.querySelectorAll('#bCopyFrom option')].some(o=>o.value===" + JSON.stringify(GYM) + ")"), "the sibling is offered");
+      await ev(`document.querySelector('#bCopyFrom').value = ${JSON.stringify(GYM)}; true`);
+      await ev("bCopyScenes()");
+      const t1 = Date.now(); while (Date.now() - t1 < 20000 && !(await ev("/copied as drafts/.test(document.querySelector('#bSceneMsg')?.textContent||'')"))) await new Promise((x) => setTimeout(x, 120));
+      const text = await ev("document.querySelector('#bSceneCard').textContent");
+      assert.match(text, new RegExp(`${sib.live} scenes? copied as drafts`)); assert.match(text, /not approved yet/); assert.match(text, /Approve all/);
+    } finally { rmSync(join(brands, gym2), { recursive: true, force: true }); }
+  } finally { rmSync(g, { recursive: true, force: true }); }
+});
