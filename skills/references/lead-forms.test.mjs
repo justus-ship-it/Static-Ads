@@ -35,14 +35,14 @@ test("LF1 a form read back becomes a template: every question as the create call
   assert.deepEqual(forms.map((f) => f.id), ["7001", "7000"]); assert.equal(forms[0].question_count, 7);
   const t = templateFrom(XINYI);
   assert.deepEqual(t.phrases, { offer: "六週中年體態雕塑計畫", district: "信義區" });
-  assert.deepEqual(t.spec.questions[0], { type: "CUSTOM", label: "你在信義區附近工作或居住嗎？", options: [{ value: "是" }, { value: "否" }] });
-  assert.deepEqual(t.spec.questions[3], { type: "DATE_TIME", label: "請預約時間與我們見面以開始！" });
+  assert.deepEqual(t.spec.questions[0], { type: "CUSTOM", label: "你在信義區附近工作或居住嗎？", key: "q1", options: [{ key: "是", value: "是" }, { key: "否", value: "否" }] }, "the form's own keys kept; every option carries one (an option without a key made Meta's server fail)");
+  assert.deepEqual(t.spec.questions[3], { type: "DATE_TIME", label: "請預約時間與我們見面以開始！", key: "q4" });
   assert.deepEqual(t.spec.questions[4], { type: "EMAIL" }, "a standard question goes up by type alone: Meta refuses a label on it");
   assert.deepEqual(t.spec.context_card, { title: "六週中年體態雕塑計畫", content: ["幫助我們多認識你！"], style: "PARAGRAPH_STYLE" });
-  assert.deepEqual(t.spec.thank_you_page, { title: "最後一步", body: XINYI.thank_you_page.body, button_type: "CALL_BUSINESS", button_text: "聯絡我們", business_phone_number: "+886980660800" });
+  assert.deepEqual(t.spec.thank_you_page, { title: "最後一步", body: XINYI.thank_you_page.body, button_type: "CALL_BUSINESS", button_text: "聯絡我們", business_phone_number: "+886980660800", country_code: "TW" }, "the call button's country from the number's prefix");
   assert.deepEqual(t.spec.privacy_policy, { url: "https://f45training.com/privacy", link_text: "瀏覽 F45 Xinyi 信義的隱私政策。" });
   assert.deepEqual([t.spec.locale, t.spec.question_page_custom_headline, t.spec.allow_organic_lead, t.source.id, t.source.leads_count], ["zh_TW", XINYI.question_page_custom_headline, true, "7001", 118]);
-  assert.deepEqual(questionSpec({ type: "custom", label: " x ", options: ["a", { value: "b" }, ""] }), { type: "CUSTOM", label: "x", options: [{ value: "a" }, { value: "b" }] });
+  assert.deepEqual(questionSpec({ type: "custom", label: " x y ", options: ["a", { value: "b" }, "", { key: "a", value: "c" }] }), { type: "CUSTOM", label: "x y", key: "x_y", options: [{ key: "a", value: "a" }, { key: "b", value: "b" }, { key: "a_4", value: "c" }] }, "keys from the values, a repeat told apart");
   assert.equal(formProblems(t.spec).length, 0, "their own form passes the rules as read");
 });
 
@@ -79,11 +79,14 @@ test("LF3 the rules in code and creation: no name, no questions, too many, an un
   assert.match(p({ questions: [{ type: "EMAIL" }, { type: "EMAIL" }] }).join(), /EMAIL is asked twice/);
   assert.match(p({ privacy_policy: null }).join(), /privacy policy address is required/);
   assert.match(p({ thank_you_page: { title: "t", body: "b", button_type: "CALL_BUSINESS" } }).join(), /call button needs the business's phone number/);
+  assert.match(p({ thank_you_page: { title: "t", body: "b", button_type: "CALL_BUSINESS", business_phone_number: "980660800" } }).join(), /needs the number's country/);
+  assert.equal(p({ thank_you_page: { title: "t", body: "b", button_type: "CALL_BUSINESS", business_phone_number: "980660800", country_code: "TW" } }).length, 0);
   assert.match(p({ thank_you_page: { title: "t", body: "b", button_type: "VIEW_WEBSITE" } }).join(), /website button needs the address/);
   assert.match(p({ thank_you_page: { title: "", body: "b", button_type: "NONE" } }).join(), /thank-you page needs a title/);
   const body = createPayload(ok);
   assert.deepEqual(Object.keys(body).sort(), ["allow_organic_lead", "block_display_for_non_targeted_viewer", "context_card", "is_optimized_for_quality", "locale", "name", "privacy_policy", "question_page_custom_headline", "questions", "thank_you_page"]);
   assert.deepEqual(body.questions[4], { type: "EMAIL" });
+  assert.equal(body.thank_you_page.country_code, "TW", "the call button goes up with its country");
   assert.deepEqual(questionSpec({ type: "PHONE", label: "Phone number" }), { type: "PHONE" });
   const dir = mkdtempSync(join(tmpdir(), "leadforms-")), c = client();
   try {

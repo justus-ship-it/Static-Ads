@@ -43,12 +43,26 @@ const summarise = (f) => ({ ...f, question_count: (f.questions || []).length });
  *  question ("無法為非自訂問題指定參數標籤", F45 Xinyi's first create, 2026-10-07) — a CUSTOM or DATE_TIME one
  *  with its wording, a multiple-choice one with its options. */
 export const LABELLED_TYPES = ["CUSTOM", "DATE_TIME"];
+/** A question's key as Meta makes one from its wording (the lead export's column): spaces to underscores. */
+export const keyFor = (label) => String(label || "").trim().replace(/\s+/g, "_").slice(0, 100);
 export function questionSpec(q) {
   const type = String(q.type || "CUSTOM").toUpperCase();
   const out = { type };
-  if (LABELLED_TYPES.includes(type)) out.label = String(q.label || "").trim();
-  if (Array.isArray(q.options) && q.options.length) out.options = q.options.map((o) => ({ value: String(typeof o === "string" ? o : o.value ?? o.key ?? "").trim() })).filter((o) => o.value);
+  if (LABELLED_TYPES.includes(type)) { out.label = String(q.label || "").trim(); out.key = String(q.key || "").trim() || keyFor(out.label); }
+  // Every option carries a key — an option without one made Meta's server fail ("An unknown error has occurred",
+  // code 1; found with each element tried alone, 2026-10-07): the value, as their own forms have it.
+  if (Array.isArray(q.options) && q.options.length) {
+    const seen = new Set();
+    out.options = q.options.map((o, i) => { const value = String(typeof o === "string" ? o : o.value ?? o.key ?? "").trim(); let key = String((typeof o === "object" && o.key) || value).trim() || `option_${i + 1}`; while (seen.has(key)) key = `${key}_${i + 1}`; seen.add(key); return { key, value }; }).filter((o) => o.value);
+  }
   return out;
+}
+/** The country code a call button needs beside its number (Meta: "Business phone number or country code is missing"): from the number's prefix, else the gym's country. */
+export const COUNTRY_PREFIXES = { "+886": "TW", "+65": "SG", "+60": "MY", "+852": "HK", "+81": "JP", "+82": "KR", "+61": "AU", "+44": "GB", "+1": "US" };
+export function countryCodeFor(phone, fallback = null) {
+  const p = String(phone || "").replace(/[\s()-]/g, "");
+  for (const [prefix, code] of Object.entries(COUNTRY_PREFIXES).sort((a, b) => b[0].length - a[0].length)) if (p.startsWith(prefix)) return code;
+  return fallback || null;
 }
 
 /**
@@ -56,7 +70,7 @@ export function questionSpec(q) {
  * it has one (their forms title the card with the offer), else nothing; the district phrase is the first
  * question's "…區" / "…附近" word when the Page's address has one.
  */
-export function templateFrom(form, { district = null } = {}) {
+export function templateFrom(form, { district = null, country = null } = {}) {
   const questions = (form.questions || []).map(questionSpec);
   const ty = form.thank_you_page || {};
   const spec = {
@@ -64,7 +78,7 @@ export function templateFrom(form, { district = null } = {}) {
     locale: form.locale || null,
     questions,
     context_card: form.context_card ? { title: form.context_card.title || "", content: [].concat(form.context_card.content || []).filter(Boolean), style: form.context_card.style || "PARAGRAPH_STYLE", ...(form.context_card.button_text ? { button_text: form.context_card.button_text } : {}) } : null,
-    thank_you_page: ty.title || ty.body ? { title: ty.title || "", body: ty.body || "", button_type: ty.button_type || "NONE", ...(ty.button_text ? { button_text: ty.button_text } : {}), ...(ty.website_url ? { website_url: ty.website_url } : {}), ...(ty.business_phone_number ? { business_phone_number: ty.business_phone_number } : {}) } : null,
+    thank_you_page: ty.title || ty.body ? { title: ty.title || "", body: ty.body || "", button_type: ty.button_type || "NONE", ...(ty.button_text ? { button_text: ty.button_text } : {}), ...(ty.website_url ? { website_url: ty.website_url } : {}), ...(ty.business_phone_number ? { business_phone_number: ty.business_phone_number, country_code: ty.country_code || countryCodeFor(ty.business_phone_number, country) } : {}) } : null,
     privacy_policy: form.legal_content?.privacy_policy?.url || form.privacy_policy_url ? { url: form.legal_content?.privacy_policy?.url || form.privacy_policy_url, ...(form.legal_content?.privacy_policy?.link_text ? { link_text: form.legal_content.privacy_policy.link_text } : {}) } : null,
     follow_up_action_url: form.follow_up_action_url || null,
     question_page_custom_headline: form.question_page_custom_headline || null,
@@ -160,6 +174,7 @@ export function formProblems(spec) {
     if (!BUTTON_TYPES.includes(bt)) p.push(`the thank-you button "${ty.button_type}" is not one Meta offers`);
     if (["VIEW_WEBSITE", "BOOK_ON_WEBSITE"].includes(bt) && !/^https?:\/\/\S+$/i.test(String(ty.website_url || ""))) p.push("a website button needs the address it opens");
     if (bt === "CALL_BUSINESS" && !/^\+?[\d\s()-]{6,}$/.test(String(ty.business_phone_number || ""))) p.push("a call button needs the business's phone number (with its country code)");
+    else if (bt === "CALL_BUSINESS" && !/^[A-Z]{2}$/.test(String(ty.country_code || countryCodeFor(ty.business_phone_number) || ""))) p.push("a call button needs the number's country (a two-letter country code: Meta refuses the page without one)");
   }
   if (spec?.question_page_custom_headline && String(spec.question_page_custom_headline).length > L.headline) p.push(`the headline is over ${L.headline} characters`);
   if (spec?.follow_up_action_url && !/^https?:\/\/\S+$/i.test(String(spec.follow_up_action_url))) p.push("the follow-up address must be a web address");
@@ -171,7 +186,7 @@ export function createPayload(spec) {
   const body = { name: String(spec.name).trim(), questions: spec.questions.map(questionSpec), privacy_policy: spec.privacy_policy };
   if (spec.locale) body.locale = spec.locale;
   if (spec.context_card) body.context_card = spec.context_card;
-  if (spec.thank_you_page) body.thank_you_page = spec.thank_you_page;
+  if (spec.thank_you_page) body.thank_you_page = { ...spec.thank_you_page, ...(spec.thank_you_page.button_type === "CALL_BUSINESS" && spec.thank_you_page.business_phone_number ? { country_code: spec.thank_you_page.country_code || countryCodeFor(spec.thank_you_page.business_phone_number) } : {}) };
   if (spec.follow_up_action_url) body.follow_up_action_url = spec.follow_up_action_url;
   if (spec.question_page_custom_headline) body.question_page_custom_headline = spec.question_page_custom_headline;
   if (spec.block_display_for_non_targeted_viewer != null) body.block_display_for_non_targeted_viewer = !!spec.block_display_for_non_targeted_viewer;
