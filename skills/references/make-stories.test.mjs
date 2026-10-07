@@ -497,3 +497,20 @@ test("S10 end to end: a photo whose pose holds none of its looks costs no image 
     for (const a of ads) assert.equal(r.stories.photos[a.photos[0]].kind, "band");
   } finally { rmSync(bdir, { recursive: true, force: true }); }
 });
+
+test("S11 the Stories spend is written after every image call (2026-10-07): a run stopped part-way keeps what it cost — before, the count was written only once a whole group of photos was done, and F45 Xinyi's stopped run had made 4 calls and recorded none", async () => {
+  const dir = brandSetup();
+  try {
+    const { out } = await finishedBatch(dir);
+    const calls = [], seen = [], gen = generate(calls);
+    const spendAt = () => { const p = join(out, "spend.json"); return existsSync(p) ? JSON.parse(readFileSync(p, "utf-8")).stories_image_calls ?? null : null; };
+    // At the second image call the record must already be on disk: a call is counted as it begins (the
+    // generating event), so a run killed in the middle of one never under-counts — the second call reads 2.
+    const generate2 = async (...a) => { if (calls.length === 1) seen.push(spendAt()); return gen(...a); };
+    const deps = { generate: generate2, check: check9, sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser, gallery: () => {} };
+    const r = await runStories({ brandDir: dir, batchId: "test-batch", maxCalls: 6, deps, log: () => {} });
+    assert.ok(calls.length >= 2, `needs at least two image calls to prove it (made ${calls.length})`);
+    assert.deepEqual(seen, [2], "the first call, and the second as it began, were recorded before the second was made (before the fix: nothing on disk)");
+    assert.equal(spendAt(), r.stories.image_calls, "the final count matches the record");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

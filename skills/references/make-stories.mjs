@@ -241,14 +241,23 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
     const left = Math.max(0, maxCalls - spentBefore - calls);
     if (todo.length && !left) log(`- the stories budget of ${maxCalls} image calls is spent: ${todo.map((v) => v.id).join(", ")} not generated`);
     if (todo.length && left) {
+      const callsBefore = calls;
       const rep = await generateVisuals({
         visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio: RATIO, shotGuide: deps.shotGuide !== undefined ? deps.shotGuide : readShotGuide(),
         refs: reference ? [at(reference)] : [], anchorFor: (v) => v.anchor, maxCalls: left, attempts,
         // The room reference was text-checked when the batch was made; not again here.
         checkRef: deps.checkRef || (async () => []),
         generate: deps.generate || ((p, parts, o) => generateImage(p, parts, { ...o, model: imageModelFor(profile) })), check, ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
+        // Written after every image call and every finished photo, as the batch runner does: a run stopped
+        // part-way keeps what it cost (F45 Xinyi's stopped Stories run, 2026-10-07, had made 4 calls and
+        // recorded none — the checkpoint ran only once the whole group was done).
+        onProgress: (e) => {
+          if (e.calls != null) calls = callsBefore + e.calls;
+          if (e.event === "done" && e.result) prior[e.id] = record(e.result, e.result.file, e.result.check);
+          if (e.calls != null || e.event === "done") checkpoint();
+        },
       });
-      calls += rep.image_calls;
+      calls = callsBefore + rep.image_calls;
       for (const r of rep.results) prior[r.id] = record(r, r.file, r.check);
       checkpoint();
     }
