@@ -51,6 +51,9 @@ const DIVIDER_CONTRAST = 3; // a divider is a mark, not text: WCAG's non-text co
 
 /** Reject anything that would break the ad or the Ads Uploader import. Mirrors hasEmDash in
  *  client-config.mjs: em/en dashes corrupt the importer, so they are refused, not replaced. */
+/** Does the text carry a Chinese, Japanese or Korean character (ideographs, kana, hangul, CJK punctuation, full-width forms)? */
+export const hasCJK = (s) => /[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(String(s ?? ""));
+
 export function validateInputs({ location, audience, offer }) {
   const errors = [];
   const check = (label, v, required) => {
@@ -71,10 +74,11 @@ export function validateInputs({ location, audience, offer }) {
  *  line ("Confidence Comeback Challenge"), the way every reference ad stacks it. Only splits —
  *  never rewords — and proves the two halves rejoin to exactly the user's string. */
 export function splitOffer(offer, freePrefix = false) {
-  const m = offer.match(/^(\d+[- ]?(?:weeks?|days?|months?))\s+(.+)$/i);
+  // "12 Week …" / "6-week …"; and Chinese "六週…" / "12週…" / "40天…" (no space after the duration, the way it is written).
+  const m = offer.match(/^(\d+[- ]?(?:weeks?|days?|months?))(\s+)(.+)$/i) || (hasCJK(offer) ? offer.match(/^((?:\d+|[一二三四五六七八九十兩百]+)\s?(?:週|周|星期|天|日|個月|月))(\s*)(.+)$/) : null);
   let duration = m ? m[1] : null;
-  const offer_name = m ? m[2] : offer;
-  if (m && `${duration} ${offer_name}` !== offer) throw new Error(`offer split did not round-trip: "${offer}"`);
+  const offer_name = m ? m[3] : offer;
+  if (m && `${duration}${m[2]}${offer_name}` !== offer) throw new Error(`offer split did not round-trip: "${offer}"`);
   if (freePrefix) duration = duration ? `FREE ${duration}` : null;
   const name = !duration && freePrefix ? `FREE ${offer_name}` : offer_name;
   return { duration, offer_name: name };
@@ -304,11 +308,16 @@ export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-s
   const used = new Map();
   const line = (g, banded) => {
     const sb = st.blocks[g.block] || {};
-    const faceId = sb.face || "montserrat";
-    const face = S.faces[faceId];
+    let faceId = sb.face || "montserrat";
+    let face = S.faces[faceId];
     if (!face) throw new Error(`style "${style}" line "${g.block}" uses unknown face "${faceId}". Known: ${Object.keys(S.faces).join(", ")}`);
-    const weight = sb.weight ?? 800;
+    // A line with CJK characters is set in its face's CJK stand-in (the Latin faces have no such glyphs; the browser
+    // would fall back to whatever it has): the same effect, the nearest weight the stand-in carries, no script rules.
+    const cjk = hasCJK(text[g.block]) && !!face.cjk && !!S.faces[face.cjk];
+    if (cjk) { faceId = face.cjk; face = S.faces[faceId]; }
+    let weight = sb.weight ?? 800;
     const [w0, w1] = face.weights;
+    if (cjk) weight = Math.min(Math.max(weight, w0), w1);
     if (weight < w0 || weight > w1) {
       throw new Error(`style "${style}" asks ${face.family} ${face.style} at weight ${weight}, but that face only has ${w0 === w1 ? w0 : `${w0}-${w1}`}. The browser would fake it, so it is refused.`);
     }
@@ -322,7 +331,9 @@ export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-s
       throw new Error(`"${g.block}" is ${t.length} characters; the script style allows ${S.script_rules.max_chars}. Use a shorter callout or a non-script style.`);
     }
     used.set(faceId, face);
-    const tracking = sb.tracking || "0";
+    // CJK is spaced by the glyph: wide tracking stays wide-ish but capped; there is no case to change.
+    const trackEm = parseFloat(sb.tracking || "0") || 0;
+    const tracking = cjk ? `${Math.min(trackEm, S.cjk_rules?.max_tracking_em ?? 0.12)}em` : (sb.tracking || "0");
     return {
       ...g,
       share: sb.share ?? g.share, // a style may give a line a bigger slice, e.g. taller script letters
@@ -335,8 +346,9 @@ export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-s
       // A line on a band (its style's own, or the layout's) keeps its letters clear of the band's ends.
       pad_em: face.overhang + (effect === "hollow" ? HOLLOW_ALLOWANCE : STROKE_ALLOWANCE) + (effect === "band" || banded ? BAND_PAD : 0),
       layout_band: banded,
-      min_px: face.script ? Math.max(g.min_px, S.script_rules.min_px) : g.min_px,
+      min_px: face.script ? Math.max(g.min_px, S.script_rules.min_px) : cjk ? Math.max(g.min_px, S.cjk_rules?.min_px ?? 40) : g.min_px,
       script: !!face.script,
+      cjk,
     };
   };
   const groups = layout.groups.map((g) => ({

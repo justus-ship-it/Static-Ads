@@ -1197,3 +1197,35 @@ test("R5 a browser start that fails is tried once more, and the failed start's C
   } finally { await b.close(); }
   assert.equal(mine(), before, "and closing ends that one");
 });
+
+test("J1 CJK (2026-10-07, F45 Xinyi in Taipei): a line with Chinese characters is set in its face's CJK stand-in at the nearest weight, with the same effect, capped tracking and a 40 px floor; every style renders Chinese callouts and offer exactly, verified on dark, light and stripes, with zero pixels outside the region at full width; the Chinese duration splits from the offer name and round-trips", async () => {
+  const CJK = { location: "信義區", audience: "女生限定", offer: "六週中年體態雕塑計畫" };
+  const LONG = { location: "台北市信義區與大安區", audience: "忙碌上班族女生限定", offer: "六週中年體態雕塑與核心線條計畫" };
+  const faces = CAT.styles.faces;
+  assert.ok(existsSync(faces["noto-sans-tc"].file) && existsSync(faces["noto-serif-tc"].file), "the Noto TC faces are in assets/fonts");
+  for (const style of STYLES) {
+    const spec = buildSpec({ image: SOLID_BG, text: { location: CJK.location, audience: CJK.audience, ...splitOffer(CJK.offer) }, style, palette: "white-on-dark" });
+    for (const b of spec.layout.stack) {
+      const want = ["abril-fatface", "cinzel"].includes(CAT.styles.styles[style].blocks[b.block]?.face) ? "noto-serif-tc" : "noto-sans-tc";
+      assert.equal(b.face.id, want, `${style}/${b.block}`); assert.ok(b.cjk && b.min_px >= 40 && b.tracking_em <= 0.12, `${style}/${b.block}: ${JSON.stringify({ cjk: b.cjk, min: b.min_px, tr: b.tracking_em })}`);
+      const [w0, w1] = faces[want].weights; assert.ok(b.face.weight >= w0 && b.face.weight <= w1);
+    }
+    assert.ok(spec.fonts.every((f) => f.cjk), `${style}: only the CJK faces are loaded for all-CJK words`);
+    for (const bg of [SOLID_BG, LIGHT, STRIPES]) {
+      const r = await renderComposite(browser, { image: bg, ...CJK, style, palette: "white-on-dark" });
+      assert.equal(r.ok, true, `${style} on ${bg === SOLID_BG ? "dark" : bg === LIGHT ? "light" : "stripes"}: ${r.failures.join(" | ")}`);
+    }
+    const r = await renderComposite(browser, { image: SOLID_BG, ...LONG, style, palette: "white-on-dark" });
+    assert.equal(r.ok, true, `${style} long: ${r.failures.join(" | ")}`);
+    const { w, h, ch, px } = decodePNG(r.png), R = r.report.region;
+    let leaks = 0, inside = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * ch; const differs = Math.abs(px[i] - 0x20) + Math.abs(px[i + 1] - 0x20) + Math.abs(px[i + 2] - 0x20) > 24; const inRegion = x >= R.x && x <= R.x + R.w && y >= R.y && y <= R.y + R.h; if (differs) { if (inRegion) inside++; else leaks++; } }
+    assert.equal(leaks, 0, `${style}: ${leaks} CJK pixels outside the region`); assert.ok(inside > 2000, `${style}: the Chinese letters were painted`);
+  }
+  // Mixed words keep their Latin faces on the Latin-only lines.
+  const mixed = buildSpec({ image: SOLID_BG, text: { location: "XINYI", audience: "女生限定", ...splitOffer("6 Week 中年體態雕塑") }, style: "s1-heavy-sans", palette: "white-on-dark" });
+  assert.deepEqual(mixed.layout.stack.map((b) => [b.block, b.face.id]).filter(([b]) => b !== "duration"), [["location", "montserrat"], ["audience", "noto-sans-tc"], ["offer_name", "noto-sans-tc"]]);
+  assert.deepEqual(splitOffer("六週中年體態雕塑計畫"), { duration: "六週", offer_name: "中年體態雕塑計畫" });
+  assert.deepEqual(splitOffer("40天川字肌計畫"), { duration: "40天", offer_name: "川字肌計畫" });
+  assert.deepEqual(splitOffer("信義區專屬課程"), { duration: null, offer_name: "信義區專屬課程" });
+});
