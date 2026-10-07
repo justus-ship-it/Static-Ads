@@ -514,3 +514,36 @@ test("S11 the Stories spend is written after every image call (2026-10-07): a ru
     assert.equal(spendAt(), r.stories.image_calls, "the final count matches the record");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("S12 one ad's Stories version (2026-10-07): `only` plans that ad alone and keeps the rest of the record; attempts on disk count unless `fresh`, which tries the photo again; an unknown ad is refused", async () => {
+  const dir = brandSetup();
+  try {
+    const { out, batch } = await finishedBatch(dir);
+    // The first generated photo's native 9:16 attempts made before `good` is set fail every check (and keep
+    // failing when looked at again): its ad gets the band until a fresh attempt is made.
+    let good = false; const bad = new Set();
+    const first = batch.photos.find((p) => p.kind === "generated").id;
+    const check = async (file, opts) => { const r = await check9(file, opts); const name = basename(file); if (!good && name.startsWith(`${first}-${RATIO}`)) bad.add(name); return bad.has(name) ? { ...r, ok: false, failures: ["crafted failure"] } : r; };
+    const ad = batch.ads.find((a) => a.photos.length === 1 && a.photos[0] === first);
+    const calls = [];
+    const deps = { generate: generate(calls), check, sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser, gallery: () => {} };
+    const r1 = await runStories({ brandDir: dir, batchId: "test-batch", maxCalls: 12, deps, log: () => {} });
+    const n1 = calls.length, total1 = r1.stories.ads.length;
+    const of = (st) => st.ads.find((a) => a.folder === ad.folder);
+    assert.equal(of(r1.stories).photos[0], `${first}-${RATIO}-band-${short(ad.treatment)}`, "the band stood in after the native 9:16 failed");
+    await assert.rejects(runStories({ brandDir: dir, batchId: "test-batch", only: ["c99"], deps, log: () => {} }), /none of the kept ads is c99/);
+    // Only this ad, not fresh: the two attempts on disk count, nothing is generated, the rest is kept.
+    const r2 = await runStories({ brandDir: dir, batchId: "test-batch", maxCalls: 12, only: [ad.candidate], deps, log: () => {} });
+    assert.equal(calls.length, n1, "no new image call: the attempts on disk count");
+    assert.equal(r2.stories.ads.length, total1, "the other ads' versions are kept in the record");
+    assert.equal(r2.plan.ads.length, batch.ads.filter((a) => a.candidate === ad.candidate).length, "the plan covers that ad alone");
+    // Fresh: the photo is tried again; now it passes, and the native 9:16 serves the ad.
+    good = true;
+    const r3 = await runStories({ brandDir: dir, batchId: "test-batch", maxCalls: 12, only: [ad.candidate], fresh: true, deps, log: () => {} });
+    assert.equal(calls.length, n1 + 1, "one new image call for the one photo");
+    assert.equal(of(r3.stories).photos[0], `${first}-${RATIO}`, "the native 9:16 now serves the ad");
+    assert.equal(r3.stories.ads.length, total1);
+    assert.equal(r3.stories.image_calls, n1 + 1, "the batch's Stories calls carry on");
+    for (const a of r3.stories.ads) assert.ok(existsSync(join(out, a.file)), `${a.folder} 9:16 on disk`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

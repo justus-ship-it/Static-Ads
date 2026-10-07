@@ -1453,7 +1453,7 @@ function paintStage(){
     info.innerHTML = `<b>${esc(it.id)}</b>${it.scene_id?`<span>${esc(it.scene_id)}</span>`:''}<span>in ${it.ads} ad${it.ads===1?'':'s'}</span>${it.primary?`<span>made for ${esc(layoutName(it.primary))}</span>`:''}${it.scene?`<span class="scene">${esc(it.scene)}</span>`:''}${(it.notes||[]).length?`<span class="note" title="${esc(it.notes.join(' · '))}">${esc(it.notes.join(' · '))}</span>`:''}`;
   } else {
     box.innerHTML = `${nav}${badge}<figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt=""><figcaption>1:1 · Feed</figcaption></figure>
-      <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="">`:`<div class="nostory">No Stories version yet.<br>Keep the ads you want, then Make Stories versions below.</div>`}<figcaption>9:16 · Stories / Reels</figcaption></figure>`;
+      <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>`;
     info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${esc(layoutName(it.treatment))} · ${esc(nice(it.style))} · ${esc(nice(it.palette))}</span><span>photo${it.photos.length===1?'':'s'} ${esc(it.photos.join(' + '))}</span>${it.by_photo?`<span class="note">excluded with photo ${esc(it.by_photo)}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">${esc(it.notes)}</span>`:''}`;
   }
   paintButtons(it);
@@ -1536,6 +1536,24 @@ async function rvStoriesGo(){
   paintFoot(true);
 }
 function rvStoriesRerender(){ run({kind:'batch-stories-rerender', gym:STATE.sel, batch:R.id}, async()=>{ R.data = null; }); paintFoot(true); }
+/** One ad's Stories version (2026-10-07): its photo is tried again even where earlier attempts failed; the other ads' versions stay. */
+async function rvStoryOne(candidate){
+  await R.save;
+  const ads = R.data.ads.filter(a=>a.candidate===candidate && a.status!=='exclude');
+  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
+    <h2>Make the Stories version for ${esc(candidate)}?</h2>
+    <p class="hint">A new 9:16 photo for this ad's photo, composed for its look, tried again even where earlier attempts failed — then its 9:16 ad${ads.length===1?'':'s'} rendered with the same words. If no new photo passes, the 1:1 crop as a band stands in. The other ads' Stories versions are untouched. The run stops at the call limit, whatever happens.</p>
+    <div class="summary"><b>${ads.length} ad${ads.length===1?'':'s'}</b> · ${esc(ads.map(a=>a.folder).join(', '))}</div>
+    <div class="row"><label for="bStCap" style="margin:0">Up to</label><input id="bStCap" type="number" min="0" max="40" value="4" style="width:70px"><span class="hint" style="margin:0">Gemini image calls</span></div>
+    <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" onclick="rvStoryOneGo('${esc(candidate)}')" ${ads.length?'':'disabled'}>Yes, make it</button></div></div></div>`;
+}
+async function rvStoryOneGo(candidate){
+  const cap = parseInt($('#bStCap').value, 10), id = R.id; bClose();
+  if (!Number.isInteger(cap) || cap < 0){ toast('The call cap must be a whole number.', 'err'); return; }
+  if (!R.data.saved) await savePicks({});
+  run({kind:'batch-stories', gym:STATE.sel, batch:id, only:candidate, confirm:{max_calls:cap}}, async()=>{ R.data = null; });
+  paintFoot(true);
+}
 
 // ── Generating ───────────────────────────────────────────────────────────────
 // A batch as it is made: each photo appears as it passes its checks (progress.json, written by the

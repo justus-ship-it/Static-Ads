@@ -112,7 +112,7 @@ const RUNNABLE = {
   batch: { label: "Run batch", needsBrief: true, spends: true, argv: ({ gym, batch, approveScenes }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), ...(approveScenes === true ? ["--approve-scenes"] : [])] },
   "batch-rerender": { label: "Re-render batch with its words (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--render-only"] },
   // Stories/Reels (9:16) versions of the selected ads (Step 8): the batch id and the confirmed call cap only.
-  "batch-stories": { label: "Make Stories versions", needsBrief: true, spends: "stories", argv: ({ gym, batch, confirm }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--max-calls", String(confirm.max_calls)] },
+  "batch-stories": { label: "Make Stories versions", needsBrief: true, spends: "stories", argv: ({ gym, batch, confirm, only }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--max-calls", String(confirm.max_calls), ...(only ? ["--only", only, "--fresh"] : [])] },
   // Publishing (E3): the plan on disk is created on Meta, every object paused. The confirmation names what
   // the plan holds now (ad sets, ads, the day's budget) so what is created is what was read; `first` limits a run.
   "batch-publish": { label: "Create on Facebook (paused)", needsBrief: true, spends: "publish", argv: ({ gym, batch, confirm }) => [PUBLISH_SCRIPT, "--gym", gym, "--brand-dir", brandDir(gym), "--batch", batch, "--create", ...(confirm.first ? ["--first", String(confirm.first)] : [])] },
@@ -716,12 +716,15 @@ function reviewState(gym, id) {
   const stories = readJsonFile(join(out, "stories.json"));
   const notes = readJsonFile(join(out, "gallery-notes.json")) || {};
   const storyOf = new Map((stories?.ads || []).filter((a) => existsSync(join(out, a.file))).map((a) => [a.folder, a]));
+  // Why an ad has no Stories version, from the last run: its 9:16 failed to verify, or no 9:16 photo fits its look.
+  const storyFail = new Map();
+  for (const f of [...(stories?.failed || []), ...(stories?.left_out || [])]) for (const folder of f.folders || []) storyFail.set(folder, (f.failures || [f.reason]).filter(Boolean).join("; "));
   const d = readDecisions(gym, id);
   const ads = (batch?.ads || []).map((a) => {
     const s = storyOf.get(a.folder);
     return {
       folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, treatment: a.treatment, style: a.style, palette: a.palette,
-      photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
+      photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
     };
   });
   const photos = batchPhotos(gym, id).map((p) => ({ ...p, status: d.photos[p.id] || null, ads: ads.filter((a) => a.photos.includes(p.id)).length }));
@@ -1696,6 +1699,12 @@ const server = createServer(async (req, res) => {
           const cap = body.confirm?.max_calls;
           if (!Number.isInteger(cap) || cap < 0 || cap > MAX_CALLS_CAP) return json(res, 400, { error: `confirm the call cap for the Stories versions (0–${MAX_CALLS_CAP})` });
           if (!existsSync(join(brandDir(body.gym), "outputs", body.batch, "selections.json"))) return json(res, 409, { error: "no picks yet: review the batch and keep or exclude its ads first" });
+          // One ad's Stories version (2026-10-07): `only` names a candidate of this batch; its photo is tried again
+          // even where earlier attempts failed, and the other ads' versions are left as they are.
+          if (body.only != null) {
+            const b = readJsonFile(join(brandDir(body.gym), "outputs", body.batch, "batch.json"));
+            if (typeof body.only !== "string" || !/^c\d{2,3}$/.test(body.only) || !(b?.ads || []).some((a) => a.candidate === body.only)) return json(res, 400, { error: "only must name one of this batch's ads (its candidate, such as c11)" });
+          }
         } else if (spec.spends === "publish") {
           const c = body.confirm || {}, out = join(brandDir(body.gym), "outputs", body.batch);
           if (!existsSync(join(out, "batch.json"))) return json(res, 409, { error: "the batch has no ads yet" });

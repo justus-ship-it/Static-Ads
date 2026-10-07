@@ -354,6 +354,17 @@ test("U8 Stories versions: refused without a confirmed call cap or without the g
   const again = await runAndWait({ kind: "batch-stories-rerender", gym: GYM, batch: BRIEF.batch_id });
   assert.equal(again.code, 0, again.lines.join("\n"));
   assert.match(again.lines[0], /make-stories\.mjs --brand-dir \S+testgym --batch ref-batch --render-only$/);
+  // One ad's Stories version (2026-10-07): `only` must name a candidate of this batch; the run gets --only and --fresh;
+  // the Review view says why an ad has none.
+  assert.equal((await post({ kind: "batch-stories", gym: GYM, batch: BRIEF.batch_id, only: "c99", confirm: { max_calls: 0 } })).status, 400, "not an ad of this batch");
+  assert.equal((await post({ kind: "batch-stories", gym: GYM, batch: BRIEF.batch_id, only: "../x", confirm: { max_calls: 0 } })).status, 400, "not a candidate id");
+  const one = await runAndWait({ kind: "batch-stories", gym: GYM, batch: BRIEF.batch_id, only: batch.ads[0].candidate, confirm: { max_calls: 0 } });
+  assert.equal(one.code, 0, one.lines.join("\n"));
+  assert.match(one.lines[0], new RegExp(`--max-calls 0 --only ${batch.ads[0].candidate} --fresh$`), "built server-side");
+  assert.ok(one.lines.some((l) => /other ads' Stories versions stay/.test(l)), one.lines.join("\n"));
+  const rv = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/review`)).json();
+  assert.equal(rv.ads.length, batch.ads.length, "every ad is still in the record after a one-ad run");
+  assert.ok(rv.ads.every((a) => a.story && a.story_failure === null && a.candidate), "each ad has its Stories version, no failure said, and its candidate for the per-ad button");
 });
 
 // ── U9 scene refresh through the panel (B2) ─────────────────────────────────

@@ -27,7 +27,7 @@
  *
  * Usage:
  *   node skills/references/make-stories.mjs --brand-dir brands/sculpt-society --batch 2026-09-11-men-variety \
- *     [--max-calls 24] [--attempts 2] [--dry-run] [--render-only]
+ *     [--max-calls 24] [--attempts 2] [--dry-run] [--render-only] [--only c11[,c12]] [--fresh]
  */
 
 import { generateImage } from "./generate_ads_gemini.mjs";
@@ -156,7 +156,10 @@ export const storiesFile = (file1x1) => file1x1.replace("/1x1/", `/${RATIO}/`).r
  * Stories for one batch. `deps` (tests): generate, check, sibling, compositor, browser, gallery.
  * Returns { out, plan, stories, calls } (or { out, plan, dryRun: true }).
  */
-export async function runStories({ brandDir, batchId, batchDir = null, maxCalls = DEFAULT_MAX_CALLS, attempts = 2, dryRun = false, renderOnly = false, deps = {}, log = console.log }) {
+/** `only`: the candidates (c11) or folders of the kept ads to make Stories versions for — the rest of the
+ *  batch's record is kept as it is. `fresh`: try a photo again even where its earlier attempts failed
+ *  (the attempts on disk no longer count), for a single ad the owner wants another go at. */
+export async function runStories({ brandDir, batchId, batchDir = null, maxCalls = DEFAULT_MAX_CALLS, attempts = 2, dryRun = false, renderOnly = false, only = null, fresh = false, deps = {}, log = console.log }) {
   const out = batchDir || join(brandDir, "outputs", batchId);
   if (!existsSync(join(out, "batch.json"))) throw new Error(`no finished batch at ${out}`);
   if (!existsSync(join(out, "selections.json"))) throw new Error(`no selections.json in ${out}: open the gallery, pick, Save Selections, and put the file in the batch folder`);
@@ -172,8 +175,14 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
   const at = (p) => (existsSync(p) ? p : existsSync(join(brandDir, "brand-assets", p)) ? join(brandDir, "brand-assets", p) : resolve(p));
 
   // ── 1 plan ──
-  const chosen = resolveSelections(out);
+  let chosen = resolveSelections(out);
   if (!chosen.length) throw new Error("selections.json chooses no ads");
+  if (only) {
+    const want = new Set(only);
+    chosen = chosen.filter((ad) => want.has(ad.candidate) || want.has(ad.folder));
+    if (!chosen.length) throw new Error(`none of the kept ads is ${only.join(", ")}: a Stories version is made for a kept ad of this batch (its candidate, c01, or its folder)`);
+    log(`· only ${chosen.map((a) => a.folder).join(", ")}${fresh ? " — earlier attempts do not count; the photo is tried again" : ""}; the other ads' Stories versions stay as they are`);
+  }
   const plan = planStories(batch, chosen, { catalogue, poseOf: (id) => visualsById[id]?.pose ?? null });
   const gen = plan.photos.filter((p) => p.kind === "generated" && p.composable !== false), real = plan.photos.filter((p) => p.kind !== "generated");
   for (const p of plan.photos.filter((x) => x.kind === "generated" && x.composable === false)) log(`- ${p.id}: its pose (${visualsById[p.id]?.pose}) holds none of its looks (${p.layouts.map(short).join("/")}) — no 9:16 photo is made; each look uses the band of its 1:1 crop`);
@@ -219,8 +228,11 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
   const reference = brief.reference || brief.real?.[0] || null;
   const earlier = (v) => (existsSync(visualsDir) ? readdirSync(visualsDir).filter((n) => new RegExp(`^${v.id}(-a\\d+)?\\.(png|jpe?g|webp)$`).test(n)).map((n) => join(visualsDir, n)).sort().reverse() : []);
   // Photos already on disk are looked at first — free of image calls; the one in use first.
+  // A photo kept for the layouts it fits (its own layout failed) counts as settled — unless the run is a
+  // fresh go at it and its own layout is what is wanted.
+  const fitsOwn = (v) => { const rec = prior[v.id]; try { return !!fitOf(rec, typeof v.people === "number" ? v.people : null)[v.treatment]?.ok; } catch { return false; } };
   const settle = async (wanted) => {
-    let todo = renderOnly ? [] : wanted.filter((v) => !same(prior[v.id], v));
+    let todo = renderOnly ? [] : wanted.filter((v) => !same(prior[v.id], v) || (fresh && !fitsOwn(v)));
     for (const v of todo) {
       const files = earlier(v), inUse = prior[v.id]?.status === "passed" ? prior[v.id].file : null;
       let last = null;
@@ -235,7 +247,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
     todo = todo.filter((v) => !same(prior[v.id], v));
     // Attempts already on disk count: a re-run does not try a systematic failure (T1's 9:16 placement)
     // `attempts` more times — the first live run spent 8 calls that way before the band stood in.
-    const spent9 = todo.filter((v) => earlier(v).length >= attempts);
+    const spent9 = fresh ? [] : todo.filter((v) => earlier(v).length >= attempts);
     for (const v of spent9) log(`- ${v.id}: ${earlier(v).length} attempt(s) on disk already, none passing — no more tries`);
     todo = todo.filter((v) => !spent9.includes(v));
     const left = Math.max(0, maxCalls - spentBefore - calls);
@@ -403,7 +415,10 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
         ads.push({ folder: ad.folder, file, file_1x1: ad.file, candidate: r.id, location: ad.location, photos: r.images, photo_files: r.images.map((id) => basename(fileOf(id))), treatment: r.treatment, style: r.style, palette: r.palette, ratio: RATIO, crop: r.images.map((id) => focus[id]?.[r.treatment] || [0.5, 0.5]), words: ad.words });
       }
     }
-    const stories = { batch_id: batch.batch_id, made: new Date().toISOString(), ratio: RATIO, image_calls: spent, image_calls_this_run: calls, max_calls: maxCalls, photos: prior, ads, failed, left_out: leftOut };
+    // A run for some ads only keeps the rest of the record: the other ads' versions, failures and left-outs.
+    const mine = new Set(plan.ads.map((a) => a.folder));
+    const rest = (list) => (only ? (existing[list] || []).filter((x) => !(x.folders || [x.folder]).some((f) => mine.has(f))) : []);
+    const stories = { batch_id: batch.batch_id, made: new Date().toISOString(), ratio: RATIO, image_calls: spent, image_calls_this_run: calls, max_calls: maxCalls, photos: prior, ads: [...rest("ads"), ...ads], failed: [...rest("failed"), ...failed], left_out: [...rest("left_out"), ...leftOut] };
     writeFileSync(storiesPath, JSON.stringify(stories, null, 2) + "\n");
     const gallery = deps.gallery || ((dir) => execFileSync(process.execPath, [join(HERE, "gallery-selector.mjs"), "--output-dir", dir], { stdio: "ignore" }));
     gallery(out);
@@ -415,15 +430,15 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const { values: v } = parseArgs({ options: {
-    "brand-dir": { type: "string" }, batch: { type: "string" }, "max-calls": { type: "string" }, attempts: { type: "string", default: "2" },
+    "brand-dir": { type: "string" }, batch: { type: "string" }, "max-calls": { type: "string" }, attempts: { type: "string", default: "2" }, only: { type: "string" }, fresh: { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false }, "render-only": { type: "boolean", default: false },
   } });
   if (!v["brand-dir"] || !v.batch) {
-    console.error("Usage: make-stories.mjs --brand-dir <brands/x> --batch <batch id> [--max-calls 24] [--attempts 2] [--dry-run] [--render-only]");
+    console.error("Usage: make-stories.mjs --brand-dir <brands/x> --batch <batch id> [--max-calls 24] [--attempts 2] [--dry-run] [--render-only] [--only c11[,c12]] [--fresh]");
     process.exit(1);
   }
   try {
-    const r = await runStories({ brandDir: resolve(v["brand-dir"]), batchId: v.batch, maxCalls: v["max-calls"] ? parseInt(v["max-calls"], 10) : DEFAULT_MAX_CALLS, attempts: parseInt(v.attempts, 10), dryRun: v["dry-run"], renderOnly: v["render-only"] });
+    const r = await runStories({ brandDir: resolve(v["brand-dir"]), batchId: v.batch, maxCalls: v["max-calls"] ? parseInt(v["max-calls"], 10) : DEFAULT_MAX_CALLS, attempts: parseInt(v.attempts, 10), dryRun: v["dry-run"], renderOnly: v["render-only"], only: v.only ? v.only.split(",").map((x) => x.trim()).filter(Boolean) : null, fresh: v.fresh });
     if (!r.dryRun) console.log(`gallery: ${join(r.out, "gallery.html")}`);
     exitWhenWritten(0);
   } catch (e) {
