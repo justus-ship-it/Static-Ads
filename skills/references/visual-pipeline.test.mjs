@@ -456,3 +456,18 @@ test("V20 the shot guide in the prompt (2026-09-27): its rules as SHOT, the reci
   // Faces never under the words; the body may be.
   assert.match(p, /No face may fall inside it, and keep it free of busy detail behind the words; the body may run into the text: the words may sit over a torso, arms or legs, never over a face\./);
 });
+
+test("V21 a Gemini call that never answers is not a stopped run (2026-10-07: F45 Xinyi's batch sat 13 minutes on one): every call carries a deadline, a call past it counts as a busy answer — waited out, tried again, logged as 'no answer in time' — and the next answer is used; the image call and the vision call both carry one", async () => {
+  const { callVision } = await import("./check-visual.mjs");
+  const { GEMINI_TIMEOUT_MS, callDeadline, isBusy, shortReason } = await import("./gemini-busy.mjs");
+  assert.ok(GEMINI_TIMEOUT_MS.vision >= 60000 && GEMINI_TIMEOUT_MS.image >= GEMINI_TIMEOUT_MS.vision);
+  assert.ok(callDeadline(10) instanceof AbortSignal); assert.equal(callDeadline(0), undefined);
+  const t = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+  assert.ok(isBusy(t) && isBusy(Object.assign(new Error("fetch failed"), { cause: t }))); assert.equal(shortReason(t), "no answer in time");
+  let calls = 0; const logs = [];
+  // A fetch that answers only when its deadline aborts it, then a real answer.
+  const fetchImpl = async (url, init) => { calls++; if (calls === 1) return new Promise((_, rej) => init.signal.addEventListener("abort", () => rej(init.signal.reason))); return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ fine: true }) }] } }] }) }; };
+  const out = await callVision(null, "hello", { type: "OBJECT", properties: { fine: { type: "BOOLEAN" } } }, { fetchImpl, key: "k", timeoutMs: 40, retry: { waits: [5], sleep: async () => {}, log: (m) => logs.push(m) } });
+  assert.deepEqual([calls, out?.fine], [2, true]);
+  assert.match(logs[0], /no answer in time.*trying again/);
+});

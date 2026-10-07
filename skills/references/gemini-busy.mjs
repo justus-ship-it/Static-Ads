@@ -7,13 +7,23 @@
  */
 
 export const BUSY_WAITS_MS = [10000, 20000, 40000];
-const BUSY = /\b(429|500|502|503|504)\b|overloaded|high demand|UNAVAILABLE|RESOURCE_EXHAUSTED|DEADLINE_EXCEEDED|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|network timeout/i;
+const BUSY = /\b(429|500|502|503|504)\b|overloaded|high demand|UNAVAILABLE|RESOURCE_EXHAUSTED|DEADLINE_EXCEEDED|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|network timeout|no answer in|TimeoutError|aborted/i;
+
+/**
+ * How long one call may take before it counts as no answer (2026-10-07: F45 Xinyi's batch sat 13 minutes on a
+ * vision call whose connection, attempted during a network blip, never answered and never failed — Node's fetch
+ * has no deadline of its own). A timed-out call is a busy answer: waited out and tried again, then the error.
+ */
+export const GEMINI_TIMEOUT_MS = { vision: 120000, image: 300000 };
+/** A deadline for one fetch, as its `signal`; `ms` 0 or less means none (tests). */
+export const callDeadline = (ms) => (ms > 0 ? AbortSignal.timeout(ms) : undefined);
 
 /** Is this an answer worth waiting out, rather than a fault in what was asked? */
-export const isBusy = (err) => BUSY.test(String(err?.message || err || ""));
+export const isBusy = (err) => err?.name === "TimeoutError" || err?.cause?.name === "TimeoutError" || BUSY.test(String(err?.message || err || ""));
 
 /** Google's own sentence when the error carries its JSON body, else the first words of the message. */
 export function shortReason(err) {
+  if (err?.name === "TimeoutError" || err?.cause?.name === "TimeoutError") return "no answer in time";
   const text = String(err?.message || err || "");
   const json = text.slice(text.indexOf("{"));
   try { const m = JSON.parse(json)?.error?.message; if (m) return String(m).replace(/\s+/g, " ").slice(0, 120); } catch {}

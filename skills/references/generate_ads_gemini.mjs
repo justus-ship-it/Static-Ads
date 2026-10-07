@@ -14,7 +14,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 
 import { join, extname, resolve, dirname, isAbsolute } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
-import { whenGeminiFree } from "./gemini-busy.mjs";
+import { whenGeminiFree, GEMINI_TIMEOUT_MS, callDeadline } from "./gemini-busy.mjs";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -116,6 +116,7 @@ async function generateImage(prompt, referenceImageParts, { aspectRatio, imageSi
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: callDeadline(GEMINI_TIMEOUT_MS.image),
     });
     if (!res.ok) {
       const text = await res.text();
