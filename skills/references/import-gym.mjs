@@ -30,7 +30,7 @@ import { readMetaFacts, writeMetaReading, readMetaReading, acceptMetaFacts } fro
 import { importPresets, readPresets } from "./meta-targeting.mjs";
 import { pullAccountHistory, historyRows } from "./meta-results.mjs";
 import { readForms, templateFrom, readLeadForms, writeLeadForms } from "./lead-forms.mjs";
-import { findSingaporeIdentity } from "./meta-publish.mjs";
+import { findIdentity, regulatedFor } from "./meta-publish.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const IMPORT_FILE = join("onboarding", "import.json");
@@ -88,8 +88,9 @@ export async function runImport({ brandDir, client, log = console.log, skip = []
     return `${forms.length} form(s)${candidate ? `; template candidate "${candidate.name}"` : ""}`;
   });
   await step("identity", async () => {
-    if ((profile.locale?.country || "SG") !== "SG") return "not a Singapore gym";
-    const copy = JSON.parse(readFileSync(pf, "utf-8")), r = await findSingaporeIdentity(copy, client);
+    const reg = regulatedFor(profile);
+    if (!reg) return "no advertiser identity needed in this country";
+    const copy = JSON.parse(readFileSync(pf, "utf-8")), r = await findIdentity(copy, client);
     if (r.set) { writeJson(pf, copy); return `beneficiary ${r.set.beneficiary}, from ${r.set.adsets} ad set(s)`; }
     return r.have ? "already on the profile" : r.reason || "nothing found";
   });

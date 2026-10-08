@@ -36,7 +36,7 @@ import {
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
-import { buildPlan, keptAds, CTA_TYPES, findSingaporeIdentity, setSingaporeIdentity, findPin } from "../skills/references/meta-publish.mjs";
+import { buildPlan, keptAds, CTA_TYPES, findIdentity, setIdentity, regulatedFor, hasIdentity, findPin } from "../skills/references/meta-publish.mjs";
 import { readForms, templateFrom, proposeForm, formProblems, createForm, readLeadForms, writeLeadForms } from "../skills/references/lead-forms.mjs";
 import { runImport, importProposal, applyImport, readImport, STEPS as IMPORT_STEPS, HISTORY_TOP } from "../skills/references/import-gym.mjs";
 import { TARGETING_LIBRARY_DIR, readLibrary as readTargetingLibrary, seedDrafts as seedTargetingDrafts, liveEntries as liveTargeting, approveEntry as approveTargeting, retireEntry as retireTargeting, restoreEntry as restoreTargeting, addEntry as addTargeting, asPreset as libraryPreset } from "../skills/references/targeting-library.mjs";
@@ -913,19 +913,20 @@ async function pinFillFor(gym, callouts) {
   pinMemo.set(key, { at: Date.now(), value });
   return value;
 }
+/** The country's verified advertiser identity (Singapore, Taiwan — REGULATED), read from the account's own ad sets when the profile has none (GET only). */
 async function singaporeIdentityFor(gym) {
   const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
-  const m = profile.meta_assets || {};
-  if ((profile.locale?.country || "SG") !== "SG" || (m.singapore_beneficiary_id && m.singapore_payer_id)) return null;
+  const m = profile.meta_assets || {}, reg = regulatedFor(profile);
+  if (!reg || hasIdentity(profile, reg)) return null;
   const cfg = metaConfig({ gym });
   if (!cfg.token) return { choices: [], reason: "the Meta link is not set up yet (Meta link page)" };
   const key = `${gym}|${m.ad_account_id || ""}`, memo = identityMemo.get(key);
   if (memo && Date.now() - memo.at < 60000) return memo.value;
   let value;
   try {
-    const r = await findSingaporeIdentity(profile, graphClient({ config: cfg }));
-    if (r.set) { writeWhole(pf, JSON.stringify(profile, null, 2) + "\n"); identityMemo.delete(key); return { set: r.set, choices: r.choices }; }
-    value = { choices: r.choices, reason: r.reason };
+    const r = await findIdentity(profile, graphClient({ config: cfg }));
+    if (r.set) { writeWhole(pf, JSON.stringify(profile, null, 2) + "\n"); identityMemo.delete(key); return { set: r.set, choices: r.choices, country: reg.name }; }
+    value = { choices: r.choices, reason: r.reason, country: reg.name };
   } catch (e) { value = { choices: [], reason: `the ad account's ad sets could not be read: ${scrubTokens(e.message)}` }; }
   identityMemo.set(key, { at: Date.now(), value });
   return value;
@@ -1442,7 +1443,7 @@ const server = createServer(async (req, res) => {
 
     // /api/client/{gym}/singapore-identity { beneficiary, payer } — the owner's pick when the account's ad sets
     // carry more than one: only an identity those ad sets really name is taken.
-    const sgm = p.match(/^\/api\/client\/([^/]+)\/singapore-identity$/);
+    const sgm = p.match(/^\/api\/client\/([^/]+)\/(?:singapore-)?identity$/);
     if (sgm && req.method === "POST") {
       const gym = sgm[1];
       if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
@@ -1451,10 +1452,12 @@ const server = createServer(async (req, res) => {
       const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
       if (!profile.meta_assets?.ad_account_id) return json(res, 409, { error: "pick the gym's ad account on the Meta link page first" });
       try {
-        const found = (await graphClient({ config: cfg }).regulationIdentities(profile.meta_assets.ad_account_id)).filter((x) => x.category === "SINGAPORE_UNIVERSAL");
+        const reg = regulatedFor(profile);
+        if (!reg) return json(res, 409, { error: "this gym's country needs no advertiser identity on Meta" });
+        const found = (await graphClient({ config: cfg }).regulationIdentities(profile.meta_assets.ad_account_id)).filter((x) => x.category === reg.category);
         const pick = found.find((x) => String(x.beneficiary) === String(body.beneficiary) && String(x.payer) === String(body.payer));
         if (!pick) return json(res, 400, { error: "that identity is not one the account's ad sets name" });
-        setSingaporeIdentity(profile, pick);
+        setIdentity(profile, pick);
         writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
         identityMemo.clear();
         return json(res, 200, { ok: true, beneficiary: pick.beneficiary, payer: pick.payer });

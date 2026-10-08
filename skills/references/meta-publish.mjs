@@ -66,12 +66,27 @@ export function placeholderWords(profile, ad) {
   };
 }
 
+/**
+ * Countries where Meta requires a regulated category and a verified advertiser (beneficiary and payer) on every ad
+ * set delivering there: Singapore since May 2025 (the first live run, 2026-09-13), Taiwan too (F45 Xinyi's first
+ * create, 2026-10-08: "Regional regulated categories value required … TAIWAN_UNIVERSAL"; 99 of the account's 106
+ * ad sets carry it with one identity). The identity is read from the account's own ad sets, never typed.
+ */
+export const REGULATED = {
+  SG: { name: "Singapore", category: "SINGAPORE_UNIVERSAL", beneficiary: "singapore_universal_beneficiary", payer: "singapore_universal_payer", fields: ["singapore_beneficiary_id", "singapore_payer_id"], label: "singapore_identity" },
+  TW: { name: "Taiwan", category: "TAIWAN_UNIVERSAL", beneficiary: "taiwan_universal_beneficiary", payer: "taiwan_universal_payer", fields: ["taiwan_beneficiary_id", "taiwan_payer_id"], label: "taiwan_identity" },
+};
+export const regulatedFor = (profile) => REGULATED[String(profile?.locale?.country || "SG").toUpperCase()] || null;
+export const hasIdentity = (profile, r = regulatedFor(profile)) => !r || r.fields.every((f) => !!profile?.meta_assets?.[f]);
+/** The ad set's regulated category and identities for the gym's country; nothing for a country Meta does not gate. */
+export const regulatedPayload = (profile, r = regulatedFor(profile)) => (r ? { regional_regulated_categories: [r.category], regional_regulation_identities: { [r.beneficiary]: profile.meta_assets[r.fields[0]], [r.payer]: profile.meta_assets[r.fields[1]] } } : {});
+
 /** Every payload for one campaign / ad set / ad from one finished ad, built from the profile and the batch. */
 export function buildTestOne({ profile, batch, ad, words = null, storyFile = null, tag = today() }) {
   const m = profile.meta_assets || {};
-  const singapore = (profile.locale?.country || "SG") === "SG";
-  const missing = ["ad_account_id", "page_id", "lead_form_id", ...(singapore ? ["singapore_beneficiary_id", "singapore_payer_id"] : [])].filter((k) => !m[k]);
-  if (missing.length) throw new Error(`the profile's Meta link is missing ${missing.join(", ")} — pick them on the Meta link page first${missing.some((k) => k.startsWith("singapore")) ? " (the verified advertiser identity: read from the account's existing ad sets)" : ""}`);
+  const reg = regulatedFor(profile);
+  const missing = ["ad_account_id", "page_id", "lead_form_id", ...(reg ? reg.fields : [])].filter((k) => !m[k]);
+  if (missing.length) throw new Error(`the profile's Meta link is missing ${missing.join(", ")} — pick them on the Meta link page first${missing.some((k) => reg && reg.fields.includes(k)) ? " (the verified advertiser identity: read from the account's existing ad sets)" : ""}`);
   const account = actId(m.ad_account_id);
   const abbr = profile.gym_abbr || "GYM", w = ad.words || {}, loc = (w.location || "").toUpperCase();
   const cd = profile.campaign_defaults || {}, budget = cd.budget || {};
@@ -111,9 +126,9 @@ export function buildTestOne({ profile, batch, ad, words = null, storyFile = nul
       optimization_goal: "LEAD_GENERATION", billing_event: "IMPRESSIONS", destination_type: "ON_AD",
       ...(level === "adset" ? { daily_budget: cents, bid_strategy: strategy } : {}), ...(capCents ? { bid_amount: capCents } : {}),
       promoted_object: { page_id: m.page_id },
-      // Meta: ads that include locations in Singapore must carry the regulated category SINGAPORE_UNIVERSAL and
-      // name a verified advertiser as beneficiary and payer (Online Criminal Harms Act, enforced since May 2025).
-      ...(singapore ? { regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: m.singapore_beneficiary_id, singapore_universal_payer: m.singapore_payer_id } } : {}),
+      // Meta: ads that include locations in a gated country (REGULATED) must carry its regulated category and name a
+      // verified advertiser as beneficiary and payer.
+      ...regulatedPayload(profile, reg),
       targeting: {
         geo_locations: geoFor(pin),
         age_min: dem.age_min ?? 25, age_max: dem.age_max ?? 45, ...(genders ? { genders } : {}),
@@ -215,12 +230,12 @@ export function creativeFor({ name, page_id, instagram_user_id, website, form_id
 export function buildPlan({ profile, batch, kept, presets = { presets: [] }, settings = {}, copies = [], headlines = [], tag = today(), library = null }) {
   const problems = [], warnings = [];
   const m = profile.meta_assets || {}, dest = settings.destination || {};
-  const singapore = (profile.locale?.country || "SG") === "SG";
+  const reg = regulatedFor(profile);
   const account = m.ad_account_id ? actId(m.ad_account_id) : null;
   // An empty Instagram id in the settings is a choice (none); an absent one takes the profile's.
   const page_id = m.page_id || null, instagram_user_id = dest.instagram_user_id != null ? (dest.instagram_user_id || null) : (m.instagram_user_id || null), lead_form_id = dest.lead_form_id || m.lead_form_id || null;
   for (const [k, v] of [["ad account", account], ["Page", page_id], ["lead form", lead_form_id]]) if (!v) problems.push(`no ${k} chosen (Meta link page)`);
-  if (singapore && (!m.singapore_beneficiary_id || !m.singapore_payer_id)) problems.push("no verified Singapore advertiser identity yet: the Publish screen reads it from the ad account's own ad sets (the beneficiary and payer every Singapore ad must name)");
+  if (reg && !hasIdentity(profile, reg)) problems.push(`no verified ${reg.name} advertiser identity yet: the Publish screen reads it from the ad account's own ad sets (the beneficiary and payer every ${reg.name} ad must name)`);
   if (!/^https?:\/\/\S+\.\S+$/.test(profile.website || "")) problems.push("a lead ad must link to an external website and the profile has none (Identity & locations)");
   if (!instagram_user_id) warnings.push("no Instagram account chosen: Meta will run the ads under a Page-backed Instagram identity (Meta link page)");
   const abbr = profile.gym_abbr || "GYM", currency = profile.locale?.currency || "SGD";
@@ -296,7 +311,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
         name: name.slice(0, 400), status: AD_STATUS, optimization_goal: "LEAD_GENERATION", billing_event: "IMPRESSIONS", destination_type: "ON_AD",
         ...(level === "adset" ? { daily_budget: Math.round(setDaily * budgetUnits(currency)), bid_strategy: strategy } : {}), ...(cap ? { bid_amount: Math.round(cap * budgetUnits(currency)) } : {}),
         promoted_object: { page_id },
-        ...(singapore ? { regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: m.singapore_beneficiary_id, singapore_universal_payer: m.singapore_payer_id } } : {}),
+        ...regulatedPayload(profile, reg),
         targeting: { ...(pin && pinUsable(pin) ? { geo_locations: geoFor({ ...pin, radius_km }) } : {}), age_min, age_max, ...(genders ? { genders } : {}), ...spec, targeting_automation: { ...NEVER_ADVANTAGE } },
         attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
       },
@@ -338,14 +353,14 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
  * most used first. One identity → written into `profile.meta_assets` (the caller saves the profile); several or
  * none → nothing is written and the caller says so. A profile that has one already is left alone.
  */
-export async function findSingaporeIdentity(profile, client) {
-  const m = (profile.meta_assets ||= {});
-  if ((profile.locale?.country || "SG") !== "SG") return { needed: false, choices: [] };
-  if (m.singapore_beneficiary_id && m.singapore_payer_id) return { needed: false, have: true, choices: [] };
-  if (!m.ad_account_id) return { needed: true, choices: [], reason: "pick the gym's ad account on the Meta link page first" };
-  const choices = (await client.regulationIdentities(m.ad_account_id)).filter((x) => x.category === "SINGAPORE_UNIVERSAL" && x.beneficiary && x.payer);
-  if (choices.length === 1) { setSingaporeIdentity(profile, choices[0]); return { needed: true, set: choices[0], choices }; }
-  return { needed: true, choices, reason: choices.length ? `the account's ad sets carry ${choices.length} different Singapore identities: choose the one this gym advertises as` : "no ad set in this ad account names a Singapore beneficiary and payer yet: publish one ad by hand in Ads Manager (it asks for the verified advertiser), then open this screen again" };
+export async function findIdentity(profile, client) {
+  const m = (profile.meta_assets ||= {}), r = regulatedFor(profile);
+  if (!r) return { needed: false, choices: [] };
+  if (hasIdentity(profile, r)) return { needed: false, have: true, choices: [], country: r.name };
+  if (!m.ad_account_id) return { needed: true, choices: [], country: r.name, reason: "pick the gym's ad account on the Meta link page first" };
+  const choices = (await client.regulationIdentities(m.ad_account_id)).filter((x) => x.category === r.category && x.beneficiary && x.payer);
+  if (choices.length === 1) { setIdentity(profile, choices[0]); return { needed: true, set: choices[0], choices, country: r.name }; }
+  return { needed: true, choices, country: r.name, reason: choices.length ? `the account's ad sets carry ${choices.length} different ${r.name} identities: choose the one this gym advertises as` : `no ad set in this ad account names a ${r.name} beneficiary and payer yet: publish one ad by hand in Ads Manager (it asks for the verified advertiser), then open this screen again` };
 }
 /**
  * A callout with no pin gets one from the account (2026-10-07; the owner's rule: the most used). F45 Xinyi's
@@ -383,12 +398,15 @@ export async function findPin(profile, client, { callouts = [], reading = null }
   }
   return { needed: true, filled };
 }
-export function setSingaporeIdentity(profile, c) {
-  const m = (profile.meta_assets ||= {});
-  m.singapore_beneficiary_id = String(c.beneficiary); m.singapore_payer_id = String(c.payer);
-  (m.labels ||= {}).singapore_identity = `from ${c.adsets} existing ad set(s), e.g. "${c.example}"`;
+export function setIdentity(profile, c) {
+  const m = (profile.meta_assets ||= {}), r = regulatedFor(profile);
+  if (!r) return profile;
+  m[r.fields[0]] = String(c.beneficiary); m[r.fields[1]] = String(c.payer);
+  (m.labels ||= {})[r.label] = `from ${c.adsets} existing ad set(s), e.g. "${c.example}"`;
   return profile;
 }
+/** The Singapore names, kept for the callers and tests that use them: the rule is per country now (REGULATED). */
+export const findSingaporeIdentity = findIdentity, setSingaporeIdentity = setIdentity;
 
 /** The kept ads of a batch from its folder: batch.json, the picks, the Stories versions on disk. */
 export function keptAds(batchDir) {
@@ -596,16 +614,15 @@ if (isMain) {
     const config = metaConfig({ gym: v.gym });
     if (!config.token && !v["dry-run"]) throw new Error(`no ${config.names.META_ACCESS_TOKEN} in .env`);
     const client = config.token ? graphClient({ config }) : null;
-    // Singapore's verified advertiser identity: the one the account's own ad sets already carry, kept in the profile.
-    const m = (profile.meta_assets ||= {});
-    if ((profile.locale?.country || "SG") === "SG" && (!m.singapore_beneficiary_id || !m.singapore_payer_id) && client && m.ad_account_id) {
+    // The country's verified advertiser identity: the one the account's own ad sets already carry, kept in the profile.
+    const m = (profile.meta_assets ||= {}), reg = regulatedFor(profile);
+    if (reg && !hasIdentity(profile, reg) && client && m.ad_account_id) {
       const found = await client.regulationIdentities(m.ad_account_id);
-      const sg = found.filter((x) => x.category === "SINGAPORE_UNIVERSAL");
-      if (sg.length !== 1) throw new Error(sg.length ? `the account's ad sets carry ${sg.length} different Singapore identities — choose one and put it in the profile (singapore_beneficiary_id, singapore_payer_id)` : "no ad set in this account names a Singapore beneficiary and payer yet — verify the advertiser in Business settings and put the identity id in the profile");
-      m.singapore_beneficiary_id = sg[0].beneficiary; m.singapore_payer_id = sg[0].payer;
-      (m.labels ||= {}).singapore_identity = `from ${sg[0].adsets} existing ad set(s), e.g. "${sg[0].example}"`;
+      const sg = found.filter((x) => x.category === reg.category);
+      if (sg.length !== 1) throw new Error(sg.length ? `the account's ad sets carry ${sg.length} different ${reg.name} identities — choose one and put it in the profile (${reg.fields.join(", ")})` : `no ad set in this account names a ${reg.name} beneficiary and payer yet — verify the advertiser in Business settings and put the identity id in the profile`);
+      setIdentity(profile, sg[0]);
       writeWhole(join(brandDir, "gym-profile.json"), JSON.stringify(profile, null, 2) + "\n");
-      console.log(`· Singapore identity: beneficiary ${m.singapore_beneficiary_id}, payer ${m.singapore_payer_id} (${m.labels.singapore_identity}) — kept in the profile`);
+      console.log(`· ${reg.name} identity: beneficiary ${m[reg.fields[0]]}, payer ${m[reg.fields[1]]} (${m.labels[reg.label]}) — kept in the profile`);
     }
     const plan = buildTestOne({ profile, batch, ad, storyFile });
     console.log(`plan: ${plan.campaign.name}\n  ad set ${plan.adset.name} · ${plan.pin.words} · ages ${plan.adset.targeting.age_min}-${plan.adset.targeting.age_max}${plan.adset.targeting.genders ? ` · genders ${plan.adset.targeting.genders.join(",")}` : " · everyone"} · ${plan.budget.daily} ${plan.budget.currency}/day on the ${plan.budget.level === "adset" ? "ad set" : "campaign"} · ${BID_STRATEGIES[plan.budget.bid_strategy]}${plan.budget.bid_cap ? ` ${plan.budget.bid_cap}` : ""}\n  ad ${plan.ad.name} · image ${plan.image.file}${plan.story ? ` (9:16 on disk: ${plan.story.file}, not used by the test)` : ""}\n  lead form ${plan.lead_form_id} on Page ${plan.page_id}${plan.instagram_user_id ? ` · Instagram ${plan.instagram_user_id}` : " · no Instagram account chosen (Meta will use a Page-backed one)"} · every object ${AD_STATUS}`);

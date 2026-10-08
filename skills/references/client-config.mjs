@@ -394,7 +394,7 @@ export function withPoint(profile, pin) {
 }
 /** Is this pin enough to target with: a Meta place, or a point on the map. */
 export const pinUsable = (pin) => !!pin && (/^\d{5,20}$/.test(String(pin.place_key || "")) || (Number.isFinite(pin.lat) && Number.isFinite(pin.lng)));
-export const META_ID = { ad_account_id: /^(act_)?\d{5,20}$/, page_id: /^\d{5,20}$/, instagram_user_id: /^\d{5,20}$/, instagram_actor_id: /^\d{5,20}$/, pixel_id: /^\d{5,20}$/, business_id: /^\d{5,20}$/, lead_form_id: /^\d{5,20}$/, singapore_beneficiary_id: /^\d{5,20}$/, singapore_payer_id: /^\d{5,20}$/ };
+export const META_ID = { ad_account_id: /^(act_)?\d{5,20}$/, page_id: /^\d{5,20}$/, instagram_user_id: /^\d{5,20}$/, instagram_actor_id: /^\d{5,20}$/, pixel_id: /^\d{5,20}$/, business_id: /^\d{5,20}$/, lead_form_id: /^\d{5,20}$/, taiwan_beneficiary_id: /^\d{5,20}$/, taiwan_payer_id: /^\d{5,20}$/, singapore_beneficiary_id: /^\d{5,20}$/, singapore_payer_id: /^\d{5,20}$/ };
 
 /**
  * Format problems in a profile: what would make a saved profile wrong, not what leaves it unfinished

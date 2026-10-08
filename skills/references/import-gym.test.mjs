@@ -32,6 +32,7 @@ const client = () => ({
   historyPins: async () => [{ kind: "place", key: "105176144862096", name: "F45 Xinyi 信義", lat: 25.033241, lng: 121.559067, radius_km: 2.5, location_types: ["home", "recent"], adsets: 1, example: "0713 6 Week 中年體態雕塑" }],
   adsetInsights: async () => [{ adset_id: "1", spend: 1000, leads: 10, impressions: 100, clicks: 5 }], savedAudiences: async () => [], customAudiences: async () => [],
   leadFormDetails: async () => FORMS,
+  regulationIdentities: async () => [{ category: "TAIWAN_UNIVERSAL", beneficiary: "2104803986589314", payer: "2104803986589314", adsets: 99, example: "0713 6 Week 中年體態雕塑" }],
   // pullAccountHistory is not stubbed: that step fails and the run goes on.
 });
 /** A fake spawn: records the command, prints a line, exits with the code the test wants. */
@@ -43,7 +44,7 @@ const fakeSpawn = (calls, codeFor = () => 0) => (cmd, args) => {
 };
 const gymDir = () => { const d = mkdtempSync(join(tmpdir(), "import-")); const p = PROFILE_STARTER("f45-xinyi", "F45 Xinyi", "TW"); p.meta_assets = { ...(p.meta_assets || {}), ad_account_id: "act_5595320690525032", page_id: "105176144862096" }; writeFileSync(join(d, "gym-profile.json"), JSON.stringify(p, null, 2)); return d; };
 
-test("IG1 the import run: the Page and account read, the targeting imported, the forms read with the template candidate (the latest version first, then the most leads; archived and chat forms never), a step that fails is recorded and the run goes on, the identity step says it is not a Singapore gym, the readers run as their own processes on the Page's website and Instagram, a skipped step is said; nothing without the Meta ids", async () => {
+test("IG1 the import run: the Page and account read, the targeting imported, the forms read with the template candidate (the latest version first, then the most leads; archived and chat forms never), a step that fails is recorded and the run goes on, the identity step reads Taiwan's verified advertiser from the account's ad sets, the readers run as their own processes on the Page's website and Instagram, a skipped step is said; nothing without the Meta ids", async () => {
   const d = gymDir(), spawned = [], logs = [];
   try {
     await assert.rejects(runImport({ brandDir: mkdtempSync(join(tmpdir(), "empty-")), client: client(), log: () => {} }), /no gym profile/);
@@ -51,7 +52,8 @@ test("IG1 the import run: the Page and account read, the targeting imported, the
     assert.deepEqual(Object.fromEntries(Object.entries(state.steps).map(([k, v]) => [k, v.ok === true ? "ok" : v.skipped ? "skipped" : "failed"])), { meta: "ok", presets: "ok", history: "failed", forms: "ok", identity: "ok", website: "ok", instagram: "skipped" });
     assert.match(state.steps.meta.note, /F45 Xinyi 信義 · 1 ad sets · 1 offer name/);
     assert.match(state.steps.history.error, /adsetHistory|not a function|campaigns/i, "the unstubbed step's error is kept");
-    assert.equal(state.steps.identity.note, "not a Singapore gym");
+    assert.match(state.steps.identity.note, /beneficiary 2104803986589314, from 99 ad set/, "Taiwan is gated like Singapore (2026-10-08): the identity read from the account's ad sets");
+    assert.equal(JSON.parse(readFileSync(join(d, "gym-profile.json"), "utf-8")).meta_assets.taiwan_beneficiary_id, "2104803986589314", "and kept on the profile");
     assert.deepEqual(spawned.map((a) => [a[0].split("/").pop(), a[a.indexOf("--url") + 1] || null]), [["read-website.mjs", "http://f45xinyi.com/6weekplan"]], "the website read on the Page's website; Instagram skipped");
     assert.ok(logs.some((l) => /fake read-website.mjs ran/.test(l)), "the reader's lines reach the log");
     assert.ok(existsSync(join(d, "onboarding", "meta", "reading.json")) && existsSync(join(d, "targeting-presets.json")) && existsSync(join(d, IMPORT_FILE)));

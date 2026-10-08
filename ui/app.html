@@ -2032,8 +2032,8 @@ function paintPublish(v){
   ${D.pin_fill && !D.pin_fill.filled?.length && D.pin_fill.reason ? `<div class="msg warn">The pin could not be filled in from the ad account: ${esc(D.pin_fill.reason)}.</div>` : ''}
   ${D.presets_import?.imported ? `<div class="msg ok">The account's targeting was imported for the first time: ${D.presets_import.added} preset${D.presets_import.added===1?'':'s'} from ${D.presets_import.adsets} ad set${D.presets_import.adsets===1?'':'s'}, each with Meta's own leads and cost per lead — every one is in the Detailed targeting list below.</div>` : ''}
   ${D.presets_import && !D.presets_import.imported && D.presets_import.reason ? `<div class="msg warn">${esc(D.presets_import.reason)}.</div>` : ''}
-  ${D.identity?.set ? `<div class="msg ok">Singapore advertiser identity ${esc(D.identity.set.beneficiary)} read from the ad account's ${D.identity.set.adsets} existing ad set${D.identity.set.adsets===1?'':'s'} and saved to the profile.</div>` : ''}
-  ${D.identity && !D.identity.set ? `<div class="card" id="pbIdentity"><h3>Singapore advertiser identity</h3><p class="hint" style="margin-top:4px">Every ad delivered in Singapore names a verified advertiser as beneficiary and payer. ${esc(D.identity.reason||'')}.</p>
+  ${D.identity?.set ? `<div class="msg ok">${esc(D.identity.country||'Singapore')} advertiser identity ${esc(D.identity.set.beneficiary)} read from the ad account's ${D.identity.set.adsets} existing ad set${D.identity.set.adsets===1?'':'s'} and saved to the profile.</div>` : ''}
+  ${D.identity && !D.identity.set ? `<div class="card" id="pbIdentity"><h3>${esc(D.identity.country||'Singapore')} advertiser identity</h3><p class="hint" style="margin-top:4px">Every ad delivered in ${esc(D.identity.country||'Singapore')} names a verified advertiser as beneficiary and payer. ${esc(D.identity.reason||'')}.</p>
     ${(D.identity.choices||[]).map(c=>`<div class="wrow"><span>Beneficiary <b class="mono">${esc(c.beneficiary)}</b> · payer <b class="mono">${esc(c.payer)}</b><br><span class="hint" style="margin:0">on ${c.adsets} ad set${c.adsets===1?'':'s'}, e.g. ${esc(c.example||'')}</span></span><div class="spacer"></div><button class="sm primary" onclick="pbIdentity('${esc(c.beneficiary)}','${esc(c.payer)}')">Use this one</button></div>`).join('')}</div>` : ''}
   <div class="card"><h3>Campaign</h3><div class="grid">
     <div style="grid-column:span 2"><label>Name</label><input value="${esc(P.campaign.name)}" onchange="pbSet('campaign.name',this.value.trim()||null)"></div>
@@ -2198,7 +2198,7 @@ function pbSetAdset(callout, k, val){ ((PB.settings.adsets ||= {})[callout] ||= 
 /** Save the settings (a moment after the last change) and repaint with the plan the server builds from them. */
 function pbSave(){ clearTimeout(PB.saveT); PB.saveT = setTimeout(async ()=>{ PB.busy = true; PB.error = null; try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/publish`, { method:'PUT', body: PB.settings }); PB.data = r; PB.settings = r.settings; } catch(e){ PB.error = e.message; } PB.busy = false; if (STATE.tab==='publish' && STATE.batch===PB.id) paintPublish($('#view')); }, 250); }
 async function pbIdentity(beneficiary, payer){
-  try { await api(`/api/client/${PB.gym}/singapore-identity`, { method:'POST', body:{ beneficiary, payer } }); PB.data = await api(`/api/client/${PB.gym}/batch/${PB.id}/publish`); PB.error = null; await refreshProfile(); }
+  try { await api(`/api/client/${PB.gym}/identity`, { method:'POST', body:{ beneficiary, payer } }); PB.data = await api(`/api/client/${PB.gym}/batch/${PB.id}/publish`); PB.error = null; await refreshProfile(); }
   catch(e){ PB.error = 'Not saved: ' + e.message; }
   paintPublish($('#view'));
 }

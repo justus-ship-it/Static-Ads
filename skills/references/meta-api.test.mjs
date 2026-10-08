@@ -274,7 +274,7 @@ test("M4 one of everything (meta-publish): the payloads are built from the profi
   f = await findSingaporeIdentity(fresh(), client());
   assert.deepEqual(f.choices, []); assert.match(f.reason, /publish one ad by hand in Ads Manager/);
   let calls = 0; answers["act_111/adsets"] = () => { calls++; return { data: [] }; };
-  assert.deepEqual(await findSingaporeIdentity({ locale: { country: "SG" }, meta_assets: { ad_account_id: "act_111", singapore_beneficiary_id: "9", singapore_payer_id: "9" } }, client()), { needed: false, have: true, choices: [] });
+  assert.deepEqual(await findSingaporeIdentity({ locale: { country: "SG" }, meta_assets: { ad_account_id: "act_111", singapore_beneficiary_id: "9", singapore_payer_id: "9" } }, client()), { needed: false, have: true, choices: [], country: "Singapore" });
   assert.equal((await findSingaporeIdentity({ locale: { country: "MY" }, meta_assets: { ad_account_id: "act_111" } }, client())).needed, false);
   assert.match((await findSingaporeIdentity({ locale: { country: "SG" }, meta_assets: {} }, client())).reason, /pick the gym's ad account/);
   assert.equal(calls, 0, "none of those asked Meta anything");
@@ -710,7 +710,7 @@ test("M12 a Taiwan gym's plan (2026-10-07, F45 Xinyi): no Singapore identity ask
   const { keptAds } = await import("./meta-publish.mjs");
   const kept = keptAds(d);
   const profile = { display_name: "F45 Xinyi", gym_abbr: "FXI", website: "https://f45xinyi.com/6weekplan", locale: { country: "TW", currency: "TWD", timezone: "Asia/Taipei", languages: ["zh_TW"] },
-    meta_assets: { ad_account_id: "act_5595320690525032", page_id: "105176144862096", instagram_user_id: "17841449500342630", lead_form_id: "9001" },
+    meta_assets: { ad_account_id: "act_5595320690525032", page_id: "105176144862096", instagram_user_id: "17841449500342630", lead_form_id: "9001", taiwan_beneficiary_id: "2104803986589314", taiwan_payer_id: "2104803986589314" },
     campaign_defaults: { budget: { level: "adset", amount: 500, currency: "TWD", bid_strategy: "LOWEST_COST_WITHOUT_CAP" } },
     targeting_defaults: { geo: { radius_pins: [{ label: "F45 Xinyi 信義", place_key: "105176144862096", place_name: "F45 Xinyi 信義", lat: 25.0332, lng: 121.5591, radius_km: 3, callouts: ["信義區"] }] }, demographics: { age_min: 28, age_max: 50, callout_genders: { "女生限定": "women" } } } };
   const presets = { presets: [{ id: "broad", name: "Broad", spec: {}, summary: [], stats: { adsets: 0, leads: 0, genders: { men: 0, women: 0, all: 0 } } }] };
@@ -719,7 +719,9 @@ test("M12 a Taiwan gym's plan (2026-10-07, F45 Xinyi): no Singapore identity ask
   const p = buildPlan({ profile, batch: { batch_id: "2026-10-07-xinyi" }, kept, presets, copies, headlines, settings: { words: { cta: "SIGN_UP" } } });
   assert.deepEqual([p.ready, p.problems], [true, []], p.problems.join(" | "));
   const set = p.adsets[0];
-  assert.deepEqual([set.callout, set.gender, set.payload.daily_budget, set.payload.targeting.geo_locations.places[0].key, "regional_regulated_categories" in set.payload, "locales" in set.payload.targeting], ["信義區", "women", 500, "105176144862096", false, false]);
+  // Taiwan is gated like Singapore (2026-10-08): the regulated category and the verified advertiser on every ad set.
+  assert.deepEqual([set.payload.regional_regulated_categories, set.payload.regional_regulation_identities], [["TAIWAN_UNIVERSAL"], { taiwan_universal_beneficiary: "2104803986589314", taiwan_universal_payer: "2104803986589314" }]);
+  assert.deepEqual([set.callout, set.gender, set.payload.daily_budget, set.payload.targeting.geo_locations.places[0].key, "regional_regulated_categories" in set.payload, "locales" in set.payload.targeting], ["信義區", "women", 500, "105176144862096", true, false]);
   assert.match(set.payload.name, /信義區 \| 六週中年體態雕塑計畫 \| Audience: F45 Xinyi 信義 \+ 3KM, Female/);
   assert.match(p.campaign.name, /六週中年體態雕塑計畫 \| FXI \| 女生限定/i);
   assert.deepEqual([p.budget.daily, p.budget.level], [500, "adset"]);
@@ -760,4 +762,30 @@ test("M13 a callout with no pin takes the account's most-used pin (2026-10-07): 
   p = { ...fresh(), locations: [] }; r = await findPin(p, client(), { callouts: ["THOMSON"], reading: { pins: [] } });
   assert.deepEqual(r.filled, []); assert.match(r.reason, /add a pin on Targeting & budget/);
   assert.equal(p.targeting_defaults.geo.radius_pins.length, 0);
+});
+
+
+test("M14 Taiwan's advertiser identity (2026-10-08, F45 Xinyi's first create): the rule is per country — a Taiwan gym's plan without the identity is refused in words; findIdentity reads TAIWAN_UNIVERSAL from the account's ad sets into taiwan_beneficiary_id / taiwan_payer_id (never the Singapore fields); a Malaysian gym needs none; the payload names the category and both identities; the Singapore names still work", async () => {
+  const { findIdentity, findSingaporeIdentity, setIdentity, regulatedFor, hasIdentity, regulatedPayload, buildPlan, keptAds, REGULATED } = await import("./meta-publish.mjs");
+  assert.deepEqual([regulatedFor({ locale: { country: "TW" } }).category, regulatedFor({ locale: { country: "SG" } }).category, regulatedFor({}).category, regulatedFor({ locale: { country: "MY" } })], ["TAIWAN_UNIVERSAL", "SINGAPORE_UNIVERSAL", "SINGAPORE_UNIVERSAL", null]);
+  assert.equal(findSingaporeIdentity, findIdentity, "the Singapore name is the same rule");
+  const tw = (ben, name) => ({ id: name, name, regional_regulated_categories: ["TAIWAN_UNIVERSAL"], regional_regulation_identities: { taiwan_universal_beneficiary: ben, taiwan_universal_payer: ben } });
+  answers["act_111/adsets"] = () => ({ data: [tw("2104803986589314", "0713 6 Week 中年體態雕塑"), tw("2104803986589314", "0713 6 Week 女生蜜桃臀"), { id: "s9", name: "old", regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: "233378150402473", singapore_universal_payer: "233378150402473" } }] });
+  const p = { locale: { country: "TW" }, meta_assets: { ad_account_id: "act_111" } };
+  const f = await findIdentity(p, client());
+  assert.deepEqual([f.set.beneficiary, f.country, p.meta_assets.taiwan_beneficiary_id, p.meta_assets.taiwan_payer_id, p.meta_assets.singapore_beneficiary_id, hasIdentity(p)], ["2104803986589314", "Taiwan", "2104803986589314", "2104803986589314", undefined, true], "the Taiwan identity, not the Singapore one, into the Taiwan fields");
+  assert.match(p.meta_assets.labels.taiwan_identity, /from 2 existing ad set/);
+  assert.deepEqual(regulatedPayload(p), { regional_regulated_categories: ["TAIWAN_UNIVERSAL"], regional_regulation_identities: { taiwan_universal_beneficiary: "2104803986589314", taiwan_universal_payer: "2104803986589314" } });
+  assert.deepEqual(regulatedPayload({ locale: { country: "MY" }, meta_assets: {} }), {});
+  assert.deepEqual(await findIdentity({ locale: { country: "MY" }, meta_assets: { ad_account_id: "act_111" } }, client()), { needed: false, choices: [] });
+  // A plan without the identity is refused in words.
+  const d = mkdtempSync(join(tmpdir(), "meta-plan-tw2-"));
+  writeFileSync(join(d, "batch.json"), JSON.stringify({ batch_id: "b", ads: [{ folder: "101-c01-信義區-t1-white-on-dark", file: "101-x/1x1/a.png", location: "信義區", photos: ["g01"], words: { location: "信義區", audience: "女性", offer: "六週全身體態改造計畫" } }] }));
+  const profile = { display_name: "F45 Xinyi", gym_abbr: "FXI", website: "https://f45xinyi.com", locale: { country: "TW", currency: "TWD" }, meta_assets: { ad_account_id: "act_5595320690525032", page_id: "105176144862096", lead_form_id: "9001" }, campaign_defaults: { budget: { level: "adset", amount: 500, currency: "TWD", bid_strategy: "LOWEST_COST_WITHOUT_CAP" } }, targeting_defaults: { geo: { radius_pins: [{ label: "x", place_key: "105176144862096", lat: 25.03, lng: 121.56, radius_km: 3, callouts: ["信義區"] }] }, demographics: { age_min: 28, age_max: 50 } } };
+  const plan = buildPlan({ profile, batch: { batch_id: "b" }, kept: keptAds(d), presets: { presets: [] } });
+  assert.ok(plan.problems.some((x) => /no verified Taiwan advertiser identity yet/.test(x)), plan.problems.join(" | "));
+  setIdentity(profile, { beneficiary: "2104803986589314", payer: "2104803986589314", adsets: 99, example: "0713 6 Week 中年體態雕塑" });
+  const plan2 = buildPlan({ profile, batch: { batch_id: "b" }, kept: keptAds(d), presets: { presets: [] } });
+  assert.deepEqual([plan2.problems, plan2.adsets[0].payload.regional_regulated_categories], [[], ["TAIWAN_UNIVERSAL"]]);
+  assert.equal(Object.keys(REGULATED).length, 2);
 });
