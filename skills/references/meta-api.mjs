@@ -82,6 +82,28 @@ const METAPERMS_TEXT = META_PERMISSIONS.join(", ");
 /** Everything a form carries that a new one is built from. */
 export const LEAD_FORM_FIELDS = "id,name,status,created_time,leads_count,locale,questions{key,type,label,options},privacy_policy_url,legal_content,context_card{title,content,style,button_text},thank_you_page{title,body,button_type,button_text,website_url,business_phone_number},follow_up_action_url,question_page_custom_headline,block_display_for_non_targeted_viewer,is_optimized_for_quality,allow_organic_lead";
 
+/** Currencies Meta counts in whole units (no subunits): a budget of 500 is 500 of them, not 5.00. Everything else is in hundredths. */
+export const WHOLE_UNIT_CURRENCIES = ["TWD", "JPY", "KRW", "VND", "CLP", "HUF", "ISK", "PYG", "UGX", "COP", "IDR"];
+export const budgetUnits = (currency) => (WHOLE_UNIT_CURRENCIES.includes(String(currency || "").toUpperCase()) ? 1 : 100);
+/** A budget as Meta answers it ("2000") in the currency's own units: NT$2,000, SGD 20.00. */
+export const budgetFrom = (raw, currency) => (raw == null || raw === "" ? null : Number(raw) / budgetUnits(currency));
+
+/** Today's date in the account's time zone (Meta's insights days are the account's days). */
+export function todayIn(timezone, now = new Date()) {
+  const d = typeof now === "string" ? new Date(now) : now;
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: timezone || "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit" }).format(d); }
+  catch { return d.toISOString().slice(0, 10); }
+}
+/** The last N days up to and including today, in the account's time zone — Meta's own presets (last_7d, last_30d) end yesterday, so a campaign switched on today shows nothing in them. */
+export function dateWindow(days, { timezone, now = new Date() } = {}) {
+  const until = todayIn(timezone, now);
+  const [y, m, d] = until.split("-").map(Number);
+  const since = new Date(Date.UTC(y, m - 1, d - (days - 1))).toISOString().slice(0, 10);
+  return { since, until };
+}
+/** The same window as Meta's `time_range` parameter. */
+export const timeRange = (days, opts) => JSON.stringify(dateWindow(days, opts));
+
 export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch, maxPages = 10 } = {}) {
   if (!config.token) throw new MetaError("no META_ACCESS_TOKEN in .env — the Meta link is not set up yet");
   const base = `${config.graphUrl.replace(/\/$/, "")}/${META_API_VERSION}`;

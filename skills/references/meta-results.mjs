@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, renameSync, mkdir
 import { join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
-import { metaConfig, graphClient, scrubTokens, actId } from "./meta-api.mjs";
+import { metaConfig, graphClient, scrubTokens, actId, budgetFrom, dateWindow } from "./meta-api.mjs";
 import { audienceLabel, summarise, adsetCountries, isAbroad } from "./meta-targeting.mjs";
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
@@ -41,30 +41,37 @@ export function metrics(r) {
   };
 }
 const EMPTY = () => metrics(null);
+/** The account's currency and time zone, from the gym's profile (the batch folder sits in brands/{gym}/outputs/). */
+const localeOf = (gymDir) => { const l = readJson(join(gymDir, "gym-profile.json"))?.locale || {}; return { currency: l.currency || "SGD", timezone: l.timezone || "Asia/Singapore" }; };
 
-/** Pull the campaign's statuses and numbers from Meta into results.json (2–5 read-only calls). */
-export async function pullResults({ client, record, batchDir, now = new Date().toISOString() }) {
+/** Pull the campaign's statuses and numbers from Meta into results.json (2–5 read-only calls). Budgets come back in the
+ *  account's currency's own units (NT$2,000 is "2000" on Meta, SGD 20.00 is "2000" too); the 7-day and 30-day windows
+ *  run up to and including today in the account's time zone (Meta's own presets end yesterday). */
+export async function pullResults({ client, record, batchDir, now = new Date().toISOString(), currency, timezone }) {
   const cid = record?.campaign?.id;
   if (!cid) throw new Error("this batch has not been created on Meta yet");
+  const locale = localeOf(resolve(batchDir, "..", ".."));
+  currency = currency || locale.currency; timezone = timezone || locale.timezone;
+  const windows = { last_7d: dateWindow(7, { timezone, now }), daily: dateWindow(30, { timezone, now }) };
   const fields = "ad_id,adset_id,spend,impressions,reach,clicks,inline_link_clicks,actions,date_start,date_stop";
   const [campaign, adsets, ads, allTime, week, daily] = await Promise.all([
     client.get(cid, { fields: "id,name,status,effective_status,daily_budget,updated_time" }),
     client.list(`${cid}/adsets`, { fields: "id,name,status,effective_status,daily_budget" }),
     client.list(`${cid}/ads`, { fields: "id,name,status,effective_status,adset_id,updated_time" }),
     client.list(`${cid}/insights`, { level: "ad", fields, date_preset: "maximum" }),
-    client.list(`${cid}/insights`, { level: "ad", fields, date_preset: "last_7d" }),
-    client.list(`${cid}/insights`, { level: "campaign", fields: "spend,actions,date_start", time_increment: 1, date_preset: "last_30d" }).catch(() => []),
+    client.list(`${cid}/insights`, { level: "ad", fields, time_range: JSON.stringify(windows.last_7d) }),
+    client.list(`${cid}/insights`, { level: "campaign", fields: "spend,actions,date_start", time_increment: 1, time_range: JSON.stringify(windows.daily) }).catch(() => []),
   ]);
   const byAd = (rows) => Object.fromEntries(rows.map((r) => [r.ad_id, metrics(r)]));
   const all = byAd(allTime), last7 = byAd(week);
   const sum = (rows) => rows.reduce((t, m) => ({ spend: round2(t.spend + m.spend), impressions: t.impressions + m.impressions, reach: t.reach + m.reach, clicks: t.clicks + m.clicks, leads: t.leads + m.leads }), { spend: 0, impressions: 0, reach: 0, clicks: 0, leads: 0 });
   const finish = (s) => ({ ...s, cost_per_lead: s.leads ? round2(s.spend / s.leads) : null, ctr: s.impressions ? round2((s.clicks / s.impressions) * 100) : null });
   const out = {
-    pulled: now,
-    campaign: { id: campaign.id, name: campaign.name, status: campaign.status, effective_status: campaign.effective_status, words: statusWords(campaign.effective_status), daily_budget: campaign.daily_budget ? num(campaign.daily_budget) / 100 : null, all_time: finish(sum(Object.values(all))), last_7d: finish(sum(Object.values(last7))) },
+    pulled: now, currency, timezone, windows,
+    campaign: { id: campaign.id, name: campaign.name, status: campaign.status, effective_status: campaign.effective_status, words: statusWords(campaign.effective_status), daily_budget: budgetFrom(campaign.daily_budget, currency), all_time: finish(sum(Object.values(all))), last_7d: finish(sum(Object.values(last7))) },
     adsets: Object.fromEntries(adsets.map((s) => {
       const mine = ads.filter((a) => a.adset_id === s.id).map((a) => a.id);
-      return [s.id, { id: s.id, name: s.name, status: s.status, effective_status: s.effective_status, words: statusWords(s.effective_status), daily_budget: s.daily_budget ? num(s.daily_budget) / 100 : null, ads: mine.length, all_time: finish(sum(mine.map((id) => all[id] || EMPTY()))), last_7d: finish(sum(mine.map((id) => last7[id] || EMPTY()))) }];
+      return [s.id, { id: s.id, name: s.name, status: s.status, effective_status: s.effective_status, words: statusWords(s.effective_status), daily_budget: budgetFrom(s.daily_budget, currency), ads: mine.length, all_time: finish(sum(mine.map((id) => all[id] || EMPTY()))), last_7d: finish(sum(mine.map((id) => last7[id] || EMPTY()))) }];
     })),
     ads: Object.fromEntries(ads.map((a) => [a.id, { id: a.id, name: a.name, adset_id: a.adset_id, status: a.status, effective_status: a.effective_status, words: statusWords(a.effective_status), updated: a.updated_time || null, all_time: all[a.id] || EMPTY(), last_7d: last7[a.id] || EMPTY() }])),
     daily: daily.map((r) => ({ date: r.date_start, ...(({ spend, leads }) => ({ spend, leads }))(metrics(r)) })),
@@ -126,22 +133,24 @@ const CDN_HOSTS = /^https:\/\/[a-z0-9.-]+\.(fbcdn\.net|facebook\.com|xx\.fbcdn\.
 const gender = (t) => (!t?.genders?.length ? "all" : t.genders.includes(1) && !t.genders.includes(2) ? "men" : t.genders.includes(2) && !t.genders.includes(1) ? "women" : "all");
 const geoWords = (g) => [...(g?.places || []).map((p) => `${p.name || p.key} +${p.radius}km`), ...(g?.custom_locations || []).map((p) => `${p.latitude},${p.longitude} +${p.radius}km`), ...(g?.cities || []).map((c) => c.name), ...(g?.countries || [])].join("; ") || null;
 /** The account's campaigns, ad sets and ads with their creatives and all-time numbers → brands/{gym}/account-history.json (read-only, ~6 calls). */
-export async function pullAccountHistory({ client, accountId, gymDir, now = new Date().toISOString(), home = null }) {
+export async function pullAccountHistory({ client, accountId, gymDir, now = new Date().toISOString(), home = null, currency = null, timezone = null }) {
   const acct = actId(accountId);
-  home = home || readJson(join(gymDir, "gym-profile.json"))?.locale?.country || "SG";
+  const locale = readJson(join(gymDir, "gym-profile.json"))?.locale || {};
+  home = home || locale.country || "SG"; currency = currency || locale.currency || "SGD"; timezone = timezone || locale.timezone || "Asia/Singapore";
+  const last30 = dateWindow(30, { timezone, now });
   const [campaigns, adsets, ads, allTime, month] = await Promise.all([
     client.list(`${acct}/campaigns`, { fields: "id,name,status,effective_status,objective,created_time,daily_budget", limit: 100 }),
     client.list(`${acct}/adsets`, { fields: "id,name,campaign_id,status,effective_status,daily_budget,created_time,targeting{genders,age_min,age_max,flexible_spec,exclusions,custom_audiences,excluded_custom_audiences,geo_locations}", limit: 100 }),
     client.list(`${acct}/ads`, { fields: "id,name,adset_id,campaign_id,status,effective_status,created_time,creative{id,object_type,thumbnail_url,image_hash,video_id,body,title,object_story_spec,asset_feed_spec{images,videos,bodies,titles,call_to_actions}}", limit: 100 }),
     client.list(`${acct}/insights`, { level: "ad", fields: "ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions,date_start,date_stop", date_preset: "maximum", limit: 100 }),
-    client.list(`${acct}/insights`, { level: "ad", fields: "ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions,date_start,date_stop", date_preset: "last_30d", limit: 100 }).catch(() => []),
+    client.list(`${acct}/insights`, { level: "ad", fields: "ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions,date_start,date_stop", time_range: JSON.stringify(last30), limit: 100 }).catch(() => []),
   ]);
-  const all = Object.fromEntries(allTime.map((r) => [r.ad_id, metrics(r)])), last30 = Object.fromEntries(month.map((r) => [r.ad_id, metrics(r)]));
+  const all = Object.fromEntries(allTime.map((r) => [r.ad_id, metrics(r)])), month30 = Object.fromEntries(month.map((r) => [r.ad_id, metrics(r)]));
   const setOf = Object.fromEntries(adsets.map((s) => [s.id, s])), campOf = Object.fromEntries(campaigns.map((c) => [c.id, c]));
   const out = {
-    pulled: now, account: acct,
-    campaigns: campaigns.map((c) => ({ id: c.id, name: c.name, status: c.status, effective_status: c.effective_status, words: statusWords(c.effective_status), objective: c.objective || null, created: (c.created_time || "").slice(0, 10), daily_budget: c.daily_budget ? num(c.daily_budget) / 100 : null })),
-    adsets: adsets.map((s) => { const t = s.targeting || {}; return { id: s.id, campaign_id: s.campaign_id, name: s.name, status: s.status, effective_status: s.effective_status, words: statusWords(s.effective_status), created: (s.created_time || "").slice(0, 10), daily_budget: s.daily_budget ? num(s.daily_budget) / 100 : null, gender: gender(t), age_min: t.age_min ?? null, age_max: t.age_max ?? null, geo: geoWords(t.geo_locations), countries: adsetCountries(t), abroad: isAbroad(t, home), audience: audienceLabel(s.name), targeting: summarise(t).join(" · ") }; }),
+    pulled: now, account: acct, currency, timezone, window_30d: last30,
+    campaigns: campaigns.map((c) => ({ id: c.id, name: c.name, status: c.status, effective_status: c.effective_status, words: statusWords(c.effective_status), objective: c.objective || null, created: (c.created_time || "").slice(0, 10), daily_budget: budgetFrom(c.daily_budget, currency) })),
+    adsets: adsets.map((s) => { const t = s.targeting || {}; return { id: s.id, campaign_id: s.campaign_id, name: s.name, status: s.status, effective_status: s.effective_status, words: statusWords(s.effective_status), created: (s.created_time || "").slice(0, 10), daily_budget: budgetFrom(s.daily_budget, currency), gender: gender(t), age_min: t.age_min ?? null, age_max: t.age_max ?? null, geo: geoWords(t.geo_locations), countries: adsetCountries(t), abroad: isAbroad(t, home), audience: audienceLabel(s.name), targeting: summarise(t).join(" · ") }; }),
     ads: ads.map((a) => {
       const cr = a.creative || {}, afs = cr.asset_feed_spec || {}, oss = cr.object_story_spec || {}, vd = oss.video_data || null;
       const hashes = [...new Set([...(afs.images || []).map((i) => i.hash), ...(cr.image_hash ? [cr.image_hash] : [])].filter(Boolean))];
@@ -153,7 +162,7 @@ export async function pullAccountHistory({ client, accountId, gymDir, now = new 
       const set = setOf[a.adset_id] || {}, camp = campOf[a.campaign_id] || {};
       return { id: a.id, name: a.name, adset_id: a.adset_id, campaign_id: a.campaign_id, campaign: camp.name || null, adset: set.name || null, status: a.status, effective_status: a.effective_status, words: statusWords(a.effective_status), created: (a.created_time || "").slice(0, 10),
         media: isVideo ? "video" : hashes.length ? "image" : "other", hashes, poster, importable: !!(hashes[0] || poster), thumbnail: cr.thumbnail_url || null, creative_id: cr.id || null, body, title, form_id: form,
-        all_time: all[a.id] || EMPTY(), last_30d: last30[a.id] || EMPTY() };
+        all_time: all[a.id] || EMPTY(), last_30d: month30[a.id] || EMPTY() };
     }),
   };
   writeWhole(join(gymDir, HISTORY), JSON.stringify(out, null, 2) + "\n");

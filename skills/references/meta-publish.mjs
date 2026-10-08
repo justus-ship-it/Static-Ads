@@ -24,16 +24,14 @@ import { createHash } from "crypto";
 import { join, resolve, basename } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
-import { metaConfig, graphClient, actId, scrubTokens, MetaError } from "./meta-api.mjs";
+import { metaConfig, graphClient, actId, scrubTokens, MetaError, WHOLE_UNIT_CURRENCIES, budgetUnits } from "./meta-api.mjs";
+export { WHOLE_UNIT_CURRENCIES, budgetUnits };
 import { calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
 import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
 import { readLibrary as readTargetingLibrary, libraryEntry, asPreset as libraryPreset } from "./targeting-library.mjs";
 import { textOptionsFor, MAX_OPTIONS, fillButton, ctaLabel, gymLanguage } from "./draft-copy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
-/** Currencies Meta counts in whole units (no subunits): a budget of 500 is 500 of them, not 5.00. Everything else is in hundredths. */
-export const WHOLE_UNIT_CURRENCIES = ["TWD", "JPY", "KRW", "VND", "CLP", "HUF", "ISK", "PYG", "UGX", "COP", "IDR"];
-export const budgetUnits = (currency) => (WHOLE_UNIT_CURRENCIES.includes(String(currency || "").toUpperCase()) ? 1 : 100);
 
 export const AD_STATUS = "PAUSED";
 const DEFAULT_RADIUS_KM = 5, RADIUS_MIN = 1, RADIUS_MAX = 80;

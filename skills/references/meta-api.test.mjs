@@ -534,18 +534,22 @@ test("M8 results: a pull reads the campaign's statuses and Meta's numbers per ad
     assert.deepEqual(batchRows(d, "2026-09-14-women"), [], "not on Meta: no rows");
     assert.deepEqual(batchRows(d, "2026-09-13-men").map((r) => [r.folder, r.status, r.superseded]), [["101-c01-bishan-t3-green-white", "not pulled yet", false], ["102-c02-bishan-t8-blue-white", "not pulled yet", false], ["101-c01-bishan-t3-green-white", "superseded", true]], "rows before any pull, the superseded ad last");
     // The pull: statuses and insights from the fake Graph.
+    const seenRanges = [];
     const ins = (ad_id, spend, leads, imp, clicks) => ({ ad_id, adset_id: "s2", spend: String(spend), impressions: String(imp), clicks: String(clicks + 5), inline_link_clicks: String(clicks), reach: String(imp - 100), actions: [{ action_type: "link_click", value: String(clicks) }, ...(leads ? [{ action_type: "lead", value: String(leads) }] : [])], date_start: "2026-09-17", date_stop: "2026-09-18" });
     Object.assign(answers, {
       "c1": () => ({ id: "c1", name: "0913 …", status: "PAUSED", effective_status: "ACTIVE", updated_time: "x" }),
       "c1/adsets": () => ({ data: [{ id: "s2", name: "0913 Bishan | …", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: "5000" }] }),
       "c1/ads": () => ({ data: [{ id: "ad4", name: "a", status: "ACTIVE", effective_status: "ACTIVE", adset_id: "s2" }, { id: "ad6", name: "b", status: "ACTIVE", effective_status: "IN_PROCESS", adset_id: "s2" }, { id: "ad2", name: "old", status: "PAUSED", effective_status: "PAUSED", adset_id: "s2" }] }),
-      "c1/insights": (q) => (q.get("level") === "campaign" ? { data: [{ date_start: "2026-09-17", spend: "40", actions: [{ action_type: "lead", value: "2" }] }, { date_start: "2026-09-18", spend: "50", actions: [{ action_type: "lead", value: "3" }] }] }
+      "c1/insights": (q) => (seenRanges.push([q.get("level"), q.get("date_preset"), q.get("time_range")]), q.get("level") === "campaign" ? { data: [{ date_start: "2026-09-17", spend: "40", actions: [{ action_type: "lead", value: "2" }] }, { date_start: "2026-09-18", spend: "50", actions: [{ action_type: "lead", value: "3" }] }] }
         : q.get("date_preset") === "maximum" ? { data: [ins("ad4", 60, 4, 2000, 40), ins("ad6", 30, 1, 1000, 10)] } : { data: [ins("ad4", 20, 1, 700, 12)] }),
     });
     const r = await pullResults({ client: client(), record: JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")), batchDir: out, now: "2026-09-18T09:00:00.000Z" });
     assert.deepEqual([r.pulled, r.campaign.words, r.campaign.all_time, r.campaign.last_7d.leads, r.adsets.s2.ads, r.adsets.s2.all_time.cost_per_lead, r.ads.ad4.words, r.ads.ad6.words, r.ads.ad2.words, r.ads.ad4.all_time.ctr, r.ads.ad6.last_7d.leads, r.daily],
       ["2026-09-18T09:00:00.000Z", "live", { spend: 90, impressions: 3000, reach: 2800, clicks: 50, leads: 5, cost_per_lead: 18, ctr: 1.67 }, 1, 3, 18, "live", "in Meta's review", "paused", 2, 0, [{ date: "2026-09-17", spend: 40, leads: 2 }, { date: "2026-09-18", spend: 50, leads: 3 }]]);
     assert.ok(existsSync(join(out, "results.json")));
+    // Budgets by the account's currency (no profile here: Singapore, hundredths), and the windows run to today — Meta's own last_7d / last_30d presets end yesterday (2026-10-08: a campaign switched on today showed 0 for the week).
+    assert.deepEqual([r.currency, r.timezone, r.adsets.s2.daily_budget, r.windows], ["SGD", "Asia/Singapore", 50, { last_7d: { since: "2026-09-12", until: "2026-09-18" }, daily: { since: "2026-08-20", until: "2026-09-18" } }]);
+    assert.deepEqual(seenRanges.sort(), [["ad", null, '{"since":"2026-09-12","until":"2026-09-18"}'], ["ad", "maximum", null], ["campaign", null, '{"since":"2026-08-20","until":"2026-09-18"}']], "the week and the days asked for as a time range to today, all time as Meta's preset");
     assert.deepEqual(metrics({ spend: "10.5", impressions: "1000", inline_link_clicks: "25", actions: [{ action_type: "lead", value: "3" }] }), { spend: 10.5, impressions: 1000, reach: 0, clicks: 25, leads: 3, cost_per_lead: 3.5, ctr: 2.5, cpm: 10.5, from: null, to: null });
     assert.deepEqual([statusWords("CAMPAIGN_PAUSED"), statusWords("SOMETHING_NEW"), statusWords(null)], ["paused with its campaign", "something new", "unknown"]);
     // The rows after the pull: what each ad was, and what it did.
@@ -564,7 +568,23 @@ test("M8 results: a pull reads the campaign's statuses and Meta's numbers per ad
     assert.ok(csv.includes('"[PLACEHOLDER headline] x"') === false && csv.includes("[PLACEHOLDER headline] x"), "no comma, no quotes needed");
     assert.ok(resultsCsv([{ ...all[0], headline: 'Say "hi", now' }]).includes('"Say ""hi"", now"'));
     assert.ok(!JSON.stringify(r).includes(TOKEN));
+    // A Taiwan gym (pulled last: it rewrites results.json): NT$2,000 is "2000" on Meta (whole units), and today is the account's day — 17:30 UTC is already the 19th in Taipei.
+    writeFileSync(join(d, "gym-profile.json"), JSON.stringify({ locale: { country: "TW", currency: "TWD", timezone: "Asia/Taipei" } }));
+    answers["c1/adsets"] = () => ({ data: [{ id: "s2", name: "0913 Bishan | …", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: "2000" }] });
+    const tw = await pullResults({ client: client(), record: JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")), batchDir: out, now: "2026-09-18T17:30:00.000Z" });
+    assert.deepEqual([tw.currency, tw.adsets.s2.daily_budget, tw.windows.last_7d], ["TWD", 2000, { since: "2026-09-13", until: "2026-09-19" }], "whole units for TWD; the window in the account's time zone");
   } finally { for (const k of ["c1", "c1/adsets", "c1/ads", "c1/insights"]) delete answers[k]; rmSync(d, { recursive: true, force: true }); }
+});
+
+test("M15 budgets and days by the account: budgetFrom reads Meta's \"2000\" as SGD 20 and NT$2,000; dateWindow ends today in the account's time zone and spans N days, across a month's end; timeRange is Meta's parameter", async () => {
+  const { budgetFrom, budgetUnits, dateWindow, timeRange, todayIn } = await import("./meta-api.mjs");
+  assert.deepEqual([budgetFrom("2000", "SGD"), budgetFrom("2000", "TWD"), budgetFrom("2000", "twd"), budgetFrom(null, "SGD"), budgetFrom("", "TWD"), budgetUnits("JPY"), budgetUnits(undefined)], [20, 2000, 2000, null, null, 1, 100]);
+  assert.deepEqual([todayIn("Asia/Taipei", "2026-09-18T17:30:00.000Z"), todayIn("Asia/Singapore", "2026-09-18T17:30:00.000Z"), todayIn("America/Los_Angeles", "2026-09-18T03:00:00.000Z")], ["2026-09-19", "2026-09-19", "2026-09-17"]);
+  assert.deepEqual(dateWindow(7, { timezone: "Asia/Taipei", now: "2026-10-08T08:00:00.000Z" }), { since: "2026-10-02", until: "2026-10-08" });
+  assert.deepEqual(dateWindow(30, { timezone: "Asia/Singapore", now: "2026-03-02T01:00:00.000Z" }), { since: "2026-02-01", until: "2026-03-02" }, "February's 28 days counted");
+  assert.deepEqual(dateWindow(1, { timezone: "Asia/Taipei", now: "2026-10-08T08:00:00.000Z" }), { since: "2026-10-08", until: "2026-10-08" });
+  assert.equal(timeRange(7, { timezone: "Asia/Taipei", now: "2026-10-08T08:00:00.000Z" }), '{"since":"2026-10-02","until":"2026-10-08"}');
+  assert.match(dateWindow(7, { timezone: "Not/AZone", now: "2026-10-08T08:00:00.000Z" }).until, /^2026-10-08$/, "an unknown zone falls back to UTC rather than failing the pull");
 });
 
 test("M9 the account's history: every campaign, ad set and ad the account ran, with its creative's image, words and form, the ad set's gender, ages, place and targeting, and Meta's all-time numbers; rows leave out the ads this app made; the chosen ads' images land in references/ with their record beside them and their words become copy references with their results — nothing fetched twice, videos said so; the CSV carries both sources", async () => {
