@@ -44,7 +44,7 @@ import { TARGETING_LIBRARY_DIR, readLibrary as readTargetingLibrary, seedDrafts 
 const targetingLibrary = () => seedTargetingDrafts(TARGETING_LIBRARY_DIR).data;
 const targetingLibraryView = () => { const d = targetingLibrary(); return { entries: d.entries.map((e) => ({ ...e, preset_id: `lib:${e.id}`, summary: summarise(e.spec) })), approved: d.entries.filter((e) => e.approved_on && !e.retired).length, drafts: d.entries.filter((e) => !e.approved_on && !e.retired).length }; };
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
-import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs } from "../skills/references/meta-results.mjs";
+import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
@@ -1308,7 +1308,7 @@ const server = createServer(async (req, res) => {
       const batches = [...new Set(rows.map((r) => r.batch))].map((id) => ({ id, results: readJsonFile(join(brandDir(gym), "outputs", id, "results.json")), record: (({ campaign, adsets, ads, done }) => ({ campaign, adsets: Object.keys(adsets || {}).length, ads: Object.keys(ads || {}).length, done }))(readJsonFile(join(brandDir(gym), "outputs", id, "publish.json")) || {}) }));
       const h = readHistory(brandDir(gym));
       const hrows = h ? historyRows(brandDir(gym)) : [];
-      return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length });
+      return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length });
     }
     // The account's history: pulled from Meta (read-only), and chosen ads brought into the library.
     const hs = p.match(/^\/api\/client\/([^/]+)\/history\/(pull|import)$/);
@@ -1705,7 +1705,7 @@ const server = createServer(async (req, res) => {
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
         return json(res, 200, { plan, settings, thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
       }
-      if (what === "results" && req.method === "GET") return json(res, 200, { results: readJsonFile(join(out, "results.json")), rows: batchRows(dir, id), record: readJsonFile(join(out, "publish.json")) });
+      if (what === "results" && req.method === "GET") return json(res, 200, { results: readJsonFile(join(out, "results.json")), rows: batchRows(dir, id), record: readJsonFile(join(out, "publish.json")), texts: textRows(dir, id) });
       if (what === "results/pull" && req.method === "POST") {
         const rec = readJsonFile(join(out, "publish.json"));
         if (!rec?.campaign?.id) return json(res, 409, { error: "this batch has not been created on Meta yet" });
@@ -1715,7 +1715,7 @@ const server = createServer(async (req, res) => {
           const r = await pullResults({ client: graphClient({ config: c }), record: rec, batchDir: out });
           writeGymCsv(dir);
           const every = allRows(dir);
-          return json(res, 200, { results: r, rows: batchRows(dir, id), record: rec, campaigns: campaignRows(every), adsets: adsetRows(every) });
+          return json(res, 200, { results: r, rows: batchRows(dir, id), record: rec, campaigns: campaignRows(every), adsets: adsetRows(every), texts: textRows(dir, id) });
         } catch (e) { return json(res, 502, { error: scrubTokens(e.message) }); }
       }
       if (what === "review" && req.method === "GET") return json(res, 200, { ...reviewState(gym, id), words: (({ offer, locations, audience }) => ({ offer, locations, audience: audience ?? null }))(readJsonFile(briefPath(gym, id))), run: activeRun(gym, id) });

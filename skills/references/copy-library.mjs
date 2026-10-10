@@ -21,6 +21,7 @@ import { parseArgs } from "util";
 import { createHash } from "crypto";
 import { callVision } from "./check-visual.mjs";
 import { ANGLES, COPY_MODEL, LIMITS, ALWAYS_NEVER, plainDashes, readCopyRefs, editCopyRef, languageOf } from "./draft-copy.mjs";
+import { textRows } from "./meta-results.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 /** Where the library lives; `COPY_LIBRARY_DIR` points tests elsewhere. */
@@ -123,6 +124,15 @@ export function usesIn(brandsDir) {
         if (!d.from) continue;
         const u = (uses[d.from] ||= { drafts: 0, kept: 0, gyms: [] });
         u.drafts++; if (d.status === "keep") u.kept++; if (!u.gyms.includes(gym)) u.gyms.push(gym);
+      }
+      // What those drafts did on Meta (2026-10-11): leads, clicks and impressions summed, spend kept per currency.
+      const seen = new Set();
+      for (const t of textRows(join(brandsDir, gym), batch)) {
+        if (!t.from || !t.matched) continue;
+        const u = (uses[t.from] ||= { drafts: 0, kept: 0, gyms: [] }), r = (u.results ||= { leads: 0, impressions: 0, clicks: 0, campaigns: 0, spend: {} });
+        r.leads += t.leads || 0; r.impressions += t.impressions || 0; r.clicks += t.clicks || 0;
+        const cur = t.currency || "?"; r.spend[cur] = Math.round(((r.spend[cur] || 0) + (t.spend || 0)) * 100) / 100;
+        if (!seen.has(t.from)) { seen.add(t.from); r.campaigns++; }
       }
     }
   }

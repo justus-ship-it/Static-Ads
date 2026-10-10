@@ -567,7 +567,12 @@ test("M8 results: a pull reads the campaign's statuses and Meta's numbers per ad
       "c1": () => ({ id: "c1", name: "0913 …", status: "PAUSED", effective_status: "ACTIVE", updated_time: "x" }),
       "c1/adsets": () => ({ data: [{ id: "s2", name: "0913 Bishan | …", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: "5000" }] }),
       "c1/ads": () => ({ data: [{ id: "ad4", name: "a", status: "ACTIVE", effective_status: "ACTIVE", adset_id: "s2" }, { id: "ad6", name: "b", status: "ACTIVE", effective_status: "IN_PROCESS", adset_id: "s2" }, { id: "ad2", name: "old", status: "PAUSED", effective_status: "PAUSED", adset_id: "s2" }] }),
-      "c1/insights": (q) => (seenRanges.push([q.get("level"), q.get("date_preset"), q.get("time_range")]), q.get("level") === "campaign" ? { data: [{ date_start: "2026-09-17", spend: "40", actions: [{ action_type: "lead", value: "2" }] }, { date_start: "2026-09-18", spend: "50", actions: [{ action_type: "lead", value: "3" }] }] }
+      "c1/insights": (q) => (q.get("breakdowns") ? null : seenRanges.push([q.get("level"), q.get("date_preset"), q.get("time_range")]), q.get("breakdowns") === "body_asset" ? { data: [
+          { ad_id: "ad4", body_asset: { id: "b1", text: "Ladies in Bishan, text 0: the 12 Week Total Body Reset.\n\nTap Sign up." }, spend: "40", impressions: "1500", inline_link_clicks: "30", actions: [{ action_type: "lead", value: "3" }] },
+          { ad_id: "ad6", body_asset: { id: "b1", text: "Ladies in Bishan, text 0: the 12 Week Total Body Reset.\n\nTap Sign up." }, spend: "20", impressions: "500", inline_link_clicks: "10", actions: [{ action_type: "lead", value: "1" }] },
+          { ad_id: "ad4", body_asset: { id: "b2", text: "Hand-written words" }, spend: "30", impressions: "1000", inline_link_clicks: "10", actions: [] }] }
+        : q.get("breakdowns") === "title_asset" ? { data: [{ ad_id: "ad4", title_asset: { id: "t1", text: "Bishan ladies: headline 0" }, spend: "90", impressions: "3000", inline_link_clicks: "50", actions: [{ action_type: "lead", value: "5" }] }] }
+        : q.get("level") === "campaign" ? { data: [{ date_start: "2026-09-17", spend: "40", actions: [{ action_type: "lead", value: "2" }] }, { date_start: "2026-09-18", spend: "50", actions: [{ action_type: "lead", value: "3" }] }] }
         : q.get("date_preset") === "maximum" ? { data: [ins("ad4", 60, 4, 2000, 40), ins("ad6", 30, 1, 1000, 10)] } : { data: [ins("ad4", 20, 1, 700, 12)] }),
     });
     const r = await pullResults({ client: client(), record: JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")), batchDir: out, now: "2026-09-18T09:00:00.000Z" });
@@ -576,6 +581,9 @@ test("M8 results: a pull reads the campaign's statuses and Meta's numbers per ad
     assert.ok(existsSync(join(out, "results.json")));
     // Budgets by the account's currency (no profile here: Singapore, hundredths), and the windows run to today — Meta's own last_7d / last_30d presets end yesterday (2026-10-08: a campaign switched on today showed 0 for the week).
     assert.deepEqual([r.currency, r.timezone, r.adsets.s2.daily_budget, r.windows], ["SGD", "Asia/Singapore", 50, { last_7d: { since: "2026-09-12", until: "2026-09-18" }, daily: { since: "2026-08-20", until: "2026-09-18" } }]);
+    // Which copy wins (2026-10-11): the per-text rows summed per distinct text, the best lead-getter first; and nothing differs from the record.
+    assert.deepEqual(r.texts.bodies.map((t) => [t.text.slice(0, 16), t.asset_id, t.ads, t.spend, t.impressions, t.clicks, t.leads, t.cost_per_lead, t.ctr]), [["Ladies in Bishan", "b1", 2, 60, 2000, 40, 4, 15, 2], ["Hand-written wor", "b2", 1, 30, 1000, 10, 0, null, 1]]);
+    assert.deepEqual([r.texts.titles.length, r.texts.titles[0].leads, r.drift], [1, 5, []]);
     assert.deepEqual(seenRanges.sort(), [["ad", null, '{"since":"2026-09-12","until":"2026-09-18"}'], ["ad", "maximum", null], ["campaign", null, '{"since":"2026-08-20","until":"2026-09-18"}']], "the week and the days asked for as a time range to today, all time as Meta's preset");
     assert.deepEqual(metrics({ spend: "10.5", impressions: "1000", inline_link_clicks: "25", actions: [{ action_type: "lead", value: "3" }] }), { spend: 10.5, impressions: 1000, reach: 0, clicks: 25, leads: 3, cost_per_lead: 3.5, ctr: 2.5, cpm: 10.5, from: null, to: null });
     assert.deepEqual([statusWords("CAMPAIGN_PAUSED"), statusWords("SOMETHING_NEW"), statusWords(null)], ["paused with its campaign", "something new", "unknown"]);
@@ -598,8 +606,27 @@ test("M8 results: a pull reads the campaign's statuses and Meta's numbers per ad
     // A Taiwan gym (pulled last: it rewrites results.json): NT$2,000 is "2000" on Meta (whole units), and today is the account's day — 17:30 UTC is already the 19th in Taipei.
     writeFileSync(join(d, "gym-profile.json"), JSON.stringify({ locale: { country: "TW", currency: "TWD", timezone: "Asia/Taipei" } }));
     answers["c1/adsets"] = () => ({ data: [{ id: "s2", name: "0913 Bishan | …", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: "2000" }] });
+    // Read back (2026-10-11): the campaign renamed in Ads Manager, the budget raised there, an ad added by hand — each said, in words.
+    answers["c1"] = () => ({ id: "c1", name: "renamed by hand", status: "PAUSED", effective_status: "ACTIVE", updated_time: "x" });
+    answers["c1/ads"] = () => ({ data: [{ id: "ad4", name: "a", status: "ACTIVE", effective_status: "ACTIVE", adset_id: "s2" }, { id: "ad6", name: "b", status: "ACTIVE", effective_status: "IN_PROCESS", adset_id: "s2" }, { id: "ad2", name: "old", status: "PAUSED", effective_status: "PAUSED", adset_id: "s2" }, { id: "ad9", name: "by hand", status: "PAUSED", effective_status: "PAUSED", adset_id: "s2" }] });
     const tw = await pullResults({ client: client(), record: JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")), batchDir: out, now: "2026-09-18T17:30:00.000Z" });
     assert.deepEqual([tw.currency, tw.adsets.s2.daily_budget, tw.windows.last_7d], ["TWD", 2000, { since: "2026-09-13", until: "2026-09-19" }], "whole units for TWD; the window in the account's time zone");
+    assert.deepEqual(tw.drift, [
+      'the campaign is named "renamed by hand" on Meta; the app sent "0913 …" — the next create renames it back unless the campaign name here is changed to match',
+      "ad set BISHAN's budget on Meta is TWD 2000 a day; the app's setting is TWD 50 — the next create puts TWD 50 back unless the budget here is changed",
+      "1 ad in the campaign was not made by this app",
+    ]);
+    // The texts tied back to the drafts: by their words with the area and button filled, spacing aside; the best first; an unknown text listed unmatched.
+    const { textRows, gymTextRows, driftFrom } = await import("./meta-results.mjs");
+    writeFileSync(join(out, "copy.json"), JSON.stringify({ drafts: [
+      { id: "c1", kind: "copy", message: "Ladies in {AREA}, text 0: the 12 Week Total Body Reset.\n\nTap {BUTTON}.", from: "lib-1", angle: "call-out", status: "keep" },
+      { id: "c2", kind: "copy", message: "Something else entirely.", from: "lib-9", angle: "pain", status: "exclude" },
+      { id: "h1", kind: "headline", headline: "{AREA} ladies: headline 0", from: "lib-2", angle: "identity", status: "keep" }] }));
+    const texts = textRows(d, "2026-09-13-men");
+    assert.deepEqual(texts.map((t) => [t.kind, t.draft_id, t.from, t.angle, t.matched, t.leads, t.currency, t.campaign_id]), [["headline", "h1", "lib-2", "identity", true, 5, "TWD", "c1"], ["copy", "c1", "lib-1", "call-out", true, 4, "TWD", "c1"], ["copy", null, null, null, false, 0, "TWD", "c1"]]);
+    assert.equal(gymTextRows(d).length, 3);
+    assert.deepEqual(driftFrom({ record: { campaign: { id: "c1", name: "n" }, adsets: { X: { id: "s9", name: "n", facts: { daily: 50 } } }, ads: { f: { id: "a1" } } }, campaign: { id: "c1", name: "n", status: "ARCHIVED" }, adsets: [], ads: [], currency: "SGD" }),
+      ["the campaign is archived on Meta: the next create makes a new one, with its ad sets and ads", "ad set X (s9) is no longer on Meta", "1 ad recorded here is no longer on Meta"]);
   } finally { for (const k of ["c1", "c1/adsets", "c1/ads", "c1/insights"]) delete answers[k]; rmSync(d, { recursive: true, force: true }); }
 });
 

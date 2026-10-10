@@ -16,6 +16,7 @@ import { join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { metaConfig, graphClient, scrubTokens, actId, budgetFrom, dateWindow } from "./meta-api.mjs";
+import { titleCase } from "./client-config.mjs";
 import { audienceLabel, summarise, adsetCountries, isAbroad } from "./meta-targeting.mjs";
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
@@ -54,13 +55,17 @@ export async function pullResults({ client, record, batchDir, now = new Date().t
   currency = currency || locale.currency; timezone = timezone || locale.timezone;
   const windows = { last_7d: dateWindow(7, { timezone, now }), daily: dateWindow(30, { timezone, now }) };
   const fields = "ad_id,adset_id,spend,impressions,reach,clicks,inline_link_clicks,actions,date_start,date_stop";
-  const [campaign, adsets, ads, allTime, week, daily] = await Promise.all([
+  const assetFields = "ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions";
+  const [campaign, adsets, ads, allTime, week, daily, bodyRows, titleRows] = await Promise.all([
     client.get(cid, { fields: "id,name,status,effective_status,daily_budget,updated_time" }),
     client.list(`${cid}/adsets`, { fields: "id,name,status,effective_status,daily_budget" }),
     client.list(`${cid}/ads`, { fields: "id,name,status,effective_status,adset_id,updated_time" }),
     client.list(`${cid}/insights`, { level: "ad", fields, date_preset: "maximum" }),
     client.list(`${cid}/insights`, { level: "ad", fields, time_range: JSON.stringify(windows.last_7d) }),
     client.list(`${cid}/insights`, { level: "campaign", fields: "spend,actions,date_start", time_increment: 1, time_range: JSON.stringify(windows.daily) }).catch(() => []),
+    // Which copy wins (2026-10-11): Meta's numbers per text option — one row per ad per body, and per headline — all time.
+    client.list(`${cid}/insights`, { level: "ad", fields: assetFields, date_preset: "maximum", breakdowns: "body_asset" }).catch(() => []),
+    client.list(`${cid}/insights`, { level: "ad", fields: assetFields, date_preset: "maximum", breakdowns: "title_asset" }).catch(() => []),
   ]);
   const byAd = (rows) => Object.fromEntries(rows.map((r) => [r.ad_id, metrics(r)]));
   const all = byAd(allTime), last7 = byAd(week);
@@ -75,9 +80,89 @@ export async function pullResults({ client, record, batchDir, now = new Date().t
     })),
     ads: Object.fromEntries(ads.map((a) => [a.id, { id: a.id, name: a.name, adset_id: a.adset_id, status: a.status, effective_status: a.effective_status, words: statusWords(a.effective_status), updated: a.updated_time || null, all_time: all[a.id] || EMPTY(), last_7d: last7[a.id] || EMPTY() }])),
     daily: daily.map((r) => ({ date: r.date_start, ...(({ spend, leads }) => ({ spend, leads }))(metrics(r)) })),
+    texts: { bodies: byText(bodyRows, "body_asset"), titles: byText(titleRows, "title_asset") },
+    drift: driftFrom({ record, campaign, adsets, ads, currency }),
   };
   writeWhole(join(batchDir, "results.json"), JSON.stringify(out, null, 2) + "\n");
   return out;
+}
+
+const normText = (s) => String(s || "").replace(/\s+/g, " ").trim();
+/** Meta's per-asset rows (one per ad per text) summed per distinct text, the best lead-getter first. */
+function byText(rows, key) {
+  const m = new Map();
+  for (const r of rows || []) {
+    const a = r?.[key], text = typeof a === "string" ? a : a?.text;
+    if (!text) continue;
+    const k = normText(text), g = m.get(k) || { text, asset_id: a?.id || null, ads: new Set(), spend: 0, impressions: 0, reach: 0, clicks: 0, leads: 0 };
+    const mm = metrics(r);
+    g.spend = round2(g.spend + mm.spend); g.impressions += mm.impressions; g.reach += mm.reach; g.clicks += mm.clicks; g.leads += mm.leads;
+    if (r.ad_id) g.ads.add(r.ad_id);
+    m.set(k, g);
+  }
+  return [...m.values()].map(({ ads, ...g }) => ({ ...g, ads: ads.size, cost_per_lead: g.leads ? round2(g.spend / g.leads) : null, ctr: g.impressions ? round2((g.clicks / g.impressions) * 100) : null }))
+    .sort((a, b) => b.leads - a.leads || (a.cost_per_lead ?? Infinity) - (b.cost_per_lead ?? Infinity) || (b.ctr ?? 0) - (a.ctr ?? 0) || b.impressions - a.impressions);
+}
+
+/** Where Meta differs from what the app last sent (2026-10-11): an archived campaign or ad set, a name or budget changed in
+ *  Ads Manager, ads gone or added by hand. The app's record is what it sent; the next create sends it again unless the
+ *  setting here is changed to match. Read-only; in words, for the Publish screen's On Facebook card and the CLI. */
+export function driftFrom({ record, campaign, adsets, ads, currency = "SGD" }) {
+  const lines = [], rec = record || {};
+  const gone = (o) => [o?.status, o?.effective_status].map((x) => String(x || "").toUpperCase()).find((x) => x === "ARCHIVED" || x === "DELETED") || null;
+  const money = (raw) => `${currency} ${budgetFrom(raw, currency)}`;
+  if (rec.campaign?.id && campaign) {
+    const g = gone(campaign);
+    if (g) lines.push(`the campaign is ${g.toLowerCase()} on Meta: the next create makes a new one, with its ad sets and ads`);
+    if (campaign.name && rec.campaign.name && campaign.name !== rec.campaign.name) lines.push(`the campaign is named "${campaign.name}" on Meta; the app sent "${rec.campaign.name}" — the next create renames it back unless the campaign name here is changed to match`);
+    if (rec.campaign.daily_budget != null && campaign.daily_budget != null && Number(campaign.daily_budget) !== Number(rec.campaign.daily_budget)) lines.push(`the campaign's budget on Meta is ${money(campaign.daily_budget)} a day; the app sent ${money(rec.campaign.daily_budget)} — the next create puts it back unless the budget here is changed`);
+  }
+  for (const [callout, had] of Object.entries(rec.adsets || {})) {
+    const live = (adsets || []).find((s) => s.id === had.id);
+    if (!live) { lines.push(`ad set ${callout} (${had.id}) is no longer on Meta`); continue; }
+    const g = gone(live);
+    if (g) lines.push(`ad set ${callout} is ${g.toLowerCase()} on Meta: the next create makes a new one and its ads again`);
+    if (live.name && had.name && live.name !== had.name) lines.push(`ad set ${callout} is named "${live.name}" on Meta; the app sent "${had.name}" — the next create renames it back unless the ad set name here is changed to match`);
+    const appDaily = had.facts?.daily;
+    if (appDaily != null && live.daily_budget != null && budgetFrom(live.daily_budget, currency) !== Number(appDaily)) lines.push(`ad set ${callout}'s budget on Meta is ${money(live.daily_budget)} a day; the app's setting is ${currency} ${appDaily} — the next create puts ${currency} ${appDaily} back unless the budget here is changed`);
+  }
+  const recorded = new Set([...Object.values(rec.ads || {}), ...(rec.superseded || [])].map((a) => a.id).filter(Boolean));
+  const liveIds = new Set((ads || []).map((a) => a.id));
+  const missing = Object.values(rec.ads || {}).filter((a) => a.id && !liveIds.has(a.id)).length;
+  const extra = (ads || []).filter((a) => !recorded.has(a.id)).length;
+  if (missing) lines.push(`${missing} ad${missing === 1 ? "" : "s"} recorded here ${missing === 1 ? "is" : "are"} no longer on Meta`);
+  if (extra) lines.push(`${extra} ad${extra === 1 ? "" : "s"} in the campaign ${extra === 1 ? "was" : "were"} not made by this app`);
+  return lines;
+}
+
+/** Which copy wins (2026-10-11): the pulled per-text numbers tied back to the drafts that made them — each kept copy and
+ *  headline with its library skeleton (`from`) and angle. A text on Meta is matched to a draft by its words with the
+ *  area and the button filled (any of the record's callouts, any button name), spacing aside; one Meta cannot be tied
+ *  back (a placeholder, a hand edit in Ads Manager) is listed unmatched. The best lead-getter first. */
+export function textRows(gymDir, id) {
+  const out = join(gymDir, "outputs", id), res = readJson(join(out, "results.json")), copy = readJson(join(out, "copy.json")), rec = readJson(join(out, "publish.json"));
+  if (!res?.texts) return [];
+  const drafts = Array.isArray(copy?.drafts) ? copy.drafts : [];
+  const callouts = Object.keys(rec?.adsets || {});
+  const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const areaRe = callouts.length ? `(?:${callouts.map((c) => escRe(titleCase(c))).join("|")})` : "[^\\n]+?";
+  const matcher = (text) => new RegExp("^" + normText(text).split(/(\{AREA\}|\{BUTTON\})/).map((p) => (p === "{AREA}" ? areaRe : p === "{BUTTON}" ? "[^\\n]{1,40}?" : escRe(p))).join("") + "$");
+  const rows = [];
+  for (const [kind, key, field] of [["copy", "bodies", "message"], ["headline", "titles", "headline"]]) {
+    const ds = drafts.filter((d) => (d.kind || "copy") === kind && d[field]).map((d) => ({ d, re: matcher(d[field]) }));
+    for (const t of res.texts[key] || []) {
+      const hit = ds.find((x) => x.re.test(normText(t.text)));
+      rows.push({ kind, batch: id, campaign_id: rec?.campaign?.id || null, text: t.text, draft_id: hit?.d.id || null, from: hit?.d.from || null, angle: hit?.d.angle || null, status: hit?.d.status || null, matched: !!hit,
+        ads: t.ads, spend: t.spend, impressions: t.impressions, clicks: t.clicks, leads: t.leads, cost_per_lead: t.cost_per_lead, ctr: t.ctr, currency: res.currency || null, pulled: res.pulled || null });
+    }
+  }
+  return rows.sort((a, b) => b.leads - a.leads || (a.cost_per_lead ?? Infinity) - (b.cost_per_lead ?? Infinity) || (b.ctr ?? 0) - (a.ctr ?? 0) || b.impressions - a.impressions);
+}
+/** Every batch's text rows for a gym (those with results pulled). */
+export function gymTextRows(gymDir) {
+  const outs = join(gymDir, "outputs");
+  if (!existsSync(outs)) return [];
+  return readdirSync(outs).filter((id) => existsSync(join(outs, id, "results.json"))).flatMap((id) => textRows(gymDir, id));
 }
 
 /**
@@ -314,6 +399,9 @@ if (isMain) {
         if (!rec?.campaign?.id) { console.log(`${id}: not on Meta yet`); continue; }
         const r = await pullResults({ client, record: rec, batchDir: join(gymDir, "outputs", id) });
         console.log(`${id}: campaign ${r.campaign.words} · ${Object.keys(r.ads).length} ads · all time ${r.campaign.all_time.spend} spent, ${r.campaign.all_time.leads} leads${r.campaign.all_time.cost_per_lead != null ? ` at ${r.campaign.all_time.cost_per_lead}` : ""} · last 7 days ${r.campaign.last_7d.spend} spent, ${r.campaign.last_7d.leads} leads`);
+        for (const line of r.drift || []) console.log(`  differs from the app's record: ${line}`);
+        const texts = textRows(gymDir, id);
+        if (texts.length) { console.log(`  which copy wins (${texts.length} texts):`); for (const t of texts) console.log(`    ${t.kind.padEnd(8)} ${String(t.leads).padStart(3)} leads ${(t.cost_per_lead ?? "—").toString().padStart(7)}  ${t.ctr ?? "—"}% ctr  ${t.from ? `skeleton ${t.from}` : t.matched ? "own words" : "not from this app"}  ${t.text.slice(0, 70).replace(/\n/g, " ")}`); }
       }
     }
     if (v.table || v.csv || v.pull) {

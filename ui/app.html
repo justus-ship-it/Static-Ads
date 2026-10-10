@@ -1884,7 +1884,8 @@ function paintCopyRefs(v){
 /** One library entry: kind, angle, placeholders, what the rules would forbid on an ad, where it came from, what was made from it; the text with its line breaks; the note; Edit / Retire… or Restore. */
 function libEntryHtml(e, use, cur){
   const o = e.origin||{}, from = o.source==='owner' || !o.gym ? 'yours' : `from ${esc(o.gym)}${o.results?.leads!=null?` · ${o.results.leads} leads${o.results.cost_per_lead!=null?` at ${money(o.results.cost_per_lead,cur)}`:''}`:''}`;
-  const used = use ? `drafted ${use.drafts} ${use.drafts===1?'time':'times'}${use.kept?`, ${use.kept} kept`:''} for ${use.gyms.length===1?use.gyms[0]:use.gyms.length+' gyms'}` : 'not drafted from yet';
+  const used = (use ? `drafted ${use.drafts} ${use.drafts===1?'time':'times'}${use.kept?`, ${use.kept} kept`:''} for ${use.gyms.length===1?use.gyms[0]:use.gyms.length+' gyms'}` : 'not drafted from yet')
+    + (use?.results ? ` · on Meta: ${use.results.leads} lead${use.results.leads===1?'':'s'} from ${use.results.impressions.toLocaleString()} impressions in ${use.results.campaigns} campaign${use.results.campaigns===1?'':'s'} (${Object.entries(use.results.spend).map(([c,v])=>`${c} ${v}`).join(', ')} spent)` : '');
   return `<div class="lib-entry" data-id="${esc(e.id)}" style="padding:10px 0;border-bottom:1px solid var(--line)${e.retired?';opacity:.7':''}">
     <div class="row" style="gap:8px;flex-wrap:wrap"><span class="pill navy">${e.kind==='headline'?'headline':'copy'}</span>${(e.language||(/[\u3400-\u9fff]/.test(e.text||'')?'zh':'en'))==='zh'?'<span class="pill">中文</span>':''}${e.angle?`<span class="pill">${esc(e.angle)}</span>`:'<span class="pill">no angle</span>'}<span class="hint">${(e.placeholders||[]).map(p=>'{'+esc(p)+'}').join(' ')||'no placeholders'}</span>${(e.warnings||[]).map(w=>`<span class="pill warn" title="a draft from it is checked by the rules; the skeleton stays">${esc(w)}</span>`).join('')}<div class="spacer"></div><span class="hint">${from} · ${used}</span>
       ${e.retired?`<button class="sm" onclick="libRestore('${esc(e.id)}')">Restore</button>`:`<button class="sm" onclick="libEdit('${esc(e.id)}')">Edit</button><button class="sm danger" onclick="libRetire('${esc(e.id)}')">Retire…</button>`}</div>
@@ -1968,31 +1969,32 @@ async function viewResults(v, seq=VIEW_SEQ){
 const RCOLS = {
   campaigns: [['name','Campaign'],['source','Source'],['status','Status'],['adsets','Ad sets'],['ads','Ads'],['spend','Spent'],['impressions','Impr.'],['clicks','Clicks'],['leads','Leads'],['cost_per_lead','Per lead'],['ctr','CTR %'],['created','Made'],['pulled','Pulled']],
   adsets: [['name','Ad set'],['source','Source'],['status','Status'],['ads','Ads'],['spend','Spent'],['impressions','Impr.'],['clicks','Clicks'],['leads','Leads'],['cost_per_lead','Per lead'],['ctr','CTR %'],['gender','Gender'],['age_min','Ages'],['pin','Pin'],['countries','Where'],['targeting','Targeting'],['daily_budget','Budget/day']],
+  texts: [['kind','Kind'],['text','Text'],['angle','Angle'],['from','Skeleton'],['ads','Ads'],['spend','Spent'],['impressions','Impr.'],['clicks','Clicks'],['leads','Leads'],['cost_per_lead','Per lead'],['ctr','CTR %']],
   ads: [['pick',''],['thumbnail',''],['name','Ad'],['source','Source'],['status','Status'],['spend','Spent'],['impressions','Impr.'],['clicks','Clicks'],['leads','Leads'],['cost_per_lead','Per lead'],['ctr','CTR %'],['media','Media'],['scenes','Scene'],['layout','Layout'],['style','Style'],['palette','Palette'],['headline','Headline'],['in_library','Library']],
 };
 const NUMERIC = new Set(['adsets','ads','spend','impressions','clicks','leads','cost_per_lead','ctr','age_min','daily_budget']);
 /** The rows of the current level, filtered by what was clicked above and by source, sorted by the level's column. */
 function rsRows(){
   const D = RS.data, all = [...(D.rows||[]), ...(D.history?.rows||[])];
-  let rows = RS.level==='campaigns' ? (D.campaigns||[]) : RS.level==='adsets' ? (D.adsets||[]).filter(s=>!RS.campaign || s.campaign_id===RS.campaign) : all.filter(r=>r.adset_id===RS.adset).map(r=>({ ...r, name: r.source==='app' ? r.folder.replace(/^\d+-/,'') : (r.ad_name||r.ad_id), media: r.source==='app' ? 'image' : (r.media||null), in_library: r.source==='app' ? null : !!r.in_library }));
+  let rows = RS.level==='campaigns' ? (D.campaigns||[]) : RS.level==='adsets' ? (D.adsets||[]).filter(s=>!RS.campaign || s.campaign_id===RS.campaign) : RS.level==='texts' ? (D.texts||[]).filter(t=>!RS.campaign || t.campaign_id===RS.campaign).map(t=>({ ...t, source:'app', name:t.text })) : all.filter(r=>r.adset_id===RS.adset).map(r=>({ ...r, name: r.source==='app' ? r.folder.replace(/^\d+-/,'') : (r.ad_name||r.ad_id), media: r.source==='app' ? 'image' : (r.media||null), in_library: r.source==='app' ? null : !!r.in_library }));
   if (RS.level!=='ads') rows = rows.filter(r => RS.source==='all' || r.source===RS.source);
-  const k = RS.sort[RS.level];
+  const k = RS.sort[RS.level] || (RS.level==='texts' ? 'leads' : 'name');
   return [...rows].sort((a,b)=> NUMERIC.has(k) ? ((a[k]??Infinity)-(b[k]??Infinity)) * (k==='cost_per_lead'?1:-1) : String(a[k]??'').localeCompare(String(b[k]??'')));
 }
 function paintResults(v){
   const D = RS.data, cur = STATE.profile?.locale?.currency || 'SGD', H = D.history;
   const camp = RS.campaign ? (D.campaigns||[]).find(c=>c.campaign_id===RS.campaign) : null, set = RS.adset ? (D.adsets||[]).find(s=>s.adset_id===RS.adset) : null;
   const rows = rsRows(), cols = RCOLS[RS.level], k = RS.sort[RS.level];
-  const fmt = (r,c) => c==='spend'||c==='cost_per_lead'||c==='daily_budget' ? (r[c]!=null?money(r[c],cur):'—') : c==='age_min' ? (r.age_min!=null?`${r.age_min}–${r.age_max}`:'—') : c==='source' ? (r.source==='app'?'this app':'account') : c==='ads' ? `${r.ads}${r.superseded?` (+${r.superseded} remade)`:''}` : c==='pulled'||c==='created' ? String(r[c]||'—').slice(0,10) : c==='in_library' ? (r.in_library===true?'yes':'') : ['name','campaign','targeting','pin','headline'].includes(c) ? String(r[c]??'—').slice(0,70) : (r[c]==null?'—':String(r[c]));
+  const fmt = (r,c) => c==='text' ? String(r.text||'').replace(/\n+/g,' ').slice(0,90) : c==='from' ? (r.from ? r.from : r.matched ? 'own words' : 'not from this app') : c==='spend'||c==='cost_per_lead'||c==='daily_budget' ? (r[c]!=null?money(r[c],cur):'—') : c==='age_min' ? (r.age_min!=null?`${r.age_min}–${r.age_max}`:'—') : c==='source' ? (r.source==='app'?'this app':'account') : c==='ads' ? `${r.ads}${r.superseded?` (+${r.superseded} remade)`:''}` : c==='pulled'||c==='created' ? String(r[c]||'—').slice(0,10) : c==='in_library' ? (r.in_library===true?'yes':'') : ['name','campaign','targeting','pin','headline'].includes(c) ? String(r[c]??'—').slice(0,70) : (r[c]==null?'—':String(r[c]));
   const crumb = [`<a href="#" onclick="rsGo('campaigns');return false">Campaigns</a>`, ...(RS.level!=='campaigns' ? [camp ? `<a href="#" onclick="rsGo('adsets');return false">${esc(camp.name.slice(0,50))}</a>` : `<a href="#" onclick="rsGo('adsets');return false">All ad sets</a>`] : []), ...(RS.level==='ads' && set ? [`<span>${esc(set.name.slice(0,50))}</span>`] : [])].join(' <span class="hint">›</span> ');
-  const title = RS.level==='campaigns' ? `Campaigns · ${rows.length}` : RS.level==='adsets' ? `Ad sets${camp?` of ${esc(camp.name.slice(0,60))}`:''} · ${rows.length}` : `Ads in ${esc(set?.name.slice(0,60)||'')} · ${rows.length}`;
+  const title = RS.level==='campaigns' ? `Campaigns · ${rows.length}` : RS.level==='adsets' ? `Ad sets${camp?` of ${esc(camp.name.slice(0,60))}`:''} · ${rows.length}` : RS.level==='texts' ? `Which copy wins${camp?` in ${esc(camp.name.slice(0,60))}`:''} · ${rows.length} texts` : `Ads in ${esc(set?.name.slice(0,60)||'')} · ${rows.length}`;
   const tot = rows.reduce((t,r)=>({ spend:t.spend+(r.spend||0), leads:t.leads+(r.leads||0) }), { spend:0, leads:0 });
   const cell = (r,c) => {
     if (c==='pick') return `<td>${r.source==='account'?`<input type="checkbox" ${RS.hsel.has(r.ad_id)?'checked':''} ${r.importable?'':'disabled title="no picture to bring"'} onchange="if(this.checked)RS.hsel.add('${esc(r.ad_id)}');else RS.hsel.delete('${esc(r.ad_id)}');paintResults($('#view'))">`:''}</td>`;
     if (c==='thumbnail') return `<td>${r.thumbnail?`<img src="${esc(r.thumbnail)}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:6px">`:''}</td>`;
     return `<td style="white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" title="${esc(String(r[c]??''))}">${esc(fmt(r,c))}${c==='name'&&r.superseded?' <span class="pill">superseded</span>':''}</td>`;
   };
-  const clickable = RS.level!=='ads';
+  const clickable = RS.level!=='ads' && RS.level!=='texts';
   const onRow = (r) => RS.level==='campaigns' ? `onclick="rsOpenCampaign('${esc(r.campaign_id)}')"` : RS.level==='adsets' ? `onclick="rsOpenAdset('${esc(r.adset_id)}')"` : '';
   v.innerHTML = `<h1>Results</h1><p class="sub">Every campaign in this gym's ad account, the ones this app made and the ones before it, with Meta's numbers from the last pull. Click a campaign for its ad sets, an ad set for its ads. Every parameter, as a spreadsheet: <a href="/api/client/${esc(STATE.sel)}/results.csv">download results.csv</a>.</p>
   ${RS.error?`<div class="msg err">${esc(RS.error)}</div>`:''}
@@ -2000,7 +2002,7 @@ function paintResults(v){
     <select onchange="RS.source=this.value;paintResults($('#view'))"><option value="all" ${RS.source==='all'?'selected':''}>both sources</option><option value="app" ${RS.source==='app'?'selected':''}>this app</option><option value="account" ${RS.source==='account'?'selected':''}>the account before</option></select>
     <button class="${H?'sm':'primary'}" onclick="rsPullHistory()" ${RS.busy?'disabled':''}>${RS.busy?'Working…':H?'Pull the account again':"Pull the account's history from Meta"}</button></div>
   ${RS.msg?`<div class="msg ${/failed|could not|not set/i.test(RS.msg)?'err':'ok'}">${esc(RS.msg)}</div>`:''}
-  <div class="card"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?` · account pulled ${esc(H.pulled.slice(0,10))}`:''}</span><div class="spacer"></div>
+  <div class="card"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?` · account pulled ${esc(H.pulled.slice(0,10))}`:''}</span>${RS.level==='adsets'&&camp&&(D.texts||[]).some(t=>t.campaign_id===camp.campaign_id)?`<button class="sm" onclick="rsGo('texts')">Which copy wins</button>`:''}<div class="spacer"></div>
       ${RS.level==='ads'?`<button class="sm" onclick="rsPickTop(10)">Pick the top 10 by leads</button><button class="sm primary" onclick="rsImport()" ${RS.hsel.size&&!RS.busy?'':'disabled'}>Bring ${RS.hsel.size||''} into the library</button>`:`<span class="hint">${clickable?'click a row to open it · ':''}click a column to sort</span>`}</div>
     ${RS.level==='ads'?"<p class=\"hint\">Ads from the account before this app can be brought into the library: the picture joins Reference images (a video's poster frame counts), the primary text and headline join the copy references with their results. Rows from outside the gym's country are greyed and left out of the top picks.</p>":''}
     ${rows.length?`<div style="overflow:auto;margin-top:8px"><table class="tbl"><thead><tr>${cols.map(([c,l])=>`<th style="${c==='pick'||c==='thumbnail'?'':'cursor:pointer;'}white-space:nowrap" onclick="if('${c}'!=='pick'&&'${c}'!=='thumbnail'){RS.sort['${RS.level}']='${c}';paintResults($('#view'))}">${l}${k===c?' ▾':''}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr class="${r.abroad?'dim':''} ${r.superseded?'dim':''}" ${clickable?`style="cursor:pointer" ${onRow(r)}`:''}>${cols.map(([c])=>cell(r,c)).join('')}</tr>`).join('')}</tbody></table></div>`:`<div class="empty">${RS.level==='campaigns'?(H?'No campaigns for this source.':"Nothing on Meta yet from this app. Pull the account's history to see what ran before, or publish a campaign."):'Nothing here.'}</div>`}
@@ -2009,7 +2011,7 @@ function paintResults(v){
   </div>`;
 }
 function rsGo(level){ RS.level = level; if (level==='campaigns'){ RS.campaign = null; RS.adset = null; } if (level==='adsets') RS.adset = null; paintResults($('#view')); }
-function rsBack(){ rsGo(RS.level==='ads' ? 'adsets' : 'campaigns'); }
+function rsBack(){ rsGo(RS.level==='ads' || RS.level==='texts' ? 'adsets' : 'campaigns'); }
 function rsOpenCampaign(id){ RS.campaign = id; RS.adset = null; RS.level = 'adsets'; paintResults($('#view')); window.scrollTo(0,0); }
 function rsOpenAdset(id){ RS.adset = id; RS.level = 'ads'; const set = (RS.data.adsets||[]).find(s=>s.adset_id===id); if (set && !RS.campaign) RS.campaign = set.campaign_id || null; paintResults($('#view')); window.scrollTo(0,0); }
 async function rsPullHistory(){ RS.busy = true; RS.msg = null; paintResults($('#view')); try { const r = await api(`/api/client/${STATE.sel}/history/pull`, { method:'POST', body:{} }); RS.data.history = r; if (r.adsets_rows) RS.data.adsets = r.adsets_rows; if (r.campaign_rows) RS.data.campaigns = r.campaign_rows; RS.msg = `Pulled ${r.campaigns} campaigns, ${r.adsets} ad sets, ${r.ads} ads from the account.`; } catch(e){ RS.msg = 'The pull failed: ' + e.message; } RS.busy = false; paintResults($('#view')); }
@@ -2022,7 +2024,7 @@ async function viewPublish(v, seq=VIEW_SEQ){
   if (PB.id !== STATE.batch || PB.gym !== STATE.sel || !PB.data){
     v.innerHTML = `<h1>Publish</h1><p class="sub">Loading ${esc(STATE.batch)}…</p>`;
     PB.gym = STATE.sel; PB.id = STATE.batch; PB.data = null; PB.error = null; PB.link = null; PB.estimates = {};
-    try { PB.data = await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/publish`); PB.settings = PB.data.settings || {}; PB.results = PB.data.published?.campaign?.id ? (await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/results`).catch(()=>({}))).results || null : null; }
+    try { PB.data = await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/publish`); PB.settings = PB.data.settings || {}; const ra = PB.data.published?.campaign?.id ? await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/results`).catch(()=>({})) : {}; PB.results = ra.results || null; PB.texts = ra.texts || []; }
     catch(e){ if (seq !== VIEW_SEQ) return; v.innerHTML = `<h1>Publish</h1><div class="msg err">${esc(e.message)}</div><p><button onclick="go('exports')">Back</button></p>`; return; }
     if (seq !== VIEW_SEQ) return;
   }
@@ -2193,17 +2195,26 @@ function publishedCard(rec, P){
   const numbers = X ? `<div class="kv" style="margin-top:8px"><span>Status</span><div>campaign ${esc(X.campaign.words)}${Object.values(X.adsets).length?` · ad sets ${[...new Set(Object.values(X.adsets).map(x=>x.words))].map(esc).join(', ')}`:''}${Object.values(X.ads).length?` · ads ${[...new Set(Object.values(X.ads).map(x=>x.words))].map(esc).join(', ')}`:''}</div>
       <span>All time</span><div>${money(cA.spend,P.currency)} spent · ${cA.leads} lead${cA.leads===1?'':'s'}${cA.cost_per_lead!=null?` at ${money(cA.cost_per_lead,P.currency)} each`:''} · ${cA.impressions.toLocaleString()} impressions${cA.ctr!=null?` · ${cA.ctr}% click rate`:''}</div>
       <span>Last 7 days</span><div>${money(c7.spend,P.currency)} spent · ${c7.leads} lead${c7.leads===1?'':'s'}${c7.cost_per_lead!=null?` at ${money(c7.cost_per_lead,P.currency)} each`:''}</div>
-      <span>Pulled</span><div>${esc(X.pulled.slice(0,16).replace('T',' '))} · <a href="#" onclick="openResults();return false">every ad in Results</a></div></div>` : '';
+      <span>Pulled</span><div>${esc(X.pulled.slice(0,16).replace('T',' '))} · <a href="#" onclick="openResults();return false">every ad in Results</a></div></div>
+      ${(X.drift||[]).length ? `<div class="msg warn" style="margin-top:8px"><b>Meta differs from what the app sent:</b><ul style="margin:4px 0 0 18px">${X.drift.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>` : `<div class="hint" style="margin-top:8px">Meta matches what the app sent: the names, the budgets, every ad accounted for.</div>`}
+      ${textsTable(PB.texts||[], P.currency)}` : '';
+  // Which copy wins: every body and headline the campaign has run, with Meta's numbers, tied back to the draft and the skeleton it followed.
+  function textsTable(texts, cur){
+    if (!texts.length) return '';
+    return `<h4 style="margin:14px 0 4px">Which copy wins</h4><div class="hint" style="margin:0 0 6px">Meta's numbers per text option, all time, every ad that carried it summed; the skeleton is the library entry the draft followed.</div>
+      <div style="overflow:auto"><table class="tbl"><thead><tr><th>Kind</th><th>Text</th><th>Angle</th><th>Skeleton</th><th>Ads</th><th>Impr.</th><th>Clicks</th><th>Leads</th><th>Per lead</th><th>CTR %</th></tr></thead><tbody>
+      ${texts.map(t=>`<tr><td><span class="pill navy">${t.kind}</span></td><td style="max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(t.text)}">${esc(t.text.replace(/\n+/g,' ').slice(0,90))}</td><td>${esc(t.angle||'—')}</td><td>${t.from?`<a href="#" onclick="go('copy');return false">${esc(t.from)}</a>`:t.matched?'own words':'<span class="hint">not from this app</span>'}</td><td>${t.ads}</td><td>${Number(t.impressions).toLocaleString()}</td><td>${t.clicks}</td><td><b>${t.leads}</b></td><td>${t.cost_per_lead!=null?money(t.cost_per_lead,cur):'—'}</td><td>${t.ctr??'—'}</td></tr>`).join('')}</tbody></table></div>`;
+  }
   const url = rec.campaign?.id ? `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${esc((rec.account||'').replace(/^act_/,''))}&selected_campaign_ids=${esc(rec.campaign.id)}` : null;
   const stale = Object.keys(rec.ads||{}).filter(f=>!P.ads.some(a=>a.folder===f));
   return `<div class="card"><div class="row"><h3 style="margin:0">On Facebook ${rec.done?'<span class="pill on">complete</span>':`<span class="pill warn">${made} of ${P.counts.ads} ads</span>`}</h3><div class="spacer"></div><button class="sm" onclick="pbPull()" ${PB.busy?'disabled':''}>${X?'Pull results again':'Pull results from Meta'}</button></div>
     <div class="kv"><span>Campaign</span><div>${rec.campaign?`${esc(rec.campaign.name)} · ${esc(rec.campaign.id)}${url?` · <a href="${url}" target="_blank" rel="noopener">open in Ads Manager</a>`:''}`:'not yet'}</div>
       <span>Ad sets</span><div>${sets.length?sets.map(x=>`${esc(x.name)} · ${esc(x.id)}`).join('<br>'):'not yet'}</div>
-      <span>Ads</span><div>${made} made, all paused${rec.superseded?.length?` · ${rec.superseded.length} remade (the old ones stay paused)`:''}${stale.length?` · <span style="color:var(--warn)">${stale.length} on Meta but no longer kept here (paused; pause or delete them in Ads Manager)</span>`:''}</div>
+      <span>Ads</span><div>${made} made${X && Object.values(X.ads||{}).length ? ` · on Meta now: ${Object.entries(Object.values(X.ads).reduce((m,a)=>(m[a.words]=(m[a.words]||0)+1,m),{})).map(([w,n])=>`${n} ${esc(w)}`).join(', ')}` : ', all paused as made'}${rec.superseded?.length?` · ${rec.superseded.length} remade (the old ones stay paused)`:''}${stale.length?` · <span style="color:var(--warn)">${stale.length} on Meta but no longer kept here (paused; pause or delete them in Ads Manager)</span>`:''}</div>
       ${rec.error?`<span>Stopped</span><div style="color:var(--err)">${esc(rec.error.step)} ${esc(rec.error.what||'')}: ${esc(rec.error.message)}</div>`:''}
       <span>Last run</span><div>${rec.runs?.length?esc((rec.runs.at(-1).finished||rec.runs.at(-1).started).slice(0,16).replace('T',' ')):'—'}</div></div>${numbers}</div>`;
 }
-async function pbPull(){ PB.busy = true; PB.error = null; paintPublish($('#view')); try { PB.results = (await api(`/api/client/${PB.gym}/batch/${PB.id}/results/pull`, { method:'POST', body:{} })).results; } catch(e){ PB.error = e.message; } PB.busy = false; paintPublish($('#view')); }
+async function pbPull(){ PB.busy = true; PB.error = null; paintPublish($('#view')); try { const ra = await api(`/api/client/${PB.gym}/batch/${PB.id}/results/pull`, { method:'POST', body:{} }); PB.results = ra.results; PB.texts = ra.texts || []; } catch(e){ PB.error = e.message; } PB.busy = false; paintPublish($('#view')); }
 function pbCreateConfirm(){
   const P = PB.data.plan, cur = P.currency, made = Object.keys(PB.data.published?.ads||{}).length;
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">

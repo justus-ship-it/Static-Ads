@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readLibrary, liveEntries, placeholdersIn, entryProblems, entryWarnings, addEntry, editEntry, retireEntry, restoreEntry, fill, verifySkeleton, skeletonFrom, sendToLibrary, buildSkeletonPrompt, usesIn, PLACEHOLDERS, KINDS, LIBRARY_FILE } from "./copy-library.mjs";
@@ -110,6 +110,13 @@ test("L4 what the gyms' batches made from each entry: drafts that followed it, h
   mkdirSync(join(brands, "gym-c"));
   assert.deepEqual(usesIn(brands), { "lib-x": { drafts: 3, kept: 2, gyms: ["gym-a", "gym-b"] }, "lib-y": { drafts: 1, kept: 0, gyms: ["gym-a"] } });
   assert.deepEqual(usesIn(join(brands, "nowhere")), {});
+  // What the drafts did on Meta (2026-10-11): a batch with results pulled adds each skeleton's leads, clicks, impressions and spend by currency.
+  const ga = join(brands, "gym-a", "outputs"), rb = readdirSync(ga).find((b) => existsSync(join(ga, b, "copy.json")));
+  const cj = JSON.parse(readFileSync(join(ga, rb, "copy.json"), "utf-8")), first = cj.drafts.find((x) => x.from === "lib-x");
+  writeFileSync(join(ga, rb, "publish.json"), JSON.stringify({ campaign: { id: "c7" }, adsets: { KATONG: { id: "s1" } }, ads: {} }));
+  writeFileSync(join(ga, rb, "results.json"), JSON.stringify({ pulled: "2026-10-11T00:00:00.000Z", currency: "SGD", texts: { bodies: [{ text: (first.message || "x").replace(/\{AREA\}/g, "Katong").replace(/\{BUTTON\}/g, "Sign up"), ads: 2, spend: 60, impressions: 2000, clicks: 40, leads: 4, cost_per_lead: 15, ctr: 2 }], titles: [] } }));
+  const withResults = usesIn(brands)["lib-x"];
+  assert.deepEqual([withResults.drafts, withResults.kept, withResults.results], [3, 2, first.kind === "headline" || !first.message ? undefined : { leads: 4, impressions: 2000, clicks: 40, campaigns: 1, spend: { SGD: 60 } }]);
 });
 
 test("L5 the library by language (2026-10-07): an entry carries the language of its text (zh for Chinese), set again on edit; liveEntries can be asked for one language; a Chinese reference goes to the library as a Chinese skeleton with 信義區 as {AREA}", async () => {
