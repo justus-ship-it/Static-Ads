@@ -2065,9 +2065,9 @@ function copyCard(D, P, sw){
   const C = D.copy || {}, drafts = C.drafts || [], lib = C.library || {};
   const n = P.copy?.max_options || 5, nh = P.copy?.max_headlines || 5;
   const tc = (s) => String(s||'').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-  const btn = (D.cta||{})[P.words.cta] || 'Sign up', area = (D.words?.locations||[])[0] ? tc(D.words.locations[0]) : 'the area';
+  const areas = (D.words?.areas||[]).length ? D.words.areas : (D.words?.locations||[]).length ? D.words.locations.map(tc) : ['the area'];
+  const btn = (D.cta||{})[P.words.cta] || 'Sign up', area = areas[0];
   const fillP = (t) => String(t||'').replace(/\{BUTTON\}/g, btn).replace(/\{AREA\}/g, area);
-  const areas = (D.words?.locations||[]).length ? D.words.locations.map(tc) : ['the area'];
   const card = (d) => { const isH = d.kind==='headline', rec = d.recommended; return `<div class="card" style="margin:0 0 8px;padding:12px 14px;${d.status==='exclude'?'opacity:.55':''}" id="cp_${esc(d.id)}">
     <div class="row" style="gap:8px;flex-wrap:wrap"><b style="font-size:14px">${esc(isH ? fillP(d.headline) : (d.headline ? fillP(d.headline) : fillP(d.message).split('\n')[0].slice(0,70)))}</b>${rec?`<span class="pill on" title="${esc(rec.why)}">#${rec.rank} recommended</span>`:''}${d.angle?`<span class="pill">${esc(d.angle)}</span>`:''}<span class="pill ${d.status==='keep'?'on':d.status==='exclude'?'err':''}">${d.status==='keep'?'kept':d.status==='exclude'?'excluded':'draft'}</span>${d.source==='owner'?'<span class="pill">yours</span>':''}<div class="spacer"></div>
       ${d.status!=='keep'?`<button class="sm ok" onclick="cpDecide('${esc(d.id)}','keep')">Keep</button>`:''}${d.status!=='exclude'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','exclude')">Exclude</button>`:''}${d.status!=='draft'?`<button class="sm" onclick="cpDecide('${esc(d.id)}','draft')">Undo</button>`:''}<button class="sm" onclick="cpEdit('${esc(d.id)}')">Edit</button>${areas.map(a=>`<button class="sm" title="Copy as it reads on the ad for ${esc(a)}: the area and button filled, line breaks kept" onclick="cpCopy('${esc(d.id)}','${esc(a).replace(/'/g,'&#39;')}')">Copy${areas.length>1?` · ${esc(a)}`:''}</button>`).join('')}</div>

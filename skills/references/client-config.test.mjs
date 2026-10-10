@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { countryRules, postalOk, profileCountry, COUNTRIES, validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES, IMAGE_MODELS, imageModelFor } from "./client-config.mjs";
+import { countryRules, postalOk, profileCountry, COUNTRIES, validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES, IMAGE_MODELS, imageModelFor, titleCase, KEEP_CAPS } from "./client-config.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems, MAX_WORDINGS } from "./ad-wordings.mjs";
 
@@ -304,4 +304,11 @@ test("P20 the room reference: creative_defaults.room_reference must be one of th
 test("P21 the ad set's gender from a Chinese callout (2026-10-07): 女性 / 女生 / 媽媽 are women, 男士 / 男生 are men, both or neither is all; English as before; the owner's map still wins", () => {
   for (const [a, want] of [["女性", "women"], ["女生限定", "women"], ["信義區媽媽", "women"], ["男士", "men"], ["信義區男生", "men"], ["男女皆可", "all"], ["忙碌上班族", "all"], ["LADIES WANTED", "women"], ["MEN WANTED", "men"]]) assert.equal(calloutGender(a), want, a);
   assert.equal(calloutGender("女性", { targeting_defaults: { demographics: { callout_genders: { "女性": "all" } } } }), "all", "the owner's map wins");
+});
+
+test("P22 a callout in words (2026-10-10): title case for place names, capitals kept for an acronym — a short word with no vowel, or a known one with a vowel — Chinese untouched", () => {
+  assert.deepEqual(["CBD", "ANG MO KIO", "LADIES OF BISHAN", "AMK HUB", "JURONG EAST", "NUS", "KL SENTRAL", "TOA PAYOH", "信義區", "the CBD area", "SG", "MEN WANTED", "O'NEIL ROAD"].map(titleCase),
+    ["CBD", "Ang Mo Kio", "Ladies Of Bishan", "AMK Hub", "Jurong East", "NUS", "KL Sentral", "Toa Payoh", "信義區", "The CBD Area", "SG", "Men Wanted", "O'Neil Road"]);
+  assert.ok(KEEP_CAPS.includes("NUS") && !KEEP_CAPS.includes("CBD"), "CBD needs no listing: no vowel");
+  assert.equal(titleCase(""), ""); assert.equal(titleCase(null), "");
 });

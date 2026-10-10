@@ -715,6 +715,10 @@ test("M11 copy on the plan: the kept copies ride as Meta text options — up to 
   assert.deepEqual([a0.bodies[0].text, a0.titles.map((t) => t.text), a0.descriptions], ["Ladies in Bishan, text 0: the 12 Week Total Body Reset. Tap Sign up.", ["Bishan ladies: headline 0", "Bishan ladies: headline 1", "Bishan ladies: headline 2", "Bishan ladies: headline 3"], [{ text: "One description", adlabels: [{ name: "copy" }] }]]);
   assert.deepEqual([a1.bodies.map((t) => t.text), a1.titles[0].text], [["Ladies in Ang Mo Kio, text 2: the 12 Week Total Body Reset. Tap Sign up.", "Ladies in Ang Mo Kio, text 0: the 12 Week Total Body Reset. Tap Sign up."], "Ang Mo Kio ladies: headline 4"], "the second ad set's own area");
   assert.ok(two.warnings.some((w) => /6 headlines kept, 4 per ad: they rotate/.test(w)));
+  // An acronym callout stays in capitals in the copy and the names (2026-10-10: Aether Athletics' "CBD" read "Cbd").
+  const cbd = buildPlan({ profile, batch, kept: [{ ...kept[0], location: "CBD" }, { ...kept[1], location: "ANG MO KIO" }], presets: { presets: [] }, copies: bodiesOnly.slice(0, 1), headlines: heads.slice(0, 1) });
+  assert.deepEqual([cbd.ads[0].creative.asset_feed_spec.bodies[0].text, cbd.ads[0].creative.asset_feed_spec.titles[0].text, cbd.adsets[0].name.split(" | ")[0], cbd.ads[0].name.split(" | ")[0], cbd.adsets[1].name.split(" | ")[0]],
+    ["Ladies in CBD, text 0: the 12 Week Total Body Reset. Tap Sign up.", "CBD ladies: headline 0", "0913 CBD", "0913 CBD", "0913 Ang Mo Kio"]);
   // No headline kept and the copies carry none: a placeholder headline, and a warning that says so.
   const noHead = buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: bodiesOnly, headlines: [] });
   assert.deepEqual([noHead.ads[0].creative.asset_feed_spec.titles.map((t) => t.text), noHead.ads[0].headlines], [[noHead.words.headline], []]);

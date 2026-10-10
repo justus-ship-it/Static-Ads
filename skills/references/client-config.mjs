@@ -365,6 +365,20 @@ export const BUDGET_LEVELS = { adset: "Ad set budget", campaign: "Campaign budge
 export const GENDER_CHOICES = ["men", "women", "all"];
 export const RADIUS_KM = { min: 1, max: 80 };
 /** The gender an audience callout targets: the profile's own map first, then the words. */
+/** Short names that stay in capitals when a callout is written in words (an acronym read letter by letter). A word of
+ *  2–4 letters with no vowel is one by rule — CBD, AMK, JB, KL, MRT, HDB — and these are the exceptions with a vowel. */
+export const KEEP_CAPS = ["AMK", "NUS", "NTU", "SMU", "SIM", "SUTD", "SIT", "SUSS", "SEA", "USA", "UK", "UAE"];
+/** A callout in words, for copy and names: "ANG MO KIO" → "Ang Mo Kio", but "CBD" stays "CBD" (2026-10-10: Aether Athletics'
+ *  copy read "Ladies in Cbd"). Chinese words are left as they are. */
+export function titleCase(s) {
+  return String(s || "").split(/(\s+)/).map((w) => {
+    if (!/[a-z]/i.test(w)) return w;
+    const letters = w.replace(/[^a-z]/gi, "");
+    if (KEEP_CAPS.includes(letters.toUpperCase()) || (letters.length >= 2 && letters.length <= 4 && !/[aeiouy]/i.test(letters))) return w.toUpperCase();
+    return w.toLowerCase().replace(/(^|[^a-z])([a-z])/g, (m, b, c) => b + c.toUpperCase());
+  }).join("");
+}
+
 export function calloutGender(callout, profile = null) {
   const map = profile?.targeting_defaults?.demographics?.callout_genders || {};
   const key = Object.keys(map).find((k) => k.trim().toUpperCase() === String(callout || "").trim().toUpperCase());

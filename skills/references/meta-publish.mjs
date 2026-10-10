@@ -26,7 +26,7 @@ import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { metaConfig, graphClient, actId, scrubTokens, MetaError, WHOLE_UNIT_CURRENCIES, budgetUnits } from "./meta-api.mjs";
 export { WHOLE_UNIT_CURRENCIES, budgetUnits };
-import { calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
+import { calloutGender, pinFor, pinUsable, withPoint, titleCase, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
 import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
 import { readLibrary as readTargetingLibrary, libraryEntry, asPreset as libraryPreset } from "./targeting-library.mjs";
 import { textOptionsFor, MAX_OPTIONS, fillButton, ctaLabel, gymLanguage } from "./draft-copy.mjs";
@@ -164,7 +164,6 @@ export const ctaLabelFor = (key, language = "en") => ctaLabel(key, language);
 const clean1 = (v, max) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
 const num = (v, lo, hi) => (Number.isFinite(v) && v >= lo && v <= hi ? v : null);
 const mmdd = (id) => { const m = String(id || "").match(/^\d{4}-(\d{2})-(\d{2})/); return m ? m[1] + m[2] : today().slice(5).replace("-", ""); };
-const titleCase = (s) => String(s || "").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 /** The words on the ad and beside it, for the whole campaign: the owner's, or placeholders that say so. */
 export function campaignWords(profile, batch, words = {}) {
   const w = { message: clean1(words.message, 2000), headline: clean1(words.headline, 255), description: clean1(words.description, 255), cta: CTA_TYPES[words.cta] ? words.cta : CTA };
