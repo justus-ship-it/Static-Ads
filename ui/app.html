@@ -318,7 +318,12 @@ function parseHash(){
 }
 async function applyHash(){
   const r = parseHash(); if (!r) return;
-  if (r.gym && r.gym !== STATE.sel && STATE.clients.find(c=>c.gym===r.gym)) await selectClient(r.gym, false, false);
+  if (r.gym && r.gym !== STATE.sel){
+    // A gym this page has not seen (made in another tab, or after this page loaded): ask the panel again before giving up (2026-10-10).
+    if (!STATE.clients.find(c=>c.gym===r.gym)) { try { await loadClients(); } catch {} }
+    if (STATE.clients.find(c=>c.gym===r.gym)) await selectClient(r.gym, false, false);
+    else { const cur = STATE.clients.find(c=>c.gym===STATE.sel); toast(`No gym called "${r.gym}" here — showing ${cur?.display_name || STATE.sel || 'the first gym'}`, 'warn'); setHash(true); }
+  }
   const tab = TITLES[r.tab] ? r.tab : 'batch', batch = ['review','generating','publish'].includes(tab) ? r.batch : null;
   if (tab===STATE.tab && batch===STATE.batch && r.rmode===STATE.rmode) return;
   STATE.tab = tab; STATE.batch = batch; STATE.rmode = r.rmode; render();
@@ -1108,6 +1113,16 @@ async function viewBatch(v, seq=VIEW_SEQ){
   if (!B.draft) B.draft = freshDraft();
   paintBatch(v);
   scheduleCheck(0); schedulePreview(0);
+  syncRun();
+}
+
+/** A run this page believes is still going is checked with the panel (2026-10-10): over, or unknown to the panel since a
+ *  restart, and the Create screen's buttons come back. Before, a stream cut by a sleep or a blip left them grey for good. */
+async function syncRun(){
+  const r = STATE.run; if (!r?.id || r.done) return;
+  let s; try { s = await api(`/api/run/${r.id}`); } catch(e){ s = { gone:true, error:e.message }; }
+  if (STATE.run !== r || r.done) return;
+  if (s.gone || s.done){ r.done = true; r.code = s.code ?? null; r.stopped = !!s.stopped; r.stopping = false; if (s.gone) r.lines.push({ stream:'meta', line:'■ the panel restarted while this ran; what it finished is on disk' }); renderRunBox(); if (B.check) paintDerived(); }
 }
 
 /** A new batch, from the profile's defaults. The offer is never among them. */
@@ -1209,6 +1224,7 @@ function paintBatch(v){
           ${re ? `<button class="primary" id="bRerender" onclick="bRerender()" style="flex:1">Save words and re-render (free)</button>`
                : `<button id="bPlan" onclick="bPlan()">Plan (free)</button><button class="primary" id="bRun" onclick="bConfirm()" style="flex:1">Generate…</button>`}
         </div>
+        <div id="bWhy" class="hint" style="margin-top:6px"></div>
         <div id="bMsg" style="font-size:12px;color:var(--dim);margin-top:6px"></div>
       </div>
     </div>
@@ -1251,9 +1267,11 @@ function paintDerived(){
   const sp = $('#bSpread'), spr = c?.spread;
   if (sp) sp.innerHTML = B.mode==='rerender' || !(Number(B.draft.generated)>0) ? '' : directionFromDraft() ? 'Spread is off for a directed batch: the reference or your words decide what the photos show.' : !B.draft.spread || !spr ? '' : spr.reason ? `Spread: ${esc(spr.reason)}.`
     : `Spread asks for ${Object.entries(spr.must_show).map(([t,v])=>`${esc(t)} ${v.map(esc).join(', ')}`).join(' · ') || 'nothing this library can show'}.${spr.left_out.length?` <span style="color:var(--warn)">Left out, no ${esc(s?.scenes_for||'')} scene shows: ${spr.left_out.map(esc).join(', ')}.</span> Draft scenes for them on <a href="#" onclick="go('scenes');return false">Scenes</a> to include them.`:''}`;
-  const errs = c?.errors || [];
+  const errs = c?.errors || [], blank = !B.touched && (B.draft?.offer||'')==='', noLoc = !(B.draft?.locations||[]).some(l=>l!=='');
+  // Every problem is shown from the start (2026-10-10; before, nothing until a field was touched) — except an empty offer or location row on an untouched form, which is where every batch begins.
+  const shown = blank ? errs.filter(e=>!/^offer is required|^locations must list/.test(e)) : errs;
   const eb = $('#bErrors');
-  if (eb) eb.innerHTML = errs.length && B.touched ? errs.map(e=>`<div class="msg err">${esc(e)}</div>`).join('') : '';
+  if (eb) eb.innerHTML = shown.map(e=>`<div class="msg err">${esc(e)}</div>`).join('');
   const sb = $('#bSummary');
   if (sb) sb.innerHTML = s ? (B.mode==='rerender'
       ? `${s.ads} ads re-rendered with these words · <b>0 image calls</b>`
@@ -1261,6 +1279,13 @@ function paintDerived(){
   const busy = STATE.run && !STATE.run.done;
   for (const id of ['bPlan','bRun','bRerender']) { const b=$('#'+id); if (b) b.disabled = !c || errs.length>0 || busy; }
   const run = $('#bRun'); if (run && s && !errs.length) run.textContent = `Generate ${s.ads} ads…`;
+  // Why the buttons are grey, in words (2026-10-10): before, three of the four reasons showed nothing at all.
+  const why = $('#bWhy');
+  if (why) why.innerHTML = busy ? `A run is going: <b>${esc(STATE.run.label||'')}</b>. Wait for it to finish, or stop it from its log below.`
+    : !c ? 'Checking the brief…'
+    : shown.length ? `Fix the ${shown.length} problem${shown.length===1?'':'s'} above to plan or generate.`
+    : blank ? `Type the offer${noLoc?' and a location':''} to start.`
+    : errs.length ? `Fix the ${errs.length} problem${errs.length===1?'':'s'} above to plan or generate.` : '';
 }
 
 function paintPreview(){
@@ -2802,7 +2827,21 @@ function attachRun(id, label, after, batch=null){
     if (after) { try { await after(STATE.run.code); } catch(e){ console.error(e); } }
     render();
   });
-  es.onerror = ()=>{ es.close(); if (STATE.run?.id===id){ STATE.run.done=true; renderRunBox(); } };
+  es.onerror = ()=>{ es.close(); if (STATE.run?.id===id) resyncRun(id, label, after, batch); };
+}
+/** The stream dropped (a sleep, a blip, a panel restart): ask the panel whether the run is over instead of guessing (2026-10-10).
+ *  Over or unknown → finished here, the view repainted; still going → attached again (the panel replays the log). */
+async function resyncRun(id, label, after, batch){
+  let s; try { s = await api(`/api/run/${id}`); } catch(e){ s = { gone:true, error:e.message }; }
+  if (STATE.run?.id !== id || STATE.run.done) return;
+  if (s.gone || s.done){
+    STATE.run.done = true; STATE.run.code = s.code ?? null; STATE.run.stopped = !!s.stopped; STATE.run.stopping = false;
+    if (s.gone) STATE.run.lines.push({ stream:'meta', line:'■ the panel restarted while this ran; what it finished is on disk' });
+    try { STATE.status = await api('/api/status'); await loadClients(); } catch {}
+    if (after && !s.gone) { try { await after(STATE.run.code); } catch(e){ console.error(e); } }
+    render(); return;
+  }
+  setTimeout(()=>{ if (STATE.run?.id===id && !STATE.run.done) attachRun(id, label, after, batch); }, 2000);
 }
 
 // ── Creation ─────────────────────────────────────────────────────────────────

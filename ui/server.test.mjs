@@ -2328,3 +2328,62 @@ test("U42 the portfolio and the import through the panel: without keys the portf
   const badBody = await bad.json();
   assert.equal(bad.status, 409, JSON.stringify(badBody)); assert.match(badBody.error, /read the ad account first/);
 });
+
+// ── U43 the Create screen says why (2026-10-10) ────────────────────────────
+
+test("U43 the Create screen says why Generate is grey, shows the brief's problems from the start, checks a run's state with the panel instead of guessing (GET /api/run/{id}; a run the panel does not know is over), and a gym the page has not seen is loaded from the panel rather than swapped for another", async () => {
+  const logBefore = panel.log().length; // earlier tests provoke blocked fetches on purpose; only this test's lines count
+  // The run-state route: an unknown id is gone; a free dry-run plan reports its state, then done.
+  const gone = await call("/api/run/batch-plan-nope"); assert.equal(gone.status, 404); assert.equal((await gone.json()).gone, true);
+  const started = await (await call("/api/run", { method: "POST", body: { kind: "batch-plan", gym: GYM, batch: BRIEF.batch_id } })).json();
+  const s1 = await (await call(`/api/run/${started.id}`)).json();
+  assert.deepEqual([s1.id, s1.kind, s1.gym, s1.batch, typeof s1.done], [started.id, "batch-plan", GYM, BRIEF.batch_id, "boolean"]);
+  await (await fetch(`${panel.url}/api/run/${started.id}/stream`)).text(); // the stream ends when the run does
+  const s2 = await (await call(`/api/run/${started.id}`)).json();
+  assert.deepEqual([s2.done, s2.code, s2.stopped], [true, 0, false]);
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+    return result.value;
+  };
+  const until = async (expression, what, ms = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { if (await ev(expression)) return; await new Promise((r) => setTimeout(r, 150)); }
+    throw new Error(`timed out waiting for ${what}: ${await ev(`JSON.stringify({ why: document.querySelector('#bWhy')?.textContent, errs: document.querySelector('#bErrors')?.textContent, run: STATE.run && { id: STATE.run.id, done: STATE.run.done }, sel: STATE.sel, hash: location.hash, toast: document.querySelector('#toast')?.textContent })`)}`);
+  };
+  const text = (sel) => `(document.querySelector('${sel}')?.textContent||'')`;
+  const loaded = cdp.once("Page.loadEventFired", sessionId);
+  await cdp.send("Page.navigate", { url: `${panel.url}/#/${GYM}/batch` }, sessionId);
+  await loaded;
+  await until(`typeof STATE!=='undefined' && STATE.sel==='${GYM}' && !!document.querySelector('#bOffer')`, "the Create screen");
+  // 1. A fresh form: the buttons are grey and the line says what to do; the empty offer is not listed as a problem.
+  await until(`/Type the offer( and a location)? to start/.test(${text("#bWhy")}) && document.querySelector('#bRun').disabled`, "the why line on a fresh form (with or without a default location, as earlier tests leave the profile)");
+  assert.equal(await ev(text("#bErrors")), "", "an empty offer or location row on an untouched form is where every batch begins, not a problem");
+  // 2. A problem is shown before any field is touched.
+  await ev(`B.draft.locations=['BISHAN — EAST']; B.touched=false; scheduleCheck(0); true`);
+  await until(`/em\\/en dash/.test(${text("#bErrors")}) && /Fix the 1 problem above/.test(${text("#bWhy")}) && document.querySelector('#bRun').disabled`, "the dash shown untouched, and the why line counting it");
+  await ev(`B.draft.locations=['BISHAN']; B.draft.offer=${JSON.stringify(WORDS.offer)}; B.touched=true; scheduleCheck(0); true`);
+  await until(`!document.querySelector('#bRun').disabled && ${text("#bWhy")}===''`, "a valid brief: enabled, nothing to explain");
+  // 1 + 4. A run the page believes is going greys the buttons and says which; the panel does not know it (a restart), so a check clears it.
+  await ev(`STATE.run={id:'batch-plan-old', label:'An old run', lines:[], done:false, code:null}; paintDerived(); true`);
+  assert.ok(await ev(`document.querySelector('#bRun').disabled && /A run is going: An old run/.test(${text("#bWhy")})`), "busy, and said");
+  await ev(`syncRun(); true`);
+  await until(`STATE.run.done===true && !document.querySelector('#bRun').disabled && ${text("#bWhy")}===''`, "the stale run cleared with the panel's answer");
+  assert.ok(await ev(`STATE.run.lines.some(l=>/panel restarted/.test(l.line))`), "the log says why it ended here");
+  // 4. A stream that drops on a run the panel does know: its real state is taken (the finished plan), not a guess.
+  await ev(`STATE.run={id:${JSON.stringify(started.id)}, label:'Plan', lines:[], done:false, code:null}; resyncRun(${JSON.stringify(started.id)}, 'Plan', null, null); true`);
+  await until(`STATE.run.done===true && STATE.run.code===0 && !STATE.run.lines.some(l=>/panel restarted/.test(l.line))`, "the finished run's own state");
+  // 3. A gym made after this page loaded is found when its address is opened; a name that is nowhere is said and the address put back.
+  const g2 = join(brands, "newgym"); mkdirSync(g2, { recursive: true }); writeFileSync(join(g2, "gym-profile.json"), JSON.stringify({ display_name: "New Gym" }));
+  try {
+    assert.ok(!(await ev(`STATE.clients.some(c=>c.gym==='newgym')`)), "unknown to the page so far");
+    await ev(`location.hash='#/newgym/batch'; true`);
+    await until(`STATE.sel==='newgym' && !!document.querySelector('#bOffer')`, "the new gym's Create screen");
+    await ev(`location.hash='#/nowhere/batch'; true`);
+    await until(`/No gym called "nowhere" here/.test(${text("#toast")}) && location.hash==='#/newgym/batch' && STATE.sel==='newgym'`, "the unknown name said, the address put back");
+    await ev(`location.hash='#/${GYM}/batch'; true`);
+    await until(`STATE.sel==='${GYM}'`, "back on the test gym");
+  } finally { rmSync(g2, { recursive: true, force: true }); }
+  assert.ok(!/NETWORK BLOCKED/.test(panel.log().slice(logBefore)), "nothing here reaches outside this machine");
+});

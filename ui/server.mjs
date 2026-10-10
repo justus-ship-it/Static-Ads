@@ -1939,6 +1939,14 @@ const server = createServer(async (req, res) => {
       try { return json(res, 200, await stopBatch(gym, id)); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
     }
 
+    // A run's state by id (2026-10-10): a page whose stream dropped asks this instead of guessing. A run the panel does
+    // not know (it restarted since) is `gone` — over as far as the page is concerned; what it finished is on disk.
+    const rstate = p.match(/^\/api\/run\/([A-Za-z0-9-]+)$/);
+    if (rstate && req.method === "GET") {
+      const run = runs.get(rstate[1]);
+      if (!run) return json(res, 404, { error: "no such run: the panel has restarted since it was started, or it never existed", gone: true });
+      return json(res, 200, { id: run.id, kind: run.kind, label: run.label, gym: run.gym, batch: run.batch, done: run.done, code: run.code, stopped: !!run.stopped, lines: run.lines.length });
+    }
     const rm = p.match(/^\/api\/run\/([A-Za-z0-9-]+)\/stream$/);
     if (rm) {
       const run = runs.get(rm[1]);
