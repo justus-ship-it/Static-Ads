@@ -298,9 +298,11 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
     if (ads.length > ADS_PER_ADSET_CAP) problems.push(`${callout}: ${ads.length} ads in one ad set; Meta allows ${ADS_PER_ADSET_CAP} — exclude some, or split the callout`);
     else if (ads.length > ADS_PER_ADSET_MANY) warnings.push(`${callout}: ${ads.length} ads share one budget; past ${ADS_PER_ADSET_MANY} each gets little`);
     const pinName = pin?.label || pin?.place_name || pin?.postal_code || "pin";
-    const name = `${date} ${titleCase(callout)} | ${offer} | Audience: ${pinName} + ${radius_km}KM, ${gender === "men" ? "Male" : gender === "women" ? "Female" : "All"}, ${preset.name}, ${age_min}-${age_max}`;
+    const house_name = `${date} ${titleCase(callout)} | ${offer} | Audience: ${pinName} + ${radius_km}KM, ${gender === "men" ? "Male" : gender === "women" ? "Female" : "All"}, ${preset.name}, ${age_min}-${age_max}`;
+    // The ad set's name: the owner's for this campaign (2026-10-10), else the house style the reports read.
+    const name = clean1(own.name, 400) || house_name;
     return {
-      callout, name, audience, ads: ads.map((a) => a.folder),
+      callout, name, house_name, own_name: name !== house_name, audience, ads: ads.map((a) => a.folder),
       pin: pin ? { ...pin, index: pins.indexOf(pin), radius_km, fallback, words: pinWords({ ...pin, radius_km }, fallback) } : null,
       age_min, age_max, gender, preset: { id: preset.id, name: preset.name, how, summary: preset.summary || summarise(preset.spec || {}) }, spec,
       budget: level === "adset" ? { daily: setDaily, currency, bid_strategy: strategy, bid_cap: cap } : null,
@@ -469,8 +471,26 @@ export async function createPlan(plan, { client, batchDir, record, log = console
       return first.hash;
     } catch (e) { fail("image", img.file, e); }
   };
-  // The campaign: made once; a changed name or budget is updated in place.
+  /** Is a recorded object still usable on Meta? A campaign or ad set archived or deleted in Ads Manager cannot take new
+   *  ads ("Archived ad sets may only contain archived or deleted ads", Aether Athletics 2026-10-10): it is set aside as
+   *  superseded, with what lived under it, and made again. A read that fails leaves the record as it is. */
+  const goneOnMeta = async (id) => {
+    try { const r = await client.get(id, { fields: "status,effective_status" }); return [r?.status, r?.effective_status].map((x) => String(x || "").toUpperCase()).find((x) => x === "ARCHIVED" || x === "DELETED") || null; }
+    catch { return null; }
+  };
+  const supersedeAds = (callout, why) => { for (const [folder, had] of Object.entries(rec.ads)) if (!callout || had.adset === callout) { rec.superseded.push({ folder, ...had, why, at: new Date().toISOString() }); delete rec.ads[folder]; run.superseded++; } };
+  // The campaign: made once; a changed name or budget is updated in place; one archived on Meta is made again, with its ad sets and ads.
   try {
+    if (rec.campaign?.id) {
+      const gone = await goneOnMeta(rec.campaign.id);
+      if (gone) {
+        const why = `the campaign was ${gone.toLowerCase()} on Meta`;
+        log(`· campaign ${rec.campaign.id}: ${gone.toLowerCase()} on Meta — making a new one, with its ad sets and ads`);
+        supersedeAds(null, why);
+        for (const [callout, had] of Object.entries(rec.adsets)) { rec.superseded.push({ step: "adset", callout, ...had, why, at: new Date().toISOString() }); delete rec.adsets[callout]; run.superseded++; }
+        rec.superseded.push({ step: "campaign", ...rec.campaign, why, at: new Date().toISOString() }); rec.campaign = null; run.superseded++; save();
+      }
+    }
     if (rec.campaign?.id) {
       const want = { name: plan.campaign.name, ...(plan.campaign.daily_budget != null ? { daily_budget: plan.campaign.daily_budget, bid_strategy: plan.campaign.bid_strategy } : {}) };
       const changed = Object.entries(want).filter(([k, v]) => rec.campaign[k] !== v);
@@ -489,8 +509,18 @@ export async function createPlan(plan, { client, batchDir, record, log = console
   const adFacts = (ad) => ({ has_story: !!ad.story, form_id: plan.lead_form_id, instagram_user_id: plan.instagram_user_id, cta: plan.words.cta, headline: plan.words.headline, message: plan.words.message, description: plan.words.description, placeholders: plan.words.placeholders.length > 0, copies: ad.copies || [], headlines: ad.headlines || [], text_options: (ad.copies || []).length || 1, title_options: (ad.headlines || []).length || 1, name: ad.name });
   for (const callout of callouts) {
     const set = plan.adsets.find((x) => x.callout === callout);
-    const key = adsetKey(set.payload), had = rec.adsets[callout];
+    const key = adsetKey(set.payload);
+    let had = rec.adsets[callout];
     try {
+      if (had?.id) {
+        const gone = await goneOnMeta(had.id);
+        if (gone) {
+          const why = `the ad set was ${gone.toLowerCase()} on Meta`;
+          log(`· ad set ${callout}: ${had.id} ${gone.toLowerCase()} on Meta — making a new one; its ads will be made again`);
+          supersedeAds(callout, `its ad set was ${gone.toLowerCase()} on Meta`);
+          rec.superseded.push({ step: "adset", callout, ...had, why, at: new Date().toISOString() }); delete rec.adsets[callout]; run.superseded++; had = null; save();
+        }
+      }
       if (had?.id) {
         had.facts = setFacts(set);
         if (had.key === key) { run.reused.adsets++; save(); log(`· ad set ${callout}: already made (${had.id}) — reused`); continue; }

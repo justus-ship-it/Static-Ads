@@ -1325,7 +1325,13 @@ test("U20 the Publish screen: the plan for a batch's kept ads from the API (noth
   r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { campaign: { name: "Test campaign", level: "campaign", daily: 80 }, adsets: { [first]: { pin: 1, age_min: 30, gender: "women", preset: "a97f701a193c" } }, words: { message: "Come and train.", headline: "Six weeks", description: "", cta: "APPLY_NOW" }, destination: {} } })).json();
   assert.deepEqual([r.plan.campaign.name, r.plan.campaign.daily_budget, r.plan.budget.level, r.plan.adsets[0].pin.label, r.plan.adsets[0].age_min, r.plan.adsets[0].gender, r.plan.adsets[0].preset.name, r.plan.adsets[0].preset.how, r.plan.words.message, r.plan.words.cta, r.plan.words.placeholders], ["Test campaign", 8000, "campaign", "Bishan", 30, "women", "Fitness", "chosen for this ad set", "Come and train.", "APPLY_NOW", ["description"]]);
   assert.ok(existsSync(join(out, "publish-settings.json")) && r.settings.updated);
-  for (const body of [{ campaign: { level: "ad" } }, { words: { headline: "one — dash" } }, { adsets: { X: { pin: "a" } } }, { destination: { lead_form_id: "abc" } }, { extra: 1 }]) {
+  // The ad set's own name (2026-10-10): saved with the rest, on the plan and its payload; cleared, the house style returns.
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { campaign: { name: "Test campaign", level: "campaign", daily: 80 }, adsets: { [first]: { pin: 1, age_min: 30, gender: "women", preset: "a97f701a193c", name: "Women near Bishan, October" } }, words: { message: "Come and train.", headline: "Six weeks", description: "", cta: "APPLY_NOW" }, destination: {} } })).json();
+  assert.ok(r.plan, `the name is saved with the rest: ${JSON.stringify(r)}`);
+  assert.deepEqual([r.plan.adsets[0].name, r.plan.adsets[0].own_name, r.plan.adsets[0].payload.name, /Bishan/.test(r.plan.adsets[0].house_name)], ["Women near Bishan, October", true, "Women near Bishan, October", true]);
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { campaign: { name: "Test campaign", level: "campaign", daily: 80 }, adsets: { [first]: { pin: 1, age_min: 30, gender: "women", preset: "a97f701a193c", name: null } }, words: { message: "Come and train.", headline: "Six weeks", description: "", cta: "APPLY_NOW" }, destination: {} } })).json();
+  assert.equal(r.plan.adsets[0].name, r.plan.adsets[0].house_name);
+  for (const body of [{ campaign: { level: "ad" } }, { words: { headline: "one — dash" } }, { adsets: { X: { pin: "a" } } }, { adsets: { X: { name: "two\nlines" } } }, { destination: { lead_form_id: "abc" } }, { extra: 1 }]) {
     const bad = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body });
     assert.equal(bad.status, 400, JSON.stringify(body));
   }

@@ -757,7 +757,7 @@ function settingsProblem(b) {
   if (!isPlainObject(c) || !str(c.name, 160) || !numOr(c.daily) || !numOr(c.bid_cap) || (c.level != null && !["adset", "campaign"].includes(c.level)) || (c.bid_strategy != null && typeof c.bid_strategy !== "string")) return "campaign settings: a one-line name, a level of adset or campaign, numbers for the budget";
   if (b.adsets != null && !isPlainObject(b.adsets)) return "adsets must map callouts to settings";
   for (const [k, v] of Object.entries(b.adsets || {})) {
-    if (!isPlainObject(v) || !numOr(v.pin) || !numOr(v.radius_km) || !numOr(v.age_min) || !numOr(v.age_max) || !numOr(v.daily) || !str(v.gender, 8) || !str(v.preset, 40)) return `ad set ${k}: numbers for pin, radius, ages and budget; a gender and a preset id`;
+    if (!isPlainObject(v) || !numOr(v.pin) || !numOr(v.radius_km) || !numOr(v.age_min) || !numOr(v.age_max) || !numOr(v.daily) || !str(v.gender, 8) || !str(v.preset, 40) || !str(v.name, 400)) return `ad set ${k}: numbers for pin, radius, ages and budget; a gender and a preset id; a one-line name up to 400 characters`;
   }
   const w = b.words || {};
   if (!isPlainObject(w) || (w.message != null && (typeof w.message !== "string" || w.message.length > 2000)) || !str(w.headline, 255) || !str(w.description, 255) || !str(w.cta, 20)) return "words: primary text up to 2000 characters, a one-line headline and description, a call-to-action type";

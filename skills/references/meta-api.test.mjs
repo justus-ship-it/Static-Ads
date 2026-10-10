@@ -436,6 +436,19 @@ test("M6 the publish plan for a batch: the kept ads only (excluded ads and photo
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test("M6b the ad set's name (2026-10-10): the house style by default, the owner's for this campaign when set, the house style again when cleared", async () => {
+  const { buildPlan } = await import("./meta-publish.mjs");
+  const profile = { display_name: "Aether", gym_abbr: "AET", website: "https://aether.sg", locale: { country: "SG", currency: "SGD" }, meta_assets: { ad_account_id: "act_111", page_id: "77", lead_form_id: "4001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+    campaign_defaults: { budget: { level: "adset", amount: 50, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ label: "CBD", place_key: "107327800879305", radius_km: 2, callouts: ["CBD"] }] }, demographics: { age_min: 25, age_max: 60 } } };
+  const kept = [{ folder: "101-c01-cbd", file: "101-c01-cbd/1x1/a.png", location: "CBD", words: { location: "CBD", audience: "LADIES WANTED", offer: "6 Week Full Body Transformation" }, story: null }];
+  const batch = { batch_id: "2026-10-10-x" };
+  const plain = buildPlan({ profile, batch, kept, presets: { presets: [] } });
+  assert.deepEqual([plain.adsets[0].name, plain.adsets[0].own_name, plain.adsets[0].payload.name], ["1010 CBD | 6 Week Full Body Transformation | Audience: CBD + 2KM, Female, Broad, 25-60", false, "1010 CBD | 6 Week Full Body Transformation | Audience: CBD + 2KM, Female, Broad, 25-60"]);
+  const own = buildPlan({ profile, batch, kept, presets: { presets: [] }, settings: { adsets: { CBD: { name: "  Ladies CBD · October  " } } } });
+  assert.deepEqual([own.adsets[0].name, own.adsets[0].own_name, own.adsets[0].house_name, own.adsets[0].payload.name], ["Ladies CBD · October", true, plain.adsets[0].name, "Ladies CBD · October"]);
+  assert.equal(buildPlan({ profile, batch, kept, presets: { presets: [] }, settings: { adsets: { CBD: { name: "" } } } }).adsets[0].name, plain.adsets[0].name, "cleared: the house style again");
+});
+
 test("M7 createPlan: images once per file by content, the campaign, the ad sets a run needs, then each ad's creative and ad — every id recorded as it lands; a re-run reuses everything and makes nothing; changed words make a new creative and ad with the old ones kept as superseded; a changed ad set is updated in place; `first` limits a run and the next continues; a refusal stops with its step recorded; a plan with problems is refused before any call", async () => {
   const { buildPlan, createPlan, freshRecord } = await import("./meta-publish.mjs");
   const d = mkdtempSync(join(tmpdir(), "meta-create-"));
@@ -454,15 +467,15 @@ test("M7 createPlan: images once per file by content, the campaign, the ad sets 
       campaign_defaults: { budget: { level: "adset", amount: 50, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", radius_km: 5 }] }, demographics: { age_min: 25, age_max: 60 } } };
     const batch = { batch_id: "2026-09-13-men" };
     let n = 0; const calls = [];
-    const refuse = { creative: null };
+    const refuse = { creative: null }, archived = { s2: false };
     Object.assign(answers, {
       "act_111/adimages": (q) => { calls.push(["adimages", q.get("name")]); return { images: { [q.get("name")]: { hash: "h" + q.get("name").slice(-9, -4) } } }; },
       "act_111/campaigns": (q) => { calls.push(["campaigns", q.get("name")]); return { id: "c" + ++n }; },
       "act_111/adsets": (q) => { calls.push(["adsets", q.get("name")]); return { id: "s" + ++n }; },
       "act_111/adcreatives": (q) => { calls.push(["adcreatives", JSON.parse(q.get("asset_feed_spec") || "null")?.images?.map((i) => i.hash) || JSON.parse(q.get("object_story_spec")).link_data.image_hash]); return { id: "cr" + ++n }; },
       "act_111/ads": (q) => { calls.push(["ads", q.get("adset_id"), JSON.parse(q.get("creative")).creative_id]); return { id: "ad" + ++n }; },
-      "c1": (q) => { calls.push(["update c1", [...q.keys()].filter((k) => !/access_token|appsecret_proof/.test(k)).join(",")]); return { success: true }; },
-      "s2": (q) => { calls.push(["update s2", [...q.keys()].filter((k) => !/access_token|appsecret_proof/.test(k)).join(",")]); return { success: true }; },
+      "c1": (q) => { if (q.get("fields")) return { id: "c1", status: "PAUSED", effective_status: "PAUSED" }; calls.push(["update c1", [...q.keys()].filter((k) => !/access_token|appsecret_proof/.test(k)).join(",")]); return { success: true }; },
+      "s2": (q) => { if (q.get("fields")) return { id: "s2", status: archived.s2 ? "ARCHIVED" : "PAUSED", effective_status: archived.s2 ? "ARCHIVED" : "PAUSED" }; calls.push(["update s2", [...q.keys()].filter((k) => !/access_token|appsecret_proof/.test(k)).join(",")]); return { success: true }; },
     });
     errorHook = (path) => (path === "act_111/adcreatives" && refuse.creative ? { error: { message: refuse.creative, code: 100 } } : null);
     const path = join(d, "publish.json");
@@ -508,6 +521,20 @@ test("M7 createPlan: images once per file by content, the campaign, the ad sets 
     calls.length = 0;
     await assert.rejects(createPlan({ ...plan, ready: false, problems: ["no ads kept"] }, { client: client(), batchDir: d, record: freshRecord(join(d, "x.json"), { batch_id: "b", account: "act_111" }) }), /the plan has problems: no ads kept/);
     assert.deepEqual(calls, []);
+    // 7. An ad set archived in Ads Manager (Aether Athletics, 2026-10-10: "Archived ad sets may only contain archived or deleted ads"): a re-run reads its status,
+    //    sets it and its ads aside as superseded, makes a new ad set and the ads again; the other ad set (whose status cannot be read here) is reused as before.
+    calls.length = 0; archived.s2 = true;
+    const plan4 = buildPlan({ profile, batch, kept: ads, presets: { presets: [] }, settings: { campaign: { name: "Men Sept" }, adsets: { BISHAN: { age_max: 55, name: "Bishan men, October" } }, words: { message: "Third words." } } });
+    const r7 = await createPlan(plan4, { client: client(), batchDir: d, record: { ...JSON.parse(readFileSync(path, "utf-8")), path }, log: (m) => log.push(m) });
+    assert.deepEqual(calls.map((c) => c[0]), ["update c1", "adsets", "adcreatives", "ads", "adcreatives", "ads", "adcreatives", "ads"], "the campaign's name back to Men Sept (step 5 had renamed it before its refusal); a new BISHAN ad set (no update of the archived one); then every ad again; no image uploaded again");
+    assert.equal(calls[1][1], "Bishan men, October", "the new ad set carries the owner's name");
+    const after7 = JSON.parse(readFileSync(path, "utf-8"));
+    assert.notEqual(after7.adsets.BISHAN.id, "s2");
+    assert.ok(after7.superseded.some((x) => x.step === "adset" && x.id === "s2" && /archived on Meta/.test(x.why)), "the archived ad set is recorded as superseded with the reason");
+    assert.ok(after7.superseded.some((x) => x.folder === ads[1].folder && /its ad set was archived on Meta/.test(x.why)), "and the ad that lived in it");
+    assert.deepEqual([Object.keys(after7.ads).length, after7.done != null, r7.run.made.adsets, r7.run.reused.adsets, r7.run.updated.campaign], [3, true, 1, 1, 1]);
+    assert.ok(log.some((l) => /archived on Meta — making a new one/.test(l)));
+    archived.s2 = false;
     assert.ok(!readFileSync(path, "utf-8").includes(TOKEN));
   } finally {
     errorHook = errorFor;
