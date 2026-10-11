@@ -340,7 +340,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
     };
   });
   return {
-    account, page_id, instagram_user_id, lead_form_id, website: profile.website || null, currency,
+    account, page_id, instagram_user_id, lead_form_id, website: profile.website || null, currency, offer,
     budget: { level, daily, bid_strategy: strategy, bid_cap: cap, per_day_total: level === "campaign" ? daily : adsets.reduce((t, s) => t + (s.budget?.daily || 0), 0) },
     campaign, adsets, ads, words, copy: { kept: keptCopy.length, max_options: maxOptions, per_ad: Math.min(maxOptions, keptCopy.length) || 0, rotating: keptCopy.length > maxOptions, descriptions: withDesc, headlines: { kept: keptHead.length, max_options: maxHeadlines, per_ad: Math.min(maxHeadlines, keptHead.length) || 0, rotating: keptHead.length > maxHeadlines } }, counts: { adsets: adsets.length, ads: ads.length, with_story: kept.length - noStory.length },
     problems, warnings, ready: problems.length === 0,
@@ -558,6 +558,49 @@ export async function createPlan(plan, { client, batchDir, record, log = console
   return { run, campaign: rec.campaign, adsets: rec.adsets, ads: Object.keys(rec.ads).length, of: plan.ads.length, url: adsManagerUrl(account, rec.campaign.id) };
 }
 
+/** Does a form's name name the offer? The whole offer, or the offer without its leading duration ("6 Week …", "六週…"),
+ *  or every word of four letters or more — spacing, case and punctuation aside. */
+export function namesOffer(formName, offer) {
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9\p{Script=Han}]/gu, "");
+  const f = norm(formName), o = norm(offer);
+  if (!f || !o) return false;
+  if (f.includes(o)) return true;
+  const shorter = norm(String(offer).replace(/^\s*(\d+\s*(?:weeks?|wks?|days?|months?)|[一二三四五六七八九十\d]+(?:週|周|天|日|個月))\s*/i, ""));
+  if (shorter && shorter !== o && f.includes(shorter)) return true;
+  const words = String(offer).toLowerCase().match(/[a-z]{4,}/g) || [];
+  return words.length > 0 && words.every((w) => f.includes(w));
+}
+
+/** Before you create (2026-10-11): what is not a problem for the plan but is usually a mistake, each said in words with where
+ *  to fix it — the form that does not name the offer, an ad set pinned on a pin for another callout, no copy or headline
+ *  kept, ads without a Stories version. The owner's call: none of these stops the create. */
+export function publishReadiness(plan, { formName = null } = {}) {
+  const checks = [];
+  const check = (ok, text, where = null) => checks.push({ ok, text, where });
+  const offer = plan.offer || null;
+  if (plan.lead_form_id) {
+    if (!formName) check(null, `the form ${plan.lead_form_id}'s name is not known here: check it is the one for "${offer}"`, "destination");
+    else if (namesOffer(formName, offer)) check(true, `the form "${formName}" names the offer`, "destination");
+    else check(false, `the form "${formName}" does not name the offer "${offer}": pick the form for this offer, or make one from the template`, "destination");
+  }
+  for (const a of plan.adsets || []) {
+    const p = a.pin; if (!p) continue;
+    const names = (p.callouts || []).map((c) => String(c).toUpperCase());
+    const where = p.label || p.place_name || p.postal_code || "its pin";
+    if (names.includes(a.callout)) check(true, `${a.callout} pins on ${where} (${p.radius_km} km)`, "targeting");
+    else check(false, `${a.callout}'s ad set pins on ${where} (${p.radius_km} km), a pin ${names.length ? `for ${names.join(", ")}` : "with no callout"} — fine if that is where ${a.callout} is; otherwise add a pin for ${a.callout} on Targeting & budget, or pick one on the ad set`, "targeting");
+  }
+  const c = plan.copy || {};
+  if (!c.kept) check(false, "no copy kept: the ads go up with placeholder text — draft or add copy below and keep some", "copy");
+  else check(true, `${c.kept} ${c.kept === 1 ? "copy" : "copies"} kept, ${c.per_ad} per ad`, "copy");
+  if (!c.headlines?.kept) check(false, "no headline kept: the ads carry the copies' own headlines, or a placeholder — draft or add headlines below and keep some", "copy");
+  else check(true, `${c.headlines.kept} headline${c.headlines.kept === 1 ? "" : "s"} kept, ${c.headlines.per_ad} per ad`, "copy");
+  const noStory = (plan.ads || []).filter((a) => !a.story).length;
+  if (noStory) check(false, `${noStory} of ${plan.ads.length} ads ${noStory === 1 ? "has" : "have"} no Stories version: they run the 1:1 on Stories and Reels too — make the Stories versions on Review`, "ads");
+  else if (plan.ads?.length) check(true, "every ad has a Stories version", "ads");
+  return { ready: plan.ready, blocking: plan.problems || [], checks, to_check: checks.filter((x) => x.ok !== true).length };
+}
+
 /** Make them, one after another, recording each answer as it lands. `client` is a graphClient. */
 export async function createTestOne(plan, { client, brandDir, record, log = console.log }) {
   const rec = record;
@@ -611,6 +654,7 @@ if (isMain) {
       const settings = existsSync(join(out, "publish-settings.json")) ? JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")) : {};
       const { keptCopies } = await import("./draft-copy.mjs");
       const plan = buildPlan({ library: readTargetingLibrary(), profile, batch, kept: keptAds(out), presets: readPresets(brandDir), settings, copies: keptCopies(out), headlines: keptCopies(out, "headline") });
+      for (const c of publishReadiness(plan, { formName: profile.meta_assets?.lead_form_id === plan.lead_form_id ? profile.meta_assets?.labels?.form || null : null }).checks) if (c.ok !== true) console.log(`check: ${c.text}`);
       const first = v.first ? parseInt(v.first, 10) : null;
       if (v.first && !(Number.isInteger(first) && first >= 1)) throw new Error("--first takes a whole number of ads");
       console.log(`plan: ${plan.campaign.name} · ${plan.counts.adsets} ad set(s) · ${plan.counts.ads} ad(s), ${plan.counts.with_story} with a Stories version · ${plan.copy.kept ? `${plan.copy.kept} copies kept, ${plan.copy.per_ad} per ad${plan.copy.rotating ? " (rotating)" : ""}` : "placeholder words"} · ${plan.budget.per_day_total} ${plan.currency}/day in all · every object ${AD_STATUS}${first ? ` · this run: the first ${first} ad(s)` : ""}`);

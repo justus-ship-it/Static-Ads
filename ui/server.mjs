@@ -36,7 +36,7 @@ import {
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
-import { buildPlan, keptAds, CTA_TYPES, findIdentity, setIdentity, regulatedFor, hasIdentity, findPin } from "../skills/references/meta-publish.mjs";
+import { buildPlan, keptAds, CTA_TYPES, findIdentity, setIdentity, regulatedFor, hasIdentity, findPin, publishReadiness } from "../skills/references/meta-publish.mjs";
 import { readForms, templateFrom, proposeForm, formProblems, createForm, readLeadForms, writeLeadForms } from "../skills/references/lead-forms.mjs";
 import { runImport, importProposal, applyImport, readImport, STEPS as IMPORT_STEPS, HISTORY_TOP } from "../skills/references/import-gym.mjs";
 import { TARGETING_LIBRARY_DIR, readLibrary as readTargetingLibrary, seedDrafts as seedTargetingDrafts, liveEntries as liveTargeting, approveEntry as approveTargeting, retireEntry as retireTargeting, restoreEntry as restoreTargeting, addEntry as addTargeting, asPreset as libraryPreset } from "../skills/references/targeting-library.mjs";
@@ -44,7 +44,7 @@ import { TARGETING_LIBRARY_DIR, readLibrary as readTargetingLibrary, seedDrafts 
 const targetingLibrary = () => seedTargetingDrafts(TARGETING_LIBRARY_DIR).data;
 const targetingLibraryView = () => { const d = targetingLibrary(); return { entries: d.entries.map((e) => ({ ...e, preset_id: `lib:${e.id}`, summary: summarise(e.spec) })), approved: d.entries.filter((e) => e.approved_on && !e.retired).length, drafts: d.entries.filter((e) => !e.approved_on && !e.retired).length }; };
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
-import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows } from "../skills/references/meta-results.mjs";
+import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
@@ -745,6 +745,15 @@ function reviewState(gym, id) {
   };
 }
 
+/** A lead form's name as this gym knows it (2026-10-11): one made here, the profile's default, or one the import read — no call. */
+function formNameFor(dir, profile, id) {
+  if (!id) return null;
+  const made = (readLeadForms(dir).created || []).find((f) => String(f.id) === String(id));
+  if (made?.name) return made.name;
+  if (String(profile?.meta_assets?.lead_form_id || "") === String(id) && profile?.meta_assets?.labels?.form) return profile.meta_assets.labels.form;
+  const read = (readJsonFile(join(dir, "onboarding", "meta", "forms.json"))?.forms || []).find((f) => String(f.id) === String(id));
+  return read?.name || null;
+}
 /** The publish settings a screen may save: shapes only; the plan builder applies its own rules on the values. */
 function settingsProblem(b) {
   if (!isPlainObject(b)) return "settings must be an object";
@@ -1666,7 +1675,7 @@ const server = createServer(async (req, res) => {
         if (rid && req.method === "PUT") { const { note, retired } = await readBody(req); return view({ ref: editCopyRef(dir, decodeURIComponent(rid), { note, retired }) }); }
       } catch (e) { return json(res, 400, { error: e.message }); }
     }
-    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull)$/);
+    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull|drift\/take)$/);
     if (rv) {
       const [, gym, id, what] = rv;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
@@ -1702,8 +1711,16 @@ const server = createServer(async (req, res) => {
         let plan;
         const library = targetingLibrary();
         try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline"), library }); } catch (e) { return json(res, 400, { error: e.message }); }
+        const readiness = publishReadiness(plan, { formName: formNameFor(dir, profile, plan.lead_form_id) });
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, settings, thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
+        return json(res, 200, { plan, readiness, settings, thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
+      }
+      if (what === "drift/take" && req.method === "POST") {
+        const { kind, callout } = await readBody(req);
+        if (!["campaign_name", "campaign_budget", "adset_name", "adset_budget"].includes(kind) || (callout != null && !(typeof callout === "string" && callout.length <= 80))) return json(res, 400, { error: "say which line: a kind and, for an ad set, its callout" });
+        const item = (readJsonFile(join(out, "results.json"))?.drift || []).find((d) => d.kind === kind && (d.callout || null) === (callout || null));
+        if (!item) return json(res, 404, { error: "that difference is not in the last pull: pull results again" });
+        try { const r = takeMetaValue(out, item, { currency: (readJsonFile(join(dir, "gym-profile.json")) || {}).locale?.currency || "SGD" }); return json(res, 200, r); } catch (e) { return json(res, 400, { error: e.message }); }
       }
       if (what === "results" && req.method === "GET") return json(res, 200, { results: readJsonFile(join(out, "results.json")), rows: batchRows(dir, id), record: readJsonFile(join(out, "publish.json")), texts: textRows(dir, id) });
       if (what === "results/pull" && req.method === "POST") {

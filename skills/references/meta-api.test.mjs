@@ -449,6 +449,28 @@ test("M6b the ad set's name (2026-10-10): the house style by default, the owner'
   assert.equal(buildPlan({ profile, batch, kept, presets: { presets: [] }, settings: { adsets: { CBD: { name: "" } } } }).adsets[0].name, plain.adsets[0].name, "cleared: the house style again");
 });
 
+test("M17 before you create (2026-10-11): the form must name the offer (whole, without its duration, or by its words; unknown is said), each ad set's pin must be for its callout, copy and headlines kept, every ad with a Stories version — each in words with where to fix it; none of it blocks", async () => {
+  const { buildPlan, publishReadiness, namesOffer } = await import("./meta-publish.mjs");
+  assert.deepEqual(["0714 6 Weeks Toned Tummy Challenge", "0421 - V2 Sculpt Society 12 Week Total Body Reset", "v9 - 10月 2026 六週全身體態改造計畫", "Lead form 全身體態改造計畫 (new)", "12wk Total-Body Reset", ""].map((f, i) => namesOffer(f, ["6 Week Full Body Transformation", "12 Week Total Body Reset", "六週全身體態改造計畫", "六週全身體態改造計畫", "12 Week Total Body Reset", "x"][i])), [false, true, true, true, true, false]);
+  const profile = { display_name: "Aether", gym_abbr: "AET", website: "https://aether.sg", locale: { country: "SG", currency: "SGD" }, meta_assets: { ad_account_id: "act_111", page_id: "77", lead_form_id: "4001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+    campaign_defaults: { budget: { level: "adset", amount: 50, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ label: "Aether Athletics", place_key: "107327800879305", radius_km: 1, callouts: ["SINGAPORE"] }] }, demographics: { age_min: 25, age_max: 60 } } };
+  const kept = [{ folder: "101-c01-cbd", file: "101-c01-cbd/1x1/a.png", location: "CBD", words: { location: "CBD", audience: "LADIES WANTED", offer: "6 Week Full Body Transformation" }, story: null }, { folder: "102-c02-cbd", file: "102-c02-cbd/1x1/a.png", location: "CBD", words: { location: "CBD", audience: "LADIES WANTED", offer: "6 Week Full Body Transformation" }, story: "102-c02-cbd/9x16/s.png" }];
+  const plan = buildPlan({ profile, batch: { batch_id: "2026-10-10-x" }, kept, presets: { presets: [] } });
+  assert.equal(plan.offer, "6 Week Full Body Transformation");
+  const r = publishReadiness(plan, { formName: "0714 6 Weeks Toned Tummy Challenge" });
+  assert.deepEqual([r.ready, r.blocking, r.to_check, r.checks.map((c) => [c.ok, c.where])], [true, [], 5, [[false, "destination"], [false, "targeting"], [false, "copy"], [false, "copy"], [false, "ads"]]]);
+  assert.match(r.checks[0].text, /does not name the offer "6 Week Full Body Transformation": pick the form for this offer, or make one from the template/);
+  assert.match(r.checks[1].text, /CBD's ad set pins on Aether Athletics \(1 km\), a pin for SINGAPORE — fine if that is where CBD is; otherwise add a pin for CBD/);
+  assert.match(r.checks[2].text, /no copy kept/); assert.match(r.checks[3].text, /no headline kept/); assert.match(r.checks[4].text, /1 of 2 ads has no Stories version/);
+  assert.equal(publishReadiness(plan, {}).checks[0].ok, null, "an unknown form name is said, not judged");
+  // Everything right: the form names the offer, a pin for the callout, copy and headlines kept, Stories on every ad.
+  const ok = buildPlan({ profile: { ...profile, targeting_defaults: { ...profile.targeting_defaults, geo: { radius_pins: [{ label: "CBD", place_key: "107327800879305", radius_km: 2, callouts: ["CBD"] }] } } }, batch: { batch_id: "2026-10-10-x" }, kept: kept.map((a) => ({ ...a, story: "s.png" })), presets: { presets: [] },
+    copies: [{ id: "c1", message: "Ladies in {AREA}: the 6 Week Full Body Transformation. Tap {BUTTON}.", headline: "", description: "" }], headlines: [{ id: "h1", headline: "Six weeks", description: "" }] });
+  const r2 = publishReadiness(ok, { formName: "v2 - Oct 2026 6 Week Full Body Transformation" });
+  assert.deepEqual([r2.to_check, r2.checks.map((c) => c.ok)], [0, [true, true, true, true, true]]);
+  assert.match(r2.checks.map((c) => c.text).join(" · "), /names the offer.*CBD pins on CBD \(2 km\).*1 copy kept, 1 per ad.*1 headline kept.*every ad has a Stories version/);
+});
+
 test("M7 createPlan: images once per file by content, the campaign, the ad sets a run needs, then each ad's creative and ad — every id recorded as it lands; a re-run reuses everything and makes nothing; changed words make a new creative and ad with the old ones kept as superseded; a changed ad set is updated in place; `first` limits a run and the next continues; a refusal stops with its step recorded; a plan with problems is refused before any call", async () => {
   const { buildPlan, createPlan, freshRecord } = await import("./meta-publish.mjs");
   const d = mkdtempSync(join(tmpdir(), "meta-create-"));
@@ -611,11 +633,20 @@ test("M8 results: a pull reads the campaign's statuses and Meta's numbers per ad
     answers["c1/ads"] = () => ({ data: [{ id: "ad4", name: "a", status: "ACTIVE", effective_status: "ACTIVE", adset_id: "s2" }, { id: "ad6", name: "b", status: "ACTIVE", effective_status: "IN_PROCESS", adset_id: "s2" }, { id: "ad2", name: "old", status: "PAUSED", effective_status: "PAUSED", adset_id: "s2" }, { id: "ad9", name: "by hand", status: "PAUSED", effective_status: "PAUSED", adset_id: "s2" }] });
     const tw = await pullResults({ client: client(), record: JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")), batchDir: out, now: "2026-09-18T17:30:00.000Z" });
     assert.deepEqual([tw.currency, tw.adsets.s2.daily_budget, tw.windows.last_7d], ["TWD", 2000, { since: "2026-09-13", until: "2026-09-19" }], "whole units for TWD; the window in the account's time zone");
-    assert.deepEqual(tw.drift, [
+    assert.deepEqual(tw.drift.map((d) => d.text), [
       'the campaign is named "renamed by hand" on Meta; the app sent "0913 …" — the next create renames it back unless the campaign name here is changed to match',
       "ad set BISHAN's budget on Meta is TWD 2000 a day; the app's setting is TWD 50 — the next create puts TWD 50 back unless the budget here is changed",
       "1 ad in the campaign was not made by this app",
     ]);
+    assert.deepEqual(tw.drift.map((d) => [d.kind, d.callout || null, d.meta ?? null, d.app ?? null, d.fixable]), [["campaign_name", null, "renamed by hand", "0913 …", true], ["adset_budget", "BISHAN", 2000, 50, true], ["ads_extra", null, null, null, false]]);
+    // Take Meta's figure (2026-10-11): the setting and the record follow Ads Manager; the line goes; a line that is only news cannot be taken.
+    const { takeMetaValue } = await import("./meta-results.mjs");
+    const took = takeMetaValue(out, tw.drift[1], { currency: "TWD" });
+    const sAfter = JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")), rAfter = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")), xAfter = JSON.parse(readFileSync(join(out, "results.json"), "utf-8"));
+    assert.deepEqual([sAfter.adsets.BISHAN.daily, rAfter.adsets.BISHAN.facts.daily, took.drift.map((d) => d.kind), xAfter.drift.map((d) => d.kind)], [2000, 2000, ["campaign_name", "ads_extra"], ["campaign_name", "ads_extra"]]);
+    takeMetaValue(out, tw.drift[0], { currency: "TWD" });
+    assert.deepEqual([JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")).campaign.name, JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")).campaign.name], ["renamed by hand", "renamed by hand"]);
+    assert.throws(() => takeMetaValue(out, tw.drift[2], { currency: "TWD" }), /nothing to take/);
     // The texts tied back to the drafts: by their words with the area and button filled, spacing aside; the best first; an unknown text listed unmatched.
     const { textRows, gymTextRows, driftFrom } = await import("./meta-results.mjs");
     writeFileSync(join(out, "copy.json"), JSON.stringify({ drafts: [
@@ -625,8 +656,8 @@ test("M8 results: a pull reads the campaign's statuses and Meta's numbers per ad
     const texts = textRows(d, "2026-09-13-men");
     assert.deepEqual(texts.map((t) => [t.kind, t.draft_id, t.from, t.angle, t.matched, t.leads, t.currency, t.campaign_id]), [["headline", "h1", "lib-2", "identity", true, 5, "TWD", "c1"], ["copy", "c1", "lib-1", "call-out", true, 4, "TWD", "c1"], ["copy", null, null, null, false, 0, "TWD", "c1"]]);
     assert.equal(gymTextRows(d).length, 3);
-    assert.deepEqual(driftFrom({ record: { campaign: { id: "c1", name: "n" }, adsets: { X: { id: "s9", name: "n", facts: { daily: 50 } } }, ads: { f: { id: "a1" } } }, campaign: { id: "c1", name: "n", status: "ARCHIVED" }, adsets: [], ads: [], currency: "SGD" }),
-      ["the campaign is archived on Meta: the next create makes a new one, with its ad sets and ads", "ad set X (s9) is no longer on Meta", "1 ad recorded here is no longer on Meta"]);
+    assert.deepEqual(driftFrom({ record: { campaign: { id: "c1", name: "n" }, adsets: { X: { id: "s9", name: "n", facts: { daily: 50 } } }, ads: { f: { id: "a1" } } }, campaign: { id: "c1", name: "n", status: "ARCHIVED" }, adsets: [], ads: [], currency: "SGD" })
+      .map((d) => d.text), ["the campaign is archived on Meta: the next create makes a new one, with its ad sets and ads", "ad set X (s9) is no longer on Meta", "1 ad recorded here is no longer on Meta"]);
   } finally { for (const k of ["c1", "c1/adsets", "c1/ads", "c1/insights"]) delete answers[k]; rmSync(d, { recursive: true, force: true }); }
 });
 

@@ -2083,7 +2083,8 @@ function paintPublish(v){
       <div><label>Link</label><div class="mono">${esc(P.website||'none')}</div></div>
     </div></div>
   ${publishedCard(D.published, P)}
-  <div class="card"><div class="row"><div><b>${P.counts.adsets} ad set${P.counts.adsets===1?'':'s'}, ${P.counts.ads} ads, ${money(P.budget.per_day_total,cur)} a day, all paused.</b><div class="hint">${P.ready?'Ready to create.':'Fix the problems above first.'}${S.updated?` Settings saved ${esc(S.updated.slice(0,16).replace('T',' '))}.`:''}</div></div><div class="spacer"></div>
+  ${readinessBlock(D.readiness, P)}
+  <div class="card"><div class="row"><div><b>${P.counts.adsets} ad set${P.counts.adsets===1?'':'s'}, ${P.counts.ads} ads, ${money(P.budget.per_day_total,cur)} a day, all paused.</b><div class="hint">${P.ready?(D.readiness?.to_check?'Ready to create once the checks above are yours to make.':'Ready to create.'):'Fix the problems above first.'}${S.updated?` Settings saved ${esc(S.updated.slice(0,16).replace('T',' '))}.`:''}</div></div><div class="spacer"></div>
     <button class="primary" onclick="pbCreateConfirm()" ${P.ready&&!PB.busy&&!(STATE.run&&!STATE.run.done)?'':'disabled'}>${D.published?.ads&&Object.keys(D.published.ads).length?'Continue creating on Facebook':'Create on Facebook, paused'}</button></div></div>
   <div id="runbox"></div><div id="bModal"></div>`;
   renderRunBox();
@@ -2196,7 +2197,7 @@ function publishedCard(rec, P){
       <span>All time</span><div>${money(cA.spend,P.currency)} spent · ${cA.leads} lead${cA.leads===1?'':'s'}${cA.cost_per_lead!=null?` at ${money(cA.cost_per_lead,P.currency)} each`:''} · ${cA.impressions.toLocaleString()} impressions${cA.ctr!=null?` · ${cA.ctr}% click rate`:''}</div>
       <span>Last 7 days</span><div>${money(c7.spend,P.currency)} spent · ${c7.leads} lead${c7.leads===1?'':'s'}${c7.cost_per_lead!=null?` at ${money(c7.cost_per_lead,P.currency)} each`:''}</div>
       <span>Pulled</span><div>${esc(X.pulled.slice(0,16).replace('T',' '))} · <a href="#" onclick="openResults();return false">every ad in Results</a></div></div>
-      ${(X.drift||[]).length ? `<div class="msg warn" style="margin-top:8px"><b>Meta differs from what the app sent:</b><ul style="margin:4px 0 0 18px">${X.drift.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>` : `<div class="hint" style="margin-top:8px">Meta matches what the app sent: the names, the budgets, every ad accounted for.</div>`}
+      ${(X.drift||[]).length ? `<div class="msg warn" style="margin-top:8px"><b>Meta differs from what the app sent:</b><ul style="margin:4px 0 0 18px">${X.drift.map(d=>`<li>${esc(d.text||d)}${d.fixable?` <button class="sm" style="margin-left:6px" onclick="pbTakeMeta('${esc(d.kind)}',${d.callout?`'${esc(d.callout)}'`:'null'})" ${PB.busy?'disabled':''}>Use Meta's ${/name$/.test(d.kind)?'name':'budget'}</button>`:''}</li>`).join('')}</ul></div>` : `<div class="hint" style="margin-top:8px">Meta matches what the app sent: the names, the budgets, every ad accounted for.</div>`}
       ${textsTable(PB.texts||[], P.currency)}` : '';
   // Which copy wins: every body and headline the campaign has run, with Meta's numbers, tied back to the draft and the skeleton it followed.
   function textsTable(texts, cur){
@@ -2213,6 +2214,26 @@ function publishedCard(rec, P){
       <span>Ads</span><div>${made} made${X && Object.values(X.ads||{}).length ? ` · on Meta now: ${Object.entries(Object.values(X.ads).reduce((m,a)=>(m[a.words]=(m[a.words]||0)+1,m),{})).map(([w,n])=>`${n} ${esc(w)}`).join(', ')}` : ', all paused as made'}${rec.superseded?.length?` · ${rec.superseded.length} remade (the old ones stay paused)`:''}${stale.length?` · <span style="color:var(--warn)">${stale.length} on Meta but no longer kept here (paused; pause or delete them in Ads Manager)</span>`:''}</div>
       ${rec.error?`<span>Stopped</span><div style="color:var(--err)">${esc(rec.error.step)} ${esc(rec.error.what||'')}: ${esc(rec.error.message)}</div>`:''}
       <span>Last run</span><div>${rec.runs?.length?esc((rec.runs.at(-1).finished||rec.runs.at(-1).started).slice(0,16).replace('T',' ')):'—'}</div></div>${numbers}</div>`;
+}
+/** Before you create (2026-10-11): what is usually a mistake, in words, with where to fix it; none of it stops the create. */
+function readinessBlock(R, P){
+  if (!R || !P.ready) return '';
+  const label = { destination:'Destination and identity', targeting:'the ad set', copy:'Copy and headlines', ads:'Ads' };
+  const open = R.checks.filter(c=>c.ok!==true);
+  if (!open.length) return `<div class="msg ok"><b>Ready.</b> ${R.checks.map(c=>esc(c.text)).join(' · ')}.</div>`;
+  return `<div class="msg warn"><b>Before you create, ${open.length} thing${open.length===1?'':'s'} to check:</b><ul style="margin:4px 0 0 18px">${open.map(c=>`<li>${esc(c.text)}${c.where?` — <a href="#" onclick="pbJump('${c.where}');return false">${esc(label[c.where]||c.where)}</a>`:''}</li>`).join('')}</ul>${R.checks.some(c=>c.ok===true)?`<div class="hint" style="margin-top:6px">Fine: ${R.checks.filter(c=>c.ok===true).map(c=>esc(c.text)).join(' · ')}.</div>`:''}</div>`;
+}
+function pbJump(where){
+  const re = { destination:/^Destination and identity/, targeting:/^Ad sets/, copy:/^Copy\b/, ads:/^Ads ·/ }[where] || /./;
+  const h = [...document.querySelectorAll('#view h2, #view h3')].find(x=>re.test(x.textContent.trim()));
+  (h?.closest('.card') || h)?.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+/** Take Meta's figure for one line (2026-10-11): the setting and the record follow what Ads Manager holds, so the next create keeps it. */
+async function pbTakeMeta(kind, callout){
+  PB.busy = true; PB.error = null; paintPublish($('#view'));
+  try { await api(`/api/client/${PB.gym}/batch/${PB.id}/drift/take`, { method:'POST', body:{ kind, callout } }); PB.data = null; PB.busy = false; return render(); }
+  catch(e){ PB.error = e.message; }
+  PB.busy = false; paintPublish($('#view'));
 }
 async function pbPull(){ PB.busy = true; PB.error = null; paintPublish($('#view')); try { const ra = await api(`/api/client/${PB.gym}/batch/${PB.id}/results/pull`, { method:'POST', body:{} }); PB.results = ra.results; PB.texts = ra.texts || []; } catch(e){ PB.error = e.message; } PB.busy = false; paintPublish($('#view')); }
 function pbCreateConfirm(){

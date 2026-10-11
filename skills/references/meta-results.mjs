@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, renameSync, mkdir
 import { join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
-import { metaConfig, graphClient, scrubTokens, actId, budgetFrom, dateWindow } from "./meta-api.mjs";
+import { metaConfig, graphClient, scrubTokens, actId, budgetFrom, budgetUnits, dateWindow } from "./meta-api.mjs";
 import { titleCase } from "./client-config.mjs";
 import { audienceLabel, summarise, adsetCountries, isAbroad } from "./meta-targeting.mjs";
 
@@ -108,31 +108,51 @@ function byText(rows, key) {
  *  Ads Manager, ads gone or added by hand. The app's record is what it sent; the next create sends it again unless the
  *  setting here is changed to match. Read-only; in words, for the Publish screen's On Facebook card and the CLI. */
 export function driftFrom({ record, campaign, adsets, ads, currency = "SGD" }) {
-  const lines = [], rec = record || {};
+  const items = [], rec = record || {};
+  const say = (kind, text, extra = {}) => items.push({ kind, text, fixable: false, ...extra });
   const gone = (o) => [o?.status, o?.effective_status].map((x) => String(x || "").toUpperCase()).find((x) => x === "ARCHIVED" || x === "DELETED") || null;
   const money = (raw) => `${currency} ${budgetFrom(raw, currency)}`;
   if (rec.campaign?.id && campaign) {
     const g = gone(campaign);
-    if (g) lines.push(`the campaign is ${g.toLowerCase()} on Meta: the next create makes a new one, with its ad sets and ads`);
-    if (campaign.name && rec.campaign.name && campaign.name !== rec.campaign.name) lines.push(`the campaign is named "${campaign.name}" on Meta; the app sent "${rec.campaign.name}" — the next create renames it back unless the campaign name here is changed to match`);
-    if (rec.campaign.daily_budget != null && campaign.daily_budget != null && Number(campaign.daily_budget) !== Number(rec.campaign.daily_budget)) lines.push(`the campaign's budget on Meta is ${money(campaign.daily_budget)} a day; the app sent ${money(rec.campaign.daily_budget)} — the next create puts it back unless the budget here is changed`);
+    if (g) say("campaign_gone", `the campaign is ${g.toLowerCase()} on Meta: the next create makes a new one, with its ad sets and ads`);
+    if (campaign.name && rec.campaign.name && campaign.name !== rec.campaign.name) say("campaign_name", `the campaign is named "${campaign.name}" on Meta; the app sent "${rec.campaign.name}" — the next create renames it back unless the campaign name here is changed to match`, { meta: campaign.name, app: rec.campaign.name, fixable: true });
+    if (rec.campaign.daily_budget != null && campaign.daily_budget != null && Number(campaign.daily_budget) !== Number(rec.campaign.daily_budget)) say("campaign_budget", `the campaign's budget on Meta is ${money(campaign.daily_budget)} a day; the app sent ${money(rec.campaign.daily_budget)} — the next create puts it back unless the budget here is changed`, { meta: budgetFrom(campaign.daily_budget, currency), app: budgetFrom(rec.campaign.daily_budget, currency), fixable: true });
   }
   for (const [callout, had] of Object.entries(rec.adsets || {})) {
     const live = (adsets || []).find((s) => s.id === had.id);
-    if (!live) { lines.push(`ad set ${callout} (${had.id}) is no longer on Meta`); continue; }
+    if (!live) { say("adset_missing", `ad set ${callout} (${had.id}) is no longer on Meta`, { callout }); continue; }
     const g = gone(live);
-    if (g) lines.push(`ad set ${callout} is ${g.toLowerCase()} on Meta: the next create makes a new one and its ads again`);
-    if (live.name && had.name && live.name !== had.name) lines.push(`ad set ${callout} is named "${live.name}" on Meta; the app sent "${had.name}" — the next create renames it back unless the ad set name here is changed to match`);
+    if (g) say("adset_gone", `ad set ${callout} is ${g.toLowerCase()} on Meta: the next create makes a new one and its ads again`, { callout });
+    if (live.name && had.name && live.name !== had.name) say("adset_name", `ad set ${callout} is named "${live.name}" on Meta; the app sent "${had.name}" — the next create renames it back unless the ad set name here is changed to match`, { callout, meta: live.name, app: had.name, fixable: true });
     const appDaily = had.facts?.daily;
-    if (appDaily != null && live.daily_budget != null && budgetFrom(live.daily_budget, currency) !== Number(appDaily)) lines.push(`ad set ${callout}'s budget on Meta is ${money(live.daily_budget)} a day; the app's setting is ${currency} ${appDaily} — the next create puts ${currency} ${appDaily} back unless the budget here is changed`);
+    if (appDaily != null && live.daily_budget != null && budgetFrom(live.daily_budget, currency) !== Number(appDaily)) say("adset_budget", `ad set ${callout}'s budget on Meta is ${money(live.daily_budget)} a day; the app's setting is ${currency} ${appDaily} — the next create puts ${currency} ${appDaily} back unless the budget here is changed`, { callout, meta: budgetFrom(live.daily_budget, currency), app: Number(appDaily), fixable: true });
   }
   const recorded = new Set([...Object.values(rec.ads || {}), ...(rec.superseded || [])].map((a) => a.id).filter(Boolean));
   const liveIds = new Set((ads || []).map((a) => a.id));
   const missing = Object.values(rec.ads || {}).filter((a) => a.id && !liveIds.has(a.id)).length;
   const extra = (ads || []).filter((a) => !recorded.has(a.id)).length;
-  if (missing) lines.push(`${missing} ad${missing === 1 ? "" : "s"} recorded here ${missing === 1 ? "is" : "are"} no longer on Meta`);
-  if (extra) lines.push(`${extra} ad${extra === 1 ? "" : "s"} in the campaign ${extra === 1 ? "was" : "were"} not made by this app`);
-  return lines;
+  if (missing) say("ads_missing", `${missing} ad${missing === 1 ? "" : "s"} recorded here ${missing === 1 ? "is" : "are"} no longer on Meta`, { count: missing });
+  if (extra) say("ads_extra", `${extra} ad${extra === 1 ? "" : "s"} in the campaign ${extra === 1 ? "was" : "were"} not made by this app`, { count: extra });
+  return items;
+}
+
+/** Take Meta's figure (2026-10-11): a name or budget changed in Ads Manager becomes the app's setting for this campaign and
+ *  the record of what the app sent, so the next create keeps it instead of putting the old one back; the drift line goes. */
+export function takeMetaValue(batchDir, item, { currency = "SGD" } = {}) {
+  if (!item?.fixable) throw new Error("nothing to take from Meta for that line");
+  const sp = join(batchDir, "publish-settings.json"), rp = join(batchDir, "publish.json"), xp = join(batchDir, "results.json");
+  const settings = readJson(sp) || {}, rec = readJson(rp), results = readJson(xp);
+  const c = item.callout;
+  if (item.kind === "campaign_name") { if (typeof item.meta !== "string" || !item.meta) throw new Error("no name to take"); settings.campaign = { ...(settings.campaign || {}), name: item.meta }; if (rec?.campaign) rec.campaign.name = item.meta; }
+  else if (item.kind === "campaign_budget") { if (!(Number(item.meta) > 0)) throw new Error("no budget to take"); settings.campaign = { ...(settings.campaign || {}), daily: Number(item.meta) }; if (rec?.campaign) rec.campaign.daily_budget = Math.round(Number(item.meta) * budgetUnits(currency)); }
+  else if (item.kind === "adset_name") { if (!c || typeof item.meta !== "string" || !item.meta) throw new Error("no ad set name to take"); settings.adsets = { ...(settings.adsets || {}), [c]: { ...((settings.adsets || {})[c] || {}), name: item.meta } }; if (rec?.adsets?.[c]) rec.adsets[c].name = item.meta; }
+  else if (item.kind === "adset_budget") { if (!c || !(Number(item.meta) > 0)) throw new Error("no ad set budget to take"); settings.adsets = { ...(settings.adsets || {}), [c]: { ...((settings.adsets || {})[c] || {}), daily: Number(item.meta) } }; if (rec?.adsets?.[c]) rec.adsets[c].facts = { ...(rec.adsets[c].facts || {}), daily: Number(item.meta) }; }
+  else throw new Error(`"${item.kind}" is not something to take from Meta`);
+  settings.updated = new Date().toISOString();
+  writeWhole(sp, JSON.stringify(settings, null, 2) + "\n");
+  if (rec) writeWhole(rp, JSON.stringify(rec, null, 2) + "\n");
+  if (results) { results.drift = (results.drift || []).filter((d) => !(d.kind === item.kind && (d.callout || null) === (c || null))); writeWhole(xp, JSON.stringify(results, null, 2) + "\n"); }
+  return { settings, drift: results?.drift || [] };
 }
 
 /** Which copy wins (2026-10-11): the pulled per-text numbers tied back to the drafts that made them — each kept copy and
@@ -399,7 +419,7 @@ if (isMain) {
         if (!rec?.campaign?.id) { console.log(`${id}: not on Meta yet`); continue; }
         const r = await pullResults({ client, record: rec, batchDir: join(gymDir, "outputs", id) });
         console.log(`${id}: campaign ${r.campaign.words} · ${Object.keys(r.ads).length} ads · all time ${r.campaign.all_time.spend} spent, ${r.campaign.all_time.leads} leads${r.campaign.all_time.cost_per_lead != null ? ` at ${r.campaign.all_time.cost_per_lead}` : ""} · last 7 days ${r.campaign.last_7d.spend} spent, ${r.campaign.last_7d.leads} leads`);
-        for (const line of r.drift || []) console.log(`  differs from the app's record: ${line}`);
+        for (const d of r.drift || []) console.log(`  differs from the app's record: ${d.text}`);
         const texts = textRows(gymDir, id);
         if (texts.length) { console.log(`  which copy wins (${texts.length} texts):`); for (const t of texts) console.log(`    ${t.kind.padEnd(8)} ${String(t.leads).padStart(3)} leads ${(t.cost_per_lead ?? "—").toString().padStart(7)}  ${t.ctr ?? "—"}% ctr  ${t.from ? `skeleton ${t.from}` : t.matched ? "own words" : "not from this app"}  ${t.text.slice(0, 70).replace(/\n/g, " ")}`); }
       }

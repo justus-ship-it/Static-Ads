@@ -1325,6 +1325,9 @@ test("U20 the Publish screen: the plan for a batch's kept ads from the API (noth
   r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { campaign: { name: "Test campaign", level: "campaign", daily: 80 }, adsets: { [first]: { pin: 1, age_min: 30, gender: "women", preset: "a97f701a193c" } }, words: { message: "Come and train.", headline: "Six weeks", description: "", cta: "APPLY_NOW" }, destination: {} } })).json();
   assert.deepEqual([r.plan.campaign.name, r.plan.campaign.daily_budget, r.plan.budget.level, r.plan.adsets[0].pin.label, r.plan.adsets[0].age_min, r.plan.adsets[0].gender, r.plan.adsets[0].preset.name, r.plan.adsets[0].preset.how, r.plan.words.message, r.plan.words.cta, r.plan.words.placeholders], ["Test campaign", 8000, "campaign", "Bishan", 30, "women", "Fitness", "chosen for this ad set", "Come and train.", "APPLY_NOW", ["description"]]);
   assert.ok(existsSync(join(out, "publish-settings.json")) && r.settings.updated);
+  // Before you create (2026-10-11): the checks ride on the answer, in words, with where to fix each; the plan stays ready.
+  assert.deepEqual([r.readiness.ready, typeof r.readiness.to_check, r.readiness.checks.every((c) => typeof c.text === "string" && [true, false, null].includes(c.ok))], [true, "number", true]);
+  assert.ok(r.readiness.checks.some((c) => c.where === "copy" && /copy/.test(c.text)) && r.readiness.checks.some((c) => c.where === "ads"), JSON.stringify(r.readiness));
   // The ad set's own name (2026-10-10): saved with the rest, on the plan and its payload; cleared, the house style returns.
   r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { campaign: { name: "Test campaign", level: "campaign", daily: 80 }, adsets: { [first]: { pin: 1, age_min: 30, gender: "women", preset: "a97f701a193c", name: "Women near Bishan, October" } }, words: { message: "Come and train.", headline: "Six weeks", description: "", cta: "APPLY_NOW" }, destination: {} } })).json();
   assert.ok(r.plan, `the name is saved with the rest: ${JSON.stringify(r)}`);
@@ -2392,4 +2395,29 @@ test("U43 the Create screen says why Generate is grey, shows the brief's problem
     await until(`STATE.sel==='${GYM}'`, "back on the test gym");
   } finally { rmSync(g2, { recursive: true, force: true }); }
   assert.ok(!/NETWORK BLOCKED/.test(panel.log().slice(logBefore)), "nothing here reaches outside this machine");
+});
+
+// ── U44 take Meta's figure (2026-10-11) ────────────────────────────────────
+
+test("U44 take Meta's figure: a budget or name changed in Ads Manager becomes the campaign's setting and the record through the panel; a line that is only news is refused; a kind that is not in the last pull says to pull again", async () => {
+  const out = join(brands, GYM, "outputs", BRIEF.batch_id);
+  const keep = Object.fromEntries(["publish.json", "publish-settings.json", "results.json"].map((f) => [f, existsSync(join(out, f)) ? readFileSync(join(out, f), "utf-8") : null]));
+  try {
+    writeFileSync(join(out, "publish.json"), JSON.stringify({ campaign: { id: "c1", name: "App name" }, adsets: { BISHAN: { id: "s1", name: "0913 Bishan | …", facts: { daily: 50 } } }, ads: {}, superseded: [], runs: [] }));
+    writeFileSync(join(out, "publish-settings.json"), JSON.stringify({ campaign: { name: "App name" }, adsets: { BISHAN: { pin: 0 } } }));
+    writeFileSync(join(out, "results.json"), JSON.stringify({ pulled: "2026-10-11T00:00:00.000Z", currency: "SGD", drift: [
+      { kind: "adset_budget", callout: "BISHAN", text: "ad set BISHAN's budget on Meta is SGD 80 a day; the app's setting is SGD 50 — …", meta: 80, app: 50, fixable: true },
+      { kind: "ads_extra", text: "1 ad in the campaign was not made by this app", count: 1, fixable: false }] }));
+    let r = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/drift/take`, { method: "POST", body: { kind: "adset_budget", callout: "BISHAN" } });
+    const j = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(j));
+    assert.deepEqual([j.settings.adsets.BISHAN.daily, j.settings.adsets.BISHAN.pin, j.drift.map((d) => d.kind)], [80, 0, ["ads_extra"]], "the setting taken, the rest of the ad set's settings kept, the line gone");
+    assert.equal(JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")).adsets.BISHAN.facts.daily, 80, "the record of what the app sent follows too");
+    r = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/drift/take`, { method: "POST", body: { kind: "adset_budget", callout: "BISHAN" } });
+    assert.equal(r.status, 404, "taken already: not in the last pull any more");
+    r = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/drift/take`, { method: "POST", body: { kind: "ads_extra" } });
+    assert.equal(r.status, 400, "a kind the route does not take");
+    r = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/drift/take`, { method: "POST", body: { kind: "campaign_name" } });
+    assert.equal(r.status, 404);
+  } finally { for (const [f, v] of Object.entries(keep)) { if (v == null) rmSync(join(out, f), { force: true }); else writeFileSync(join(out, f), v); } }
 });
