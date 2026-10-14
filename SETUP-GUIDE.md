@@ -1,584 +1,136 @@
-# Static Ad Generator v2 - Setup & Usage Guide
+# Setup & Usage Guide
 
-A fully automated pipeline for generating production-ready static ad images and Meta ad copy using Claude Code + Google Gemini AI. One command produces 50 ad creatives for any brand, complete with ad copy and a ready-to-upload CSV for Ads Uploader.
+How to set the panel up on a Mac and take a gym from nothing to a paused campaign on Meta.
 
----
-
-## Table of Contents
-
-1. [What This Does](#what-this-does)
-2. [Prerequisites](#prerequisites)
-3. [Initial Setup](#initial-setup)
-4. [The 4-Phase Pipeline](#the-4-phase-pipeline)
-5. [Phase 1: Brand Research](#phase-1-brand-research)
-6. [Phase 2: Prompt Generation](#phase-2-prompt-generation)
-7. [Phase 3: Image Generation](#phase-3-image-generation)
-8. [Phase 4: Ad Copy & Upload](#phase-4-ad-copy--upload)
-9. [Command Reference](#command-reference)
-10. [Folder Structure](#folder-structure)
-11. [Troubleshooting](#troubleshooting)
-12. [Cost Estimates](#cost-estimates)
-
----
-
-## What This Does
-
-This project takes a **brand name + website URL** and automatically:
-
-1. Researches the brand (scrapes website, downloads images, takes screenshots, builds a Brand DNA document)
-2. Generates 50 unique ad prompts from a template library, customized with the brand's colors, voice, product details, and pricing
-3. Fires those prompts to Google Gemini's image generation API, producing images in both **1:1** (feed) and **9:16** (Stories/Reels) aspect ratios
-4. Builds an interactive HTML gallery so you can pick the best image for each ad
-5. Writes Meta-compliant ad copy for 3 funnel stages (TOF/MOF/BOF) using the Hook Bank framework library
-6. Exports everything as an Ads Uploader-compatible CSV + Excel file, ready to upload and publish
-
-**End result:** ~150 ad variations (50 templates x 3 funnel stages), each with paired images, copy, and targeting — ready to go live on Meta as paused ads.
+1. [Prerequisites](#prerequisites)
+2. [Install](#install)
+3. [Keys](#keys)
+4. [The Meta app](#the-meta-app)
+5. [Start the panel](#start-the-panel)
+6. [A new gym](#a-new-gym)
+7. [The first campaign](#the-first-campaign)
+8. [Publishing](#publishing)
+9. [Results](#results)
+10. [Copy](#copy)
+11. [Tests](#tests)
+12. [Troubleshooting](#troubleshooting)
+13. [What it costs](#what-it-costs)
 
 ---
 
 ## Prerequisites
 
-### Software
-
-| Requirement | Details |
+| | |
 |---|---|
-| **Claude Code** | Anthropic's CLI tool — this is the AI that orchestrates the entire pipeline. Install from [claude.ai/code](https://claude.ai/code) |
-| **Node.js 18+** | Required for the image generation and gallery scripts. Download from [nodejs.org](https://nodejs.org) |
-| **Firecrawl CLI** | Website scraper used in Phase 1 brand research. Install globally: `npm install -g firecrawl-cli` |
-| **VS Code** (recommended) | Claude Code runs inside VS Code as an extension. You can also use the standalone CLI |
+| **macOS** | The text layer, the website reader and the panel tests drive the Mac's installed **Google Chrome** over the DevTools protocol; iPhone HEIC uploads are converted with the Mac's `sips`. |
+| **Node.js 18+** | [nodejs.org](https://nodejs.org). Built-in `fetch`, `parseArgs` and `WebSocket` are used; nothing else is downloaded. |
+| **Google Chrome** | Installed in `/Applications`. Never opened for you; it runs headless. |
+| **Claude Code** (optional) | The agent that built this and maintains it; `CLAUDE.md` is its record. The panel runs without it. |
 
-### API Keys
-
-You need **two** API keys to run the full pipeline:
-
-| Service | What It Does | How to Get It |
-|---|---|---|
-| **Firecrawl API** (required) | Scrapes brand websites + takes full-page screenshots in Phase 1 | [firecrawl.dev](https://firecrawl.dev) — sign up for a free account, get your API key from the dashboard |
-| **Google Gemini API** (required) | Generates ad images from text prompts | [aistudio.google.com](https://aistudio.google.com) — create a project, enable the Generative Language API, create an API key |
-| **FAL.ai API** (optional backup) | Backup image generator if Gemini is down | [fal.ai](https://fal.ai) — sign up, add credits, get API key from dashboard |
-
-> **Firecrawl free tier** is enough to get started and test the pipeline. If this becomes your daily driver, you'll want a paid plan for higher rate limits — or integrate another scraping service.
-
----
-
-## Initial Setup
-
-### Step 1: Clone or Copy the Project
-
-Copy this entire project folder to your machine. The folder structure should look like:
-
-```
-Static Ads v2/
-├── .claude/
-│   ├── skills/
-│   │   ├── static-ads/SKILL.md          # Image generation skill
-│   │   └── ad-copy-builder/             # Ad copy skill + references
-│   └── commands/
-│       ├── static-ads.md                # Slash command for /static-ads
-│       └── ad-copy-builder.md           # Slash command for /ad-copy-builder
-├── skills/references/
-│   ├── generate_ads_gemini.mjs          # Primary image generation script
-│   ├── generate_ads.mjs                 # Backup (FAL.ai) generation script
-│   ├── gallery-selector.mjs             # Gallery HTML builder
-│   └── ad-library.mjs                   # Ad Library preview builder
-├── brands/                              # Your brand workspaces go here
-├── hook-bank.md                         # 100 hook frameworks for ad copy
-├── CLAUDE.md                            # Project instructions for Claude
-├── package.json
-└── .env.example                         # Rename to .env and add your API keys
-```
-
-### Step 2: Install Dependencies
-
-Open a terminal in the project folder and run:
+## Install
 
 ```bash
+git clone https://github.com/justus-ship-it/Static-Ads.git
+cd Static-Ads
 npm install
+cp .env.example .env
 ```
 
-This installs the `xlsx` package (used to generate Excel files for Ads Uploader). Everything else uses Node.js built-in modules.
+`npm install` brings one package (`xlsx`, kept for the old CSV export). Everything else is built in.
 
-### Step 3: Install & Authenticate Firecrawl CLI
+## Keys
 
-Firecrawl is used in Phase 1 to scrape brand websites and take full-page screenshots. Install it globally and authenticate:
+Edit `.env` (it is gitignored; keys never go anywhere else — a gym's profile refuses to hold one).
 
-```bash
-npm install -g firecrawl-cli
-firecrawl auth
-# Paste your Firecrawl API key when prompted
-```
-
-Get your API key at [firecrawl.dev](https://firecrawl.dev) — the free account is enough to get started. If this becomes your daily driver, you'll want a paid plan for higher rate limits or to integrate another scraping service.
-
-### Step 4: Add Your API Keys
-
-Rename `.env.example` to `.env` and replace the placeholder values with your real API keys:
-
-```
-# Google Gemini API Key (required - primary image generator)
-GEMINI_KEY=your-gemini-api-key-here
-
-# FAL.ai API Key (optional - backup image generator)
-FAL_KEY=your-fal-api-key-here
-```
-
-### Step 5: Open the Project in Claude Code
-
-Open the project folder in VS Code with the Claude Code extension, or navigate to it in the Claude Code CLI:
-
-```bash
-cd "path/to/Static Ads v2"
-claude
-```
-
-Claude Code will automatically read the `CLAUDE.md` file and understand the entire pipeline.
-
----
-
-## The 4-Phase Pipeline
-
-Here's the big picture of how a brand goes from URL to live ads:
-
-```
-Brand Name + URL
-      │
-      ▼
-┌─────────────────────────┐
-│  Phase 1: Brand Research │  Claude scrapes the site, downloads images,
-│  (Brand DNA)             │  takes screenshots, writes brand-dna.md
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│  Phase 2: Prompts        │  Claude fills 50 templates with brand details
-│  (prompts.json)          │  → prompts.json
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│  Phase 3: Image Gen      │  Node script sends prompts to Gemini API
-│  (outputs/ + gallery)    │  → downloads images → builds gallery.html
-└────────────┬────────────┘
-             │
-      You pick the best images in the gallery
-             │
-             ▼
-┌─────────────────────────┐
-│  Phase 4: Ad Copy        │  Claude writes TOF/MOF/BOF copy for each ad
-│  (CSV + Excel + preview) │  → upload.csv + upload-2.xlsx + ad-library.html
-└────────────┬────────────┘
-             │
-             ▼
-      Upload to Ads Uploader → Publish as Paused on Meta
-```
-
----
-
-## Phase 1: Brand Research
-
-### How to Start
-
-In Claude Code, use the slash command:
-
-```
-/static-ads YourBrand https://yourbrand.com "Product Name"
-```
-
-Or just tell Claude what you want:
-
-```
-Create static ads for YourBrand at https://yourbrand.com. The product is [description].
-```
-
-### What Claude Will Do
-
-1. **Create the brand folder** — `brands/yourbrand/` with `product-images/` and `brand-images/` subfolders
-2. **Ask you about pricing** — Claude needs to know:
-   - What price to advertise and how it's billed (monthly, annual, etc.)
-   - Whether it needs a qualifier ("starting at", "as low as")
-   - Any compliance/legal requirements for advertising
-3. **Scrape the website** — Downloads brand images, logos, and product photos
-4. **Take screenshots** — Full-page screenshots of the homepage and key pages
-5. **Visually inspect screenshots** — Claude looks at the actual rendered website to extract accurate brand colors (this prevents color mistakes that happen with text-only scraping)
-6. **Research the brand** — Searches for brand guidelines, press coverage, competitor positioning
-7. **Write `brand-dna.md`** — A comprehensive brand identity document with colors, fonts, voice, product details, pricing rules, and a prompt modifier paragraph
-
-### What You Need to Do
-
-**Before Phase 2, drop your product images into the brand folder:**
-
-```
-brands/yourbrand/product-images/
-├── product-front.png
-├── product-angle.png
-├── product-lifestyle.jpg
-└── ... (any product photos you want in the ads)
-```
-
-These images are sent to the AI as visual references so it can accurately reproduce your product in the generated ads.
-
-Claude will ask you to confirm which images to use and whether all images go with every prompt or specific images go with specific templates.
-
-### Review the Brand DNA
-
-After Phase 1 completes, **open `brands/yourbrand/brand-dna.md` and review it.** Check:
-
-- Are the brand colors correct? (hex codes should match your actual brand)
-- Is the pricing structure right?
-- Does the voice/tone match your brand?
-- Are the product details accurate?
-
-Edit anything that's wrong before proceeding — this document feeds into every prompt.
-
----
-
-## Phase 2: Prompt Generation
-
-### What Happens
-
-Claude reads the Brand DNA and fills out **50 ad prompt templates** with your brand's specific details. Each template is a different ad style:
-
-| # | Template | Description |
+| Key | Needed for | Where |
 |---|---|---|
-| 01 | Headline | Bold headline with key benefit |
-| 02 | Offer/Promotion | Price-forward promotional ad |
-| 03 | Testimonial/Review | Customer quote or review card |
-| 04 | Features & Benefits | Product feature callout grid |
-| 05 | Problem/Solution | Pain point → solution framing |
-| 06 | Lifestyle | Aspirational scene with product |
-| 07 | Us vs. Them | Side-by-side comparison |
-| 08 | Social Proof | Stats, reviews, trust signals |
-| 09 | Negative Marketing | "Don't buy this if..." |
-| ... | ... | (50 templates total) |
+| `GEMINI_KEY` | every picture, check and draft | [aistudio.google.com](https://aistudio.google.com) — a key with the image models enabled |
+| `META_ACCESS_TOKEN`, `META_APP_ID`, `META_APP_SECRET` | the Meta link, publishing, results, the targeting import, Instagram onboarding | see [The Meta app](#the-meta-app) |
+| `APIFY_TOKEN` | the swipe-intel skill only | optional |
+| `FAL_KEY` | the unused backup generator | optional |
 
-### Output
+Paste only the key itself after the `=` — no label in front of it.
 
-Prompts are saved to `brands/yourbrand/prompts.json` — a JSON file containing all 50 prompts, each with:
-- Template number and name
-- The full prompt text (with brand colors, product details, pricing baked in)
-- Reference image assignments (which product photos to include)
+## The Meta app
 
-You can review this file and edit any prompts before running image generation.
+One Meta app for the agency, Live, under the agency's own business portfolio; a system user whose partner-shared access reaches each client's ad account and Page. The panel's **Meta link** page lists these steps too.
 
----
+1. In the agency's Business Manager: **an app** of type Business with the Marketing API product, switched to **Live** (ad creatives cannot be made by an app in Development mode). The app's business must pass business verification.
+2. **A system user** in that portfolio (admin). Generate a token with `ads_management`, `ads_read`, `business_management`, `pages_show_list`, `pages_read_engagement`, `pages_manage_ads`, and `instagram_basic` for the Instagram onboarding. Put the token, the app id and the app secret in `.env` as the three shared `META_*` keys.
+3. **Each client** shares their ad account and Facebook Page with the agency's portfolio (Partners → Share assets), and the agency **assigns** both to the system user. Shared but not assigned is the usual reason a gym "can't be found" on the Meta link page.
+4. For Singapore delivery Meta needs a verified advertiser identity on every ad set; the panel reads it from the account's existing ad sets, so the client should have run at least one ad by hand.
+5. A gym may carry its own keys instead (`META_ACCESS_TOKEN_{GYM}` and so on, the folder name upper-cased); they win over the shared ones.
 
-## Phase 3: Image Generation
+`node --env-file=.env skills/references/meta-api.mjs --check` prints what the token can act on, without a token value in the output.
 
-### Running the Script
-
-Once prompts.json is ready, run the image generation script:
+## Start the panel
 
 ```bash
-# Full run — all 50 templates, 4 images each, both aspect ratios
-# Generates ~400 images (50 templates × 4 images × 2 ratios)
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/yourbrand
-
-# Test run — just 3 templates, 1 image each, one ratio (cheap/fast)
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/yourbrand --templates 1,7,13 --num-images 1 --ratios 1x1
-
-# Specific templates only
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/yourbrand --templates 1,4,7,9,13 --num-images 4
-
-# Increase parallelism for faster generation (default is 2, recommended max is 5)
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/yourbrand --max-concurrent 5
+npm run panel
 ```
 
-### Script Options
+or double-click **Start Panel.command** in Finder. The Terminal shows the address and the port (`http://localhost:4310`) and keeps the panel up until Ctrl+C; after a crash it starts it again. To load new code while it runs, `kill` the panel's process id shown in the banner — the keeper restarts it and running batches carry on.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--brand-dir` | (required) | Path to the brand folder |
-| `--templates` | all | Comma-separated template numbers to generate (e.g., `1,7,13`) |
-| `--num-images` | 4 | Number of image variations per prompt per ratio |
-| `--ratios` | `1x1,9x16` | Which aspect ratios to generate (`1x1`, `9x16`, or both) |
-| `--max-concurrent` | 2 | Number of parallel API requests (max recommended: 5) |
+`node ui/keep-panel.mjs --port 4311` for another port. If the port already answers, a panel is running elsewhere and nothing is started.
 
-### What the Script Does
+## A new gym
 
-1. Reads `prompts.json` and product images from `product-images/`
-2. Sends each prompt to Google Gemini with product images as base64 reference
-3. Downloads generated images into organized folders
-4. Automatically appends safe zone instructions to 9:16 images (keeps top 15% and bottom 25% clear of text/logos for Meta Stories/Reels UI overlays)
-5. Builds `gallery.html` — an interactive gallery for reviewing and selecting images
+Top bar → **New client**: a name and a folder slug. That makes `brands/{gym}/` with a starter profile. Then, in the rail's **Profile** section:
 
-### Output Structure
+1. **From the website** — type the address, Read. Our own Chrome reads the home page and a few of its own pages: address and postal code (placed on the map through OneMap), phone, Instagram and Facebook links, colours measured from the page, fonts, logo candidates, every photo at its original size, sorted by what it shows. Tick what to keep, **Add to the gym**. Nothing is filed without this step.
+2. **From Instagram** — the handle (pre-filled when the website named one), the latest 100 to 500 posts, photos only (videos and their covers are skipped), **Add to the gym**. Needs the Meta keys.
+3. **Identity & locations**, **Brand & photography** (the photography rules: must, never, the people), **Offer wording**, **Ad defaults** (photos per batch, image model, palettes: reference · brand · both), **Targeting & budget** (budget level, pins by postal code, ages, gender per callout, detailed-targeting presets imported from the account), **Meta link** (Check the link → pick the ad account, Page, Instagram, lead form, pixel).
+4. **Library → Photos & assets** — drop more photos (logo, premises, coaches, members; 1080 px minimum for the ones ads use). Select premises photos → **Survey** (free) → **Clean** (a few image calls each) removes old-brand marks, signage and weight numbers; the cleaned copies are what batches use. A photo the check still flags can be kept with **Use it anyway**.
+5. **Library → Scenes** — **Draft the first scenes…**: the agent writes scenes to the gym's photography rules; approve the good ones, reject the rest with a reason. The first approval approves the library. Batches only photograph approved scenes.
 
-```
-brands/yourbrand/outputs/{date}-V{n}/
-├── 01-headline/
-│   ├── prompt.txt
-│   ├── 1x1/
-│   │   ├── headline_1x1_v1.png
-│   │   ├── headline_1x1_v2.png
-│   │   ├── headline_1x1_v3.png
-│   │   └── headline_1x1_v4.png
-│   └── 9x16/
-│       ├── headline_9x16_v1.png
-│       ├── headline_9x16_v2.png
-│       ├── headline_9x16_v3.png
-│       └── headline_9x16_v4.png
-├── 02-offer-promotion/
-│   └── ...
-├── ... (50 template folders)
-└── gallery.html
-```
+The **Overview** page says what each section still needs before the gym can create, and before it can publish.
 
-### Selecting Your Best Images
+## The first campaign
 
-1. **Open `gallery.html`** in your browser (the script opens it automatically, or double-click it)
-2. You'll see all generated images in a dark-theme gallery, grouped by template
-3. **Click the radio button** under the best image for each template and ratio
-4. Click **"Save Selections"** at the top of the page
-5. This writes `selections.json` into the output folder — Phase 4 reads this file
+**Create**: the offer in its exact words (chips remember earlier wordings), one to four location callouts, the audience callout (MEN WANTED, LADIES WANTED, or none), how many generated photos and which real ones, looks per photo, the Spread switch (exercises, ages, settings, equipment spread across the batch), optional direction (words or a reference image → the batch drafts its own scenes for approval). The preview on the right renders your words live.
 
-If you need to rebuild the gallery later (e.g., it's missing or empty):
+**Plan (free)** shows what will be made and the most it can cost. **Generate** asks you to confirm the words and the call cap, then the **Generating** screen shows each photo as it passes its checks. **Stop** ends a run; what it finished and spent is kept.
+
+**Review**: one ad at a time, the 1:1 and the 9:16 side by side, Keep / Exclude (K, X, Space, arrows). Excluding a photo excludes every ad it is in. **Make Stories versions** makes the 9:16 photos for the kept ads within a cap. **Change the words** re-renders the batch for free.
+
+## Publishing
+
+Review → **Publish to Meta →** opens the Publish screen: the campaign (name, budget), one card per location callout (pin, radius, ages, gender, preset, Estimate reach), the ads with their 9:16, **Copy** and **Headlines** (below), the destination (lead form, Instagram identity). Every change saves. **Create on Facebook, paused** confirms the counts and the day's budget, then creates images, campaign, ad sets, creatives and ads — all PAUSED — recording each as it lands. A second run makes nothing twice; changed words remake only those ads.
+
+Switching the ads on stays in Ads Manager. For a gym whose Page is not shared yet, **Download images (zip)** gives the kept ads by ad set for building by hand.
+
+## Results
+
+**Results**: campaigns → ad sets → ads, each row with its photo, layout, words, targeting and Meta's numbers (spend, leads, cost per lead, CTR). **Pull results from Meta** refreshes; the account history pull reads everything in the account (whoever made it) and lets you bring the best ads into the library as references.
+
+## Copy
+
+**Library → Copy** is the shared copy library: skeletons of proven copies and headlines with `{GYM}`, `{OFFER}`, `{AREA}`, `{AUDIENCE}`, `{BUTTON}` and `{DURATION}` as placeholders; edit, retire with a reason, restore, or write one. Paste a copy that worked under the gym's references and it is read into the library as a skeleton in the same step.
+
+On a Publish screen, **Draft 10 copies** / **Draft 10 headlines** writes from the library for this gym and offer, judges the drafts for clarity and recommends five of distinct angles; keep, exclude, edit, or add your own. The kept ones ride on every ad as Meta text options.
+
+## Tests
 
 ```bash
-node skills/references/gallery-selector.mjs --output-dir brands/yourbrand/outputs/{version} --open
+node --test --test-concurrency=1 skills/references/*.test.mjs ui/*.test.mjs
 ```
 
----
-
-## Phase 4: Ad Copy & Upload
-
-### Starting the Copy Builder
-
-After selecting your images in the gallery and saving `selections.json`, tell Claude:
-
-```
-create copy for yourbrand {version-folder-name}
-```
-
-For example:
-```
-create copy for yourbrand 3-30-26-V1
-```
-
-Or use the slash command:
-```
-/ad-copy-builder yourbrand {version}
-```
-
-### What Claude Does
-
-1. **Reads your selections** — loads `selections.json`, `brand-dna.md`, and `hook-bank.md`
-2. **Matches hooks to templates** — For each selected template, picks 3 hook frameworks (one per funnel stage) from the 100-hook library
-3. **Writes 3 variants per template:**
-
-| Funnel Stage | Audience | Copy Style |
-|---|---|---|
-| **TOF (Cold)** | Never heard of you | Curiosity-driven, no hard sell, no price upfront |
-| **MOF (Warm)** | Visited your site, engaged with content | Differentiation, social proof, "why us" |
-| **BOF (Retargeting)** | Abandoned checkout, started signup | Direct offer, price, guarantee, hard CTA |
-
-4. **Builds the CSV** — Each template produces 3 rows (TOF + MOF + BOF), with all fields mapped to Ads Uploader's format
-5. **Creates `Ad-uploads/` folder** — Copies selected images with clean filenames (strips version suffixes so 1x1 and 9x16 variants pair correctly)
-6. **Generates `upload-2.xlsx`** — Excel version of the CSV for Ads Uploader
-7. **Generates `ad-library.html`** — A Facebook Ad Library-style preview so you can see how every ad will look before publishing
-
-### Output Files
-
-```
-brands/yourbrand/outputs/{version}/
-├── upload.csv              # Ads Uploader CSV
-├── upload-3.csv            # Funnel-format CSV (same data)
-├── upload-2.xlsx           # Excel version for Ads Uploader
-├── copy-summary.md         # Human-readable copy for review
-├── ad-library.html         # Visual preview of all ads
-├── selections.json         # Your image selections
-└── Ad-uploads/             # Flat folder of selected images
-    ├── headline_1x1.jpg
-    ├── headline_9x16.jpg
-    ├── offer-promotion_1x1.jpg
-    ├── offer-promotion_9x16.jpg
-    └── ... (all selected images, clean filenames)
-```
-
-### Uploading to Meta via Ads Uploader
-
-1. Open [Ads Uploader](https://adsuploader.com)
-2. Upload `upload-2.xlsx` as the data file
-3. Point to the `Ad-uploads/` folder as your media root
-4. Map the CSV columns to Meta fields (first time only — Ads Uploader remembers the mapping)
-5. For Stories/Reels placements: attach the 9x16 image manually under placement-specific media
-6. **Publish as PAUSED** — always review all ads before setting them live
-
----
-
-## Command Reference
-
-### Quick Reference (Copy-Paste)
-
-```bash
-# === PHASE 1-2: Brand Research + Prompts (run in Claude Code) ===
-/static-ads mybrand https://mybrand.com "Product Name"
-
-# === PHASE 3: Image Generation ===
-
-# Full run (all 50 templates)
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/mybrand
-
-# Test run (3 templates, fast & cheap)
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/mybrand --templates 1,7,13 --num-images 1 --ratios 1x1
-
-# Rebuild gallery if needed
-node skills/references/gallery-selector.mjs --output-dir brands/mybrand/outputs/{version} --open
-
-# === PHASE 4: Ad Copy (run in Claude Code) ===
-# "create copy for mybrand {version}"
-
-# === UTILITIES ===
-
-# Rebuild gallery for existing output folder
-node skills/references/gallery-selector.mjs --output-dir brands/mybrand/outputs/{version} --open
-
-# Generate ad library preview
-node skills/references/ad-library.mjs --output-dir brands/mybrand/outputs/{version} --open
-```
-
-### Backup: FAL.ai Image Generation
-
-If Google Gemini is down or unavailable, use the backup FAL.ai script:
-
-```bash
-# Full run (~$48 for 50 templates at default settings)
-node skills/references/generate_ads.mjs --brand-dir brands/mybrand
-
-# Test run
-node skills/references/generate_ads.mjs --brand-dir brands/mybrand --templates 1,7,13 --num-images 1 --resolution 1K
-```
-
-FAL.ai options include `--resolution` (0.5K, 1K, 2K, 4K) instead of relying on prompt-based aspect ratio control.
-
----
-
-## Folder Structure
-
-### Project Root
-
-```
-Static Ads v2/
-├── .claude/                    # Claude Code configuration
-│   ├── skills/                 # Skill definitions (the AI's instructions)
-│   │   ├── static-ads/         # Phase 1-3 skill
-│   │   └── ad-copy-builder/    # Phase 4 skill + compliance rules
-│   └── commands/               # Slash commands (linked to skills)
-├── skills/references/          # Node.js scripts
-├── brands/                     # All brand workspaces
-│   ├── mybrand/
-│   ├── anotherbrand/
-│   └── ...
-├── hook-bank.md                # 100 hook frameworks for ad copywriting
-├── CLAUDE.md                   # Project instructions for Claude
-├── package.json                # Node dependencies (just xlsx)
-└── .env.example                # Rename to .env and add your API keys
-```
-
-### Per-Brand Workspace
-
-```
-brands/mybrand/
-├── product-images/             # YOUR product photos (drop these in manually)
-│   ├── product-front.png
-│   └── product-angle.png
-├── brand-images/               # Auto-downloaded from website during Phase 1
-│   ├── homepage-screenshot.png
-│   ├── logo.png
-│   └── image-index.md
-├── brand-dna.md                # Brand identity document (generated Phase 1)
-├── prompts.json                # 50 ad prompts (generated Phase 2)
-└── outputs/
-    └── 3-30-26-V1/             # One folder per generation run
-        ├── 01-headline/
-        │   ├── 1x1/            # Square images (feed, desktop)
-        │   └── 9x16/           # Vertical images (Stories, Reels)
-        ├── ...
-        ├── gallery.html        # Image selection UI
-        ├── selections.json     # Your picks
-        ├── upload.csv           # Ads Uploader CSV
-        ├── upload-2.xlsx        # Excel version
-        ├── copy-summary.md      # Human-readable copy
-        ├── ad-library.html      # Ad Library preview
-        └── Ad-uploads/          # Clean image files for upload
-```
-
----
+Offline (a fake Gemini, a fake Graph API, a fake map; real Chrome on synthetic photos), several minutes. Run them sequentially and not while a batch is generating: each file starts its own Chrome.
 
 ## Troubleshooting
 
-### "GEMINI_KEY not found"
+| | |
+|---|---|
+| **"Cannot parse access token"** | A label was pasted in front of the key in `.env`; keep only the value after `=`. |
+| **"could not reach Meta (fetch failed)"** | The machine is overloaded (a full test run alongside a batch) or offline; try again when quiet. |
+| **A gym is missing from the ad accounts list** | Shared with the portfolio but not assigned to the system user. Assign it in Business Manager → Users → System users. |
+| **"no verified Singapore advertiser identity"** | The account has no ad set carrying one yet; publish one ad by hand in Ads Manager, then open the Publish screen again. |
+| **"no usable pin"** | A pin with a postal code and no point: open Targeting & budget and Save (it is placed), or press Find. |
+| **A photo was refused as low resolution** | Ads are 1080 px; ask the gym for the shoot originals, or tick Keep it anyway. |
+| **"timed out: DevTools connect"** | Chrome could not start in time on a busy machine; the start is retried once on its own. |
+| **The panel stopped when the Claude app's Browser pane closed** | Start it from Terminal with `npm run panel` or Start Panel.command instead. |
+| **Primary texts came as one block** | Older drafts; the Copy card offers **Add line breaks**. |
 
-Make sure your `.env` file is in the project root (same folder as `package.json`) and contains:
-```
-GEMINI_KEY=your-key-here
-```
+## What it costs
 
-### Gallery is empty or missing
-
-Rebuild it:
-```bash
-node skills/references/gallery-selector.mjs --output-dir brands/mybrand/outputs/{version} --open
-```
-
-### Images look wrong / wrong brand colors
-
-1. Check `brand-dna.md` — are the hex codes correct?
-2. Edit the Brand DNA and re-run Phase 2 (prompt generation) to update `prompts.json`
-3. Re-run Phase 3 for the affected templates:
-   ```bash
-   node skills/references/generate_ads_gemini.mjs --brand-dir brands/mybrand --templates 1,7,13
-   ```
-
-### Rate limiting / API errors
-
-- Reduce parallelism: `--max-concurrent 2` (or even 1)
-- The script automatically retries failed requests up to 3 times with 10-second delays
-- If Gemini is persistently failing, switch to the FAL.ai backup script
-
-### "xlsx" module not found
-
-Run `npm install` in the project root.
-
-### Python errors
-
-This project does NOT use Python. All scripts are Node.js. If you see Python errors, you're running the wrong file. Use the `.mjs` scripts, not any `.py` files.
-
----
-
-## Cost Estimates
-
-### Google Gemini (Primary)
-
-Gemini pricing is per-request. A full 50-template run with 4 images each and both aspect ratios = ~400 API calls. Check current Gemini pricing at [ai.google.dev/pricing](https://ai.google.dev/pricing).
-
-**Cheap test run** (3 templates, 1 image, 1 ratio = 3 API calls):
-```bash
-node skills/references/generate_ads_gemini.mjs --brand-dir brands/mybrand --templates 1,7,13 --num-images 1 --ratios 1x1
-```
-
-### FAL.ai (Backup)
-
-| Resolution | Per Image | Full Run (50 templates, 4 imgs, 2 ratios = 400 imgs) |
-|---|---|---|
-| 1K | ~$0.08 | ~$32 |
-| 2K | ~$0.12 | ~$48 |
-| 4K | ~$0.16 | ~$64 |
-
----
-
-## Tips for Best Results
-
-1. **Product images matter** — Higher quality product photos = better generated ads. Use clean PNGs with transparent or white backgrounds when possible.
-
-2. **Review the Brand DNA** — Spend 2 minutes checking the colors and pricing before generating 400 images. Fixing one hex code is cheaper than re-running everything.
-
-3. **Start with a test run** — Always run 3 templates first to check quality before committing to the full 50:
-   ```bash
-   node skills/references/generate_ads_gemini.mjs --brand-dir brands/mybrand --templates 1,7,13 --num-images 2 --ratios 1x1
-   ```
-
-4. **Use the gallery** — The selection step is where you control quality. Pick only the best images for each template. You can exclude weak templates entirely.
-
-5. **Publish paused** — Always upload to Meta as paused ads first. Review everything in Ads Manager before turning anything on.
-
-6. **Iterate** — You can re-run specific templates anytime. If template 7 ("Us vs. Them") didn't turn out well, just re-run that one with `--templates 7`.
+Only image calls cost real money; checks and drafts are text/vision calls at a fraction of that. A batch with 10 generated photos uses 10–20 image calls (retries included, capped by the brief's `max_calls`); Stories versions another 10–15; cleaning a real photo 2–4. Changing words, re-rendering, planning and publishing are free. Current Gemini prices: [ai.google.dev/pricing](https://ai.google.dev/pricing).
