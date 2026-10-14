@@ -419,6 +419,12 @@ test("U9 scenes through the panel: drafts listed; approve and reject write exact
   assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 13 })).status, 400);
   assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: "3" })).status, 400);
   assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 3, reference: "other.png" })).status, 400, "not uploaded");
+  // What the drafts must cover (2026-10-15, Create's "Draft scenes for them"): tag:value pairs from the vocabulary, else refused.
+  for (const cover of [[], ["colour:red"], ["age:ancient"], ["exercise:"], "exercise:lunge", Array(9).fill("exercise:lunge")]) assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 2, cover })).status, 400, JSON.stringify(cover));
+  const covered = await (await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 2, cover: ["exercise:lunge", "age:older"] })).json();
+  assert.ok(covered.id, "a cover from the vocabulary starts the run");
+  const coveredLog = await (await fetch(`${panel.url}/api/run/${covered.id}/stream`)).text();
+  assert.match(coveredLog, /exercise lunge \(\d+\), age older \(\d+\)/, "the drafter is directed at exactly those tags");
   assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 3, reference: "../.env" })).status, 400);
   assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 3, words: "x" })).status, 400);
   const ran = await runAndWait({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 2, words: " older women lunging ", reference: "ad.png", extra: "--approve all" });
@@ -1327,6 +1333,7 @@ test("U20 the Publish screen: the plan for a batch's kept ads from the API (noth
   assert.ok(existsSync(join(out, "publish-settings.json")) && r.settings.updated);
   // Before you create (2026-10-11): the checks ride on the answer, in words, with where to fix each; the plan stays ready.
   assert.deepEqual([r.readiness.ready, typeof r.readiness.to_check, r.readiness.checks.every((c) => typeof c.text === "string" && [true, false, null].includes(c.ok))], [true, "number", true]);
+  assert.ok("lead_form_name" in r && (r.lead_form_name === null || typeof r.lead_form_name === "string"), "the campaign's form name rides on the answer for the Destination card (2026-10-15)");
   assert.ok(r.readiness.checks.some((c) => c.where === "copy" && /copy/.test(c.text)) && r.readiness.checks.some((c) => c.where === "ads"), JSON.stringify(r.readiness));
   // The ad set's own name (2026-10-10): saved with the rest, on the plan and its payload; cleared, the house style returns.
   r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { campaign: { name: "Test campaign", level: "campaign", daily: 80 }, adsets: { [first]: { pin: 1, age_min: 30, gender: "women", preset: "a97f701a193c", name: "Women near Bishan, October" } }, words: { message: "Come and train.", headline: "Six weeks", description: "", cta: "APPLY_NOW" }, destination: {} } })).json();

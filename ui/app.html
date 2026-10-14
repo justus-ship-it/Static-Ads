@@ -1266,7 +1266,7 @@ function paintDerived(){
   // What the Spread switch will ask for, cut to this gym's scenes for the batch's audience (the server's spreadFor).
   const sp = $('#bSpread'), spr = c?.spread;
   if (sp) sp.innerHTML = B.mode==='rerender' || !(Number(B.draft.generated)>0) ? '' : directionFromDraft() ? 'Spread is off for a directed batch: the reference or your words decide what the photos show.' : !B.draft.spread || !spr ? '' : spr.reason ? `Spread: ${esc(spr.reason)}.`
-    : `Spread asks for ${Object.entries(spr.must_show).map(([t,v])=>`${esc(t)} ${v.map(esc).join(', ')}`).join(' · ') || 'nothing this library can show'}.${spr.left_out.length?` <span style="color:var(--warn)">Left out, no ${esc(s?.scenes_for||'')} scene shows: ${spr.left_out.map(esc).join(', ')}.</span> Draft scenes for them on <a href="#" onclick="go('scenes');return false">Scenes</a> to include them.`:''}`;
+    : `Spread asks for ${Object.entries(spr.must_show).map(([t,v])=>`${esc(t)} ${v.map(esc).join(', ')}`).join(' · ') || 'nothing this library can show'}.${spr.left_out.length?` <span style="color:var(--warn)">Left out, no ${esc(s?.scenes_for||'')} scene shows: ${spr.left_out.map(esc).join(', ')}.</span> <button class="sm" onclick="bDraftGaps()" ${STATE.run&&!STATE.run.done?'disabled':''}>Draft scenes for them…</button> <span class="hint">one text call; you approve them on <a href="#" onclick="go('scenes');return false">Scenes</a> before a batch uses them</span>`:''}`;
   const errs = c?.errors || [], blank = !B.touched && (B.draft?.offer||'')==='', noLoc = !(B.draft?.locations||[]).some(l=>l!=='');
   // Every problem is shown from the start (2026-10-10; before, nothing until a field was touched) — except an empty offer or location row on an untouched form, which is where every batch begins.
   const shown = blank ? errs.filter(e=>!/^offer is required|^locations must list/.test(e)) : errs;
@@ -1317,6 +1317,19 @@ async function doPreview(){
 }
 
 const WORDS = new Set(['offer','audience']);
+/** Draft scenes for what the Spread leaves out (2026-10-15): the scene refresh directed at exactly those tags, as drafts for approval. */
+function bDraftGaps(){
+  const spr = B.check?.spread, s = B.check?.summary; if (!spr?.left_out?.length) return;
+  const cover = spr.left_out.map(x=>x.replace(/^(\S+)\s+/, '$1:')), audience = ['men','women','any'].includes(s?.scenes_for) ? s.scenes_for : 'any', count = Math.min(12, Math.max(1, cover.length));
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card">
+    <h2>Draft ${count} scene${count===1?'':'s'} for ${esc(audience==='any'?'everyone':audience)}?</h2>
+    <p class="hint">One for each of: <b>${spr.left_out.map(esc).join(', ')}</b>. One text call, no image calls. They land on Scenes as drafts; nothing generates from them until you approve them, and the Spread includes them once approved.</p>
+    <div class="row"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" onclick="bDraftGapsGo(${JSON.stringify(cover).replace(/"/g,'&quot;')},'${audience}',${count})">Draft them</button></div></div></div>`;
+}
+function bDraftGapsGo(cover, audience, count){
+  $('#gModal').innerHTML = '';
+  run({kind:'scenes-refresh', gym:STATE.sel, audience, count, cover}, async(code)=>{ B.setup = null; await loadSetup(); const d = B.setup?.scenes?.drafts || 0; if (code===0) toast(`${d} scene draft${d===1?'':'s'} await approval on Scenes`, 'ok'); paintBatch($('#view')); scheduleCheck(0); schedulePreview(0); });
+}
 function bSet(k, v){ B.draft[k]=v; B.touched=true; if (k==='audience') paintAud(); scheduleCheck(); if (WORDS.has(k) || k==='generated') schedulePreview(); }
 function bLoc(i, v){ B.draft.locations[i]=v; B.touched=true; scheduleCheck(); schedulePreview(); }
 function bLocAdd(){ B.draft.locations.push(''); paintLocs(); $('#bLoc'+(B.draft.locations.length-1))?.focus(); scheduleCheck(); }
@@ -2077,7 +2090,7 @@ function paintPublish(v){
   ${copyCard(D, P, sw)}
   <div class="card"><div class="row"><h3 style="margin:0">Destination and identity</h3><div class="spacer"></div><button class="sm" onclick="pbLoadLink()" ${PB.busy?'disabled':''}>${PB.link?'Reload the lists':'Load the Page\'s forms and Instagram accounts'}</button></div>
     <div class="grid" style="margin-top:10px">
-      <div><label>Instant form <span class="n">· <a href="#" onclick="pbNewForm();return false">new form from the template…</a></span></label>${PB.link?`<select onchange="pbSet('destination.lead_form_id',this.value||null)">${(PB.link.chosen?.forms||[]).map(f=>`<option value="${esc(f.id)}" ${f.id===P.lead_form_id?'selected':''}>${esc(f.name)} · ${(f.status||'').toLowerCase()}${f.leads_count!=null?` · ${f.leads_count} leads`:''}</option>`).join('')}</select>`:`<div class="mono">${esc(P.lead_form_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.form||'the profile\'s form')}</div>`}</div>
+      <div><label>Instant form <span class="n">· <a href="#" onclick="pbNewForm();return false">new form from the template…</a></span></label>${PB.link?`<select onchange="pbSet('destination.lead_form_id',this.value||null)">${(PB.link.chosen?.forms||[]).map(f=>`<option value="${esc(f.id)}" ${f.id===P.lead_form_id?'selected':''}>${esc(f.name)} · ${(f.status||'').toLowerCase()}${f.leads_count!=null?` · ${f.leads_count} leads`:''}</option>`).join('')}</select>`:`<div class="mono">${esc(P.lead_form_id||'none')}</div><div class="hint">${esc(D.lead_form_name || (P.lead_form_id && P.lead_form_id===STATE.profile?.meta_assets?.lead_form_id ? STATE.profile?.meta_assets?.labels?.form : '') || (P.lead_form_id ? 'this campaign\'s form' : 'the profile\'s form'))}</div>`}</div>
       <div><label>Facebook Page</label><div class="mono">${esc(P.page_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.page||'')}</div></div>
       <div><label>Instagram account</label>${PB.link?`<select onchange="pbSet('destination.instagram_user_id',this.value)"><option value="" ${!P.instagram_user_id?'selected':''}>none · a Page-backed identity</option>${igList(PB.link).map(x=>`<option value="${esc(x.id)}" ${x.id===P.instagram_user_id?'selected':''}>@${esc(x.username||x.id)}</option>`).join('')}</select>`:`<div class="mono">${esc(P.instagram_user_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.instagram||'')}</div>`}</div>
       <div><label>Link</label><div class="mono">${esc(P.website||'none')}</div></div>
