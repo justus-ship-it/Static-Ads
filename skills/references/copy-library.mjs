@@ -112,6 +112,17 @@ export function restoreEntry(dir, id) {
  * What every gym's batches made from each entry: the drafts that followed it (`from` on a draft) and how many
  * of those the owner kept, by entry id — `{ [id]: { drafts, kept, gyms } }`. Read from `brands/{gym}/outputs/{batch}/copy.json`.
  */
+/** The library ranked by what its skeletons did on Meta across every gym (2026-10-15): live entries with results, the
+ *  most leads first, then the click rate; `never_led` marks one shown widely with no lead to show for it. */
+export function resultsAcross(dir, brandsDir, { minImpressions = 1000 } = {}) {
+  const lib = readLibrary(dir), uses = usesIn(brandsDir);
+  return lib.entries.filter((e) => !e.retired && uses[e.id]?.results).map((e) => {
+    const u = uses[e.id], r = u.results;
+    return { id: e.id, kind: e.kind, text: e.text, angle: e.angle || null, language: e.language || (languageOf(e.text || "") === "zh" ? "zh" : "en"), gyms: u.gyms, drafts: u.drafts, kept: u.kept, results: r,
+      ctr: r.impressions ? Math.round((r.clicks / r.impressions) * 10000) / 100 : null, never_led: r.leads === 0 && r.impressions >= minImpressions };
+  }).sort((a, b) => b.results.leads - a.results.leads || (b.ctr ?? 0) - (a.ctr ?? 0) || b.results.impressions - a.results.impressions);
+}
+
 export function usesIn(brandsDir) {
   const uses = {};
   if (!brandsDir || !existsSync(brandsDir)) return uses;
@@ -129,9 +140,11 @@ export function usesIn(brandsDir) {
       const seen = new Set();
       for (const t of textRows(join(brandsDir, gym), batch)) {
         if (!t.from || !t.matched) continue;
-        const u = (uses[t.from] ||= { drafts: 0, kept: 0, gyms: [] }), r = (u.results ||= { leads: 0, impressions: 0, clicks: 0, campaigns: 0, spend: {} });
+        const u = (uses[t.from] ||= { drafts: 0, kept: 0, gyms: [] }), r = (u.results ||= { leads: 0, impressions: 0, clicks: 0, campaigns: 0, spend: {}, by_currency: {} });
         r.leads += t.leads || 0; r.impressions += t.impressions || 0; r.clicks += t.clicks || 0;
         const cur = t.currency || "?"; r.spend[cur] = Math.round(((r.spend[cur] || 0) + (t.spend || 0)) * 100) / 100;
+        const bc = (r.by_currency[cur] ||= { spend: 0, leads: 0, impressions: 0, clicks: 0 });
+        bc.spend = Math.round((bc.spend + (t.spend || 0)) * 100) / 100; bc.leads += t.leads || 0; bc.impressions += t.impressions || 0; bc.clicks += t.clicks || 0;
         if (!seen.has(t.from)) { seen.add(t.from); r.campaigns++; }
       }
     }
@@ -226,13 +239,18 @@ export async function sendToLibrary(gymDir, refId, { dir = LIBRARY_DIR, ask = ca
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   const { values: v } = parseArgs({ options: {
-    list: { type: "boolean", default: false }, kind: { type: "string" }, gym: { type: "string" }, "brand-dir": { type: "string" }, ref: { type: "string" }, "all-owner": { type: "boolean", default: false },
+    list: { type: "boolean", default: false }, results: { type: "boolean", default: false }, "brands-dir": { type: "string" }, kind: { type: "string" }, gym: { type: "string" }, "brand-dir": { type: "string" }, ref: { type: "string" }, "all-owner": { type: "boolean", default: false },
     retire: { type: "string" }, restore: { type: "string" }, reason: { type: "string" },
     fill: { type: "string" }, offer: { type: "string" }, area: { type: "string" }, audience: { type: "string" }, button: { type: "string", default: "Sign up" }, duration: { type: "string" },
   } });
   const gymDir = v["brand-dir"] || (v.gym ? join(REPO_ROOT, "brands", v.gym) : null);
   try {
-    if (v.list) {
+    if (v.results) {
+      // Every skeleton that has run on Meta, across every gym, the most leads first (2026-10-15).
+      const rows = resultsAcross(LIBRARY_DIR, v["brands-dir"] ? resolve(v["brands-dir"]) : join(REPO_ROOT, "brands"));
+      if (!rows.length) console.log("no skeleton has results yet: pull results on a Publish screen first");
+      for (const r of rows) console.log(`${r.kind.padEnd(8)} ${String(r.results.leads).padStart(4)} leads  ${Object.entries(r.results.by_currency).map(([c, x]) => `${c} ${x.leads ? Math.round((x.spend / x.leads) * 100) / 100 : "—"}/lead`).join(" ")}  ctr ${r.ctr ?? "—"}%  ${r.results.campaigns} campaign(s) in ${r.gyms.join(", ")}  [${r.angle || "-"}, ${r.language}]  ${r.id}  ${r.text.slice(0, 60).replace(/\n/g, " ")}`);
+    } else if (v.list) {
       const es = liveEntries(LIBRARY_DIR, v.kind || null);
       console.log(`${es.length} live ${v.kind || "entries"} in ${join(LIBRARY_DIR, LIBRARY_FILE)} (${readLibrary().entries.filter((e) => e.retired).length} retired)`);
       for (const e of es) console.log(`\n[${e.id}] ${e.kind} · ${e.angle || "no angle"} · {${e.placeholders.join("} {")}}${e.warnings.length ? ` · ⚠ ${e.warnings.join("; ")}` : ""}\n  ${e.text.split("\n").join("\n  ")}\n  note: ${e.note}`);

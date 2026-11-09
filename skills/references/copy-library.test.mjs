@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readLibrary, liveEntries, placeholdersIn, entryProblems, entryWarnings, addEntry, editEntry, retireEntry, restoreEntry, fill, verifySkeleton, skeletonFrom, sendToLibrary, buildSkeletonPrompt, usesIn, PLACEHOLDERS, KINDS, LIBRARY_FILE } from "./copy-library.mjs";
+import { readLibrary, liveEntries, placeholdersIn, entryProblems, entryWarnings, addEntry, editEntry, retireEntry, restoreEntry, fill, verifySkeleton, skeletonFrom, sendToLibrary, buildSkeletonPrompt, usesIn, PLACEHOLDERS, KINDS, LIBRARY_FILE, resultsAcross } from "./copy-library.mjs";
 import { ANGLES, readCopyRefs } from "./draft-copy.mjs";
 
 const lib = () => mkdtempSync(join(tmpdir(), "copylib-"));
@@ -104,7 +104,7 @@ test("L3 the model's skeleton is verified in code: fragments word for word and i
 test("L4 what the gyms' batches made from each entry: drafts that followed it, how many the owner kept, which gyms — read from every gym's outputs; a draft from nothing, a gym without outputs and a missing folder count nothing", () => {
   const brands = mkdtempSync(join(tmpdir(), "copylib-brands-"));
   const put = (gym, batch, drafts) => { const d = join(brands, gym, "outputs", batch); mkdirSync(d, { recursive: true }); writeFileSync(join(d, "copy.json"), JSON.stringify({ drafts })); };
-  put("gym-a", "b1", [{ id: "1", from: "lib-x", status: "keep" }, { id: "2", from: "lib-x", status: "exclude" }, { id: "3", from: null, status: "keep" }]);
+  put("gym-a", "b1", [{ id: "1", kind: "copy", from: "lib-x", status: "keep", message: "Ladies in {AREA}: the offer. Tap {BUTTON}." }, { id: "2", from: "lib-x", status: "exclude" }, { id: "3", from: null, status: "keep" }]);
   put("gym-a", "b2", [{ id: "4", from: "lib-y", status: "draft" }]);
   put("gym-b", "b1", [{ id: "5", from: "lib-x", status: "keep" }]);
   mkdirSync(join(brands, "gym-c"));
@@ -112,11 +112,17 @@ test("L4 what the gyms' batches made from each entry: drafts that followed it, h
   assert.deepEqual(usesIn(join(brands, "nowhere")), {});
   // What the drafts did on Meta (2026-10-11): a batch with results pulled adds each skeleton's leads, clicks, impressions and spend by currency.
   const ga = join(brands, "gym-a", "outputs"), rb = readdirSync(ga).find((b) => existsSync(join(ga, b, "copy.json")));
-  const cj = JSON.parse(readFileSync(join(ga, rb, "copy.json"), "utf-8")), first = cj.drafts.find((x) => x.from === "lib-x");
-  writeFileSync(join(ga, rb, "publish.json"), JSON.stringify({ campaign: { id: "c7" }, adsets: { KATONG: { id: "s1" } }, ads: {} }));
-  writeFileSync(join(ga, rb, "results.json"), JSON.stringify({ pulled: "2026-10-11T00:00:00.000Z", currency: "SGD", texts: { bodies: [{ text: (first.message || "x").replace(/\{AREA\}/g, "Katong").replace(/\{BUTTON\}/g, "Sign up"), ads: 2, spend: 60, impressions: 2000, clicks: 40, leads: 4, cost_per_lead: 15, ctr: 2 }], titles: [] } }));
+  const rb1 = "b1";
+  writeFileSync(join(ga, rb1, "publish.json"), JSON.stringify({ campaign: { id: "c7" }, adsets: { KATONG: { id: "s1" } }, ads: {} }));
+  writeFileSync(join(ga, rb1, "results.json"), JSON.stringify({ pulled: "2026-10-11T00:00:00.000Z", currency: "SGD", texts: { bodies: [{ text: "Ladies in Katong: the offer.\n\nTap Sign up.", ads: 2, spend: 60, impressions: 2000, clicks: 40, leads: 4, cost_per_lead: 15, ctr: 2 }], titles: [] } }));
   const withResults = usesIn(brands)["lib-x"];
-  assert.deepEqual([withResults.drafts, withResults.kept, withResults.results], [3, 2, first.kind === "headline" || !first.message ? undefined : { leads: 4, impressions: 2000, clicks: 40, campaigns: 1, spend: { SGD: 60 } }]);
+  assert.deepEqual([withResults.drafts, withResults.kept, withResults.results], [3, 2, { leads: 4, impressions: 2000, clicks: 40, campaigns: 1, spend: { SGD: 60 }, by_currency: { SGD: { spend: 60, leads: 4, impressions: 2000, clicks: 40 } } }], "the draft's words with the area and button filled are matched back to it, spacing aside");
+  // The library ranked by results across gyms (2026-10-15): entries with results only, the most leads first; shown widely with no lead → marked.
+  const libDir = mkdtempSync(join(tmpdir(), "copylib-lib-"));
+  writeFileSync(join(libDir, "copy-library.json"), JSON.stringify({ schema: 1, entries: [{ id: "lib-x", kind: "copy", text: "Ladies in {AREA}: the offer. Tap {BUTTON}.", angle: "call-out", language: "en" }, { id: "lib-z", kind: "headline", text: "Never ran", angle: "pain" }] }));
+  const ranked = resultsAcross(libDir, brands);
+  assert.deepEqual(ranked.map((r) => [r.id, r.results.leads, r.ctr, r.never_led, r.gyms]), [["lib-x", 4, 2, false, ["gym-a", "gym-b"]]]);
+  assert.deepEqual(resultsAcross(libDir, join(brands, "nowhere")), []);
 });
 
 test("L5 the library by language (2026-10-07): an entry carries the language of its text (zh for Chinese), set again on edit; liveEntries can be asked for one language; a Chinese reference goes to the library as a Chinese skeleton with 信義區 as {AREA}", async () => {
