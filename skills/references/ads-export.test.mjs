@@ -12,9 +12,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCsv, parseExport, adNameParts, adsetNameFacts, similarity, matchCreatives, listCreatives, parseCopyText, rtfToText, importExport, MATCH_FLOOR } from "./ads-export.mjs";
-import { readCreatives, readsFor, ratioOf, READS_FILE, FORMATS } from "./read-creatives.mjs";
-import { attributeTables, suggestions, medianCpl, joinReads, confidence, whatWins, LEADS_EARLY, LEADS_SOLID, FREQ_TIRED } from "./what-wins.mjs";
-import { readHistory, historyRows, pullAccountHistory, readCopyRefs } from "./meta-results.mjs";
+import { readCreatives, readsFor, ratioOf, READS_FILE, FORMATS, pictures, unreadCount } from "./read-creatives.mjs";
+import { attributeTables, suggestions, medianCpl, joinReads, confidence, whatWins, LEADS_EARLY, LEADS_SOLID, FREQ_TIRED, inScope, inTrack, trackSums, RECENT_DAYS, leftOutWhy, poolTables, acrossSuggestions, nextWave, whatWinsAcross, refreshAll, readAll } from "./what-wins.mjs";
+import { readHistory, historyRows, pullAccountHistory, readCopyRefs, fetchPictures, PICTURES_DIR } from "./meta-results.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
@@ -171,7 +171,97 @@ test("X3 what wins, by rule: the median over ads with enough leads, each attribu
   try {
     writeFileSync(join(g, "account-history.json"), JSON.stringify({ pulled: null, account: null, campaigns: [{ id: "c", name: "C" }], adsets: [{ id: "s", campaign_id: "c", name: "S" }], ads: [{ id: "1", name: "Paused ad", adset_id: "s", campaign_id: "c", status: "PAUSED", effective_status: "PAUSED", words: "paused", media: "image", all_time: { spend: 100, leads: 6, cost_per_lead: 16.67, impressions: 1000 }, last_30d: {} }] }));
     const w = whatWins(g, { currency: "SGD" });
-    assert.deepEqual([w.scope, w.active, w.every, w.ads, w.median, w.leads, w.read, w.suggestions[0].kind], ["all", 0, 1, 1, 16.67, 6, 0, "thin"]);
+    assert.deepEqual([w.scope, w.track, w.tracks.stills.leads, w.tracks.video.ads, w.active, w.every, w.ads, w.median, w.leads, w.read, w.suggestions[0].kind, w.tables.some((t) => t.key === "media")], ["all", "stills", 6, 0, 0, 1, 1, 16.67, 6, 0, "thin", false]);
+    assert.deepEqual([whatWins(g, { track: "video" }).ads, whatWins(g, { track: "all" }).tables.some((t) => t.key === "media")], [0, true]);
     assert.equal(whatWins(g, { scope: "all" }).scope, "all");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("X4 across every gym: costs are never pooled raw — each value's spend is measured in its own gym's median leads, so SGD and TWD accounts pool; a value wins when it is solid, two gyms can judge it and it is cheaper in more than dearer; loses the other way; one gym alone is said as a test for the others; a gym without a median draws on the rest; each gym's next batch leans on its own account first, then on what holds elsewhere; the recent scope keeps the running ads and the last 12 months", async () => {
+  const R = (gym, id, read, spend, leads, over = {}) => ({ source: "account", gym, ad_id: id, ad_name: id, status: "paused", media: "image", spend, leads, cost_per_lead: leads ? Math.round((spend / leads) * 100) / 100 : null, read, ...over });
+  const G = (gym, currency, base, rows) => ({ gym, name: gym.toUpperCase(), currency, base, median: base, leads: rows.reduce((t, r) => t + r.leads, 0), rows, every: rows.length, ads: rows.length, unread: 0, pictures: rows.length, account: "act_1" });
+  const gyms = [
+    G("a", "SGD", 20, [R("a", "a1", { format: "studio-portrait", backdrop: "dark-wall" }, 300, 30), R("a", "a2", { format: "workout", backdrop: "gym-floor" }, 750, 25)]),
+    G("b", "TWD", 400, [R("b", "b1", { format: "studio-portrait" }, 6000, 24), R("b", "b2", { format: "workout" }, 12000, 20)]),
+    G("c", "SGD", 15, [R("c", "c1", { format: "workout" }, 300, 20), R("c", "c2", { format: "testimonial" }, 120, 20)]),
+    G("d", "SGD", null, [R("d", "d1", { format: "workout" }, 90, 2)]),
+  ];
+  const tables = poolTables(gyms), fmt = tables.find((t) => t.key === "format");
+  assert.ok(!tables.some((t) => t.key === "offer"), "an offer's name does not travel between gyms");
+  assert.deepEqual(fmt.values.map((v) => [v.value, v.leads, v.index, v.tried_in, v.judged_in, v.cheaper_in, v.dearer_in, v.confidence]), [["testimonial", 20, 0.4, 1, 1, 1, 0, "solid"], ["studio-portrait", 54, 0.56, 2, 2, 2, 0, "solid"], ["workout", 65, 1.35, 3, 3, 0, 2, "solid"]], "300/20 + 6000/400 = 30 average-leads of spend for 54 leads; the gym without an average of its own is left out");
+  assert.deepEqual(fmt.values[1].spend_by_currency, { SGD: 300, TWD: 6000 }); assert.deepEqual(fmt.values[1].gyms.map((x) => [x.gym, x.cost_per_lead, x.rel]), [["a", 10, 0.5], ["b", 250, 0.63]]);
+  const sug = acrossSuggestions(gyms, tables);
+  assert.deepEqual(sug.map((x) => [x.kind, x.value || x.gym]), [["wins", "studio-portrait"], ["one-gym", "testimonial"], ["one-gym", "dark-wall"], ["loses", "workout"], ["thin", "d"]], "the dark wall is read in one gym only, so it is a test for the others, not a finding");
+  assert.match(sug[0].text, /Format: studio-portrait leads 44% under each gym's own average — 54 leads, cheaper in 2 of the 2 gyms with enough of it \(A, B\)\./);
+  assert.match(sug[1].text, /testimonial leads 60% under the average at C \(20 leads\) and no other gym has enough of it to judge\. Worth a test elsewhere\./);
+  assert.match(sug[3].text, /workout leads 35% over each gym's own average — 65 leads, dearer in 2 of 3 gyms\./);
+  const across = { tables, _gyms: gyms };
+  assert.deepEqual(nextWave("a", across).map((n) => [n.attribute, n.value, n.source]), [["format", "studio-portrait", "own"], ["backdrop", "dark-wall", "own"]], "its own account says so: two solid values a quarter apart or more");
+  assert.match(nextWave("a", across)[0].text, /this gym's own leads \(30 at SGD 10\.00 against workout's 25 at SGD 30\.00\)/);
+  const d = nextWave("d", across);
+  assert.deepEqual(d.map((n) => [n.attribute, n.value, n.source, n.tried_here]), [["format", "studio-portrait", "portfolio", false]], "too thin itself: what holds across the others");
+  assert.match(d[0].text, /across 2 gyms it leads 44% under each gym's own average \(54 leads; A, B\)\. Not run here yet\./);
+  assert.deepEqual(nextWave("c", across).map((n) => [n.value, n.source]), [["testimonial", "own"]]);
+  assert.deepEqual(nextWave("nowhere", across), []);
+  // The scopes: Meta's word for a running ad is "live", an export's is "active"; "inactive" is neither.
+  const rows = [{ id: 1, status: "active" }, { id: 2, status: "paused", published: "2026-07-01" }, { id: 3, status: "paused", published: "2026-01-01" }, { id: 4, status: "paused" }, { id: 5, status: "live", published: "2023-01-01" }, { id: 6, status: "inactive" }], now = new Date("2026-11-10T00:00:00Z");
+  assert.deepEqual([inScope(rows, "active", { now }).map((r) => r.id), inScope(rows, "recent", { now }).map((r) => r.id), inScope(rows, "all", { now }).length], [[1, 5], [1, 2, 5], 6]);
+  // Two tracks: the agent makes stills, so stills learn from stills; video is read on its own. Six months is the recent window.
+  const tr = [{ media: "video", spend: 100, leads: 10 }, { media: "image", spend: 50, leads: 2 }, { spend: 30, leads: 1 }, { media: "other", spend: 0, leads: 0 }];
+  assert.deepEqual([inTrack(tr, "video").length, inTrack(tr, "stills").length, inTrack(tr, "all").length, trackSums(tr), RECENT_DAYS], [1, 3, 4, { stills: { ads: 3, leads: 3, spend: 80, cost_per_lead: 26.67 }, video: { ads: 1, leads: 10, spend: 100, cost_per_lead: 10 } }, 183]);
+  assert.ok(!poolTables(gyms).some((t) => t.key === "media") && poolTables(gyms, { withMedia: true }).some((t) => t.key === "media"), "media is an attribute only when both tracks are read together");
+  // What is left out, and why.
+  assert.deepEqual([leftOutWhy({ abroad: true }), leftOutWhy({ objective: "OUTCOME_AWARENESS" }), leftOutWhy({ objective: "OUTCOME_TRAFFIC" }), leftOutWhy({ objective: "OUTCOME_LEADS", ad_name: "0305 HR | Video: Tired of Job" }), leftOutWhy({ campaign: "招募教練" }), leftOutWhy({ objective: "OUTCOME_SALES", ad_name: "New Sales ad" }), leftOutWhy({ objective: "OUTCOME_LEADS", ad_name: "Shred challenge" }), leftOutWhy({ ad_name: "CHROME finish" })], ["abroad", "objective", "objective", "recruitment", "recruitment", null, null, null]);
+});
+
+test("X5 every account, refreshed and read: the delivered ads' pictures fetched once per image hash (a video's poster too; never the app's own ads, an ad set reaching abroad, an ad that spent nothing, an export's rows), the app's published ads read through one finished picture per photo of a batch, the unread count, a refresh of every gym that goes on past a gym without an account or a failing pull, one reading cap for the whole portfolio, and the portfolio view over real gym folders", async () => {
+  const d = mkdtempSync(join(tmpdir(), "portfolio-")), brands = join(d, "brands");
+  const mk = (gym, account) => { const g = join(brands, gym); mkdirSync(g, { recursive: true }); const p = PROFILE_STARTER(gym, gym.toUpperCase(), "SG"); p.meta_assets.ad_account_id = account || ""; writeFileSync(join(g, "gym-profile.json"), JSON.stringify(p)); return g; };
+  const png = (n) => Buffer.concat([PNG, Buffer.from([n])]);
+  try {
+    const g = mk("one", "act_1"); mk("two", ""); const three = mk("three", "act_3");
+    const ad = (id, over = {}) => ({ id, name: `ad ${id}`, adset_id: "s1", campaign_id: "c1", campaign: "C", adset: "S", status: "ACTIVE", effective_status: "ACTIVE", words: "active", created: "2026-09-01", media: "image", hashes: [], poster: null, all_time: { spend: 100, leads: 10, cost_per_lead: 10, impressions: 1000, reach: 500 }, last_30d: {}, ...over });
+    const history = { pulled: "2026-11-01T00:00:00Z", account: "act_1", campaigns: [{ id: "c1", name: "C", words: "active" }], adsets: [{ id: "s1", campaign_id: "c1", name: "S", words: "active" }, { id: "s2", campaign_id: "c1", name: "Abroad", abroad: true, countries: ["BD"] }],
+      ads: [ad("1", { hashes: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] }), ad("2", { hashes: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] }), ad("3", { media: "video", poster: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }), ad("4", { hashes: ["cccccccccccccccccccccccccccccccc"], adset_id: "s2" }), ad("5", { hashes: ["dddddddddddddddddddddddddddddddd"], all_time: { spend: 0, leads: 0 } }), ad("900", { hashes: ["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"] }), ad("export:x", { origin: "export", hashes: [] })] };
+    writeFileSync(join(g, "account-history.json"), JSON.stringify(history));
+    // The app's own batch: two ads of one photo (two locations), one of another; ad 900 is the app's.
+    const out = join(g, "outputs", "b1"); for (const f of ["101-c01-a", "102-c01-b", "103-c02-a"]) mkdirSync(join(out, f, "1x1"), { recursive: true });
+    writeFileSync(join(out, "101-c01-a", "1x1", "x.png"), png(7)); writeFileSync(join(out, "102-c01-b", "1x1", "x.png"), png(8)); writeFileSync(join(out, "103-c02-a", "1x1", "x.png"), png(9));
+    writeFileSync(join(out, "batch.json"), JSON.stringify({ ads: [{ folder: "101-c01-a", file: "101-c01-a/1x1/x.png", photos: ["g01"] }, { folder: "102-c01-b", file: "102-c01-b/1x1/x.png", photos: ["g01"] }, { folder: "103-c02-a", file: "103-c02-a/1x1/x.png", photos: ["g02"] }] }));
+    writeFileSync(join(out, "publish.json"), JSON.stringify({ campaign: { id: "c9" }, adsets: {}, ads: { "101-c01-a": { id: "900" }, "102-c01-b": { id: "901" }, "103-c02-a": { id: "902" } }, superseded: [] }));
+    const asked = [];
+    const client = { get: async (path, q) => { asked.push([path, JSON.parse(q.hashes)]); return { data: JSON.parse(q.hashes).map((h) => ({ hash: h, url: `http://127.0.0.1:1/${h}.png` })) }; } };
+    const fetchImpl = async (url) => ({ ok: !/bbbb/.test(url) || true, arrayBuffer: async () => png(/aaaa/.test(url) ? 1 : 2) });
+    let p = await fetchPictures({ client, accountId: "act_1", gymDir: g, fetchImpl });
+    assert.deepEqual([p.wanted, p.fetched, p.kept, p.skipped], [2, 2, 0, []]);
+    assert.deepEqual(asked, [["act_1/adimages", ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]]], "one call for the two hashes: the shared image once, the video's poster; not the abroad ad set's, the unspent ad's, the app's own or the export's");
+    assert.ok(existsSync(join(g, PICTURES_DIR, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png")) && existsSync(join(g, PICTURES_DIR, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png")));
+    p = await fetchPictures({ client: { get: async () => { throw new Error("no call expected"); } }, accountId: "act_1", gymDir: g, fetchImpl });
+    assert.deepEqual([p.fetched, p.kept], [0, 2], "nothing fetched twice");
+    // One list of every ad's picture.
+    const list = pictures(g), file = (id) => list.find((x) => x.ad_id === id)?.file?.replace(g + "/", "") ?? null;
+    assert.deepEqual([file("1"), file("2"), file("3"), file("4"), file("900"), file("901"), file("902"), list.filter((x) => x.ad_id === "900").length],
+      [`${PICTURES_DIR}/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png`, `${PICTURES_DIR}/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png`, `${PICTURES_DIR}/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png`, null, "outputs/b1/101-c01-a/1x1/x.png", "outputs/b1/101-c01-a/1x1/x.png", "outputs/b1/103-c02-a/1x1/x.png", 1], "the app's ad is listed once, from outputs; two locations of one photo share its first finished picture");
+    assert.deepEqual(unreadCount(g), { pictures: 4, unread: 4 });
+    // Every account refreshed: a gym without an account is skipped, a failing pull is said, the run goes on.
+    const lines = [];
+    const fake = (gym) => ({ list: async (path) => { if (gym === "three") throw new Error("(#200) no access"); return /\/ads$/.test(path) ? history.ads.filter((a) => a.origin !== "export").map((a) => ({ id: a.id, name: a.name, adset_id: a.adset_id, campaign_id: a.campaign_id, status: "ACTIVE", effective_status: "ACTIVE", created_time: "2026-09-01T00:00:00+0800", creative: { id: "cr", image_hash: a.hashes[0] || null, ...(a.poster ? { object_type: "VIDEO", object_story_spec: { video_data: { image_hash: a.poster } } } : {}) } })) : /\/adsets$/.test(path) ? [{ id: "s1", name: "S", campaign_id: "c1", status: "ACTIVE", effective_status: "ACTIVE" }] : /\/campaigns$/.test(path) ? [{ id: "c1", name: "C", status: "ACTIVE", effective_status: "ACTIVE" }] : /insights$/.test(path) ? history.ads.filter((a) => a.all_time.spend).map((a) => ({ ad_id: a.id, spend: "100", impressions: "1000", reach: "500", actions: [{ action_type: "lead", value: "10" }] })) : []; }, get: async (path) => (/adimages$/.test(path) ? { data: [] } : { id: "c9", status: "PAUSED", effective_status: "PAUSED" }) });
+    const done = await refreshAll({ brandsDir: brands, log: (m) => lines.push(m), clientFor: fake });
+    assert.deepEqual(done.map((x) => [x.gym, x.skipped || null, x.steps?.history?.replace(/\d+/g, "N") || null]), [["one", null, "N campaigns, N ads"], ["three", null, "failed: (#N) no access"], ["two", "no ad account", null]]);
+    assert.ok(lines.some((l) => /TWO: no ad account/.test(l)) && lines.some((l) => /ONE: history .* results b1 pulled · pictures 0 fetched, 2 already here, 1 skipped · 4 of 4 pictures not read yet/.test(l)), lines.join("\n"));
+    assert.equal(readHistory(g).ads.length, 6, "the pull kept nothing stale and the history is whole");
+    // One cap for the whole portfolio.
+    const ask = async (f) => ({ format: /outputs/.test(f) ? "workout" : "studio-portrait", subject: "woman", people: 1, backdrop: /outputs/.test(f) ? "gym-floor" : "dark-wall", pose: "easy-posed", expression: "smile", eye_contact: true, mood: "m", text_density: "light", words: [], logo: false, colours: [] });
+    let r = await readAll({ brandsDir: brands, max: 3, log: () => {}, ask });
+    assert.deepEqual([r.calls, r.gyms.find((x) => x.gym === "one").read, r.gyms.find((x) => x.gym === "one").left], [3, 3, 1]);
+    r = await readAll({ brandsDir: brands, max: 10, log: () => {}, ask });
+    assert.deepEqual([r.calls, unreadCount(g)], [1, { pictures: 4, unread: 0 }], "the second run reads only what was left");
+    const { byAd } = readsFor(g);
+    assert.deepEqual([byAd.get("1").format, byAd.get("2").format, byAd.get("900").format, byAd.get("901").format, byAd.has("4")], ["studio-portrait", "studio-portrait", "workout", "workout", false]);
+    // The portfolio view over the folders.
+    const A = whatWinsAcross(brands, { scope: "all" });
+    assert.deepEqual(A.gyms.map((x) => [x.gym, x.ads > 0, x.unread]), [["one", true, 0], ["three", false, 0], ["two", false, 0]]);
+    assert.ok(A.suggestions.some((x) => x.kind === "no-data" && x.gym === "two") && Array.isArray(A.tables));
+    assert.ok(!A.gyms[0].rows && A._gyms[0].rows.every((x) => !x.abroad), "ad sets reaching abroad are left out of every table");
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

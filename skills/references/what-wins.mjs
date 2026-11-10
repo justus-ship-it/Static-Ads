@@ -9,8 +9,13 @@
  * is code: no model writes a conclusion, and nothing here touches Meta. The owner decides.
  */
 
-import { allRows } from "./meta-results.mjs";
-import { readsFor, FORMATS } from "./read-creatives.mjs";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
+import { join, resolve } from "path";
+import { parseArgs } from "util";
+import { fileURLToPath } from "url";
+import { allRows, pullAccountHistory, pullResults, fetchPictures } from "./meta-results.mjs";
+import { readsFor, readCreatives, unreadCount, FORMATS } from "./read-creatives.mjs";
+import { metaConfig, graphClient, scrubTokens } from "./meta-api.mjs";
 
 /** Under 5 leads a value is "early"; from 20 it is "solid". Between, "enough" to compare. An ad is named a keeper from 10. */
 export const LEADS_EARLY = 5, LEADS_SOLID = 20, LEADS_KEEP = 10;
@@ -54,7 +59,7 @@ export function attributeTables(rows, { median = medianCpl(rows) } = {}) {
   });
 }
 /** The ads shown too often: active, with a frequency at or over the bar, the most shown first. */
-export const fatigueRows = (rows) => rows.filter((r) => (r.frequency || 0) >= FREQ_TIRED && /active/i.test(r.status || "")).sort((a, b) => b.frequency - a.frequency);
+export const fatigueRows = (rows) => rows.filter((r) => (r.frequency || 0) >= FREQ_TIRED && isActive(r)).sort((a, b) => b.frequency - a.frequency);
 
 const adName = (r) => r.ad_name || (r.folder ? `${r.batch}/${r.folder.replace(/^\d+-/, "")}` : r.ad_id);
 const kindOf = (r) => { const d = r.read; if (!d) return r.media || "ad"; return [d.format, d.subject !== "none" ? d.subject : null, d.backdrop].filter(Boolean).join(", "); };
@@ -63,7 +68,7 @@ const money = (n, cur) => (n == null ? "—" : `${cur} ${Number(n).toFixed(2)}`)
 /** What to do, by rule. Each item: { kind, text, ads?, attribute? }. Nothing here acts. */
 export function suggestions(rows, tables, { median = medianCpl(rows), currency = "SGD", everyRows = rows } = {}) {
   const out = [], total = rows.reduce((t, r) => t + (r.leads || 0), 0);
-  const active = rows.filter((r) => /active/i.test(r.status || ""));
+  const active = rows.filter(isActive);
   if (total < LEADS_SOLID) out.push({ kind: "thin", text: `Too few leads to conclude anything yet: ${total} in all. Let the current ads run to ${LEADS_SOLID} before changing the mix.` });
   if (median == null) { out.push({ kind: "thin", text: `No ad has ${LEADS_EARLY} leads yet, so there is no median cost per lead to compare against.` }); return out; }
   const keep = active.filter((r) => (r.leads || 0) >= LEADS_KEEP && r.cost_per_lead != null && r.cost_per_lead <= CHEAP * median).sort((a, b) => b.leads - a.leads);
@@ -89,17 +94,203 @@ export function suggestions(rows, tables, { median = medianCpl(rows), currency =
   return out;
 }
 
-/** The ads a scope keeps: "active" — the ads running now (the account's old campaigns would otherwise set the median); "all" — every ad the gym ran. */
-export const SCOPES = ["active", "all"];
-export const inScope = (rows, scope) => (scope === "active" ? rows.filter((r) => /active/i.test(r.status || "")) : rows);
+/** The ads a scope keeps: "active" — the ads running now (an account's old campaigns would otherwise set the median);
+ *  "recent" — running now, or made in the last 6 months (the owner's window, 2026-11-10); "all" — every ad the gym ran. */
+export const SCOPES = ["active", "recent", "all"];
+export const RECENT_DAYS = 183;
+/** Two tracks (the owner's rule, 2026-11-10): the agent makes stills, so stills learn from stills; video is read on its own. */
+export const TRACKS = ["stills", "video", "all"];
+export const trackOf = (r) => (r.media === "video" ? "video" : "stills");
+export const inTrack = (rows, track) => (track === "all" ? rows : rows.filter((r) => trackOf(r) === track));
+/** What each track did in a set of rows: ads, leads, spend, cost per lead. */
+export const trackSums = (rows) => Object.fromEntries(["stills", "video"].map((t) => { const x = rows.filter((r) => trackOf(r) === t), spend = round2(x.reduce((a, r) => a + (r.spend || 0), 0)), leads = x.reduce((a, r) => a + (r.leads || 0), 0); return [t, { ads: x.length, leads, spend, cost_per_lead: leads ? round2(spend / leads) : null }]; }));
+/** Running now: Meta's "live" (the API's word for ACTIVE) or an export's "active". */
+export const isActive = (r) => /^(live|active)$/i.test(String(r.status || "").trim());
+export function inScope(rows, scope, { now = new Date() } = {}) {
+  if (scope === "active") return rows.filter(isActive);
+  if (scope === "recent") { const since = new Date(now.getTime() - RECENT_DAYS * 86400000).toISOString().slice(0, 10); return rows.filter((r) => isActive(r) || (r.published && String(r.published).slice(0, 10) >= since)); }
+  return rows;
+}
+/** Campaigns that were never after a lead: their spend would count against whatever their picture shows. */
+export const NOT_LEAD_OBJECTIVE = /AWARENESS|ENGAGEMENT|TRAFFIC|LINK_CLICKS|VIDEO_VIEWS|REACH|PAGE_LIKES|APP_INSTALLS|APP_PROMOTION/i;
+/** Hiring ads: their "leads" are job applicants, not members (F45 Xinyi's "HR | …" ads). */
+export const RECRUITMENT = /(^|[^a-z])HR([^a-z]|$)|hiring|recruit|we'?re hiring|join our team|招募|徵才|招聘|徵人/i;
+/** Why a row is left out of What wins, or null: an ad set reaching outside the gym's country, a campaign that was not after leads, a hiring ad. */
+export function leftOutWhy(r) {
+  if (r.abroad) return "abroad";
+  if (r.objective && NOT_LEAD_OBJECTIVE.test(r.objective)) return "objective";
+  if (RECRUITMENT.test([r.campaign, r.adset_name, r.ad_name].filter(Boolean).join(" | "))) return "recruitment";
+  return null;
+}
+/** A gym's rows with their readings, and what was left out and why. */
+export function gymRowsSplit(gymDir) {
+  const all = joinReads(allRows(gymDir), readsFor(gymDir).byAd), left_out = { abroad: 0, objective: 0, recruitment: 0 }, rows = [];
+  for (const r of all) { const why = leftOutWhy(r); if (why) left_out[why]++; else rows.push(r); }
+  return { rows, left_out };
+}
+export const gymRowsRead = (gymDir) => gymRowsSplit(gymDir).rows;
 
 /** Everything the Results page shows under What wins. The scope falls back to every ad when nothing is active. */
-export function whatWins(gymDir, { currency = "SGD", scope = "active" } = {}) {
-  const { byAd, total: pictures } = readsFor(gymDir);
-  const every = joinReads(allRows(gymDir), byAd);
-  let rows = inScope(every, scope);
-  if (!rows.length && scope === "active") { scope = "all"; rows = every; }
-  const median = medianCpl(rows), tables = attributeTables(rows, { median });
-  return { scope, active: every.filter((r) => /active/i.test(r.status || "")).length, every: every.length, median, currency, ads: rows.length, read: rows.filter((r) => r.read).length, pictures, leads: rows.reduce((t, r) => t + (r.leads || 0), 0), spend: round2(rows.reduce((t, r) => t + (r.spend || 0), 0)),
-    tables, fatigue: fatigueRows(rows).map((r) => ({ ad_id: r.ad_id, name: adName(r), frequency: r.frequency, leads: r.leads, cost_per_lead: r.cost_per_lead, kind: kindOf(r) })), suggestions: suggestions(rows, tables, { median, currency, everyRows: every }), floors: { early: LEADS_EARLY, solid: LEADS_SOLID, tired: FREQ_TIRED } };
+export function whatWins(gymDir, { currency = "SGD", scope = "active", track = "stills", now = new Date() } = {}) {
+  const { total: pictures } = readsFor(gymDir);
+  const every = gymRowsRead(gymDir);
+  let scoped = inScope(every, scope, { now });
+  if (!scoped.length && scope === "active") { scope = "recent"; scoped = inScope(every, scope, { now }); }
+  if (!scoped.length && scope === "recent") { scope = "all"; scoped = every; }
+  const rows = inTrack(scoped, track);
+  const median = medianCpl(rows), tables = attributeTables(rows, { median }).filter((t) => track === "all" || t.key !== "media");
+  return { scope, track, tracks: trackSums(scoped), active: every.filter(isActive).length, recent: inScope(every, "recent", { now }).length, every: every.length, median, currency, ads: rows.length, read: rows.filter((r) => r.read).length, pictures, leads: rows.reduce((t, r) => t + (r.leads || 0), 0), spend: round2(rows.reduce((t, r) => t + (r.spend || 0), 0)),
+    tables, fatigue: fatigueRows(rows).map((r) => ({ ad_id: r.ad_id, name: adName(r), frequency: r.frequency, leads: r.leads, cost_per_lead: r.cost_per_lead, kind: kindOf(r) })), suggestions: suggestions(rows, tables, { median, currency, everyRows: inTrack(every, track) }), floors: { early: LEADS_EARLY, solid: LEADS_SOLID, tired: FREQ_TIRED } };
+}
+
+// ── across every gym ─────────────────────────────────────────────────────────
+// One gym's account is a small sample; the portfolio is a larger one. But a lead costs different money in each
+// account (another currency, another suburb, another offer), so costs are never pooled raw: a value's cost per
+// lead is measured against ITS OWN gym's overall cost per lead in the scope (all spend over all leads — the same
+// kind of figure, so the values of an attribute average out to 1), and those ratios are what is pooled. An index of
+// 0.80 reads "20% cheaper than each gym's own average"; how many gyms agree is said beside it. (The first cut used
+// the median of the ads with 5+ leads as the baseline: a value's total includes the ads that spent for nothing, the
+// median does not, and nearly every value read as a loser — 2026-11-10.)
+const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
+/** Attributes that say something about a creative anywhere (an offer's name or a gym's own campaign does not travel). Media only when both tracks are read together. */
+export const PORTABLE = ["format", "subject", "backdrop", "pose", "expression", "ratio", "text_density", "logo", "eye_contact"];
+/** A value wins across gyms at 85% of the gyms' medians or less; loses at 125% or more. */
+export const LOSES = 1.25;
+
+/** Every gym folder with a profile, with its rows in scope and its own median. */
+export function gymsFor(brandsDir, { scope = "recent", track = "all", now = new Date() } = {}) {
+  if (!existsSync(brandsDir)) return [];
+  return readdirSync(brandsDir).filter((n) => !n.startsWith(".") && !n.startsWith("_") && existsSync(join(brandsDir, n, "gym-profile.json")) && statSync(join(brandsDir, n)).isDirectory()).sort().map((gym) => {
+    const dir = join(brandsDir, gym), profile = readJson(join(dir, "gym-profile.json")) || {}, h = readJson(join(dir, "account-history.json"));
+    const { rows: every, left_out } = gymRowsSplit(dir), scoped = inScope(every, scope, { now }), rows = inTrack(scoped, track);
+    const u = unreadCount(dir), leadsIn = rows.reduce((t, r) => t + (r.leads || 0), 0), spendIn = rows.reduce((t, r) => t + (r.spend || 0), 0);
+    return { gym, name: profile.display_name || gym, country: profile.locale?.country || "SG", currency: profile.locale?.currency || "SGD", account: profile.meta_assets?.ad_account_id || null,
+      pulled: h?.pulled || null, exports: (h?.exports || []).map((e) => ({ file: e.file, to: e.reporting?.to || null, ads: e.ads })), every: every.length, active: every.filter(isActive).length, ads: rows.length, read: rows.filter((r) => r.read).length,
+      leads: leadsIn, spend: round2(spendIn), median: medianCpl(rows), base: leadsIn >= LEADS_SOLID ? round2(spendIn / leadsIn) : null, tracks: trackSums(scoped), left_out, pictures: u.pictures, unread: u.unread, rows };
+  });
+}
+/** The pooled tables: for each portable attribute, each value's leads, ads, gyms, and its index against the gyms' own medians. */
+export function poolTables(gyms, { withMedia = false } = {}) {
+  const withMedian = gyms.filter((g) => g.base);
+  return ATTRIBUTES.filter(([k]) => PORTABLE.includes(k) || (withMedia && k === "media")).map(([key, label]) => {
+    const by = new Map();
+    for (const g of withMedian) for (const r of g.rows) {
+      const v = valueOf(r, key); if (v == null) continue;
+      const e = by.get(v) || by.set(v, { value: v, ads: 0, leads: 0, units: 0, spend_by_currency: {}, per: new Map() }).get(v);
+      const pg = e.per.get(g.gym) || e.per.set(g.gym, { gym: g.gym, name: g.name, currency: g.currency, ads: 0, leads: 0, spend: 0 }).get(g.gym);
+      e.ads++; e.leads += r.leads || 0; e.units += (r.spend || 0) / g.base; e.spend_by_currency[g.currency] = round2((e.spend_by_currency[g.currency] || 0) + (r.spend || 0));
+      pg.ads++; pg.leads += r.leads || 0; pg.spend = round2(pg.spend + (r.spend || 0));
+    }
+    const values = [...by.values()].map((e) => {
+      const per = [...e.per.values()].map((x) => { const g = withMedian.find((y) => y.gym === x.gym); const cpl = x.leads ? round2(x.spend / x.leads) : null; return { ...x, cost_per_lead: cpl, rel: cpl != null ? round2(cpl / g.base) : null }; }).sort((a, b) => b.leads - a.leads);
+      const judged = per.filter((x) => x.leads >= LEADS_EARLY && x.rel != null);
+      return { value: e.value, ads: e.ads, leads: e.leads, spend_by_currency: e.spend_by_currency, index: e.leads ? round2(e.units / e.leads) : null, confidence: confidence(e.leads), gyms: per, tried_in: per.length, judged_in: judged.length, cheaper_in: judged.filter((x) => x.rel < 1).length, dearer_in: judged.filter((x) => x.rel > 1).length };
+    }).sort((a, b) => (a.index ?? Infinity) - (b.index ?? Infinity) || b.leads - a.leads);
+    return { key, label, values };
+  });
+}
+const pct = (index) => { const d = Math.round((1 - index) * 100); return d >= 0 ? `${d}% under` : `${-d}% over`; };
+/** Does a pooled value hold: solid leads, judged in two gyms or more, and cheaper in more of them than dearer. */
+const holds = (v) => v.index != null && v.confidence === "solid" && v.judged_in >= 2 && v.cheaper_in > v.dearer_in;
+/** The portfolio's findings in words, by rule. */
+export function acrossSuggestions(gyms, tables) {
+  const out = [];
+  for (const t of tables) for (const v of t.values) {
+    if (holds(v) && v.index <= CHEAP) out.push({ kind: "wins", attribute: t.key, value: v.value, text: `${t.label}: ${v.value} leads ${pct(v.index)} each gym's own average — ${v.leads} leads, cheaper in ${v.cheaper_in} of the ${v.judged_in} gyms with enough of it (${v.gyms.filter((x) => x.leads >= LEADS_EARLY).map((x) => x.name).join(", ")}).` });
+    else if (v.index != null && v.confidence === "solid" && v.judged_in >= 2 && v.dearer_in > v.cheaper_in && v.index >= LOSES) out.push({ kind: "loses", attribute: t.key, value: v.value, text: `${t.label}: ${v.value} leads ${pct(v.index)} each gym's own average — ${v.leads} leads, dearer in ${v.dearer_in} of ${v.judged_in} gyms.` });
+    else if (v.index != null && v.confidence === "solid" && v.judged_in === 1 && v.index <= CHEAP && gyms.filter((g) => g.base).length > 1) out.push({ kind: "one-gym", attribute: t.key, value: v.value, text: `${t.label}: ${v.value} leads ${pct(v.index)} the average at ${v.gyms[0].name} (${v.gyms[0].leads} leads) and no other gym has enough of it to judge. Worth a test elsewhere.` });
+  }
+  const order = { wins: 0, "one-gym": 1, loses: 2 };
+  out.sort((a, b) => order[a.kind] - order[b.kind]);
+  for (const g of gyms) {
+    if (!g.every) out.push({ kind: "no-data", gym: g.gym, text: `${g.name}: no ads read from its account yet${g.account ? " — refresh the accounts" : " — no ad account on its profile"}.` });
+    else if (!g.base) out.push({ kind: "thin", gym: g.gym, text: `${g.name}: ${g.leads} lead${g.leads === 1 ? "" : "s"} in this scope, under the ${LEADS_SOLID} it takes for an average of its own, so it draws on the other gyms.` });
+    if (g.unread) out.push({ kind: "unread", gym: g.gym, text: `${g.name}: ${g.unread} of ${g.pictures} pictures not read yet.` });
+  }
+  return out;
+}
+/** Everything the portfolio view shows. */
+export function whatWinsAcross(brandsDir, { scope = "recent", track = "stills", now = new Date() } = {}) {
+  const gyms = gymsFor(brandsDir, { scope, track, now }), tables = poolTables(gyms, { withMedia: track === "all" });
+  const both = (t) => { const ads = gyms.reduce((a, g) => a + g.tracks[t].ads, 0), leads = gyms.reduce((a, g) => a + g.tracks[t].leads, 0); return { ads, leads }; };
+  return { scope, track, tracks: { stills: both("stills"), video: both("video") }, gyms: gyms.map(({ rows, ...g }) => g), leads: gyms.reduce((t, g) => t + g.leads, 0), ads: gyms.reduce((t, g) => t + g.ads, 0), tables, suggestions: acrossSuggestions(gyms, tables), floors: { early: LEADS_EARLY, solid: LEADS_SOLID, cheap: CHEAP, loses: LOSES }, _gyms: gyms };
+}
+/**
+ * What one gym's next batch should lean on, attribute by attribute: its own account first (two solid values a quarter
+ * apart or more), else what holds across the other gyms. Each line says where it comes from and whether the gym has run it.
+ */
+export function nextWave(gym, across, { currency = "SGD" } = {}) {
+  const g = (across._gyms || []).find((x) => x.gym === gym); if (!g) return [];
+  const own = attributeTables(g.rows, { median: g.median }), out = [];
+  for (const key of (across.tables || []).map((x) => x.key).filter((k) => k !== "media")) {
+    const t = own.find((x) => x.key === key), label = t.label;
+    const solid = t.values.filter((v) => v.cost_per_lead != null && v.confidence === "solid");
+    if (solid.length >= 2 && solid[solid.length - 1].cost_per_lead / solid[0].cost_per_lead >= 1.25) {
+      const b = solid[0], w = solid[solid.length - 1];
+      out.push({ attribute: key, label, value: b.value, source: "own", text: `${label}: ${b.value} — this gym's own leads (${b.leads} at ${money(b.cost_per_lead, currency)} against ${w.value}'s ${w.leads} at ${money(w.cost_per_lead, currency)}).` });
+      continue;
+    }
+    const pooled = (across.tables.find((x) => x.key === key)?.values || []).find((v) => holds(v) && v.index <= CHEAP);
+    if (pooled) {
+      const mine = t.values.find((v) => v.value === pooled.value), others = pooled.gyms.filter((x) => x.gym !== gym && x.leads >= LEADS_EARLY);
+      if (!others.length) continue;
+      out.push({ attribute: key, label, value: pooled.value, source: "portfolio", tried_here: !!mine, text: `${label}: ${pooled.value} — across ${pooled.judged_in} gyms it leads ${pct(pooled.index)} each gym's own average (${pooled.leads} leads; ${others.map((x) => x.name).join(", ")}). ${mine ? `Here: ${mine.leads} lead${mine.leads === 1 ? "" : "s"} so far${mine.cost_per_lead != null ? ` at ${money(mine.cost_per_lead, currency)}` : ""}.` : "Not run here yet."}` });
+    }
+  }
+  return out;
+}
+
+// ── every account, refreshed and read ────────────────────────────────────────
+/** Pull every gym's account again (history, the app's own campaigns' results, the delivered ads' pictures). Read-only on Meta; no model call. */
+export async function refreshAll({ brandsDir, log = console.log, clientFor = (gym) => { const config = metaConfig({ gym }); return config.token ? graphClient({ config }) : null; } }) {
+  const done = [];
+  for (const g of gymsFor(brandsDir, { scope: "all" })) {
+    const dir = join(brandsDir, g.gym), d = { gym: g.gym, steps: {} };
+    if (!g.account) { log(`${g.name}: no ad account on its profile — skipped`); d.skipped = "no ad account"; done.push(d); continue; }
+    const client = clientFor(g.gym);
+    if (!client) { log(`${g.name}: the Meta link is not set up — skipped`); d.skipped = "no Meta link"; done.push(d); continue; }
+    try { const h = await pullAccountHistory({ client, accountId: g.account, gymDir: dir }); d.steps.history = `${h.campaigns.length} campaigns, ${h.ads.length} ads`; } catch (e) { d.steps.history = `failed: ${scrubTokens(e.message)}`; }
+    const outDir = join(dir, "outputs");
+    if (existsSync(outDir)) for (const id of readdirSync(outDir)) {
+      const rec = readJson(join(outDir, id, "publish.json")); if (!rec?.campaign?.id) continue;
+      try { await pullResults({ client, record: rec, batchDir: join(outDir, id) }); d.steps[`results ${id}`] = "pulled"; } catch (e) { d.steps[`results ${id}`] = `failed: ${scrubTokens(e.message)}`; }
+    }
+    try { const p = await fetchPictures({ client, accountId: g.account, gymDir: dir }); d.steps.pictures = `${p.fetched} fetched, ${p.kept} already here${p.skipped.length ? `, ${p.skipped.length} skipped` : ""}`; } catch (e) { d.steps.pictures = `failed: ${scrubTokens(e.message)}`; }
+    const u = unreadCount(dir); d.pictures = u.pictures; d.unread = u.unread;
+    log(`${g.name}: ${Object.entries(d.steps).map(([k, v]) => `${k} ${v}`).join(" · ")} · ${u.unread} of ${u.pictures} pictures not read yet`);
+    done.push(d);
+  }
+  return done;
+}
+/** Read every gym's unread pictures under one cap for the whole portfolio (one vision call per picture). */
+export async function readAll({ brandsDir, max = 100, log = console.log, ask }) {
+  let left = max; const done = [];
+  for (const g of gymsFor(brandsDir, { scope: "all" })) {
+    const dir = join(brandsDir, g.gym);
+    if (!g.unread) { done.push({ gym: g.gym, read: 0, left: 0 }); continue; }
+    try { const d = await readCreatives({ gymDir: dir, max: left, log: (m) => log(`  ${g.gym}: ${m}`), ...(ask ? { ask } : {}) }); left -= d.calls; done.push({ gym: g.gym, read: d.read, left: d.left, failed: d.skipped.filter((x) => /reading failed/.test(x)).length }); log(`${g.name}: read ${d.read}${d.left ? `, ${d.left} left for another run` : ""}`); }
+    catch (e) { log(`${g.name}: ${e.message}`); done.push({ gym: g.gym, error: e.message }); }
+  }
+  return { gyms: done, calls: max - left };
+}
+
+// ── CLI ──────────────────────────────────────────────────────────────────────
+const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+if (isMain) {
+  const { values: v } = parseArgs({ options: { "brands-dir": { type: "string" }, all: { type: "boolean", default: false }, refresh: { type: "boolean", default: false }, read: { type: "boolean", default: false }, max: { type: "string", default: "100" }, scope: { type: "string", default: "recent" }, track: { type: "string", default: "stills" }, gym: { type: "string" } } });
+  if (!(v.all || v.refresh || v.read || v.gym)) { console.error("Usage: what-wins.mjs (--all | --gym <slug>) [--scope active|recent|all] [--track stills|video|all] | --refresh | --read [--max 100]   [--brands-dir <dir>]"); process.exit(1); }
+  const brandsDir = v["brands-dir"] ? resolve(v["brands-dir"]) : join(REPO_ROOT, "brands");
+  try {
+    if (v.refresh) await refreshAll({ brandsDir });
+    if (v.read) { const d = await readAll({ brandsDir, max: parseInt(v.max, 10) || 100 }); console.log(`${d.calls} call(s) in all`); }
+    if (v.all || v.gym) {
+      const A = whatWinsAcross(brandsDir, { scope: SCOPES.includes(v.scope) ? v.scope : "recent", track: TRACKS.includes(v.track) ? v.track : "stills" });
+      console.log(`track ${A.track} (stills ${A.tracks.stills.leads} leads over ${A.tracks.stills.ads} ads · video ${A.tracks.video.leads} over ${A.tracks.video.ads}) · scope ${A.scope}: ${A.leads} leads over ${A.ads} ads in ${A.gyms.length} gyms`);
+      for (const g of A.gyms) console.log(`  ${g.name.padEnd(22)} ${g.currency} ads ${String(g.ads).padStart(4)} read ${String(g.read).padStart(4)} leads ${String(g.leads).padStart(5)} average ${String(g.base ?? "—").padStart(8)} median ${String(g.median ?? "—").padStart(8)} active ${String(g.active).padStart(3)} unread ${g.unread}/${g.pictures} pulled ${String(g.pulled || (g.exports.length ? "export" : "never")).slice(0, 10)}`);
+      for (const t of A.tables) if (t.values.length) console.log(`${t.label}: ` + t.values.map((x) => `${x.value} ${x.index ?? "—"}× ${x.leads}L ${x.cheaper_in}/${x.judged_in}g ${x.confidence}`).join(" | "));
+      for (const s2 of A.suggestions) console.log(`- ${s2.kind}: ${s2.text}`);
+      if (v.gym) { console.log(`\nFor ${v.gym}'s next batch:`); const g = A.gyms.find((x) => x.gym === v.gym); for (const n of nextWave(v.gym, A, { currency: g?.currency })) console.log(`  [${n.source}] ${n.text}`); }
+    }
+  } catch (e) { console.error(scrubTokens(e.message)); process.exit(1); }
 }

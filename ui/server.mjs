@@ -45,7 +45,7 @@ const targetingLibrary = () => seedTargetingDrafts(TARGETING_LIBRARY_DIR).data;
 const targetingLibraryView = () => { const d = targetingLibrary(); return { entries: d.entries.map((e) => ({ ...e, preset_id: `lib:${e.id}`, summary: summarise(e.spec) })), approved: d.entries.filter((e) => e.approved_on && !e.retired).length, drafts: d.entries.filter((e) => !e.approved_on && !e.retired).length }; };
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { importExport } from "../skills/references/ads-export.mjs";
-import { whatWins } from "../skills/references/what-wins.mjs";
+import { whatWins, whatWinsAcross, nextWave, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
@@ -70,6 +70,9 @@ const CLEAN_SCRIPT = join(REPO_ROOT, "skills", "references", "clean-photo.mjs");
 const READ_SCRIPT = join(REPO_ROOT, "skills", "references", "read-website.mjs");
 const IG_SCRIPT = join(REPO_ROOT, "skills", "references", "read-instagram.mjs");
 const CREATIVES_SCRIPT = join(REPO_ROOT, "skills", "references", "read-creatives.mjs");
+const WINS_SCRIPT = join(REPO_ROOT, "skills", "references", "what-wins.mjs");
+/** A reading run's cap: one vision call per picture, a portfolio holds a few hundred. */
+const MAX_READ_CALLS = 800;
 /** An Ads Manager export (CSV) uploaded from Results: its name, and where it is kept. */
 const EXPORT_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,100}\.csv$/, MAX_EXPORT_BYTES = 10 * 1024 * 1024, EXPORTS_DIR = join("onboarding", "exports");
 // The tests serve a fake gym site from this machine; a real panel reads public websites only.
@@ -147,8 +150,41 @@ const RUNNABLE = {
   "instagram-read": { label: "Read Instagram", argv: ({ gym, handle, posts }) => [IG_SCRIPT, "--brand-dir", brandDir(gym), "--handle", handle, "--posts", String(posts)] },
   // What wins (2026-11-09): the vision model reads each picture in the gym's history once (format, subject, backdrop, pose…); one call per unread picture under the confirmed cap.
   "creatives-read": { label: "Read the creatives", argv: ({ gym, max }) => [CREATIVES_SCRIPT, "--brand-dir", brandDir(gym), "--max", String(max)] },
+  // Every gym at once (2026-11-10): each account pulled again with its delivered ads' pictures (read-only on Meta, no model call), and every gym's unread pictures read under one cap.
+  "portfolio-refresh": { label: "Refresh every gym's account (read-only)", argv: () => [WINS_SCRIPT, "--refresh", "--brands-dir", BRANDS] },
+  "portfolio-read": { label: "Read every gym's creatives", argv: ({ max }) => [WINS_SCRIPT, "--read", "--max", String(max), "--brands-dir", BRANDS] },
   "photo-clean": { label: "Clean photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...(photos.some((p) => p.includes("/") && !p.startsWith("facility/")) ? ["--clean-dir", join(brandDir(gym), "brand-assets", "reference-clean")] : []), ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", p.includes("/") ? p : `facility/${p}`)])] },
 };
+
+// ── Once a week, by itself (the owner's rule, 2026-11-10) ─────────────────────
+// Every gym's account is read again and its new pictures read, without a click: the refresh (read-only on Meta, no
+// model call), then the reading under a small cap (one vision call per NEW picture). It runs while the panel is up,
+// checked an hour apart; a panel that was down when the week came round does it when it next starts. Never beside
+// another run (a batch being made keeps the machine), never without the Meta link. Off in the tests' panels (they
+// name their own clients folder) unless PANEL_WEEKLY=1; PANEL_WEEKLY=0 turns it off for a real one.
+const WEEK_MS = 7 * 86400000, WEEKLY_READ_CAP = 150;
+const WEEKLY_ON = process.env.PANEL_WEEKLY === "1" || (process.env.PANEL_WEEKLY !== "0" && !process.env.PANEL_BRANDS_DIR);
+const SCHEDULE_FILE = join(COPY_LIBRARY, "portfolio-schedule.json");
+const readSchedule = () => { try { return JSON.parse(readFileSync(SCHEDULE_FILE, "utf-8")); } catch { return {}; } };
+const saveSchedule = (patch) => { mkdirSync(COPY_LIBRARY, { recursive: true }); writeFileSync(SCHEDULE_FILE, JSON.stringify({ ...readSchedule(), ...patch }, null, 2) + "\n"); };
+function weeklyState() {
+  const s = readSchedule(), last = s.last_started ? Date.parse(s.last_started) : null;
+  return { weekly: WEEKLY_ON, last_started: s.last_started || null, last_finished: s.last_finished || null, last_result: s.last_result || null, next_due: last ? new Date(last + WEEK_MS).toISOString() : null, read_cap: WEEKLY_READ_CAP };
+}
+/** Start the week's refresh when it is due. Answers what it did, in a word (for the log and the tests). */
+function weeklyTick(now = Date.now()) {
+  if (!WEEKLY_ON) return "off";
+  const s = readSchedule();
+  if (s.last_started && now - Date.parse(s.last_started) < WEEK_MS) return "not due";
+  if (!metaConfig().token) return "no Meta link";
+  if ([...runs.values()].some((r) => !r.done)) return "a run is going";
+  saveSchedule({ last_started: new Date(now).toISOString(), last_finished: null, last_result: "running" });
+  startRun("portfolio-refresh", {}, { onDone: (r1) => {
+    if (r1.code !== 0) return saveSchedule({ last_finished: new Date().toISOString(), last_result: `the refresh ended with code ${r1.code}` });
+    startRun("portfolio-read", { max: WEEKLY_READ_CAP }, { onDone: (r2) => saveSchedule({ last_finished: new Date().toISOString(), last_result: r2.code === 0 ? "refreshed and read" : `refreshed; the reading ended with code ${r2.code}` }) });
+  } });
+  return "started";
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const json = (res, code, body) => {
@@ -997,7 +1033,7 @@ async function stopBatch(gym, batch) {
   return { ok: true, stopped: true };
 }
 
-function startRun(kind, params) {
+function startRun(kind, params, hooks = {}) {
   const spec = RUNNABLE[kind];
   if (!spec) throw new Error(`unknown command "${kind}"`);
   const args = spec.argv(params);
@@ -1032,6 +1068,7 @@ function startRun(kind, params) {
     run.code = code;
     run.stopped = stopped;
     push(code === 0 ? "✓ finished" : stopped ? "■ stopped by you" : `✗ exited with code ${code}`, "meta");
+    try { hooks.onDone?.(run); } catch (e) { push(`after the run: ${e.message}`, "err"); }
     for (const res of run.clients) { res.write(`event: done\ndata: ${JSON.stringify({ code, stopped })}\n\n`); res.end(); }
     run.clients.clear();
   });
@@ -1325,9 +1362,18 @@ const server = createServer(async (req, res) => {
       const h = readHistory(brandDir(gym));
       const hrows = h ? historyRows(brandDir(gym)) : [];
       const currency = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).locale?.currency || "SGD";
-      const scope = new URL(req.url, "http://x").searchParams.get("scope") === "all" ? "all" : "active";
-      let wins = null; try { wins = whatWins(brandDir(gym), { currency, scope }); } catch (e) { wins = { error: e.message }; }
+      const wq = new URL(req.url, "http://x").searchParams, scope = WIN_SCOPES.includes(wq.get("scope")) ? wq.get("scope") : "active", track = WIN_TRACKS.includes(wq.get("track")) ? wq.get("track") : "stills";
+      let wins = null; try { wins = whatWins(brandDir(gym), { currency, scope, track }); } catch (e) { wins = { error: e.message }; }
       return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, exports: h.exports || [] } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length, wins });
+    }
+    // /api/wins — What wins across every gym: each gym's ads against its own median, pooled; and what that says for one gym's next batch.
+    if (p === "/api/wins" && req.method === "GET") {
+      const q = new URL(req.url, "http://x").searchParams, scope = WIN_SCOPES.includes(q.get("scope")) ? q.get("scope") : "recent", track = WIN_TRACKS.includes(q.get("track")) ? q.get("track") : "stills", gym = q.get("gym");
+      try {
+        const { _gyms, ...across } = whatWinsAcross(BRANDS, { scope, track });
+        const g = gym && okSlug(gym) ? across.gyms.find((x) => x.gym === gym) : null;
+        return json(res, 200, { ...across, next: g ? nextWave(gym, { ...across, _gyms }, { currency: g.currency }) : null, max_read: MAX_READ_CALLS, schedule: weeklyState() });
+      } catch (e) { return json(res, 500, { error: e.message }); }
     }
     // An Ads Manager export (CSV) for an account the system user does not reach: uploaded as raw bytes, kept under
     // onboarding/exports/, its ads brought into the history as rows of origin "export" (ads-export.mjs).
@@ -1904,8 +1950,20 @@ const server = createServer(async (req, res) => {
         if (!okSlug(body.gym) || !existsSync(join(brandDir(body.gym), "gym-profile.json"))) return json(res, 400, { error: "reading the creatives needs a client with a profile" });
         if (!existsSync(join(brandDir(body.gym), "account-history.json"))) return json(res, 409, { error: "no account history yet: pull the account from Meta or import an Ads Manager export first (Results)" });
         const max = body.max ?? 60;
-        if (!Number.isInteger(max) || max < 1 || max > MAX_CALLS_CAP) return json(res, 400, { error: `how many pictures to read must be 1 to ${MAX_CALLS_CAP}` });
+        if (!Number.isInteger(max) || max < 1 || max > MAX_READ_CALLS) return json(res, 400, { error: `how many pictures to read must be 1 to ${MAX_READ_CALLS}` });
         const run = startRun(kind, { gym: body.gym, max });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "portfolio-refresh") {
+        if (!metaConfig().token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+        saveSchedule({ last_started: new Date().toISOString(), last_finished: null, last_result: "running (started by you)" });
+        const run = startRun(kind, {}, { onDone: (r) => saveSchedule({ last_finished: new Date().toISOString(), last_result: r.code === 0 ? "refreshed by you" : `the refresh ended with code ${r.code}` }) });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "portfolio-read") {
+        const max = body.max ?? 100;
+        if (!Number.isInteger(max) || max < 1 || max > MAX_READ_CALLS) return json(res, 400, { error: `how many pictures to read must be 1 to ${MAX_READ_CALLS}` });
+        const run = startRun(kind, { max });
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "photo-survey" || kind === "photo-clean") {
@@ -2053,6 +2111,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 // Local only. This exposes the filesystem and can spawn processes — it must never bind publicly.
+if (WEEKLY_ON) { setTimeout(() => { try { weeklyTick(); } catch {} }, Number(process.env.PANEL_WEEKLY_FIRST_MS) || 90000).unref(); setInterval(() => { try { weeklyTick(); } catch {} }, 3600000).unref(); }
 server.listen(PORT, "127.0.0.1", () => {
   PORT = server.address().port; // --port 0 picks a free port (tests); the Host and Origin checks use the real one
   console.log(`Gym Ads control panel → http://localhost:${PORT}`);

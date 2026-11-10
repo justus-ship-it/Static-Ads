@@ -296,7 +296,7 @@ export function historyRows(gymDir) {
   const refDir = join(gymDir, "references");
   return h.ads.filter((a) => !ours.has(a.id)).map((a) => { const s = setOf[a.adset_id] || {}; return {
     source: "account", origin: a.origin || "account", gym: gymDir.split("/").pop(), batch: null, folder: null, ad_id: a.id, creative_id: a.creative_id, adset_id: a.adset_id, campaign_id: a.campaign_id, published: a.created, superseded: false,
-    campaign: a.campaign, campaign_status: campOf[a.campaign_id]?.words || null, campaign_created: campOf[a.campaign_id]?.created || null, adset_name: a.adset, ad_name: a.name, media: a.media, hashes: a.hashes, importable: !!a.importable,
+    campaign: a.campaign, campaign_status: campOf[a.campaign_id]?.words || null, campaign_created: campOf[a.campaign_id]?.created || null, objective: campOf[a.campaign_id]?.objective || null, adset_name: a.adset, ad_name: a.name, media: a.media, hashes: a.hashes, importable: !!a.importable,
     thumbnail: a.origin === "export" ? (a.creative_file && a.media === "image" ? `/files/brands/${gymDir.split("/").pop()}/${a.creative_file}` : null) : a.thumbnail,
     creative_file: a.creative_file || null, description: a.description || null, frequency: a.all_time?.frequency ?? null, quality_ranking: a.export?.quality_ranking ?? a.all_time?.quality_ranking ?? null, engagement_ranking: a.export?.engagement_ranking ?? a.all_time?.engagement_ranking ?? null, conversion_ranking: a.export?.conversion_ranking ?? a.all_time?.conversion_ranking ?? null,
     offer: a.offer || null, location: null, audience: s.audience || null, callout: null, photos: null, scenes: null, exercise: null, age_tag: null, setting: null, equipment: null, layout: null, style: null, palette: null, has_story: null,
@@ -387,6 +387,40 @@ export async function importFromAccount({ client, accountId, gymDir, adIds, fetc
     }
   }
   writeWhole(join(gymDir, COPY_REFS), JSON.stringify(copy, null, 2) + "\n");
+  return done;
+}
+
+/** Where the pictures of the account's own delivered ads are kept for the creative reader: one file per image hash. */
+export const PICTURES_DIR = "history-pictures";
+/**
+ * The picture of every ad in the history that spent anything (a video's poster frame counts): fetched once per image
+ * hash through the account's adimages into brands/{gym}/history-pictures/{hash}.{ext}. Not the app's own ads (their
+ * pictures are in outputs/), not an export's (their files came with it), not ad sets reaching outside the country.
+ * Read-only on Meta. These are reading material for What wins, never references for an image call.
+ */
+export async function fetchPictures({ client, accountId, gymDir, fetchImpl = globalThis.fetch, maxBytes = 25 * 1024 * 1024, log = () => {} }) {
+  const h = readHistory(gymDir); if (!h) throw new Error("pull the account's history first");
+  const ours = appAdIds(gymDir), abroad = new Set((h.adsets || []).filter((s) => s.abroad).map((s) => s.id));
+  const dir = join(gymDir, PICTURES_DIR); mkdirSync(dir, { recursive: true });
+  const have = (hash) => ["jpg", "png", "webp"].some((e) => existsSync(join(dir, `${hash}.${e}`)));
+  const wanted = [...new Set(h.ads.filter((a) => a.origin !== "export" && !ours.has(a.id) && !abroad.has(a.adset_id) && (a.all_time?.spend || 0) > 0).map((a) => a.hashes?.[0] || a.poster).filter((x) => x && /^[a-f0-9]{16,64}$/i.test(x)))];
+  const missing = wanted.filter((x) => !have(x)), done = { wanted: wanted.length, kept: wanted.length - missing.length, fetched: 0, skipped: [] };
+  for (let i = 0; i < missing.length; i += 20) {
+    const part = missing.slice(i, i + 20), urls = {};
+    try { const r = await client.get(`${actId(accountId)}/adimages`, { hashes: JSON.stringify(part), fields: "hash,url,permalink_url" }); for (const x of r.data || []) urls[x.hash] = x.url || x.permalink_url || null; }
+    catch (e) { done.skipped.push(`${part.length} pictures: ${scrubTokens(e.message)}`); continue; }
+    for (const hash of part) {
+      const url = urls[hash];
+      if (!url || (!CDN_HOSTS.test(url) && !/^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(url))) { done.skipped.push(`${hash}: no image url from Meta`); continue; }
+      try {
+        const res = await fetchImpl(url); if (!res.ok) throw new Error(`Meta's CDN answered ${res.status}`);
+        const buf = Buffer.from(await res.arrayBuffer()), ext = imageExt(buf);
+        if (!ext) throw new Error("not an image"); if (buf.length > maxBytes) throw new Error("too large");
+        writeFileSync(join(dir, `${hash}.${ext}`), buf); done.fetched++;
+      } catch (e) { done.skipped.push(`${hash}: ${scrubTokens(e.message)}`); }
+    }
+    log(`pictures ${Math.min(i + 20, missing.length)} of ${missing.length}`);
+  }
   return done;
 }
 

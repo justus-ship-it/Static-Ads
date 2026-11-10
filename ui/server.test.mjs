@@ -2449,8 +2449,11 @@ test("U45 what wins (the data loop, 2026-11-09): an Ads Manager export uploaded 
     assert.deepEqual([couple.origin, couple.offer, couple.frequency, couple.quality_ranking, couple.leads, couple.cost_per_lead, couple.importable, couple.status], ["export", "Beginner's Body Reset", 4.44, "average", 86, 14.52, false, "active"]);
     assert.ok(existsSync(join(g, "onboarding", "exports", "Shamanee-Param-Ads.csv")));
     // The results answer: What wins over the ads running now, every ad on request.
-    r = await (await call(`/api/client/${GYM}/results`)).json();
+    r = await (await call(`/api/client/${GYM}/results?track=all`)).json();
     const W = r.wins;
+    // By default the stills are read alone (the agent makes stills); the video is its own track.
+    const S = (await (await call(`/api/client/${GYM}/results`)).json()).wins, V = (await (await call(`/api/client/${GYM}/results?track=video`)).json()).wins;
+    assert.deepEqual([S.track, S.ads, S.leads, S.median, S.tracks.stills.leads, S.tracks.video.leads, S.tables.some((t) => t.key === "media"), V.track, V.ads, V.leads], ["stills", 1, 86, 14.52, 86, 2, false, "video", 1, 2]);
     // Earlier tests may leave this app's own (paused) ads in the gym's outputs: they join "every ad", never the running ones.
     const appRows = r.rows.length;
     assert.deepEqual([W.scope, W.active, W.every, W.ads, W.leads, W.median, W.read, W.currency], ["active", 2, 3 + appRows, 2, 88, 14.52, 0, "SGD"]);
@@ -2460,7 +2463,7 @@ test("U45 what wins (the data loop, 2026-11-09): an Ads Manager export uploaded 
     assert.deepEqual(W.suggestions.map((s) => s.kind), ["tiring", "unread"], "the one ad with 5+ leads IS the median, so nothing is cheaper than 85% of it: no keeper; the couple is tiring; the unread are named");
     assert.match(W.suggestions[0].text, /Couple.*seen 4.44 times per person/);
     assert.deepEqual([r.history.exports.length, r.history.pulled, r.campaigns.filter((c) => c.origin === "export").length, r.adsets.filter((c) => c.origin === "export").length, r.campaigns.find((c) => c.origin === "export").ads], [1, null, 1, 1, 3]);
-    const all = (await (await call(`/api/client/${GYM}/results?scope=all`)).json()).wins;
+    const all = (await (await call(`/api/client/${GYM}/results?scope=all&track=all`)).json()).wins;
     assert.deepEqual([all.scope, all.ads, all.leads >= 90], ["all", 3 + appRows, true]);
     // The reading run: checked before anything starts.
     r = await call("/api/run", { method: "POST", body: { kind: "creatives-read", gym: GYM, max: 0 } }); assert.equal(r.status, 400);
@@ -2473,17 +2476,95 @@ test("U45 what wins (the data loop, 2026-11-09): an Ads Manager export uploaded 
     const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u45#/${GYM}/results` }, sessionId); await loaded;
     const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!RS.data && !!document.querySelector('#wins')"))) await new Promise((x) => setTimeout(x, 120));
     let text = await ev("document.querySelector('#wins').textContent");
-    assert.match(text, /What wins/); assert.match(text, /88 leads over 2 ads · median SGD 14.52 a lead · 0 of 2 pictures read/);
+    assert.match(text, /What wins/); assert.match(text, /86 leads over 1 ad · median SGD 14.52 a lead · 0 of 1 pictures read/); assert.match(text, /stills 86 leads at SGD 14.52 · video 2 leads at SGD 32.15/);
     assert.match(text, /Tiring/); assert.match(text, /Not read yet/); assert.match(text, /the ads running now \(2\)/);
-    assert.match(text, /Media.*image · 86 leads at SGD 14.52/); assert.match(text, /Ads Manager exports: Shamanee-Param-Ads.csv — 3 ads/);
+    assert.match(text, /Offer.*Beginner's Body Reset · 86 leads at SGD 14.52/); assert.match(text, /Ads Manager exports: Shamanee-Param-Ads.csv — 3 ads/);
+    assert.ok(await ev("[...document.querySelectorAll('#wins select option')].some(o=>/^video \\(1\\)$/.test(o.textContent))"), "the track switch");
     assert.ok(await ev("!!document.querySelector('#wins input[type=file]') && [...document.querySelectorAll('#wins button')].some(b=>/Read the creatives/.test(b.textContent))"));
     assert.match(await ev("document.querySelector('#view').textContent"), /from an Ads Manager export/, "no API pull: the card says where the rows came from");
     await ev("rsScope('all')"); const t1 = Date.now(); while (Date.now() - t1 < 10000 && !(await ev("RS.data.wins.scope==='all'"))) await new Promise((x) => setTimeout(x, 100));
-    assert.match(await ev("document.querySelector('#wins').textContent"), new RegExp(`\\d+ leads over ${3 + appRows} ads`));
+    assert.match(await ev("document.querySelector('#wins').textContent"), new RegExp(`\\d+ leads over ${2 + appRows} ads`), "every still the gym ran");
+    await ev("rsTrack('video')"); const t2 = Date.now(); while (Date.now() - t2 < 10000 && !(await ev("RS.data.wins.track==='video'"))) await new Promise((x) => setTimeout(x, 100));
+    assert.match(await ev("document.querySelector('#wins').textContent"), /2 leads over 1 ad /, "the video track alone");
+    await ev("rsTrack('stills')"); const t3 = Date.now(); while (Date.now() - t3 < 10000 && !(await ev("RS.data.wins.track==='stills'"))) await new Promise((x) => setTimeout(x, 100));
     await ev("const c = RS.data.campaigns.find(x=>x.origin==='export'); rsOpenCampaign(c.campaign_id); rsOpenAdset(RS.data.adsets.find(s=>s.campaign_id===c.campaign_id).adset_id); true");
     assert.match(await ev("document.querySelector('table.tbl tbody').textContent"), /export/, "the Source column names an export's rows");
     await ev("rsReadCreatives(); true");
     assert.ok(await ev("!!document.querySelector('#rsMax') && document.querySelector('#gModal').textContent.includes('one call per picture')"));
     await ev("document.querySelector('#gModal').innerHTML=''; true");
   } finally { rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true }); }
+});
+
+test("U46 across every gym (2026-11-10): /api/wins pools every gym folder — each gym with its ads, leads, own median, unread pictures and when its account was read — in a scope (running now or the last 12 months by default), with what holds for one gym's next batch; the portfolio runs are checked before they start (a cap, the Meta link); the Results page shows the card under the gym's own What wins with the gyms table, the scope, the refresh and the reading dialogs", async () => {
+  const g = join(brands, GYM);
+  await linkTestGym();
+  rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "creative-reads.json"), { force: true });
+  const HEADER = `"Reporting starts","Reporting ends","Ad name","Ad delivery","Attribution setting",Results,"Result indicator","Cost per results","Ad set budget","Ad set budget type","Amount spent (SGD)",Impressions,Reach,Ends,Bid,"Bid type","Last significant edit","Quality ranking","Engagement rate ranking","Conversion rate ranking","Ad set name","Results (initial)","Results (initial) indicator"`;
+  const row = (ad, results, spend, delivery = "active") => `2023-10-08,2026-11-08,"${ad}",${delivery},"7-day click or 1-day view",${results},actions:leadgen.other,1,100,Daily,${spend},10000,5000,Ongoing,0,ABSOLUTE_OCPM,2026-10-15T19:04:37+0800,Average,Average,Average,"0413 Broad Audience | Both Genders | 25-50 | +3KM",,`;
+  const CSV = [HEADER, row("0413 Offer A | Image 1: One", 40, 400), row("0413 Offer A | Image 2: Two", 20, 400), row("0413 Offer A | Image 3: Old", 10, 300, "inactive")].join("\n") + "\n";
+  try {
+    let r = await fetch(`${panel.url}/api/client/${GYM}/history/export/portfolio.csv`, { method: "PUT", headers: { "content-type": "text/csv", "x-panel-token": panel.token }, body: CSV });
+    assert.equal(r.status, 200);
+    let A = await (await call(`/api/wins?gym=${GYM}`)).json();
+    const me = A.gyms.find((x) => x.gym === GYM);
+    assert.deepEqual([A.scope, A.track, A.tracks.stills.leads >= 60, A.max_read, Array.isArray(A.tables), Array.isArray(A.next), "_gyms" in A, "rows" in me, A.schedule.weekly, A.tables.some((t) => t.key === "media")], ["recent", "stills", true, 800, true, true, false, false, false, false], "stills by default; the weekly refresh is off on a test panel");
+    // Earlier tests may leave this app's own (paused, just published) ads in the gym's outputs: they are recent, never running.
+    const mine = (await (await call(`/api/client/${GYM}/results`)).json()).rows, appRows = mine.length, appLeads = mine.reduce((t, x) => t + (x.leads || 0), 0);
+    assert.deepEqual([me.ads, me.active, me.leads, me.median, me.currency, me.pulled, me.exports.length], [2 + appRows, 2, 60 + appLeads, 15, "SGD", null, 1], "an export's paused ad carries no date, so the recent scope keeps the two running");
+    const media = (await (await call(`/api/wins?track=all&gym=${GYM}`)).json()).tables.find((t) => t.key === "media").values.find((v) => v.value === "image");
+    assert.ok(media.leads >= 60 && media.gyms.some((x) => x.gym === GYM && x.leads === 60 && x.cost_per_lead === 13.33 && x.rel >= 0.95 && x.rel <= 1.05), JSON.stringify(media.gyms));
+    A = await (await call(`/api/wins?scope=all&gym=${GYM}`)).json();
+    assert.deepEqual([A.scope, A.gyms.find((x) => x.gym === GYM).ads >= 3], ["all", true]);
+    assert.equal((await (await call("/api/wins?scope=nonsense")).json()).scope, "recent");
+    assert.equal((await (await call(`/api/client/${GYM}/results?scope=recent`)).json()).wins.scope, "recent");
+    // The portfolio runs.
+    r = await call("/api/run", { method: "POST", body: { kind: "portfolio-read", max: 0 } }); assert.equal(r.status, 400);
+    r = await call("/api/run", { method: "POST", body: { kind: "portfolio-read", max: 801 } }); assert.equal(r.status, 400);
+    r = await call("/api/run", { method: "POST", body: { kind: "portfolio-refresh" } }); assert.equal(r.status, 409); assert.match((await r.json()).error, /Meta link is not set up/);
+    r = await call("/api/run", { method: "POST", body: { kind: "portfolio-read", max: 5 }, token: null }); assert.equal(r.status, 403);
+    // The page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u46#/${GYM}/results` }, sessionId); await loaded;
+    const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!RS.data && !!RS.across && !!document.querySelector('#across table')"))) await new Promise((x) => setTimeout(x, 120));
+    const text = await ev("document.querySelector('#across').textContent");
+    assert.match(text, /Across every gym/); assert.match(text, /never pooled raw/); assert.match(text, /own average/); assert.match(text, /this gym/); assert.match(text, /export only/);
+    assert.match(text, /next batch/); assert.match(text, /Split by gym/); assert.match(text, /weekly refresh is off on this panel/); assert.match(text, /last 6 months/);
+    assert.ok(await ev("document.querySelector('#wins').compareDocumentPosition(document.querySelector('#across')) & Node.DOCUMENT_POSITION_FOLLOWING"), "under the gym's own What wins");
+    assert.ok(await ev("[...document.querySelectorAll('#wins select option')].some(o=>/last 6 months/.test(o.textContent))"));
+    await ev("rsPortfolioRead(); true");
+    assert.ok(await ev("!!document.querySelector('#rsMaxAll') && /one call per picture/.test(document.querySelector('#gModal').textContent)"));
+    await ev("rsPortfolioRefresh(); true");
+    assert.match(await ev("document.querySelector('#gModal').textContent"), /Read-only on Meta\. No model call/);
+    await ev("document.querySelector('#gModal').innerHTML=''; rsAcrossScope('all')");
+    const t1 = Date.now(); while (Date.now() - t1 < 10000 && !(await ev("RS.across && RS.across.scope==='all'"))) await new Promise((x) => setTimeout(x, 100));
+    assert.equal(await ev("RS.across.scope"), "all");
+  } finally { rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true }); }
+});
+
+test("U47 once a week, by itself (2026-11-10): a panel with the weekly refresh on starts it when no refresh is on record — every account pulled again (read-only), then the new pictures read under the weekly cap — and writes when it started, how it ended and when the next is due; a panel started inside the week starts nothing; a refresh started by hand counts as the week's", async () => {
+  const lib = join(dirname(brands), "library"), file = join(lib, "portfolio-schedule.json");
+  rmSync(file, { force: true });
+  const graph = await fakeGraph();
+  const main = panel;
+  const env = { META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url, PANEL_WEEKLY: "1", PANEL_WEEKLY_FIRST_MS: "200" };
+  try {
+    panel = await startPanel(env);
+    let t0 = Date.now(), sch = null;
+    while (Date.now() - t0 < 60000) { sch = existsSync(file) ? JSON.parse(readFileSync(file, "utf-8")) : null; if (sch?.last_finished) break; await new Promise((x) => setTimeout(x, 200)); }
+    assert.ok(sch?.last_started && sch.last_finished, "the week's refresh ran to its end: " + JSON.stringify(sch));
+    assert.equal(sch.last_result, "refreshed and read");
+    let A = await (await call("/api/wins")).json();
+    assert.deepEqual([A.schedule.weekly, A.schedule.last_started, A.schedule.read_cap, Math.round((Date.parse(A.schedule.next_due) - Date.parse(sch.last_started)) / 86400000)], [true, sch.last_started, 150, 7]);
+    await panel.stop();
+    // Inside the week: nothing starts.
+    panel = await startPanel(env);
+    await new Promise((x) => setTimeout(x, 1500));
+    assert.equal(JSON.parse(readFileSync(file, "utf-8")).last_started, sch.last_started, "not due: left alone");
+    // By hand: it counts as the week's.
+    const made = await runAndWait({ kind: "portfolio-refresh" });
+    assert.equal(made.code, 0, made.lines.join("\n"));
+    const after = JSON.parse(readFileSync(file, "utf-8"));
+    assert.ok(after.last_started > sch.last_started && after.last_result === "refreshed by you", JSON.stringify(after));
+  } finally { await panel.stop(); panel = main; graph.server.close(); rmSync(file, { force: true }); }
 });

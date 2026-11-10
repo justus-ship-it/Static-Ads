@@ -15,13 +15,13 @@
  *   node skills/references/read-creatives.mjs --brand-dir brands/{gym} [--max 60] [--show]
  */
 
-import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 import { createHash } from "crypto";
 import { parseArgs } from "util";
 import { fileURLToPath } from "url";
 import { callVision, imageSize, CHECK_MODEL } from "./check-visual.mjs";
-import { readHistory } from "./meta-results.mjs";
+import { readHistory, appAdIds, PICTURES_DIR } from "./meta-results.mjs";
 
 export const READS_FILE = "creative-reads.json";
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
@@ -100,50 +100,78 @@ const IMAGE_RE = /\.(jpe?g|png|webp)$/i;
 export function pictureOf(gymDir, ad) {
   if (ad.creative_file && IMAGE_RE.test(ad.creative_file) && existsSync(join(gymDir, ad.creative_file))) return join(gymDir, ad.creative_file);
   for (const ext of ["jpg", "png", "webp"]) { const p = join(gymDir, "references", `meta-${ad.id}.${ext}`); if (existsSync(p)) return p; }
+  const hash = ad.hashes?.[0] || ad.poster;
+  if (hash) for (const ext of ["jpg", "png", "webp"]) { const p = join(gymDir, PICTURES_DIR, `${hash}.${ext}`); if (existsSync(p)) return p; }
   return null;
+}
+/**
+ * Every ad the gym has run with the picture that stands for it: the account's and an export's ads through pictureOf;
+ * the app's own published ads through their finished 1:1 in outputs/ — one representative file per photo of a batch
+ * (the same photo under another location or look is the same picture to read), so a batch costs a call per photo.
+ */
+export function pictures(gymDir) {
+  const out = [], h = readHistory(gymDir), ours = appAdIds(gymDir);
+  for (const ad of h?.ads || []) { if (ours.has(ad.id)) continue; out.push({ ad_id: ad.id, name: ad.name, media: ad.media, leads: ad.all_time?.leads || 0, spend: ad.all_time?.spend || 0, file: pictureOf(gymDir, ad) }); }
+  const outDir = join(gymDir, "outputs");
+  if (existsSync(outDir)) for (const b of readdirSync(outDir).sort()) {
+    const rec = readJson(join(outDir, b, "publish.json")), batch = readJson(join(outDir, b, "batch.json"));
+    if (!rec?.ads || !Array.isArray(batch?.ads)) continue;
+    const byFolder = Object.fromEntries(batch.ads.map((a) => [a.folder, a])), rep = new Map(), key = (a) => (a.photos || []).join("+");
+    for (const a of [...batch.ads].sort((x, y) => String(x.folder).localeCompare(String(y.folder)))) { const f = a.file ? join(outDir, b, a.file) : null; if (f && !rep.has(key(a)) && existsSync(f)) rep.set(key(a), f); }
+    const add = (folder, id) => { const a = byFolder[folder]; if (a && id) out.push({ ad_id: id, name: `${b}/${folder}`, media: "image", app: true, leads: 0, spend: 0, file: rep.get(key(a)) || null }); };
+    for (const [folder, e] of Object.entries(rec.ads)) add(folder, e.id);
+    for (const o of rec.superseded || []) add(o.folder, o.id);
+  }
+  return out;
 }
 export const readReads = (gymDir) => { const j = readJson(join(gymDir, READS_FILE)); return { schema: 1, model: CHECK_MODEL, reads: {}, ...(j || {}), reads: j?.reads && typeof j.reads === "object" ? j.reads : {} }; };
 const hashOf = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
-/** Read every unread picture in the gym's history, under `max` calls. Returns what was read, what was cached, what was skipped and why. */
+/** Read every unread picture the gym's ads have, under `max` calls. Returns what was read, what was cached, what was skipped and why. */
 export async function readCreatives({ gymDir, ask = callVision, max = 60, log = () => {}, now = () => new Date().toISOString() }) {
-  const h = readHistory(gymDir);
-  if (!h) throw new Error("no account history yet: pull the account or import an Ads Manager export first");
+  const list = pictures(gymDir);
+  if (!list.length) throw new Error("no ads yet: pull the account, import an Ads Manager export or publish a batch first");
   const store = readReads(gymDir);
-  const done = { read: 0, cached: 0, skipped: [], calls: 0, ads: 0 };
-  const seen = new Set();
-  for (const ad of h.ads) {
-    const pic = pictureOf(gymDir, ad);
-    if (!pic) { if ((ad.all_time?.leads || 0) > 0 || (ad.all_time?.spend || 0) > 0) done.skipped.push(`${ad.name}: ${ad.media === "video" ? "a video with no poster frame" : "no picture on this machine"}`); continue; }
-    const sha = hashOf(pic);
+  const done = { read: 0, cached: 0, skipped: [], calls: 0, ads: 0, left: 0 };
+  const shaOf = new Map(), sha = (f) => shaOf.get(f) || shaOf.set(f, hashOf(f)).get(f);
+  const seen = new Set(), capped = new Set();
+  for (const ad of list) {
+    if (!ad.file) { if (ad.leads > 0 || ad.spend > 0) done.skipped.push(`${ad.name}: ${ad.media === "video" ? "a video with no poster frame" : "no picture on this machine"}`); continue; }
+    const id = sha(ad.file);
     done.ads++;
-    if (seen.has(sha)) continue; seen.add(sha);
-    const had = store.reads[sha];
-    if (had && had.format) { if (!had.ad_ids?.includes(ad.id)) { had.ad_ids = [...new Set([...(had.ad_ids || []), ad.id])]; } done.cached++; continue; }
-    if (done.calls >= max) { done.skipped.push(`${ad.name}: the cap of ${max} calls was reached`); continue; }
+    if (seen.has(id)) continue; seen.add(id);
+    const had = store.reads[id];
+    if (had && had.format) { done.cached++; continue; }
+    if (done.calls >= max) { capped.add(id); done.skipped.push(`${ad.name}: the cap of ${max} calls was reached`); continue; }
     done.calls++;
-    log(`reading ${pic.split("/").pop()} (${ad.name.slice(0, 60)})`);
-    let size = null; try { size = imageSize(readFileSync(pic)); } catch {}
+    log(`reading ${ad.file.split("/").pop()} (${ad.name.slice(0, 60)})`);
+    let size = null; try { size = imageSize(readFileSync(ad.file)); } catch {}
     try {
-      const a = await ask(pic, READ_QUESTION, READ_SCHEMA);
-      store.reads[sha] = { file: pic.replace(gymDir + "/", ""), size, ratio: size ? ratioOf(size) : "other", read_on: now(), model: store.model || CHECK_MODEL, ad_ids: [...new Set([...(had?.ad_ids || []), ad.id])],
+      const a = await ask(ad.file, READ_QUESTION, READ_SCHEMA);
+      store.reads[id] = { file: ad.file.replace(gymDir + "/", ""), size, ratio: size ? ratioOf(size) : "other", read_on: now(), model: store.model || CHECK_MODEL, ad_ids: [],
         format: a.format, subject: a.subject, people: a.people, backdrop: a.backdrop, backdrop_colour: a.backdrop_colour || null, pose: a.pose, expression: a.expression, eye_contact: !!a.eye_contact, mood: a.mood || null,
         text_density: a.text_density, words: Array.isArray(a.words) ? a.words.filter(Boolean) : [], logo: !!a.logo, colours: Array.isArray(a.colours) ? a.colours.filter(Boolean) : [], clothing_colour: a.clothing_colour || null, notes: a.notes || null };
       done.read++;
       writeWhole(join(gymDir, READS_FILE), JSON.stringify(store, null, 2) + "\n");
     } catch (e) { done.skipped.push(`${ad.name}: the reading failed — ${e.message}`); }
   }
-  // Every ad that shares a picture is noted on the reading (the same video under three offers).
-  for (const ad of h.ads) { const pic = pictureOf(gymDir, ad); if (!pic) continue; const r = store.reads[hashOf(pic)]; if (r && !r.ad_ids?.includes(ad.id)) r.ad_ids = [...(r.ad_ids || []), ad.id]; }
+  done.left = capped.size;
+  // Every ad that shares a picture is noted on the reading (the same video under three offers, a photo under four locations).
+  for (const ad of list) { if (!ad.file) continue; const r = store.reads[sha(ad.file)]; if (r && !r.ad_ids?.includes(ad.ad_id)) r.ad_ids = [...(r.ad_ids || []), ad.ad_id]; }
   writeWhole(join(gymDir, READS_FILE), JSON.stringify(store, null, 2) + "\n");
   return done;
 }
+/** How many distinct pictures the gym has on this machine, and how many of them are not read yet (what a reading run would cost). */
+export function unreadCount(gymDir) {
+  const store = readReads(gymDir), ids = new Set();
+  for (const ad of pictures(gymDir)) if (ad.file) ids.add(hashOf(ad.file));
+  return { pictures: ids.size, unread: [...ids].filter((id) => !store.reads[id]?.format).length };
+}
 
-/** The reading for each ad id in the history (ads sharing a picture share a reading). */
+/** The reading for each ad id (ads sharing a picture share a reading). */
 export function readsFor(gymDir) {
-  const h = readHistory(gymDir), store = readReads(gymDir), byAd = new Map();
-  if (!h) return { byAd, reads: store.reads, total: 0 };
-  for (const ad of h.ads) { const pic = pictureOf(gymDir, ad); if (!pic) continue; const r = store.reads[hashOf(pic)]; if (r?.format) byAd.set(ad.id, r); }
+  const store = readReads(gymDir), byAd = new Map(), shaOf = new Map();
+  for (const ad of pictures(gymDir)) { if (!ad.file) continue; const id = shaOf.get(ad.file) || shaOf.set(ad.file, hashOf(ad.file)).get(ad.file); const r = store.reads[id]; if (r?.format) byAd.set(ad.ad_id, r); }
   return { byAd, reads: store.reads, total: Object.keys(store.reads).length };
 }
 
@@ -156,10 +184,11 @@ if (isMain) {
   try {
     if (v.show) {
       const { byAd } = readsFor(gymDir), h = readHistory(gymDir);
+      const u = unreadCount(gymDir); console.log(`${u.pictures} distinct pictures on this machine, ${u.unread} not read yet`);
       for (const ad of h?.ads || []) { const r = byAd.get(ad.id); if (r) console.log(`${String(ad.all_time?.leads ?? 0).padStart(4)} leads  ${(ad.all_time?.cost_per_lead ?? "—").toString().padStart(7)}  ${r.ratio.padEnd(6)} ${r.format.padEnd(16)} ${r.subject.padEnd(7)} ${r.backdrop.padEnd(16)} ${r.pose.padEnd(18)} ${r.expression.padEnd(8)} ${r.text_density.padEnd(6)} logo:${r.logo ? "y" : "n"}  ${ad.name.slice(0, 60)}`); }
     } else {
       const d = await readCreatives({ gymDir, max: parseInt(v.max, 10) || 60, log: (m) => console.log("  " + m) });
-      console.log(`read ${d.read} picture(s) (${d.cached} already read) for ${d.ads} ads · ${d.calls} call(s)${d.skipped.length ? `\nskipped:\n  ${d.skipped.join("\n  ")}` : ""}`);
+      console.log(`read ${d.read} picture(s) (${d.cached} already read) for ${d.ads} ads · ${d.calls} call(s)${d.left ? ` · ${d.left} left for another run` : ""}${d.skipped.length ? `\nskipped:\n  ${d.skipped.join("\n  ")}` : ""}`);
     }
   } catch (e) { console.error(e.message); process.exit(1); }
 }
