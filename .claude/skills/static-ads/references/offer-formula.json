@@ -1,0 +1,1288 @@
+{
+  "schema_version": 1,
+  "note": "The formula family (2026-11-10): the look of F45 Jurong West's own running ads, as a second family beside the reference set. The area callout across the top, the duration and the offer low in the frame, plain filled type with a soft shadow and no outline, colour pairings chosen to sit on a plain backdrop, no logo and no brand colour. A batch uses one family (brief.look, else creative_defaults.look): 'reference' is offer-treatments / offer-styles / offer-palettes, 'formula' is this file. Same schema as those files; every entry carries family 'formula'. Both groups float clear of faces (float: { edge?, min_h_pct, gap_pct }): the lower block starts below the lowest face under it if at least min_h_pct of the canvas is left, else it moves above the heads; the callout (edge 'top') is cut short above a face. The lower block's scrim is 'local': full strength behind the block, fading above and below, so a plain backdrop is never tinted to the frame's edge. No contrast stroke: a line that a scrim cannot rescue gets a band. Contrast is judged at the large-text level (3:1): every line is display type, 40 px or more.",
+  "treatments": {
+    "f1-callout-left": {
+      "family": "formula",
+      "number": 201,
+      "name": "Callout / offer, left",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026): the area across the top, the duration and the offer low in the frame"
+      ],
+      "why": "Everything ranged left: the callout top-left, the duration and offer bottom-left.",
+      "visual_hint": "Head and face in the upper-middle of the frame, below the top strip; the lowest quarter of the frame may hold the torso, legs or floor, free of faces and busy detail. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "One or two people framed from the knees or the waist up, or in a seated, kneeling or crouching version of the movement, with the head in the upper half but clear of the very top; eye-level camera.",
+      "pose_fit": [
+        "upright",
+        "compact",
+        "low"
+      ],
+      "lead": "location",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                15
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 8,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                64,
+                90,
+                31
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 16
+              },
+              "float": {
+                "min_h_pct": 17,
+                "gap_pct": 2.5
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "4x5": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                13.5
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 7,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                68,
+                90,
+                27
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 16
+              },
+              "float": {
+                "min_h_pct": 15,
+                "gap_pct": 2.5
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "9x16": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                6,
+                14.5,
+                88,
+                9
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 12
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 5,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                6,
+                46,
+                88,
+                18.5
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 12
+              },
+              "float": {
+                "min_h_pct": 10.5,
+                "gap_pct": 2
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 3,
+        "stroke_min": 2.2,
+        "scrim_max_alpha": 0.6,
+        "sample_percentile": 85,
+        "chain": [
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "the location callout is the lead line; the duration and the offer sit under it in size"
+    },
+    "f2-callout-centre": {
+      "family": "formula",
+      "number": 202,
+      "name": "Callout / offer, centred",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026): the area across the top, the duration and the offer low in the frame"
+      ],
+      "why": "Everything centred: the callout across the top, the duration and offer centred low.",
+      "visual_hint": "Head and face in the upper-middle of the frame, below the top strip; the lowest quarter of the frame may hold the torso, legs or floor, free of faces and busy detail. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "One or two people framed from the knees or the waist up, or in a seated, kneeling or crouching version of the movement, with the head in the upper half but clear of the very top; eye-level camera.",
+      "pose_fit": [
+        "upright",
+        "compact",
+        "low"
+      ],
+      "lead": "location",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                15
+              ],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 8,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                64,
+                90,
+                31
+              ],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 16
+              },
+              "float": {
+                "min_h_pct": 17,
+                "gap_pct": 2.5
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "4x5": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                13.5
+              ],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 7,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                68,
+                90,
+                27
+              ],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 16
+              },
+              "float": {
+                "min_h_pct": 15,
+                "gap_pct": 2.5
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "9x16": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                6,
+                14.5,
+                88,
+                9
+              ],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 12
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 5,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                6,
+                46,
+                88,
+                18.5
+              ],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 12
+              },
+              "float": {
+                "min_h_pct": 10.5,
+                "gap_pct": 2
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 3,
+        "stroke_min": 2.2,
+        "scrim_max_alpha": 0.6,
+        "sample_percentile": 85,
+        "chain": [
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "the location callout is the lead line; the duration and the offer sit under it in size"
+    },
+    "f3-offer-card": {
+      "family": "formula",
+      "number": 203,
+      "name": "Callout / offer on a card",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026): the area across the top, the duration and the offer low in the frame"
+      ],
+      "why": "The callout over the photo; the duration and offer on a solid card low in the frame, so dark type reads over any clothing.",
+      "visual_hint": "Head and face in the upper-middle of the frame, below the top strip; the lowest quarter of the frame may hold the torso, legs or floor, free of faces and busy detail. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "One or two people framed from the knees or the waist up, or in a seated, kneeling or crouching version of the movement, with the head in the upper half but clear of the very top; eye-level camera.",
+      "pose_fit": [
+        "upright",
+        "compact",
+        "low"
+      ],
+      "lead": "location",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                15
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 8,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                64,
+                90,
+                31
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "none",
+                "fade_pct": 8
+              },
+              "float": {
+                "min_h_pct": 17,
+                "gap_pct": 2.5
+              },
+              "band": {
+                "mode": "full",
+                "shape": "pill",
+                "blocks": [
+                  "duration",
+                  "offer_name"
+                ],
+                "pad_pct": 1.5,
+                "radius_pct": 1.6
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "4x5": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                13.5
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 7,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                68,
+                90,
+                27
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "none",
+                "fade_pct": 8
+              },
+              "float": {
+                "min_h_pct": 15,
+                "gap_pct": 2.5
+              },
+              "band": {
+                "mode": "full",
+                "shape": "pill",
+                "blocks": [
+                  "duration",
+                  "offer_name"
+                ],
+                "pad_pct": 1.5,
+                "radius_pct": 1.6
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "9x16": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                6,
+                14.5,
+                88,
+                9
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 12
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 5,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                6,
+                46,
+                88,
+                18.5
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "none",
+                "fade_pct": 5
+              },
+              "float": {
+                "min_h_pct": 10.5,
+                "gap_pct": 2
+              },
+              "band": {
+                "mode": "full",
+                "shape": "pill",
+                "blocks": [
+                  "duration",
+                  "offer_name"
+                ],
+                "pad_pct": 1.5,
+                "radius_pct": 1.6
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 3,
+        "stroke_min": 2.2,
+        "scrim_max_alpha": 0.6,
+        "sample_percentile": 85,
+        "chain": [
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "the location callout is the lead line; the duration and the offer sit under it in size"
+    }
+  },
+  "styles": {
+    "fs1-heavy-italic": {
+      "family": "formula",
+      "number": 201,
+      "name": "Heavy sans, italic duration",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "face": "montserrat",
+          "weight": 900,
+          "effect": "plain"
+        },
+        "audience": {
+          "face": "montserrat",
+          "weight": 800,
+          "tracking": "0.03em",
+          "effect": "plain"
+        },
+        "duration": {
+          "face": "montserrat-italic",
+          "weight": 900,
+          "effect": "plain"
+        },
+        "offer_name": {
+          "face": "montserrat",
+          "weight": 900,
+          "effect": "plain"
+        }
+      }
+    },
+    "fs2-condensed": {
+      "family": "formula",
+      "number": 202,
+      "name": "Condensed",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "face": "anton",
+          "weight": 400,
+          "tracking": "0.01em",
+          "effect": "plain"
+        },
+        "audience": {
+          "face": "oswald",
+          "weight": 600,
+          "tracking": "0.04em",
+          "effect": "plain"
+        },
+        "duration": {
+          "face": "anton",
+          "weight": 400,
+          "tracking": "0.01em",
+          "effect": "plain"
+        },
+        "offer_name": {
+          "face": "anton",
+          "weight": 400,
+          "tracking": "0.01em",
+          "effect": "plain"
+        }
+      }
+    },
+    "fs3-tall-sans": {
+      "family": "formula",
+      "number": 203,
+      "name": "Tall sans",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "face": "oswald",
+          "weight": 700,
+          "tracking": "0.02em",
+          "effect": "plain"
+        },
+        "audience": {
+          "face": "oswald",
+          "weight": 600,
+          "tracking": "0.05em",
+          "effect": "plain"
+        },
+        "duration": {
+          "face": "oswald",
+          "weight": 700,
+          "tracking": "0.02em",
+          "effect": "plain"
+        },
+        "offer_name": {
+          "face": "oswald",
+          "weight": 700,
+          "tracking": "0.02em",
+          "effect": "plain"
+        }
+      }
+    }
+  },
+  "palettes": {
+    "f-cream": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#FFF6DC",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "audience": {
+          "fill": "#FFF6DC",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "duration": {
+          "fill": "#FFF6DC",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "offer_name": {
+          "fill": "#FFF6DC",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        }
+      },
+      "pill": "#151515",
+      "band": "#121212",
+      "scrim": "#000000",
+      "divider": "#FFF6DC"
+    },
+    "f-white-pink": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "audience": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "duration": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "offer_name": {
+          "fill": "#FF4F9A",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        }
+      },
+      "pill": "#151515",
+      "band": "#121212",
+      "scrim": "#000000",
+      "divider": "#FFFFFF"
+    },
+    "f-white-rose": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "audience": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "duration": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "offer_name": {
+          "fill": "#FF7AB6",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        }
+      },
+      "pill": "#151515",
+      "band": "#121212",
+      "scrim": "#000000",
+      "divider": "#FFFFFF"
+    },
+    "f-yellow-white": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#F2D35B",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "audience": {
+          "fill": "#F2D35B",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "duration": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "offer_name": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        }
+      },
+      "pill": "#151515",
+      "band": "#121212",
+      "scrim": "#000000",
+      "divider": "#F2D35B"
+    },
+    "f-gold-white": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#E3B84A",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "audience": {
+          "fill": "#E3B84A",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "duration": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "offer_name": {
+          "fill": "#E3B84A",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        }
+      },
+      "pill": "#151515",
+      "band": "#121212",
+      "scrim": "#000000",
+      "divider": "#E3B84A"
+    },
+    "f-olive-red": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#A89A3C",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "audience": {
+          "fill": "#A89A3C",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "duration": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "offer_name": {
+          "fill": "#E8262B",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        }
+      },
+      "pill": "#151515",
+      "band": "#121212",
+      "scrim": "#000000",
+      "divider": "#A89A3C"
+    },
+    "f-white-black": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "audience": {
+          "fill": "#FFFFFF",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "duration": {
+          "fill": "#111111",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "offer_name": {
+          "fill": "#111111",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        }
+      },
+      "pill": "#FFFFFF",
+      "band": "#FFFFFF",
+      "scrim": "#000000",
+      "divider": "#FFFFFF"
+    },
+    "f-cream-forest": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#FFF6DC",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "audience": {
+          "fill": "#FFF6DC",
+          "outline": "#1A1A1A",
+          "shadow": "rgba(0,0,0,0.42)"
+        },
+        "duration": {
+          "fill": "#1E2A24",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "offer_name": {
+          "fill": "#1E2A24",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        }
+      },
+      "pill": "#E8EEE6",
+      "band": "#E8EEE6",
+      "scrim": "#000000",
+      "divider": "#FFF6DC"
+    },
+    "f-navy-red": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#0B1F4B",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "audience": {
+          "fill": "#0B1F4B",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "duration": {
+          "fill": "#0B1F4B",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "offer_name": {
+          "fill": "#D62828",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        }
+      },
+      "pill": "#FFF6DC",
+      "band": "#FFF6DC",
+      "scrim": "#FFFFFF",
+      "divider": "#0B1F4B"
+    },
+    "f-navy": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#0B1F4B",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "audience": {
+          "fill": "#0B1F4B",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "duration": {
+          "fill": "#0B1F4B",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "offer_name": {
+          "fill": "#0B1F4B",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        }
+      },
+      "pill": "#FFFFFF",
+      "band": "#FFFFFF",
+      "scrim": "#FFFFFF",
+      "divider": "#0B1F4B"
+    },
+    "f-black-sand": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#111111",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "audience": {
+          "fill": "#111111",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "duration": {
+          "fill": "#111111",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "offer_name": {
+          "fill": "#111111",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        }
+      },
+      "pill": "#F3E6B8",
+      "band": "#F3E6B8",
+      "scrim": "#F3E6B8",
+      "divider": "#111111"
+    },
+    "f-black-red": {
+      "family": "formula",
+      "seen_in": [
+        "F45 Jurong West's own running ads (2026)"
+      ],
+      "blocks": {
+        "location": {
+          "fill": "#111111",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "audience": {
+          "fill": "#111111",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "duration": {
+          "fill": "#111111",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        },
+        "offer_name": {
+          "fill": "#E8262B",
+          "outline": "#FFFFFF",
+          "shadow": "rgba(255,255,255,0.35)"
+        }
+      },
+      "pill": "#DADADA",
+      "band": "#DADADA",
+      "scrim": "#FFFFFF",
+      "divider": "#111111"
+    }
+  }
+}

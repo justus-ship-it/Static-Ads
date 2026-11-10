@@ -79,8 +79,8 @@ export function rankPalettes(stat, palettes) {
 /** Measure each photo's colour under every single-photo layout's text regions, plus overall.
  *  Uses the same Chrome as the renderer, and the same cover-fit, so it sees what the text sees.
  *  Returns [{ overall: {hue, strength}, layouts: { id: {hue, strength} } }] per photo. */
-export async function measurePhotos(browser, images, { ratio = "1x1" } = {}) {
-  const { treatments: T } = loadCatalogue();
+export async function measurePhotos(browser, images, { ratio = "1x1", catalogue = loadCatalogue() } = {}) {
+  const { treatments: T } = catalogue;
   const [W, H] = T.canvas[ratio];
   const areas = Object.fromEntries(Object.entries(T.treatments)
     .filter(([, t]) => imagesNeeded(layoutFor(t, ratio, T)) === 1)
@@ -97,7 +97,8 @@ window.__stats = (async () => {
   const px = c.getImageData(0, 0, ${W}, ${H}).data;
   // Colourfulness (saturation x value) weighted circular mean of hue, times how consistent it is.
   const stat = (rects) => {
-    let sx = 0, sy = 0, sw = 0, n = 0;
+    let sx = 0, sy = 0, sw = 0, n = 0, sl = 0;
+    const lin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
     for (const [x, y, w, h] of rects) {
       const x0 = Math.floor(x / 100 * ${W}), x1 = Math.ceil((x + w) / 100 * ${W}), y0 = Math.floor(y / 100 * ${H}), y1 = Math.ceil((y + h) / 100 * ${H});
       for (let yy = y0; yy < y1; yy += 3) for (let xx = x0; xx < x1; xx += 3) {
@@ -107,10 +108,11 @@ window.__stats = (async () => {
         if (d) hh = mx === r ? 60 * (((g - b) / d) % 6) : mx === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
         const wgt = (mx ? d / mx : 0) * mx, a = (hh * Math.PI) / 180;
         sx += wgt * Math.cos(a); sy += wgt * Math.sin(a); sw += wgt; n++;
+        sl += 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
       }
     }
     const R = sw ? Math.hypot(sx, sy) / sw : 0;
-    return { hue: +(((Math.atan2(sy, sx) * 180) / Math.PI + 360) % 360).toFixed(1), strength: +((sw / n) * R).toFixed(3) };
+    return { hue: +(((Math.atan2(sy, sx) * 180) / Math.PI + 360) % 360).toFixed(1), strength: +((sw / n) * R).toFixed(3), lum: +(sl / Math.max(1, n)).toFixed(3) };
   };
   const areas = ${JSON.stringify(areas)};
   // Each text region is also judged as a 4 x 4 grid of patches, so colour behind part of the text counts.
@@ -127,6 +129,40 @@ window.__stats = (async () => {
     out.push(result.value);
   }
   return out;
+}
+
+// ── light on dark, dark on light (the formula family) ─────────────────────
+const lumOf = (hex) => { const n = parseInt(hex.slice(1), 16), lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }; return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255); };
+const contrastOf = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+/** A pairing needs this much contrast with the photo as it is: under it the two are nearly the same brightness, and only a haze would part them. */
+export const WEAK_NATURAL = 1.6;
+/** The strongest scrim a pairing may lean on and still count as suiting the photo (the guard itself may go further). */
+export const GENTLE_SCRIM = 0.35;
+/**
+ * How a palette's colours sit on the photo under one layout's text, by brightness. For each group of the layout, each of
+ * its lines' fill against each of the 16 patches measured under that group, as the photo is and under a gentle scrim in
+ * the palette's scrim colour; the figure is what four patches in five meet or beat. The pairing is `weak` when the
+ * photo as it is gives under WEAK_NATURAL, or the gentle scrim does not reach the layout's contrast target — white type
+ * on a bright window, navy type on a black top. The formula family is plain type with no outline, so its pairings are
+ * matched to the backdrop the way they were picked by hand for F45 Jurong West; a weak one would be rescued by a band
+ * or a heavy haze, which is not the look. Lines on a layout's own card are judged on the card, not here.
+ */
+export function lumFit(stat, layout, palette, { target = 3 } = {}) {
+  if (!stat?.cells?.length || stat.cells[0].lum == null) return null;
+  const scrim = lumOf(palette.scrim || "#000000");
+  let natural = Infinity, helped = Infinity;
+  layout.groups.forEach((g, gi) => {
+    const cells = stat.cells.slice(gi * 16, gi * 16 + 16).map((c) => c.lum);
+    if (!cells.length) return;
+    const fifth = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(0.2 * (xs.length - 1))];
+    for (const it of g.stack) {
+      if (it.block === "divider" || !palette.blocks[it.block] || (g.band?.blocks || []).includes(it.block)) continue;
+      const fill = lumOf(palette.blocks[it.block].fill);
+      natural = Math.min(natural, fifth(cells.map((L) => contrastOf(fill, L))));
+      helped = Math.min(helped, fifth(cells.map((L) => Math.max(contrastOf(fill, L), contrastOf(fill, L * (1 - GENTLE_SCRIM) + scrim * GENTLE_SCRIM)))));
+    }
+  });
+  return natural === Infinity ? null : { contrast: +natural.toFixed(2), with_scrim: +helped.toFixed(2), weak: natural < WEAK_NATURAL || helped < target };
 }
 
 /** A client's switched-off looks, from gym-profile.json → creative (validated by client-config.mjs). */
@@ -243,6 +279,11 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
       for (const layout of order2) {
         const stat = statFor(vi, layout);
         const fit = stat ? Object.fromEntries(rankPalettes(stat, Object.fromEntries(palettes.map((k) => [k, P.palettes[k]]))).map((r) => [r.id, r])) : null;
+        // The formula family is matched by brightness too: a pairing that would not read on this photo counts as a clash.
+        if (fit && catalogue.look === "formula") {
+          const L = layoutFor(T.treatments[layout], ratio, T);
+          for (const k of palettes) { const lf = lumFit(stat, L, P.palettes[k], { target: T.treatments[layout].contrast?.target ?? 3 }); if (lf) { fit[k].contrast = lf.contrast; if (lf.weak) fit[k].clash = true; fit[k].score = +(fit[k].score * Math.min(1, lf.contrast / 4.5)).toFixed(3); } }
+        }
         for (const style of byUse(styles, count.S, on.S)) {
           // Least-used palettes first; within the same use, ones that suit the photo best.
           const suits = byUse(palettes, count.P, on.P).sort((a, b) => count.P[a] - count.P[b] || (fit ? fit[b].score - fit[a].score : 0));

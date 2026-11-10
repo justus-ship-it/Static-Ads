@@ -23,7 +23,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
-import { loadCatalogue, validateInputs } from "./render-composites.mjs";
+import { loadCatalogue, validateInputs, LOOKS } from "./render-composites.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -276,7 +276,9 @@ function validate(profile, offer, resolved, gymDir) {
 export const PROFILE_SCHEMA = 3;
 const MAX_LOCATION_CALLOUTS = 4; // plan-offer-batch MAX_LOCATIONS: one version of every ad per location
 /** What the Create screen opens with when a profile says nothing. The offer is never among them. */
-export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 10, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true, palettes: "reference", image_model: "pro" };
+export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 10, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true, palettes: "reference", image_model: "pro", look: "reference", ratio: "1x1" };
+/** The feed ad's shape: square, or 4:5 (taller in the feed; what F45 Jurong West's running ads use). Stories are always 9:16. */
+export const FEED_RATIOS = ["1x1", "4x5"];
 /**
  * The image model a gym's new photos are made with (batch photos and Stories). Pro by default since the
  * Flash vs Pro test (2026-09-27: 5 of 5 passed the checks first time against 3 of 5, sharper and better lit);
@@ -330,7 +332,12 @@ export function brandPalettes(profile) {
 
 /** The catalogue a gym's batches use: the reference palettes, its brand palettes, or both, by
  *  creative_defaults.palettes. Layouts and styles are the catalogue's own. */
-export function catalogueFor(profile, catalogue = loadCatalogue()) {
+export function catalogueFor(profile, catalogue = null, { look = null } = {}) {
+  // The look family first (a batch's own, else the gym's default): the formula brings its own pairings, so the
+  // brand-palette modes apply to the reference family only.
+  const family = look || profile?.creative_defaults?.look || CREATIVE_DEFAULTS.look;
+  catalogue = catalogue || loadCatalogue({ look: family });
+  if (family !== "reference") return catalogue;
   const mode = profile?.creative_defaults?.palettes || CREATIVE_DEFAULTS.palettes;
   if (mode === "reference") return catalogue;
   const brand = brandPalettes(profile);
@@ -479,6 +486,8 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       if (cd.spread != null && typeof cd.spread !== "boolean") errors.push("creative_defaults.spread must be true or false");
       if (cd.palettes != null && !PALETTE_MODES.includes(cd.palettes)) errors.push(`creative_defaults.palettes must be one of ${PALETTE_MODES.join(", ")}`);
       if (cd.image_model != null && !IMAGE_MODELS[cd.image_model]) errors.push(`creative_defaults.image_model must be one of ${Object.keys(IMAGE_MODELS).join(", ")}`);
+      if (cd.look != null && !LOOKS.includes(cd.look)) errors.push(`creative_defaults.look must be one of ${LOOKS.join(", ")}`);
+      if (cd.ratio != null && !FEED_RATIOS.includes(cd.ratio)) errors.push(`creative_defaults.ratio must be one of ${FEED_RATIOS.join(", ")}`);
       if (["brand", "both"].includes(cd.palettes) && !brandRoles(profile.brand_lock?.colors)) errors.push(`creative_defaults.palettes is "${cd.palettes}", but the brand has no colours yet (Brand & photography)`);
     }
   }

@@ -29,7 +29,7 @@ const SCENES = [
   { id: "m-low", audience: "men", pose: "low", people: 1, scene: "A man holding the top of a push-up." },
 ];
 const BRIEF = { batch_id: "test-batch", offer: "12 Week Total Body Reset", free: false, locations: ["BISHAN", "ANG MO KIO"], audience: "MEN", generated: 2, real: ["real/r1.png", "real/r2.png"], looks_per_photo: 2, scenes: null, max_calls: 4, attempts: 2, seed: "t" };
-const SIZES = { "3:4": [896, 1200], "4:3": [1200, 896], "1:1": [1024, 1024], "9:16": [1080, 1920] };
+const SIZES = { "3:4": [896, 1200], "4:3": [1200, 896], "1:1": [1024, 1024], "9:16": [1080, 1920], "4:5": [928, 1160] };
 const short = (id) => id.split("-")[0];
 
 function pngSize(buf) { return [buf.readUInt32BE(16), buf.readUInt32BE(20)]; }
@@ -632,5 +632,30 @@ test("S14 the photo above the words (2026-10-07): an ad no layout can carry at 9
     assert.ok(existsSync(join(out, mine.file)), "the 9:16 file is on disk");
     assert.ok(logs.some((l) => l.includes(`${ad.candidate}: no layout carries the words over this photo at 9:16`)), logs.join("\n"));
     assert.equal(JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).ads.find((a) => a.folder === ad.folder).treatment, own, "the feed ad keeps its look");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("S15 Stories from a 4:5 formula batch (2026-11-10): each ad's 9:16 is a native photo anchored to its own 4:5 photo, set in the same formula look and words inside Meta's live area, saved beside the feed image as 9x16 for 4x5", async () => {
+  const dir = brandSetup();
+  try {
+    const answer = (faces, people) => async () => ({ ok: true, failures: [], notes: [], stray_text: [], excluded: [], dismissed: [], faces, focus: [0.5, 0.5], placement: { people_box: people, people_count: 1 } });
+    const calls = [];
+    const brief = { ...BRIEF, batch_id: "formula-stories", real: [], generated: 2, max_calls: 3, locations: ["JURONG WEST"], look: "formula", ratio: "4x5" };
+    const r = await runBatch({ brandDir: dir, brief, deps: { generate: generate(calls), check: answer([[280, 430, 400, 570]], [240, 300, 980, 700]), checkRef: async () => [], checkPhoto: async () => ({ text: [], never: [], people_count: 0, people_box: null, face_boxes: [] }), compositor: null, browser }, log: () => {} });
+    assert.deepEqual([r.batch.ratio, r.batch.look, r.batch.ads.length, calls.every((c) => c.aspectRatio === "4:5")], ["4x5", "formula", 4, true]);
+    writeFileSync(join(r.out, "selections.json"), JSON.stringify({ ...Object.fromEntries(r.batch.ads.map((a) => [a.folder, { "4x5": a.file }])), excluded: [] }));
+    const scalls = [], logs = [];
+    const s = await runStories({ brandDir: dir, batchId: "formula-stories", deps: { generate: generate(scalls), check: answer([[300, 460, 380, 540]], [280, 330, 900, 670]), sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser }, log: (m) => logs.push(m) });
+    assert.equal(s.stories.ads.length, r.batch.ads.length, logs.join(" | "));
+    assert.ok(scalls.length >= 2 && scalls.every((c) => c.aspectRatio === "9:16" && c.refs.length >= 1), "a native 9:16 per photo, the feed photo attached as its anchor");
+    const byFolder = new Map(r.batch.ads.map((a) => [a.folder, a])), S0 = safe(), S = { x: S0.x - 1, y: S0.y - 1, w: S0.w + 2, h: S0.h + 2 }; // the renderer's own 1 px of layout rounding
+    for (const ad of s.stories.ads) {
+      const one = byFolder.get(ad.folder);
+      assert.equal(ad.file, storiesFile(one.file, "4x5")); assert.match(ad.file, /\/9x16\/c\d\d-jurong-west_9x16_v1\.png$/);
+      assert.deepEqual([ad.treatment, ad.style, ad.palette], [one.treatment, one.style, one.palette], "the same formula look as its feed ad");
+      assert.deepEqual(pngSize(readFileSync(join(r.out, ad.file))), [1080, 1920]);
+      assert.ok(s.stories.photos[ad.photos[0]]?.status === "passed" && s.stories.photos[ad.photos[0]].kind !== "band", `${ad.folder}: a native 9:16 photo, not a band`);
+    }
+    for (const res of s.results) { assert.ok(!res.failed, `${res.id}: ${JSON.stringify(res.failed)}`); for (const { r: rr } of res.renders) for (const b of rr.report.blocks) assert.ok(inside(b.rect, S), `${res.id}: "${b.text}" inside the live area: ${JSON.stringify(b.rect)} in ${JSON.stringify(S)} ${JSON.stringify(rr.report.groups.map((g) => [g.id, g.floated, g.region]))}`); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

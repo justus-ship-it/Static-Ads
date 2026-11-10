@@ -310,7 +310,7 @@ test("B4 the planner only picks layouts each photo can carry; a generated photo'
 async function fakePhoto(w, h, out) {
   return cropImage(browser, svg(w, h, `<rect width="100%" height="100%" fill="#3a1414"/><rect x="${w * 0.2}" y="${h * 0.55}" width="${w * 0.6}" height="${h * 0.3}" fill="#2a2a2a"/><rect x="${w * 0.42}" y="${h * 0.1}" width="${w * 0.16}" height="${h * 0.3}" fill="#c9a27e"/><circle cx="${w * 0.5}" cy="${h * 0.12}" r="${w * 0.04}" fill="#e0b48f"/>`), [0, 0, w, h], out);
 }
-const SIZES = { "3:4": [896, 1200], "4:3": [1200, 896], "1:1": [1024, 1024] };
+const SIZES = { "3:4": [896, 1200], "4:3": [1200, 896], "1:1": [1024, 1024], "4:5": [928, 1160] };
 
 function brandSetup() {
   const dir = mkdtempSync(join(tmpdir(), "batch-"));
@@ -863,5 +863,35 @@ test("B12 a gym's brand palettes: with palettes \"brand\" every ad uses one of t
     // A brand mode with no colours stops the batch before anything is made.
     writeFileSync(pf, JSON.stringify({ ...base, creative_defaults: { palettes: "brand" } }));
     await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "palettes-none" }, deps, log: () => {} }), /no brand colours/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("B11 a formula batch at 4:5 (2026-11-10): the brief's look and feed shape pick the catalogue and the canvas — photos asked for at 4:5, every ad a formula layout, style and pairing, rendered 1080 × 1350 into a 4x5 folder, with the look and ratio on batch.json; the gym's Ad defaults stand in when the brief names neither; a look that is not a family is refused", async () => {
+  const dir = brandSetup();
+  try {
+    const calls = [], logs = [];
+    // The figure's face sits a third of the way down, clear of the callout strip; its body runs to the foot of the frame.
+    const check = async () => ({ ok: true, failures: [], notes: [], stray_text: [], excluded: [], dismissed: [], faces: [[280, 430, 400, 570]], focus: [0.5, 0.5], placement: { people_box: [240, 300, 980, 700], people_count: 1 } });
+    const deps = { ...fakes(calls), check, browser };
+    const brief = { ...BRIEF, batch_id: "formula-batch", real: [], generated: 3, max_calls: 4, locations: ["JURONG WEST"], look: "formula", ratio: "4x5" };
+    assert.deepEqual(validateBrief({ ...brief, look: "loud" }).filter((e) => /look/.test(e)), ['look "loud" is not one of reference, formula']);
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, look: "loud" }, deps, log: () => {} }), /look "loud" is not one of reference, formula/);
+    const r = await runBatch({ brandDir: dir, brief, deps, log: (m) => logs.push(m) });
+    assert.deepEqual([...new Set(calls)], ["4:5"], "every photo is asked for at the feed shape");
+    assert.deepEqual([r.batch.ratio, r.batch.look, r.batch.ads.length, r.batch.failed.length], ["4x5", "formula", 3 * 2, 0], logs.join(" | "));
+    assert.ok(r.batch.ads.every((a) => /^f[123]-/.test(a.treatment) && /^fs[123]-/.test(a.style) && /^f-/.test(a.palette) && a.ratio === "4x5" && /\/4x5\/c\d\d-jurong-west_4x5_v1\.png$/.test(a.file)), JSON.stringify(r.batch.ads.map((a) => [a.treatment, a.style, a.palette, a.file])));
+    const png = readFileSync(join(r.out, r.batch.ads[0].file));
+    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1080, 1350]);
+    assert.ok(r.batch.photos.every((p) => /^f[123]-/.test(p.primary) && Object.keys(p.fit).every((k) => /^f[123]-/.test(k))), "each photo is made for, and fitted against, the family's own layouts only");
+    assert.ok(new Set(r.batch.ads.filter((a) => a.photos[0] === "g01").map((a) => a.treatment)).size === 2, "two looks of a photo never share a layout");
+    // The gym's Ad defaults stand in for a brief that names neither.
+    const pf = join(dir, "gym-profile.json"), profile = JSON.parse(readFileSync(pf, "utf-8"));
+    writeFileSync(pf, JSON.stringify({ ...profile, creative_defaults: { look: "formula", ratio: "4x5" } }));
+    const { look, ratio, ...plain } = brief;
+    const r2 = await runBatch({ brandDir: dir, brief: { ...plain, batch_id: "formula-default" }, deps, log: () => {} });
+    assert.deepEqual([r2.batch.ratio, r2.batch.look, r2.batch.ads.every((a) => /^f[123]-/.test(a.treatment))], ["4x5", "formula", true]);
+    // And a brief may still ask for the reference set at a square.
+    const r3 = await runBatch({ brandDir: dir, brief: { ...plain, batch_id: "reference-again", look: "reference", ratio: "1x1" }, deps, log: () => {} });
+    assert.deepEqual([r3.batch.ratio, r3.batch.look, r3.batch.ads.every((a) => /^t\d-/.test(a.treatment))], ["1x1", "reference", true]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

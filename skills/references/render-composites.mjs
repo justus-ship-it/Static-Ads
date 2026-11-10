@@ -97,7 +97,7 @@ export function imageDataUrl(pathOrUrl) {
   return `data:${mime};base64,${readFileSync(p).toString("base64")}`;
 }
 
-const EFFECTS = ["fill", "outline-bold", "hollow", "band"];
+const EFFECTS = ["fill", "outline-bold", "hollow", "band", "plain"]; // plain (the formula family): a solid fill and a soft shadow, no outline
 const STROKE_ALLOWANCE = 0.04; // em per side: the widest outline (0.075em stroke) reaches half its width outside
 // A hollow line's outline is centred on the letter edge and Chrome joins it with sharp mitres, so
 // pointed corners reach further: measured up to 0.081em past the box (the "K" of Montserrat Black,
@@ -105,19 +105,65 @@ const STROKE_ALLOWANCE = 0.04; // em per side: the widest outline (0.075em strok
 const HOLLOW_ALLOWANCE = 0.07;
 const BAND_PAD = 0.24;         // em per side reserved for a style band's padding
 
-/** The three catalogues: layouts, palettes, styles. */
-export function loadCatalogue() {
-  return {
-    treatments: loadJson(join(REF_DIR, "offer-treatments.json")),
-    palettes: loadJson(join(REF_DIR, "offer-palettes.json")),
-    styles: loadJson(join(REF_DIR, "offer-styles.json")),
+/** The look families a batch can be made in: the reference set, or the formula (offer-formula.json). */
+export const LOOKS = ["reference", "formula"];
+/**
+ * The three catalogues — layouts, palettes, styles — for one look family (2026-11-10).
+ *
+ * A batch is made in ONE family: every loop over a catalogue (the looks a batch may use, the layouts a photo is
+ * fitted against) sees only that family's entries. But a lookup by id must work for either family whichever
+ * catalogue is in hand (the checks render with a fixed reference look; a Stories run reads a formula batch's ads),
+ * so the other family's entries are there too, as NON-ENUMERABLE properties: `T.treatments["f1-callout-left"]`
+ * answers, `Object.keys(T.treatments)` does not list it. Spreading or cloning a catalogue map drops them.
+ */
+export function loadCatalogue({ look = "reference" } = {}) {
+  if (!LOOKS.includes(look)) throw new Error(`unknown look "${look}". Known: ${LOOKS.join(", ")}`);
+  const T = loadJson(join(REF_DIR, "offer-treatments.json")), P = loadJson(join(REF_DIR, "offer-palettes.json")), S = loadJson(join(REF_DIR, "offer-styles.json"));
+  const F = loadJson(join(REF_DIR, "offer-formula.json"));
+  const family = (reference, formula) => {
+    const [own, other] = look === "formula" ? [formula, reference] : [reference, formula];
+    const out = { ...own };
+    for (const [id, v] of Object.entries(other)) Object.defineProperty(out, id, { value: v, enumerable: false });
+    return out;
   };
+  return {
+    look,
+    treatments: { ...T, treatments: family(T.treatments, F.treatments) },
+    palettes: { ...P, palettes: family(P.palettes, F.palettes) },
+    styles: { ...S, styles: family(S.styles, F.styles) },
+  };
+}
+
+/**
+ * Where a floating text group sits once the faces are known (the formula's lower block). All in % of the canvas:
+ * `region` [x, y, w, h], `faces` [{ x, y, w, h }], `floorY` the lowest edge of anything above the group.
+ * (`fl.edge: "top"`: a group hanging from the top — the callout — is only ever cut short above the highest face.)
+ * No face under it → where the layout put it. A face under it → it starts below the lowest such face, if at least
+ * min_h_pct of the canvas is left down to its own bottom edge; else it moves above the heads, when that much room
+ * is free under `floorY`; else it stays, and the render fails on the face as any layout would.
+ * Self-contained on purpose: the render page runs this same function (buildHtml injects its source).
+ */
+export function floatRegion(region, fl, faces, floorY) {
+  const x = region[0], y = region[1], w = region[2], h = region[3];
+  const gap = fl.gap_pct == null ? 2 : fl.gap_pct, minH = fl.min_h_pct == null ? h * 0.55 : fl.min_h_pct;
+  const inCol = (faces || []).filter((f) => f.x < x + w && f.x + f.w > x);
+  const hit = inCol.filter((f) => f.y < y + h && f.y + f.h > y);
+  if (!hit.length) return { region, moved: null };
+  if (fl.edge === "top") { // a group hanging from the top is cut short above the highest face under it
+    const nh = Math.min.apply(null, hit.map((f) => f.y)) - gap - y;
+    return nh >= minH ? { region: [x, y, w, nh], moved: "shrunk" } : { region, moved: null };
+  }
+  const lowest = Math.max.apply(null, hit.map((f) => f.y + f.h)), y1 = y + h;
+  if (y1 - (lowest + gap) >= minH) return { region: [x, lowest + gap, w, y1 - (lowest + gap)], moved: "below" };
+  const top = Math.min.apply(null, inCol.map((f) => f.y)) - gap, room = top - floorY;
+  if (room >= minH) { const hh = Math.min(h, room); return { region: [x, top - hh, w, hh], moved: "above" }; }
+  return { region, moved: null };
 }
 
 const TEXT_BLOCKS = ["location", "audience", "duration", "offer_name"];
 const ANCHORS = ["top", "center", "bottom"];
 const ALIGNS = ["left", "center", "right"];
-const SCRIMS = ["none", "top", "bottom", "left", "right", "even"];
+const SCRIMS = ["none", "top", "bottom", "left", "right", "even", "local"]; // local: full strength behind the group's text, fading above and below
 const BACKGROUNDS = ["single", "collage", "panels"];
 
 /** Geometry rules every layout must meet before anything renders. Returns a list of problems.
@@ -158,6 +204,7 @@ export function validateLayout(layout, id = "layout", canvas = [1, 1], safe = [5
         if (!(it.share > 0) || !(it.max_lines >= 1) || !(it.min_px > 0)) e.push(`${gid}: "${it.block}" needs share, max_lines and min_px`);
       }
     });
+    if (g.float != null && !(g.float && typeof g.float === "object" && (g.float.min_h_pct == null || g.float.min_h_pct > 0) && (g.float.gap_pct == null || g.float.gap_pct >= 0) && (g.float.edge == null || g.float.edge === "top"))) e.push(`${gid}: float must be { edge?: "top", min_h_pct, gap_pct } in % of the canvas`);
     if (g.band) {
       const b = g.band;
       if (!["full", "line"].includes(b.mode)) e.push(`${gid}: band.mode must be full or line`);
@@ -186,7 +233,7 @@ export function validateLayout(layout, id = "layout", canvas = [1, 1], safe = [5
     for (const o of valid) {
       if (o === g) continue;
       const q = box(o.region);
-      const hit = d === "bottom" ? q.y1 > r.y0 - f : d === "top" ? q.y0 < r.y1 + f : d === "right" ? q.x1 > r.x0 - f : d === "left" ? q.x0 < r.x1 + f : false;
+      const hit = d === "bottom" ? q.y1 > r.y0 - f : d === "top" ? q.y0 < r.y1 + f : d === "right" ? q.x1 > r.x0 - f : d === "left" ? q.x0 < r.x1 + f : d === "local" ? q.y1 > r.y0 - f && q.y0 < r.y1 + f : false;
       if (hit) e.push(`${id}: group "${g.id}"'s ${d} scrim would reach group "${o.id}"`);
     }
   }
@@ -242,6 +289,7 @@ export function deriveLayout(layout, from, to, T = loadCatalogue().treatments) {
       region: rect(g.region),
       gap_pct: g.gap_pct * sy,
       scrim: fade(g.scrim),
+      ...(g.float ? { float: { ...g.float, ...(g.float.min_h_pct != null ? { min_h_pct: g.float.min_h_pct * sy } : {}), ...(g.float.gap_pct != null ? { gap_pct: g.float.gap_pct * sy } : {}) } } : {}),
       ...(g.band ? { band: { ...g.band, ...(g.band.pad_pct != null ? { pad_pct: g.band.pad_pct * sy } : {}), ...(g.band.radius_pct != null ? { radius_pct: g.band.radius_pct * sy } : {}) } } : {}),
       stack: g.stack.map((it) => (it.block !== "divider" ? { ...it } : { ...it, thickness_pct: it.thickness_pct * sy, ...(it.space_pct != null ? { space_pct: it.space_pct * sy } : {}) })),
     })),
@@ -249,6 +297,18 @@ export function deriveLayout(layout, from, to, T = loadCatalogue().treatments) {
     ...(bg?.type === "collage" ? { background: { ...bg, rows: Math.round((bg.rows * (H1 / W1)) / (H0 / W0)) } } : {}),
     ...(bg?.type === "panels" ? { background: { ...bg, panels: bg.panels.map((pn) => ({ ...pn, cx: X(pn.cx), cy: Y(pn.cy), r: pn.r * sx })) } } : {}),
   };
+}
+
+/** Every group's region ([x, y, w, h] in %) once the faces are known: a floating group moved or cut short (floatRegion),
+ *  the others where the layout put them. `faces` are [{ x, y, w, h }] in % of the canvas; `safeTop` the safe area's top.
+ *  The render page does exactly this before it sets a line. */
+export function placedRegions(layout, faces = [], safeTop = 5) {
+  return layout.groups.map((G) => {
+    if (!G.float) return G.region;
+    const above = layout.groups.filter((o) => o !== G && o.region[1] + o.region[3] <= G.region[1]);
+    const floorY = (above.length ? Math.max(...above.map((o) => o.region[1] + o.region[3])) : safeTop) + 1;
+    return floatRegion(G.region, G.float, faces, floorY).region;
+  });
 }
 
 /** The layout a treatment uses at a ratio: its own, or one derived from its 1:1 layout. */
@@ -365,6 +425,8 @@ export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-s
     treatment: treatmentSpec ? "(custom)" : treatment, palette, style: styleSpec ? "(custom)" : style, ratio,
     canvas: T.canvas[ratio],
     layout: { groups, stack, clear_zones: layout.clear_zones || [] },
+    // The line no other may outgrow: the duration in the reference set, the area callout in the formula.
+    lead: tr.lead || "duration",
     contrast: tr.contrast,
     palette_spec: pal,
     fonts: [...used.values()],
@@ -395,7 +457,7 @@ function buildHtml(spec) {
   const pageSpec = { ...spec, palette: spec.palette_spec };
   // Escape "<" so no string can close the <script> it is embedded in.
   const json = JSON.stringify(pageSpec).replace(/</g, "\\u003c");
-  return readFileSync(TEMPLATE, "utf-8").replace("/*__FONTFACES__*/", faces).replace("/*__SPEC__*/", json);
+  return readFileSync(TEMPLATE, "utf-8").replace("/*__FONTFACES__*/", faces).replace("/*__SPEC__*/", json).replace("/*__FLOAT__*/", () => floatRegion.toString());
 }
 
 // ── Chrome over the DevTools protocol ─────────────────────────────────────
@@ -615,7 +677,7 @@ export function verifyReport(spec, report) {
   }
 
   const size = (id) => report.blocks.find((b) => b.block === id)?.size;
-  const lead = size("duration") ?? size("offer_name");
+  const lead = size(spec.lead || "duration") ?? size("duration") ?? size("offer_name");
   for (const b of report.blocks) if (lead != null && b.size > lead) f.push(`hierarchy: "${b.block}" (${b.size}px) is larger than the lead line (${lead}px)`);
   if (size("audience") != null && size("location") != null && size("audience") > size("location")) f.push("hierarchy: audience is larger than location");
   return f;

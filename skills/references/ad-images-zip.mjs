@@ -51,12 +51,13 @@ export function zipStore(entries) {
 
 /** What goes in a batch's zip: every kept ad's 1:1 and 9:16, by ad set, with the list and the instructions. */
 export function keptImagesZip(batchDir, { batchId = "batch" } = {}) {
-  const kept = keptAds(batchDir), entries = [], rows = [["ad set", "ad", "1x1 (feeds)", "9x16 (Stories and Reels)"]], missing = [];
+  const kept = keptAds(batchDir), entries = [], rows = [["ad set", "ad", "feed image (1x1 or 4x5)", "9x16 (Stories and Reels)"]], missing = [];
   for (const a of kept) {
     const set = safe(titleCase(a.location || "All")), base = safe(a.folder);
     const one = join(batchDir, a.file);
     if (!existsSync(one)) { missing.push(a.file); continue; }
-    const f1 = `${set}/${base}_1x1${extname(a.file).toLowerCase() || ".png"}`;
+    const feed = a.ratio || (/[\\/]4x5[\\/]/.test(a.file) ? "4x5" : "1x1"); // the feed image's shape: square, or 4:5
+    const f1 = `${set}/${base}_${feed}${extname(a.file).toLowerCase() || ".png"}`;
     entries.push({ name: f1, data: readFileSync(one) });
     let f9 = "";
     if (a.story && existsSync(join(batchDir, a.story))) { f9 = `${set}/${base}_9x16${extname(a.story).toLowerCase() || ".png"}`; entries.push({ name: f9, data: readFileSync(join(batchDir, a.story)) }); }
@@ -68,10 +69,10 @@ export function keptImagesZip(batchDir, { batchId = "batch" } = {}) {
     `${batchId}: ${rows.length - 1} kept ad(s) in ${sets.length} ad set(s): ${sets.join(", ")}.`,
     "",
     "One folder per ad set (one ad set per location). In each, every ad has two images that pair by name:",
-    "  ..._1x1   the feed image (Facebook and Instagram feeds, and everything else)",
+    "  ..._1x1 or ..._4x5   the feed image (Facebook and Instagram feeds, and everything else)",
     "  ..._9x16  the Stories and Reels version (where there is one)",
     "",
-    "In Ads Manager, for each ad: choose Single image, add the 1:1, then Customise by placement (or",
+    "In Ads Manager, for each ad: choose Single image, add the feed image, then Customise by placement (or",
     "\"Edit\" on the Stories and Reels placements) and give those placements the 9:16. Keep the ad paused",
     "until you have checked it. ads.csv lists every ad with its ad set and files.",
     ...(missing.length ? ["", `Not included, the file was missing: ${missing.join(", ")}`] : []),

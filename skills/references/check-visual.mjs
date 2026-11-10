@@ -36,7 +36,7 @@ import { whenGeminiFree, GEMINI_TIMEOUT_MS, callDeadline } from "./gemini-busy.m
 import { extname, join, dirname, basename } from "path";
 import { createHash } from "crypto";
 import { tmpdir } from "os";
-import { loadCatalogue, layoutFor } from "./render-composites.mjs";
+import { loadCatalogue, layoutFor, placedRegions } from "./render-composites.mjs";
 import { describeSubjectArea, coveredSpans, MAX_SUBJECT_UNDER_TEXT, checkableNever } from "./visual-prompts.mjs";
 import { loadGeminiKey } from "./generate_ads_gemini.mjs";
 
@@ -125,6 +125,13 @@ export function textAreaBoxes(treatment, ratio = "1x1", catalogue = loadCatalogu
   const L = layoutFor(catalogue.treatments.treatments[treatment], ratio, catalogue.treatments);
   return L.groups.map(({ region: [x, y, w, h] }) => [y * 10, x * 10, (y + h) * 10, (x + w) * 10]);
 }
+/** A floating layout's text areas for one set of faces (boxes on the ad, 0–1000): the groups where the renderer will
+ *  put them once it has moved them clear of those faces (placedRegions), padded as the render page pads a face. */
+export function floatedAreaBoxes(treatment, ratio, faces, catalogue = loadCatalogue()) {
+  const T = catalogue.treatments, L = layoutFor(T.treatments[treatment], ratio, T), m = 0.04;
+  const pctFaces = faces.map(([y0, x0, y1, x1]) => { const w = (x1 - x0) / 10, h = (y1 - y0) / 10; return { x: Math.max(0, x0 / 10 - m * w), y: Math.max(0, y0 / 10 - m * h), w: w * (1 + 2 * m), h: h * (1 + 2 * m) }; });
+  return placedRegions(L, pctFaces, (T.safe_area?.[ratio] || [5, 5, 90, 90])[1]).map(([x, y, w, h]) => [y * 10, x * 10, (y + h) * 10, (x + w) * 10]);
+}
 const valid = (b) => Array.isArray(b) && b.length === 4 && b[2] > b[0] && b[3] > b[1];
 const area = ([y0, x0, y1, x1]) => Math.max(0, y1 - y0) * Math.max(0, x1 - x0);
 const overlap = (a, b) => area([Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]);
@@ -188,13 +195,14 @@ const clip1000 = ([y0, x0, y1, x1]) => [Math.max(0, y0), Math.max(0, x0), Math.m
  * Prefers, in order: no face cut off, little of the people cut off, the layout's placement rule
  * met, no face under a text area, the crop nearest the centre.
  */
-export function bestCrop({ imageSize: [iw, ih], canvas: [W, H], people, faces = [], areas, rule }) {
+export function bestCrop({ imageSize: [iw, ih], canvas: [W, H], people, faces = [], areas: areasIn, rule }) {
   const s = Math.max(W / iw, H / ih), visW = W / s, visH = H / s, roomX = iw - visW, roomY = ih - visH;
   const steps = (room) => (room > 1 ? Array.from({ length: 41 }, (_, i) => i / 40) : [0.5]);
   const onAd = (fx, fy) => ([y0, x0, y1, x1]) => [((y0 / 1000) * ih - fy * roomY) / visH * 1000, ((x0 / 1000) * iw - fx * roomX) / visW * 1000, ((y1 / 1000) * ih - fy * roomY) / visH * 1000, ((x1 / 1000) * iw - fx * roomX) / visW * 1000];
   let best = null;
   for (const fx of steps(roomX)) for (const fy of steps(roomY)) {
     const m = onAd(fx, fy), P = people && m(people), F = faces.map(m);
+    const areas = typeof areasIn === "function" ? areasIn(F) : areasIn; // a floating layout's areas depend on where the faces land
     const cut = P ? 1 - area(clip1000(P)) / area(P) : 0;
     const facesCut = F.filter((f) => area(clip1000(f)) < 0.95 * area(f)).length;
     const seen = P && clip1000(P);
@@ -230,7 +238,8 @@ export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = t
   if (banned.length) failures.push(`shows what the client never allows: ${banned.map((t) => t.what).join("; ")}`);
   const layout = layoutFor(catalogue.treatments.treatments[treatment], ratio, catalogue.treatments);
   const kind = layout.background?.type || "single";
-  const areas = textAreaBoxes(treatment, ratio, catalogue);
+  // A layout whose groups float is judged where the renderer will really put them for these faces.
+  const areas = layout.groups.some((g) => g.float) ? (F) => floatedAreaBoxes(treatment, ratio, F, catalogue) : textAreaBoxes(treatment, ratio, catalogue);
   const faces = (answer.face_boxes || []).filter(valid);
   const people = valid(answer.people_box) ? answer.people_box : null;
   const rule = kind === "panels" ? "circle" : kind === "collage" ? "none" : describeSubjectArea(layout, { canvas: catalogue.treatments.canvas[ratio], covered: coveredSpans(ratio, catalogue.treatments) }) ? "subject-area" : "none";

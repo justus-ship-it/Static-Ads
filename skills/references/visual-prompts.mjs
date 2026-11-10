@@ -81,7 +81,7 @@ export function poseProblem(treatment, pose, catalogue = loadCatalogue()) {
   const fit = tr.pose_fit || Object.keys(POSES);
   return fit.includes(pose) ? null : `${treatment} cannot hold ${/^[aeiou]/.test(pose) ? "an" : "a"} ${pose} pose (${POSES[pose]}); it needs ${fit.map((f) => `${f} (${POSES[f]})`).join(" or ")}. Pair this scene with another layout, or change the pose.`;
 }
-const ASPECT_WORDS = { "1:1": "square (1:1)", "3:4": "portrait 3:4 (taller than wide)", "4:3": "landscape 4:3 (wider than tall)", "9:16": "vertical 9:16 (portrait, taller than wide)" };
+const ASPECT_WORDS = { "1:1": "square (1:1)", "4:5": "portrait 4:5 (a little taller than wide)", "3:4": "portrait 3:4 (taller than wide)", "4:3": "landscape 4:3 (wider than tall)", "9:16": "vertical 9:16 (portrait, taller than wide)" };
 
 /** Plain-language description of where text will sit, from the layout's group regions. */
 export function describeTextAreas(layout) {
@@ -185,7 +185,7 @@ export const REAL_CLAUSE = "REAL: everything could be photographed in a real gym
 
 /** The 9:16 sibling of a chosen 1:1 photo (Step 8): the first attached photo is the scene itself. Anchoring
  *  is the one prompting technique measured to work (Step 4): the sibling keeps the room, people and moment. */
-export const ANCHOR_CLAUSE = "SAME SCENE: the first attached photo is this exact scene, already photographed for the square advert. Make the same photograph re-framed as a vertical 9:16: the same people with the same faces, ages, builds, clothes and expressions, at the same spot in the same room and light, doing the same thing at the same moment. The taller frame shows more floor below and more ceiling above; nothing else changes.";
+export const ANCHOR_CLAUSE = "SAME SCENE: the first attached photo is this exact scene, already photographed for the feed advert. Make the same photograph re-framed as a vertical 9:16: the same people with the same faces, ages, builds, clothes and expressions, at the same spot in the same room and light, doing the same thing at the same moment. The taller frame shows more floor below and more ceiling above; nothing else changes.";
 
 const escapeRe = (n) => n.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
 /** "the real Sculpt Society premises" → "the real premises": the name goes, the meaning stays. */

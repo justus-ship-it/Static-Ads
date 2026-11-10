@@ -32,7 +32,7 @@ import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
   scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
-  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase } from "../skills/references/client-config.mjs";
+  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase, FEED_RATIOS } from "../skills/references/client-config.mjs";
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
@@ -696,6 +696,8 @@ function checkBrief(gym, raw) {
   // cleaned coach/member photo that is only ever a reference). Without one, a gym without premises photos generated
   // rooms from nothing (F45 Xinyi, 2026-10-07). A real photo in the batch still stands in when the gym names none.
   if (brief && typeof brief === "object" && brief.reference == null) { const rr = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference; if (typeof rr === "string" && rr && !rr.includes("..") && existsSync(join(brandDir(gym), "brand-assets", rr))) brief.reference = rr; }
+  // The gym's look and feed shape (Ad defaults) ride on the brief when it names none and they differ from the standard, so the brief on disk says what ran.
+  if (brief && typeof brief === "object") { const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {}; if (brief.look == null && cd.look && cd.look !== "reference") brief.look = cd.look; if (brief.ratio == null && cd.ratio && cd.ratio !== "1x1") brief.ratio = cd.ratio; }
   const errors = validateBrief(brief, { brandDir: brandDir(gym) });
   const g = brief?.generated ?? 0, real = Array.isArray(brief?.real) ? brief.real : [];
   const scenes = sceneStatus(gym);
@@ -839,7 +841,7 @@ function savePicks(gym, id, change) {
     const stories = new Map((readJsonFile(join(out, "stories.json"))?.ads || []).filter((a) => existsSync(join(out, a.file))).map((a) => [a.folder, a.file]));
     const excluded = batch.ads.filter((a) => standing(a, d).status === "exclude").map((a) => a.folder).sort();
     const sel = { excluded };
-    for (const a of batch.ads) if (!excluded.includes(a.folder)) sel[a.folder] = { "1x1": a.file, ...(stories.has(a.folder) ? { "9x16": stories.get(a.folder) } : {}) };
+    for (const a of batch.ads) if (!excluded.includes(a.folder)) sel[a.folder] = { [a.ratio || batch.ratio || "1x1"]: a.file, ...(stories.has(a.folder) ? { "9x16": stories.get(a.folder) } : {}) };
     writeWhole(join(out, "selections.json"), JSON.stringify(sel, null, 2) + "\n");
   }
   return null;
@@ -857,23 +859,33 @@ const PREVIEW_LOOKS = [
   { id: "t5", label: "Offer band", treatment: "t5-offer-band", style: "s2-heavy-outlined", palette: "blue-white", photos: [0] },
   { id: "t8", label: "Panels + band", treatment: "t8-panels-band", style: "s8-script-accent", palette: "white-on-dark", photos: [0, 1], noAudienceStyle: "s4-wide-tracked" },
 ];
+/** The formula family's preview: its three layouts, one style and pairing each. */
+const PREVIEW_FAMILIES = ["reference", "formula"];
+const FORMULA_PREVIEW = [
+  { id: "f1", label: "Callout / offer, left", treatment: "f1-callout-left", style: "fs1-heavy-italic", palette: "f-cream", photos: [0] },
+  { id: "f2", label: "Callout / offer, centred", treatment: "f2-callout-centre", style: "fs2-condensed", palette: "f-white-pink", photos: [1] },
+  { id: "f3", label: "Offer on a card", treatment: "f3-offer-card", style: "fs3-tall-sans", palette: "f-navy-red", photos: [0] },
+];
 let browserP = null, queue = Promise.resolve();
 const previews = new Map();
-async function renderPreview(gym, { offer, location, audience, photos }) {
+async function renderPreview(gym, { offer, location, audience, photos, look = null, ratio = null }) {
   browserP ||= launchBrowser();
   const browser = await browserP;
   const files = photos.map((p) => join(brandDir(gym), "brand-assets", p));
   const looks = [];
   // A gym whose ads use its brand colours sees them in the preview: the offer-band look takes the brand palette.
   const profile = readJsonFile(join(brandDir(gym), "gym-profile.json"));
+  // The look family and the feed shape: the Create screen's own choice, else the gym's (Ad defaults).
+  const family = PREVIEW_FAMILIES.includes(look) ? look : (profile?.creative_defaults?.look || "reference");
+  const shape = FEED_RATIOS.includes(ratio) ? ratio : (profile?.creative_defaults?.ratio || "1x1");
   let catalogue = null;
-  try { catalogue = catalogueFor(profile); } catch {}
-  const brand = catalogue?.palettes.palettes.brand ? "brand" : null;
-  for (const L of PREVIEW_LOOKS) {
+  try { catalogue = catalogueFor(profile, null, { look: family }); } catch {}
+  const brand = family === "reference" && catalogue?.palettes.palettes.brand ? "brand" : null;
+  for (const L of family === "formula" ? FORMULA_PREVIEW : PREVIEW_LOOKS) {
     const ims = L.photos.map((i) => files[Math.min(i, files.length - 1)]);
     const style = !audience && L.noAudienceStyle ? L.noAudienceStyle : L.style;
     const palette = brand && L.id === "t5" ? brand : L.palette;
-    const r = await renderComposite(browser, { images: ims, location, audience: audience || null, offer, treatment: L.treatment, style, palette, ratio: "1x1", ...(catalogue ? { catalogue } : {}) });
+    const r = await renderComposite(browser, { images: ims, location, audience: audience || null, offer, treatment: L.treatment, style, palette, ratio: shape, ...(catalogue ? { catalogue } : {}) });
     let url = null;
     if (r.png) {
       const id = randomBytes(9).toString("hex");
@@ -1474,14 +1486,14 @@ const server = createServer(async (req, res) => {
     }
 
     if (p === "/api/preview" && req.method === "POST") {
-      const { gym, offer, location, audience = null, photos } = await readBody(req);
+      const { gym, offer, location, audience = null, photos, look = null, ratio = null } = await readBody(req);
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
       const errors = validateInputs({ location, audience, offer });
       if (errors.length) return json(res, 200, { errors, looks: [] });
       const clean = cleanPhotos(gym).map((x) => x.path);
       const use = (Array.isArray(photos) && photos.length ? photos : clean).filter((x) => clean.includes(x)).slice(0, 2);
       if (!use.length) return json(res, 200, { errors: ["no clean photo to preview on: clean one first (clean-photo.mjs)"], looks: [] });
-      const job = queue.then(() => renderPreview(gym, { offer, location, audience, photos: use }));
+      const job = queue.then(() => renderPreview(gym, { offer, location, audience, photos: use, look, ratio }));
       queue = job.catch(() => {});
       return json(res, 200, { errors: [], looks: await job });
     }

@@ -13,10 +13,12 @@
   },
   "canvas": {
     "1x1": [1080, 1080],
+    "4x5": [1080, 1350],
     "9x16": [1080, 1920]
   },
   "safe_area": {
     "1x1": [5, 5, 90, 90],
+    "4x5": [5, 5, 90, 90],
     "9x16": [6, 14, 88, 51]
   },
   "safe_area_note": "[x, y, w, h] in % of the canvas: every line, band and divider must sit inside it, and every group region is validated against it. 1:1 keeps a 5% margin. 9:16 is Meta's unified Stories/Reels safe zone (March 2026): the top 14% (profile row), the bottom 35% (caption, like/comment/share, CTA) and 6% each side are covered by the app. Source: Meta Business Help Centre, 'About text overlays and the Safe Zone for ads in Stories and Reels'.",

@@ -152,8 +152,8 @@ export function inBand(answer, [bx, by, bw, bh], { crop = null, size = null, can
   return { people_box: answer?.people_box ? box(answer.people_box) : null, face_boxes: (answer?.face_boxes || []).map(box).filter(([y0, x0, y1, x1]) => y1 > y0 && x1 > x0), people_count: answer?.people_count ?? 0 };
 }
 
-/** The 9:16 file beside an ad's 1:1: the same folder and name, 9x16 for 1x1. */
-export const storiesFile = (file1x1) => file1x1.replace("/1x1/", `/${RATIO}/`).replace("_1x1_", `_${RATIO}_`);
+/** The 9:16 file beside an ad's feed image: the same folder and name, 9x16 for the feed ratio (1x1, or 4x5). */
+export const storiesFile = (feedFile, feed = "1x1") => feedFile.replace(`/${feed}/`, `/${RATIO}/`).replace(`_${feed}_`, `_${RATIO}_`);
 
 /**
  * Stories for one batch. `deps` (tests): generate, check, sibling, compositor, browser, gallery.
@@ -170,8 +170,9 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
   const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
   const brief = JSON.parse(readFileSync(join(out, "brief.json"), "utf-8"));
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
-  const catalogue = catalogueFor(profile); // the 1:1 ads' palettes, brand ones included
+  const catalogue = catalogueFor(profile, null, { look: batch.look }); // the feed ads' look family and palettes, brand ones included
   const T = catalogue.treatments;
+  const feed = batch.ratio || "1x1", feedCanvas = T.canvas[feed] || [1080, 1080]; // the feed ad's shape: its crop window is that shape, not always a square
   const photography = profile.brand_lock?.photography || {}, brandNames = [profile.display_name].filter(Boolean);
   const visualsById = Object.fromEntries((existsSync(join(out, "visuals.json")) ? JSON.parse(readFileSync(join(out, "visuals.json"), "utf-8")).visuals : []).map((v) => [v.id, v]));
   const pictures = existsSync(join(out, "pictures.json")) ? JSON.parse(readFileSync(join(out, "pictures.json"), "utf-8")) : {};
@@ -321,7 +322,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
       if (!(prior[id]?.status === "passed" && existsSync(prior[id].file))) {
         const src = at(p.file), size = imageSize(readFileSync(src));
         const ad = batch.ads.find((a) => a.photos[0] === p.id && a.photos.length === 1 && a.treatment === la);
-        const crop = cropWindow(size, ad?.crop?.[0] || [0.5, 0.5]);
+        const crop = cropWindow(size, ad?.crop?.[0] || [0.5, 0.5], feedCanvas);
         const file = join(visualsDir, `${id}.png`), band = await bandImage(browser, src, file, { crop }), pic = pictures[p.id]?.check;
         const answer = inBand(pic?.placement ? { people_box: pic.placement.people_box, face_boxes: pic.faces, people_count: pic.placement.people_count } : null, band, { crop, size });
         prior[id] = { status: "passed", kind: "band", for: p.id, treatment: la, file, band, crop, checks: STORIES_CHECKS, answer, notes: [`the 1:1 ad's crop of the chosen photo as a band: ${why}`], failures: [] };
@@ -445,7 +446,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
       if (!(prior[id]?.status === "passed" && existsSync(prior[id].file))) {
         const src = at(p.file), size = imageSize(readFileSync(src));
         const ad = batch.ads.find((a) => a.photos[0] === p.id && a.photos.length === 1 && a.treatment === p.layouts?.[0]) || batch.ads.find((a) => a.photos[0] === p.id && a.photos.length === 1);
-        const crop = cropWindow(size, ad?.crop?.[0] || [0.5, 0.5]);
+        const crop = cropWindow(size, ad?.crop?.[0] || [0.5, 0.5], feedCanvas);
         const file = join(visualsDir, `${id}.png`), band = await bandImage(browser, src, file, { crop, window: win }), pic = pictures[p.id]?.check;
         const answer = inBand(pic?.placement ? { people_box: pic.placement.people_box, face_boxes: pic.faces, people_count: pic.placement.people_count } : null, band, { crop, size });
         prior[id] = { status: "passed", kind: "band", stacked: true, for: p.id, treatment: la, file, band, crop, checks: STORIES_CHECKS, answer, notes: [`the 1:1 ad's crop of the chosen photo above the words, on the blurred backdrop: ${why}`], failures: [] };
@@ -478,7 +479,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
       for (const ad of r.ads) {
         const render = r.renders.find((x) => x.text.location === ad.location);
         if (!render) continue;
-        const file = storiesFile(ad.file);
+        const file = storiesFile(ad.file, feed);
         mkdirSync(dirname(join(out, file)), { recursive: true });
         writeFileSync(join(out, file), render.r.png);
         ads.push({ folder: ad.folder, file, file_1x1: ad.file, candidate: r.id, location: ad.location, photos: r.images, photo_files: r.images.map((id) => basename(fileOf(id))), treatment: r.treatment, style: r.style, palette: r.palette, ratio: RATIO, crop: r.images.map((id) => focus[id]?.[r.treatment] || [0.5, 0.5]), words: ad.words, ...(r.look_changed ? { look_changed: r.look_changed } : {}), ...(r.stacked ? { stacked: true } : {}) });

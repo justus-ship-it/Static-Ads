@@ -57,6 +57,9 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
   const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
   const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * sorted.length)))];
 
+  // Where a floating group sits once the faces are known — the same function the fit stage runs (render-composites.mjs).
+  /*__FLOAT__*/
+
   async function render() {
     const [W, H] = S.canvas;
     const L = S.layout;
@@ -153,7 +156,18 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 
     // 3. Groups. Each owns a region; the lines with text share its height. A divider is kept only
     //    when there is text on both sides of it, so a missing audience line never leaves a stray rule.
-    const groups = L.groups.map((G) => {
+    // A floating group (the formula's lower block) moves clear of the faces: below the lowest one, or above the heads.
+    const facePct = faceZones.map((z) => ({ x: (z.x / W) * 100, y: (z.y / H) * 100, w: (z.w / W) * 100, h: (z.h / H) * 100 }));
+    const placed = L.groups.map((G) => {
+      if (!G.float) return G;
+      const above = L.groups.filter((o) => o !== G && o.region[1] + o.region[3] <= G.region[1]);
+      const floorY = (above.length ? Math.max(...above.map((o) => o.region[1] + o.region[3])) : S.safe_area[1]) + 1;
+      const f = floatRegion(G.region, G.float, facePct, floorY);
+      if (!f.moved) return G;
+      // Above the heads, a scrim running down from the text would cover the faces: it runs up instead.
+      return { ...G, region: f.region, floated: f.moved, scrim: f.moved === "above" && G.scrim.direction === "bottom" ? { ...G.scrim, direction: "top" } : G.scrim };
+    });
+    const groups = placed.map((G) => {
       const [rx, ry, rw, rh] = G.region.map((v, i) => (v / 100) * (i % 2 ? H : W));
       const kept = [];
       for (const it of G.stack) {
@@ -293,7 +307,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     //    smaller than audience. Clamping only ever shrinks, so every block still fits.
     const by = (id) => blocks.find((b) => b.spec.block === id);
     const dur = by("duration"), name = by("offer_name"), loc = by("location"), aud = by("audience");
-    const lead = dur || name;
+    const lead = (S.lead === "location" ? loc : null) || dur || name;
     for (const b of blocks) if (lead && b !== lead && b.size > lead.size) b.size = lead.size;
     if (loc && aud && aud.size > loc.size) aud.size = loc.size;
 
@@ -356,7 +370,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       b.judgeLs = b.judgeHexes.map(lumHex);
       b.judgeHex = b.judgeHexes[0];
       b.judgeL = b.judgeLs[0];
-      b.strokeable = e === "fill" && !b.spec.layout_band; // a contrast stroke only makes sense on plain filled text
+      b.strokeable = (e === "fill" || e === "plain") && !b.spec.layout_band; // a contrast stroke only makes sense on plain filled text
       b.floor = b.strokeable ? C.stroke_min : C.target;
       b.before = e === "band" || b.spec.layout_band ? null : worst(b, 0);
       // On a layout band a line may be set in either of its own palette colours, fill or outline —
@@ -473,6 +487,14 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
         Object.assign(el.style, { left: "0px", top: "0px", width: x1 + "px", height: H + "px",
           background: `linear-gradient(to left, ${c(0)} 0px, ${c(A)} ${x1 - edge}px, ${c(A)} 100%)` });
         g.scrimFull = { x: 0, y: 0, w: edge, h: H };
+      } else if (dir === "local") {
+        // Full strength behind the group's own lines, fading above and below: a plain backdrop keeps its colour elsewhere.
+        const fade = (g.G.scrim.fade_pct / 100) * H;
+        const topB = Math.min(...g.blocks.map((b) => b.rect.top)), botB = Math.max(...g.blocks.map((b) => b.rect.bottom));
+        const y0 = Math.max(0, topB - fade), y1 = Math.min(H, botB + fade);
+        Object.assign(el.style, { left: "0px", top: y0 + "px", width: W + "px", height: y1 - y0 + "px",
+          background: `linear-gradient(to bottom, ${c(0)} 0px, ${c(A)} ${topB - y0}px, ${c(A)} ${botB - y0}px, ${c(0)} 100%)` });
+        g.scrimFull = { x: 0, y: topB, w: W, h: botB - topB };
       } else if (dir === "even") {
         Object.assign(el.style, { left: "0px", top: "0px", width: W + "px", height: H + "px", background: c(A) });
         g.scrimFull = { x: 0, y: 0, w: W, h: H };
@@ -538,6 +560,10 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       } else if (res.steps.includes("stroke")) {
         sp.style.webkitTextStroke = `${0.075 * s}px ${autoStroke}`;
         sp.style.textShadow = `0 ${0.05 * s}px ${0.12 * s}px rgba(0,0,0,0.85)`;
+      } else if (e === "plain") {
+        // The formula family: a solid fill and a soft shadow, no outline.
+        sp.style.webkitTextStroke = "0px transparent";
+        sp.style.textShadow = `0 ${0.02 * s}px ${0.14 * s}px ${b.pal.shadow}`;
       } else {
         sp.style.webkitTextStroke = `${0.03 * s}px ${b.pal.outline}`;
         sp.style.textShadow = `0 ${0.045 * s}px ${0.09 * s}px ${b.pal.shadow}`;
@@ -659,6 +685,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       scrim: { alpha: +Math.max(...groups.map((g) => g.A)).toFixed(3) },
       groups: groups.map((g) => ({
         id: g.G.id,
+        floated: g.G.floated || null,
         region: regionOf(g),
         anchor: g.G.anchor,
         align: g.G.align,

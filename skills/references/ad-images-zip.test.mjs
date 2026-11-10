@@ -52,7 +52,7 @@ test("Z2 a batch's zip: every kept ad's 1:1 and its 9:16 when it has one, one fo
   if (hasUnzip) {
     execFileSync("unzip", ["-q", f, "-d", join(d, "x")]);
     assert.equal(readFileSync(join(d, "x", "Bishan", "101-c01-bishan-t3_9x16.png"), "utf8"), "story 101");
-    assert.equal(readFileSync(join(d, "x", "ads.csv"), "utf8"), "ad set,ad,1x1 (feeds),9x16 (Stories and Reels)\nBishan,101-c01-bishan-t3,Bishan/101-c01-bishan-t3_1x1.png,Bishan/101-c01-bishan-t3_9x16.png\nAng Mo Kio,102-c01-ang-mo-kio-t3,Ang Mo Kio/102-c01-ang-mo-kio-t3_1x1.png,\n");
+    assert.equal(readFileSync(join(d, "x", "ads.csv"), "utf8"), "ad set,ad,feed image (1x1 or 4x5),9x16 (Stories and Reels)\nBishan,101-c01-bishan-t3,Bishan/101-c01-bishan-t3_1x1.png,Bishan/101-c01-bishan-t3_9x16.png\nAng Mo Kio,102-c01-ang-mo-kio-t3,Ang Mo Kio/102-c01-ang-mo-kio-t3_1x1.png,\n");
     assert.match(readFileSync(join(d, "x", "README.txt"), "utf8"), /^b1: 2 kept ad\(s\) in 2 ad set\(s\): Bishan, Ang Mo Kio\.[^]*Customise by placement/);
   }
   assert.ok(!existsSync(join(d, "images.zip")), "nothing is written into the batch folder");

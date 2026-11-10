@@ -2568,3 +2568,42 @@ test("U47 once a week, by itself (2026-11-10): a panel with the weekly refresh o
     assert.ok(after.last_started > sch.last_started && after.last_result === "refreshed by you", JSON.stringify(after));
   } finally { await panel.stop(); panel = main; graph.server.close(); rmSync(file, { force: true }); }
 });
+
+test("U48 the look and the feed shape (Phase 2, 2026-11-10): a gym's Ad defaults take a look family and a feed shape (a look or shape that is not one is refused); a brief checked for that gym carries them, so the brief on disk says what ran; the Create preview renders the formula's three layouts at 4:5; Ad defaults and Create show the two choices and the brief built on the page sends them", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json");
+  await linkTestGym();
+  const before = readFileSync(pf, "utf-8"), profile = JSON.parse(before);
+  try {
+    let r = await call(`/api/client/${GYM}`, { method: "PUT", body: { ...profile, creative_defaults: { ...profile.creative_defaults, look: "loud" } } });
+    assert.equal(r.status, 400); assert.match(JSON.stringify(await r.json()), /creative_defaults.look must be one of reference, formula/);
+    r = await call(`/api/client/${GYM}`, { method: "PUT", body: { ...profile, creative_defaults: { ...profile.creative_defaults, ratio: "9x16" } } });
+    assert.equal(r.status, 400);
+    // A brief with neither, for a gym on the standard defaults: nothing is added.
+    const raw = { batch_id: "look-check", ...WORDS, free: false, generated: 0, real: BRIEF.real, looks_per_photo: 2, max_calls: 0, attempts: 1, scenes: null };
+    let c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: raw } })).json();
+    assert.deepEqual([c.errors, "look" in c.brief, "ratio" in c.brief], [[], false, false]);
+    r = await call(`/api/client/${GYM}`, { method: "PUT", body: { ...profile, creative_defaults: { ...profile.creative_defaults, look: "formula", ratio: "4x5" } } });
+    assert.equal(r.status, 200, await r.clone().text());
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: raw } })).json();
+    assert.deepEqual([c.errors, c.brief.look, c.brief.ratio], [[], "formula", "4x5"], "the gym's defaults ride on the brief");
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, look: "reference", ratio: "1x1" } } })).json();
+    assert.deepEqual([c.brief.look, c.brief.ratio], ["reference", "1x1"], "a brief's own choice stands");
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, look: "loud" } } })).json();
+    assert.ok(c.errors.some((e) => /look "loud" is not one of reference, formula/.test(e)));
+    // The preview: the gym's look and shape by default, the Create screen's own when it sends them.
+    let pv = await (await call("/api/preview", { method: "POST", body: { gym: GYM, offer: WORDS.offer, location: "ANG MO KIO", audience: null } })).json();
+    assert.deepEqual([pv.errors, pv.looks.map((l) => l.id)], [[], ["f1", "f2", "f3"]]);
+    for (const l of pv.looks) { assert.ok(l.ok, `${l.id}: ${l.failures}`); const png = Buffer.from(await (await fetch(panel.url + l.url)).arrayBuffer()); assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1080, 1350], `${l.id} at 4:5`); }
+    pv = await (await call("/api/preview", { method: "POST", body: { gym: GYM, offer: WORDS.offer, location: "ANG MO KIO", audience: "MEN", look: "reference", ratio: "1x1" } })).json();
+    assert.deepEqual(pv.looks.map((l) => l.id), ["t1", "t3", "t5", "t8"]);
+    // The page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u48${hash.replace(/\W/g, "")}#/${GYM}/${hash}` }, sessionId); await loaded; const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); };
+    await open("defaults", "!!document.querySelector('input[name=cdLook]')");
+    assert.deepEqual(await ev("[document.querySelector('input[name=cdLook]:checked').parentElement.textContent.includes('The formula'), document.querySelector('input[name=cdRatio]:checked').parentElement.textContent.includes('Portrait (4:5)'), /No look adds a logo or the gym's brand colours unless you ask/.test(document.querySelector('#view').textContent)]"), [true, true, true]);
+    await open("create", "!!document.querySelector('#bLook') && !!document.querySelector('#bRatio')");
+    assert.deepEqual(await ev("[document.querySelector('#bLook').value, document.querySelector('#bRatio').value, briefFromDraft().look, briefFromDraft().ratio]"), ["formula", "4x5", "formula", "4x5"], "the gym's defaults pre-fill the batch's own choice");
+    assert.deepEqual(await ev("bSet('look','reference'); bSet('ratio','1x1'); ['look' in briefFromDraft(), 'ratio' in briefFromDraft()]"), [false, false]);
+  } finally { writeFileSync(pf, before); }
+});

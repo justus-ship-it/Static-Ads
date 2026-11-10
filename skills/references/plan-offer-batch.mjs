@@ -37,12 +37,12 @@ import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
-import { validateInputs, loadCatalogue, launchBrowser, layoutFor } from "./render-composites.mjs";
+import { validateInputs, loadCatalogue, launchBrowser, layoutFor, LOOKS } from "./render-composites.mjs";
 import { poseProblem, POSES, readShotGuide } from "./visual-prompts.mjs";
 import { fitLayouts, imageSize, checkTiled, splitMarks, ownerKept } from "./check-visual.mjs";
 import { QUALITY_VERSION } from "./check-quality.mjs";
 import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from "./assign-variants.mjs";
-import { catalogueFor, imageModelFor } from "./client-config.mjs";
+import { catalogueFor, imageModelFor, FEED_RATIOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { SCENE_TAGS, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
@@ -122,6 +122,7 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
     }
   }
   if (brief.ratio && !T.canvas[brief.ratio]) errs.push(`ratio "${brief.ratio}" is not one of ${Object.keys(T.canvas).join(", ")}`);
+  if (brief.look != null && !LOOKS.includes(brief.look)) errs.push(`look "${brief.look}" is not one of ${LOOKS.join(", ")}`);
   // The owner's direction for the batch's photos: words, or a reference image read into words.
   if (brief.direction != null) {
     for (const e of validateDirection(brief.direction, { brandDir })) errs.push(`direction: ${e}`);
@@ -391,10 +392,13 @@ export function progressWriter(out, base) {
 export async function runBatch({ brandDir, brief, outDir = null, dryRun = false, renderOnly = false, approveScenes: confirmScenes = false, scenesPath = null, deps = {}, log = console.log }) {
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
   // The reference palettes, the gym's brand palettes, or both (creative_defaults.palettes).
-  const catalogue = catalogueFor(profile);
+  // The batch's look family (its own, else the gym's default) picks the catalogue; the feed ad's shape likewise.
+  if (brief.look != null && !LOOKS.includes(brief.look)) throw new Error(`the brief cannot run:\n- look "${brief.look}" is not one of ${LOOKS.join(", ")}`);
+  const look = brief.look || profile.creative_defaults?.look || CREATIVE_DEFAULTS.look;
+  const catalogue = catalogueFor(profile, null, { look });
   const errs = validateBrief(brief, { brandDir, catalogue });
   if (errs.length) throw new Error(`the brief cannot run:\n- ${errs.join("\n- ")}`);
-  const ratio = brief.ratio || "1x1", looks = brief.looks_per_photo ?? 2, seed = brief.seed || brief.batch_id;
+  const ratio = brief.ratio || profile.creative_defaults?.ratio || CREATIVE_DEFAULTS.ratio, looks = brief.looks_per_photo ?? 2, seed = brief.seed || brief.batch_id;
   const exclude = excludeFromProfile(profile.creative);
   const audience = brief.audience ?? null;
   const texts = brief.locations.map((location) => ({ location, audience, offer: brief.offer, free: brief.free === true }));
@@ -576,7 +580,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     const browser = deps.browser || await launchBrowser();
     let results;
     try {
-      const stats = await measurePhotos(browser, photos.map((p) => p.file), { ratio });
+      const stats = await measurePhotos(browser, photos.map((p) => p.file), { ratio, catalogue });
       const planned = assignVariants({ visuals: photos.map((p) => ({ id: p.id })), perVisual: looks, text: { location: brief.locations[0], audience }, seed, exclude, photoStats: stats, allowed, prefer: Object.fromEntries(photos.filter((p) => p.primary).map((p) => [p.id, p.primary])), catalogue, ratio });
       for (const n of planned.notes) log(`  note: ${n}`);
 
@@ -607,7 +611,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
     // record of the calls that made its photos (the panel showed "0 image calls" after one).
     const batch = {
-      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, image_calls: spent, image_calls_this_run: calls,
+      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, image_calls: spent, image_calls_this_run: calls,
       photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
       ads, failed,
     };
