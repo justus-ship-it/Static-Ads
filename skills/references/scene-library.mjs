@@ -23,6 +23,25 @@ export const SCENE_TAGS = {
   muscles: ["legs", "back", "chest", "shoulders", "arms", "core", "full-body"],
 };
 export const MAX_SCENE_PEOPLE = 6;
+/**
+ * A scene's FORMAT — the kind of photograph it is (Phase 3 of the formats plan, 2026-11-10). A scene without one is a
+ * workout scene, as every scene was before. Each format has its own way of being photographed (visual-prompts.mjs),
+ * its own quality rules (check-quality.mjs: a portrait is posed by design, a class is candid) and its own drafting
+ * brief (refresh-scenes.mjs). A batch is made in one format (the mix is Phase 4).
+ */
+export const SCENE_FORMATS = {
+  workout: "people training in the gym, caught mid-movement: candid, nobody looking into the camera",
+  "studio-portrait": "one or two people at ease on a plain backdrop (a seamless studio colour, a dark wall) or in front of the gym softened to a blur: an easy pose or a light movement, a smile, often looking into the camera",
+};
+export const formatOf = (s) => (s && SCENE_FORMATS[s.format] ? s.format : "workout");
+/** What a portrait scene says beyond the description. The words are the creative readings' own (read-creatives.mjs:
+ *  BACKDROPS, POSES, EXPRESSIONS), so a scene and what Meta's numbers say about ads like it are named alike. */
+export const PORTRAIT_TAGS = {
+  backdrop: ["seamless-colour", "dark-wall", "gym-floor"], // a flat studio colour · a plain dark wall · the gym, softened to a blur
+  stance: ["easy-posed", "holding-equipment", "stretch", "walking"],
+  expression: ["smile", "neutral"],
+};
+export const MAX_PORTRAIT_PEOPLE = 2;
 export const AUDIENCES = ["men", "women", "any"];
 
 export function sceneProblems(s) {
@@ -33,6 +52,15 @@ export function sceneProblems(s) {
   if (!Number.isInteger(s.people) || s.people < 1 || s.people > MAX_SCENE_PEOPLE) errs.push(`people must be 1 to ${MAX_SCENE_PEOPLE}`);
   if (s.audience && !AUDIENCES.includes(s.audience)) errs.push('audience must be "men", "women" or "any"');
   for (const [tag, allowed] of Object.entries(SCENE_TAGS)) if (s[tag] != null && !allowed.includes(s[tag])) errs.push(`${tag} must be one of ${allowed.join(", ")}`);
+  if (s.format != null && !SCENE_FORMATS[s.format]) errs.push(`format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+  for (const [tag, allowed] of Object.entries(PORTRAIT_TAGS)) if (s[tag] != null && !allowed.includes(s[tag])) errs.push(`${tag} must be one of ${allowed.join(", ")}`);
+  if (s.eye_contact != null && typeof s.eye_contact !== "boolean") errs.push("eye_contact must be true or false");
+  if (s.format === "studio-portrait") {
+    // A portrait is one person or a pair, on a backdrop it names; it is never a coached session or a class.
+    if (!s.backdrop) errs.push(`a studio-portrait scene names its backdrop: ${PORTRAIT_TAGS.backdrop.join(", ")}`);
+    if (Number.isInteger(s.people) && s.people > MAX_PORTRAIT_PEOPLE) errs.push(`a studio-portrait scene has 1 or ${MAX_PORTRAIT_PEOPLE} people`);
+    if (s.setting != null && s.setting !== "solo") errs.push("a studio-portrait scene has no setting but solo (two people are a pair, not a coached session)");
+  }
   if (s.exercise != null && !/^[a-z][a-z-]{1,40}$/.test(s.exercise)) errs.push("exercise must be a short lower-case name, e.g. back-squat");
   // The setting has to agree with the head count, or the people check fails every photo.
   if (s.setting === "solo" && s.people !== 1) errs.push("a solo scene has 1 person");
@@ -48,6 +76,7 @@ export const UNIFORM_WORDS = /\b(side by side|in time|in unison|in sync|synchron
 /** Not refusals: wording that makes a scene with several people come out posed. */
 export function sceneWarnings(s) {
   if (!s || typeof s.scene !== "string" || !(s.people >= 2 || ["group", "coached"].includes(s.setting))) return [];
+  if (formatOf(s) === "studio-portrait") return []; // a pair posed side by side is the picture
   const m = s.scene.match(UNIFORM_WORDS);
   return m ? [`"${m[0]}" asks the people to move as one — photos come out posed; describe each person at their own point of the movement`] : [];
 }
@@ -124,7 +153,7 @@ export function copyScenesFrom(targetPath, sourcePath, { fromGym = null, people 
 
 /** One line per scene, for the drafter's "do not repeat" list and the panel. */
 export function sceneSummary(s) {
-  const tags = [s.audience || "any", s.setting, s.people != null ? `${s.people} ${s.people === 1 ? "person" : "people"}` : null, s.exercise, s.age, s.equipment].filter(Boolean).join(", ");
+  const tags = [s.audience || "any", formatOf(s) === "workout" ? null : formatOf(s), s.backdrop, s.setting, s.people != null ? `${s.people} ${s.people === 1 ? "person" : "people"}` : null, s.exercise, s.stance, s.age, s.equipment].filter(Boolean).join(", ");
   return `${s.id} [${tags}]${isRetired(s) ? ` (retired${s.reason ? `: ${s.reason}` : ""})` : isDraft(s) ? " (draft)" : ""}: ${s.scene}`;
 }
 
@@ -179,5 +208,8 @@ export function libraryStatus(lib) {
   const scenes = lib.scenes.filter((s) => !sceneProblems(s).length);
   const live = scenes.filter((s) => !isRetired(s) && !isDraft(s)), counts = {};
   for (const s of live) counts[s.audience || "any"] = (counts[s.audience || "any"] || 0) + 1;
-  return { approved: lib.approved === true, counts, total: live.length, drafts: scenes.filter(isDraft).length, retired: scenes.filter(isRetired).length };
+  // Live scenes per format and audience: a batch is made in one format, so "are there scenes for it" is asked per format.
+  const formats = {};
+  for (const s of live) { const f = (formats[formatOf(s)] ||= { total: 0, counts: {} }); f.total++; f.counts[s.audience || "any"] = (f.counts[s.audience || "any"] || 0) + 1; }
+  return { approved: lib.approved === true, counts, formats, total: live.length, drafts: scenes.filter(isDraft).length, retired: scenes.filter(isRetired).length };
 }

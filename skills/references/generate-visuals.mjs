@@ -27,7 +27,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve, extname, basename } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
-import { buildVisualPrompt, poseProblem } from "./visual-prompts.mjs";
+import { buildVisualPrompt, poseProblem, needsRoom } from "./visual-prompts.mjs";
 import { checkVisual, checkTiled, splitMarks, ownerKept } from "./check-visual.mjs";
 import { checkQuality } from "./check-quality.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
@@ -69,7 +69,7 @@ export async function checkPicture(file, opts, { base = checkVisual, quality = c
   // A photo the owner has looked at and passed (plan-offer-batch → withRulings) is not judged again.
   if (opts.skipQuality) return { ...pic, notes: pic.notes || [], quality: { ok: true, failures: [], minor: [], dismissed: [], ruling: "passed by the owner" } };
   let q;
-  try { q = await quality(file, { scene: opts.scene, people: opts.maxPeople, setting: opts.setting }); } catch (e) { q = { ok: false, failures: [`quality check could not run: ${e.message}`], minor: [], dismissed: [] }; }
+  try { q = await quality(file, { scene: opts.scene, people: opts.maxPeople, setting: opts.setting, format: opts.format || "workout" }); } catch (e) { q = { ok: false, failures: [`quality check could not run: ${e.message}`], minor: [], dismissed: [] }; }
   // Notes never fail a photo; they ride with it to the gallery, so selection is informed.
   return { ...pic, ok: pic.ok && q.ok, failures: [...(pic.failures || []), ...q.failures], notes: [...(pic.notes || []), ...(q.minor || [])], quality: q };
 }
@@ -77,7 +77,7 @@ export async function checkPicture(file, opts, { base = checkVisual, quality = c
 /** Both halves of the check for a visual on disk. */
 async function assess(file, v, { ratio, text, check, compositor, outDir, never = [] }) {
   let pic;
-  try { pic = await check(file, { treatment: v.treatment, ratio, expectPeople: v.people !== false, maxPeople: typeof v.people === "number" ? v.people : null, never, scene: v.scene, setting: v.tags?.setting ?? v.setting ?? null, anchor: v.anchor ?? null }); } catch (e) { pic = { ok: false, failures: [`check could not run: ${e.message}`] }; }
+  try { pic = await check(file, { treatment: v.treatment, ratio, expectPeople: v.people !== false, maxPeople: typeof v.people === "number" ? v.people : null, never, scene: v.scene, setting: v.tags?.setting ?? v.setting ?? null, format: v.format || "workout", anchor: v.anchor ?? null }); } catch (e) { pic = { ok: false, failures: [`check could not run: ${e.message}`] }; }
   let ad = null;
   if (pic.ok && text && compositor) {
     try { ad = await compositor.compose(file, pic.faces, v, text, ratio, join(outDir, `${v.id}-ad.png`), pic.focus); } catch (e) { ad = { ok: false, failures: [`ad could not render: ${e.message}`] }; }
@@ -126,8 +126,10 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
   for (const v of visuals) {
     // A sibling of a chosen photo (Step 8, 9:16): that photo goes first, as the scene itself.
     const anchor = anchorFor ? anchorFor(v) : null;
-    const parts = anchor ? [inline(anchor), ...refParts] : refParts;
-    const { prompt, aspect } = buildVisualPrompt({ treatment: v.treatment, scene: v.scene, ratio, photography, shotGuide, age: Number.isInteger(v.age) ? v.age : null, brandNames, hasReference: refParts.length > 0, anchor: !!anchor, people: typeof v.people === "number" ? v.people : null, setting: v.tags?.setting ?? v.setting ?? null });
+    // A portrait on a plain backdrop shows no room, so the room reference is not attached to it (it would bring the room in).
+    const backdrop = v.backdrop ?? v.tags?.backdrop ?? null, room = needsRoom({ format: v.format, backdrop }), roomParts = room ? refParts : [];
+    const parts = anchor ? [inline(anchor), ...roomParts] : roomParts;
+    const { prompt, aspect } = buildVisualPrompt({ treatment: v.treatment, scene: v.scene, ratio, photography, shotGuide, format: v.format || "workout", backdrop, age: Number.isInteger(v.age) ? v.age : null, brandNames, hasReference: roomParts.length > 0, anchor: !!anchor, people: typeof v.people === "number" ? v.people : null, setting: v.tags?.setting ?? v.setting ?? null });
     writeFileSync(join(outDir, `${v.id}.prompt.txt`), prompt + "\n");
     const tries = [];
     let final = null;

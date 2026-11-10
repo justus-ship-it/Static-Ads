@@ -140,7 +140,7 @@ test("R4 approve clears the draft with a date; reject needs a reason and retires
     const p = join(dir, "scenes.json");
     assert.deepEqual(loadScenes(p).map((s) => s.id), ["m-squat", "m-press", "w-swing", "w-plank", "w-lunge-old", "a-pair"], "no draft, no retired scene");
     assert.ok(!loadScenes(p, { allowDraft: true }).some((s) => s.id === "w-row-old"), "not even for a dry run");
-    assert.deepEqual(libraryStatus(readLibrary(p)), { approved: true, counts: { men: 2, women: 3, any: 1 }, total: 6, drafts: 1, retired: 1 });
+    assert.deepEqual(libraryStatus(readLibrary(p)), { approved: true, counts: { men: 2, women: 3, any: 1 }, formats: { workout: { total: 6, counts: { men: 2, women: 3, any: 1 } } }, total: 6, drafts: 1, retired: 1 });
     const r = approveScenes(p, ["w-curl", "w-swing"], { date: "2026-09-13" });
     assert.deepEqual(r, { approved: ["w-curl"], already: ["w-swing"] });
     const curl = readLibrary(p).scenes.find((s) => s.id === "w-curl");

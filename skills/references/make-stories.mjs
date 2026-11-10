@@ -219,7 +219,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
   const visualFor = (p, la, id) => {
     const v = visualsById[p.id];
     if (!v) throw new Error(`${p.id}: no scene in visuals.json — the batch must have generated it`);
-    return { id, for: p.id, treatment: la, scene: v.scene, scene_id: v.scene_id, pose: v.pose, people: v.people, tags: v.tags, look: CHECK_LOOK, anchor: at(p.file) };
+    return { id, for: p.id, treatment: la, scene: v.scene, scene_id: v.scene_id, pose: v.pose, people: v.people, ...(v.format ? { format: v.format } : {}), tags: v.tags, look: CHECK_LOOK, anchor: at(p.file) };
   };
   let calls = 0;
   // The count is written after every generation, so a run that stops half-way never loses what it

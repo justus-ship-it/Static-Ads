@@ -187,6 +187,19 @@ export const REAL_CLAUSE = "REAL: everything could be photographed in a real gym
  *  is the one prompting technique measured to work (Step 4): the sibling keeps the room, people and moment. */
 export const ANCHOR_CLAUSE = "SAME SCENE: the first attached photo is this exact scene, already photographed for the feed advert. Make the same photograph re-framed as a vertical 9:16: the same people with the same faces, ages, builds, clothes and expressions, at the same spot in the same room and light, doing the same thing at the same moment. The taller frame shows more floor below and more ceiling above; nothing else changes.";
 
+// ── formats (Phase 3, 2026-11-10): how each kind of photograph is asked for ──
+/** The studio portrait's look: what made the hand-built Jurong West set (68 calls, 60 ads the owner runs as they are). */
+export const PORTRAIT_SHOT = "SHOT: an editorial fitness portrait. Soft, even, flattering light on the face; natural skin with real texture; sharp focus on the face; eye-level camera. The feel is relaxed, warm and unforced: at ease in front of the camera, nothing stiff, no hard flex, no strain.";
+export const BACKDROP_CLAUSE = {
+  "seamless-colour": "BACKDROP: a seamless studio backdrop in the one flat colour the scene names, evenly lit, running behind and under the people with no floor line or only a soft one. Nothing else in the frame: no room, no props beyond what the scene names, no furniture, no windows.",
+  "dark-wall": "BACKDROP: a plain dark wall close behind the people, with nothing on it, the light falling off softly into shadow. Nothing else in the frame: no room, no props beyond what the scene names.",
+  "gym-floor": "BACKDROP: the gym behind the people, softened to a blur so nothing in it is sharp and nobody else is in it; the people stand well in front of it.",
+};
+/** Does this photo show the gym's own room (so the room reference and the profile's must-show belong in its prompt)? */
+export const needsRoom = ({ format = "workout", backdrop = null } = {}) => format !== "studio-portrait" || backdrop === "gym-floor";
+/** The 9:16 sibling of a portrait on a plain backdrop: the taller frame shows more backdrop, not more room. */
+export const ANCHOR_CLAUSE_PLAIN = "SAME PORTRAIT: the first attached photo is this exact portrait, already photographed for the feed advert. Make the same photograph re-framed as a vertical 9:16, as if the camera had been held upright and stepped back a little: the same people with the same faces, ages, builds, clothes, expressions and pose, on the same backdrop in the same light. The taller frame shows more of the plain backdrop above the heads and more below; nothing else changes.";
+
 const escapeRe = (n) => n.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
 /** "the real Sculpt Society premises" → "the real premises": the name goes, the meaning stays. */
 export const scrubNames = (t, names = []) => names.filter(Boolean).reduce((a, n) => a.replace(new RegExp(`\\s*${escapeRe(n)}('s)?`, "gi"), ""), t).replace(/\s{2,}/g, " ").trim();
@@ -210,7 +223,10 @@ export const isStyleRule = (t) => STYLE_WORDS.test(String(t || "")) || (rulePart
 export const checkableNever = (list = []) => (list || []).filter((t) => t && !isStyleRule(t))
   .map((t) => (ruleParts(t).some((p) => FRAMING_WORDS.test(p)) ? ruleParts(t).filter((p) => !FRAMING_WORDS.test(p)).join(" or ") : t));
 
-export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, age = null, shotGuide = null, catalogue = loadCatalogue() }) {
+export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, age = null, shotGuide = null, format = "workout", backdrop = null, catalogue = loadCatalogue() }) {
+  const portrait = format === "studio-portrait";
+  const room = needsRoom({ format, backdrop }); // a plain backdrop shows no room: no reference, no must-show
+  if (!room) hasReference = false;
   const T = catalogue.treatments;
   const tr = T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}"`);
@@ -230,7 +246,7 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
   const subjectArea = describeSubjectArea(gl, where);
   const maxH = layout.background?.type ? null : maxFigureHeight(gl, where);
   const lines = [
-    `A realistic, natural-light photograph for a gym's social media advert, ${ASPECT_WORDS[frame.aspect] || frame.aspect}.`,
+    portrait ? `A realistic editorial portrait photograph for a gym's social media advert, ${ASPECT_WORDS[frame.aspect] || frame.aspect}.` : `A realistic, natural-light photograph for a gym's social media advert, ${ASPECT_WORDS[frame.aspect] || frame.aspect}.`,
     "",
     NO_TEXT_CLAUSE,
     ONE_PHOTO_CLAUSE,
@@ -240,31 +256,35 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
   // The head count is stated outright: "apart from the people in the scene" still let the model add
   // gym-goers in the background of wide shots (48-ad batch, 2026-09-11).
   const count = Number.isInteger(people) ? `Exactly ${people} ${people === 1 ? "person" : "people"} in the whole photo, and nobody else: no one in the background, at other equipment, or reflected in the mirrors.` : "Apart from the people in the scene, the gym is empty — nobody else in the room or reflected in the mirrors.";
-  if (photography.people) lines.push(`PEOPLE: ${photography.people}. Real people, candid and mid-movement, not posed models; nobody looks into the camera. It is a private session. ${count}`);
+  // A portrait is posed by design: at ease, the expression and where they look as the scene says. A workout is candid.
+  if (portrait) lines.push(`PEOPLE: ${photography.people ? `${photography.people}. ` : ""}Real people with natural builds and natural skin, not fitness models; relaxed and at ease, with the expression and the gaze the scene describes. ${count}`);
+  else if (photography.people) lines.push(`PEOPLE: ${photography.people}. Real people, candid and mid-movement, not posed models; nobody looks into the camera. It is a private session. ${count}`);
   // Group classes came back as line-ups — identical poses at the same instant (48-ad batch, 2026-09-12).
   // Said as what a real class looks like; the faults are never named, since naming invites them.
-  if (CANDID[setting]) lines.push(CANDID[setting]);
+  if (!portrait && CANDID[setting]) lines.push(CANDID[setting]);
   // Ages on a bell curve over the owner's range (plan-offer-batch → ageTargets): the photo names one.
-  if (Number.isInteger(age)) lines.push(`AGE: the person training is about ${age} years old${setting === "coached" ? "; the coach is any adult age" : ""}. If the scene gives them another age, this age wins.`);
+  if (Number.isInteger(age)) lines.push(portrait ? `AGE: ${people === 2 ? "the people are" : "the person is"} about ${age} years old. If the scene gives another age, this age wins.` : `AGE: the person training is about ${age} years old${setting === "coached" ? "; the coach is any adult age" : ""}. If the scene gives them another age, this age wins.`);
   lines.push(REAL_CLAUSE);
-  lines.push(...shotClause(shotGuide, setting));
-  if (anchor) lines.push(ANCHOR_CLAUSE);
-  if (must.length) lines.push(`SETTING (must show): ${must.join("; ")}.`);
+  // The workout shot guide is read from workout adverts (mid-rep, peak effort): a portrait has its own look.
+  if (portrait) lines.push(PORTRAIT_SHOT, ...(BACKDROP_CLAUSE[backdrop] ? [BACKDROP_CLAUSE[backdrop]] : []));
+  else lines.push(...shotClause(shotGuide, setting));
+  if (anchor) lines.push(room ? ANCHOR_CLAUSE : ANCHOR_CLAUSE_PLAIN);
+  if (must.length && room) lines.push(`SETTING (must show): ${must.join("; ")}.`);
   if (hasReference) {
     // With a shot guide the room is matched but not its light: a flat fluorescent reference made flat photos (F45 Lower Peirce, 2026-09-26).
-    lines.push(`${anchor ? "The second attached photo" : "The attached reference photo"} is the real gym. Match its room: wall colour, ceiling, ${shotGuide ? "" : "lighting, "}floor and equipment.${shotGuide ? " Light the people as SHOT says, keeping the room recognisable." : ""} ` +
+    lines.push(`${anchor ? "The second attached photo" : "The attached reference photo"} is the real gym. Match its room: wall colour, ceiling, ${shotGuide || portrait ? "" : "lighting, "}floor and equipment.${shotGuide || portrait ? " Light the people as SHOT says, keeping the room recognisable." : ""} ` +
       "Do NOT copy any sign, lettering or neon words from it — none may appear in your image. " +
       "Any people in the reference photo are only there to show the room: they are not in your image, and nobody in your image looks like them.");
   }
   lines.push(
     "",
     `COMPOSITION: ${hint}`,
-    ...(tr.visual_framing ? [`FRAMING: ${tr.visual_framing} If the scene's pose would not fit this framing, show a variant of the same exercise that does (for example a seated, kneeling or floor version).`] : []),
+    ...(tr.visual_framing ? [`FRAMING: ${tr.visual_framing} ${portrait ? "If the scene's pose would not fit this framing, keep the pose and step the camera back or in until it does." : "If the scene's pose would not fit this framing, show a variant of the same exercise that does (for example a seated, kneeling or floor version)."}`] : []),
     `Text will be laid over ${areas.join(" and over ")}. No face may fall inside ${areas.length > 1 ? "them" : "it"}, and keep ${areas.length > 1 ? "them" : "it"} free of busy detail behind the words; ` +
       "the body may run into the text: the words may sit over a torso, arms or legs, never over a face.",
   );
   if (subjectArea && layout.background?.type !== "panels") {
-    lines.push(`Place every face, and the subject's head and upper body, within ${subjectArea}. Frame the shot close, the way a phone photo taken a few steps away looks: the body may run into the text area.`);
+    lines.push(`Place every face, and the subject's head and upper body, within ${subjectArea}. ${portrait ? "Frame it as a portrait photographer would, a few steps away" : "Frame the shot close, the way a phone photo taken a few steps away looks"}: the body may run into the text area.`);
     // Gemini overshoots a size slightly (run 6: 31% when asked for 30%), so the top of the range is 85% of the maximum.
     if (maxH) { const target = Math.floor((maxH * 0.85) / 5) * 5, lo = Math.max(30, target - 20); lines.push(`SIZE: the main person fills about ${lo}% to ${target}% of the frame's height — step in close; the frame may cut the body at the knees or the waist.`); }
     else if (!layout.background?.type) lines.push("SIZE: the main person fills about 65% to 85% of the frame's height — step in close; the frame may cut the body at the knees or the waist.");

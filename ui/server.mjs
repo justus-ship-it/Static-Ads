@@ -51,7 +51,7 @@ import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecomm
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, madeShape } from "../skills/references/plan-offer-batch.mjs";
-import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS } from "../skills/references/scene-library.mjs";
+import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 import { readReading, checkUrl as checkSiteUrl, MIN_PHOTO_PX, ONBOARDING_DIR } from "../skills/references/read-website.mjs";
@@ -134,7 +134,7 @@ const RUNNABLE = {
   "batch-stories-rerender": { label: "Re-render Stories versions (free)", needsBrief: true, argv: ({ gym, batch }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--render-only"] },
   // A scene refresh (text calls only): the audience, the count and the direction — words and/or an
   // uploaded reference image — each checked for shape before it becomes an argument.
-  "scenes-refresh": { label: "Refresh scenes (drafts for approval)", argv: ({ gym, audience, count, words, reference, cover }) => [REFRESH_SCRIPT, "--brand-dir", brandDir(gym), "--audience", audience, "--count", String(count), ...(words ? ["--words", words] : []), ...(reference ? ["--reference", reference] : []), ...(cover?.length ? ["--cover", cover.join(",")] : [])] },
+  "scenes-refresh": { label: "Refresh scenes (drafts for approval)", argv: ({ gym, audience, count, words, reference, cover, format }) => [REFRESH_SCRIPT, "--brand-dir", brandDir(gym), "--audience", audience, "--count", String(count), ...(format && format !== "workout" ? ["--format", format] : []), ...(words ? ["--words", words] : []), ...(reference ? ["--reference", reference] : []), ...(cover?.length ? ["--cover", cover.join(",")] : [])] },
   // The premises photos' clean-up (Step 5): a free survey of what an edit would remove, and the edit
   // itself under a confirmed call cap. Photos are names in brand-assets/facility, checked before they
   // become arguments; the clean copies land in brand-assets/facility-clean as the CLI's do.
@@ -472,7 +472,7 @@ function listReferences(gym) {
   return readdirSync(dir).filter((f) => REFERENCE_NAME.test(f)).sort().map((name) => ({ name, url: `/files/brands/${gym}/${REFERENCES_DIR}/${name}`, read: existsSync(join(dir, `${name}.description.json`)) }));
 }
 /** The library's drafts and the scenes drafted for a batch, for the panel. */
-const sceneCard = (s) => ({ id: s.id, scene: s.scene, audience: s.audience || "any", pose: s.pose, people: s.people, exercise: s.exercise || null, age: s.age || null, setting: s.setting || null, equipment: s.equipment || null, muscles: s.muscles || null, draft: isDraft(s), source: s.source || null, added: s.added || null, covers: s.covers || null, direction: s.direction || null, prefer_layout: s.prefer_layout || null });
+const sceneCard = (s) => ({ id: s.id, scene: s.scene, audience: s.audience || "any", format: formatOf(s), backdrop: s.backdrop || null, stance: s.stance || null, expression: s.expression || null, eye_contact: s.eye_contact ?? null, pose: s.pose, people: s.people, exercise: s.exercise || null, age: s.age || null, setting: s.setting || null, equipment: s.equipment || null, muscles: s.muscles || null, draft: isDraft(s), source: s.source || null, added: s.added || null, covers: s.covers || null, direction: s.direction || null, prefer_layout: s.prefer_layout || null });
 function sceneDrafts(gym) {
   const p = join(brandDir(gym), "scenes.json");
   if (!existsSync(p)) return [];
@@ -683,12 +683,22 @@ function resolveSpread(gym, brief) {
   // a spread worked out from the whole library would ask those scenes for what they cannot show (2026-09-28).
   if (spread === true && rest.direction && (rest.direction.words || rest.direction.reference)) return { brief: rest, spread: { must_show: {}, left_out: [], reason: "off for a directed batch: the reference or your words decide what the photos show" } };
   if (spread !== true || !(rest.generated > 0) || rest.must_show) return { brief: rest, spread: null };
+  // A portrait batch spreads across backdrops, poses and ages by itself: the Spread's wish is about exercises and equipment.
+  const fmt = formatFor(gym, rest);
+  if (fmt !== "workout") return { brief: rest, spread: { must_show: {}, left_out: [], reason: `off for a ${fmt.replace("-", " ")} batch: it spreads across backdrops, poses and ages by itself` } };
   let scenes = [];
-  try { scenes = loadScenes(join(brandDir(gym), "scenes.json")); } catch { return { brief: rest, spread: { must_show: {}, left_out: [], reason: "no approved scenes yet" } }; }
+  try { scenes = loadScenes(join(brandDir(gym), "scenes.json")).filter((s) => formatOf(s) === "workout"); } catch { return { brief: rest, spread: { must_show: {}, left_out: [], reason: "no approved scenes yet" } }; }
   // With an age range the ages come from the bell curve (plan-offer-batch → ageTargets), so the spread leaves them out.
   const wish = Array.isArray(rest.age_range) ? Object.fromEntries(Object.entries(SPREAD_WISH).filter(([k]) => k !== "age")) : SPREAD_WISH;
   const s = spreadFor({ scenes, audience: sceneAudience(rest.audience, rest.scene_audience), count: rest.generated, wish });
   return { brief: Object.keys(s.must_show).length ? { ...rest, must_show: s.must_show } : rest, spread: s };
+}
+/** The format a brief's photos are made in: its own, else the gym's (Ad defaults), else workout. */
+function formatFor(gym, brief) {
+  const own = brief && typeof brief === "object" ? brief.format : null;
+  if (own != null) return SCENE_FORMATS[own] ? own : "workout"; // a format that is not one is refused by validateBrief
+  const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {};
+  return SCENE_FORMATS[cd.format] ? cd.format : "workout";
 }
 function checkBrief(gym, raw) {
   const { brief, spread } = resolveSpread(gym, raw);
@@ -697,7 +707,7 @@ function checkBrief(gym, raw) {
   // rooms from nothing (F45 Xinyi, 2026-10-07). A real photo in the batch still stands in when the gym names none.
   if (brief && typeof brief === "object" && brief.reference == null) { const rr = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference; if (typeof rr === "string" && rr && !rr.includes("..") && existsSync(join(brandDir(gym), "brand-assets", rr))) brief.reference = rr; }
   // The gym's look (Ad defaults) rides on the brief when it names none and it differs from the standard, so the brief on disk says what ran.
-  if (brief && typeof brief === "object") { const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {}; if (brief.look == null && cd.look && cd.look !== "reference") brief.look = cd.look; }
+  if (brief && typeof brief === "object") { const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {}; if (brief.look == null && cd.look && cd.look !== "reference") brief.look = cd.look; if (brief.format == null && cd.format && cd.format !== "workout" && SCENE_FORMATS[cd.format]) brief.format = cd.format; }
   const errors = validateBrief(brief, { brandDir: brandDir(gym) });
   // The feed shape (the owner's rule, 2026-11-10): feed ads are 4:5 and Stories 9:16; the square is no longer made. Only a
   // batch already made as a square may name it (its words changed, run again) — and it keeps that shape whatever is asked.
@@ -707,14 +717,21 @@ function checkBrief(gym, raw) {
   }
   const g = brief?.generated ?? 0, real = Array.isArray(brief?.real) ? brief.real : [];
   const scenes = sceneStatus(gym);
+  const format = formatFor(gym, brief), directedBrief = !!(brief?.direction && (brief.direction.words || brief.direction.reference));
   const audienceFor = sceneAudience(brief?.audience, brief?.scene_audience);
   if (g > 0 && !brief?.scenes) {
     if (!scenes.exists) errors.push("no scene library yet: generated photos need approved scenes. Draft the first ones on Library → Scenes, or set generated photos to 0 and use real photos only");
     else if (!scenes.approved) errors.push("no approved scenes yet: approve some on Library → Scenes (nothing is generated from a draft)");
     else if (audienceFor !== "any" && !(scenes.counts[audienceFor] || scenes.counts.any)) errors.push(`the scene library has no scenes for a "${audienceFor}" audience`);
+    else if (!directedBrief) {
+      // A batch is made in one format: that format needs its own approved scenes, for this audience.
+      const of = scenes.formats?.[format], name = format.replace("-", " ");
+      if (!of?.total) errors.push(`no approved ${name} scenes yet: draft some on Library → Scenes (Refresh scenes…, format: ${name}) and approve them`);
+      else if (audienceFor !== "any" && !(of.counts[audienceFor] || of.counts.any)) errors.push(`no approved ${name} scenes for a "${audienceFor}" audience yet: draft some on Library → Scenes`);
+    }
   }
   const photos = g + real.length, looks = brief?.looks_per_photo ?? 2, locs = Array.isArray(brief?.locations) ? brief.locations.length : 0;
-  return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor } };
+  return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format } };
 }
 
 // ── Review and picks (sub-step 2) ────────────────────────────────────────────
@@ -1629,7 +1646,7 @@ const server = createServer(async (req, res) => {
       const scenesPath = join(brandDir(gym), "scenes.json");
       // The other gyms' libraries a new gym may start from: each with its live count (its own left out).
       const siblings = () => listClients().filter((c) => c.gym !== gym).map((c) => { const st = sceneStatus(c.gym); return { gym: c.gym, name: c.display_name || c.gym, live: st.exists ? st.total : 0 }; }).filter((c) => c.live > 0);
-      if (what === "scenes" && req.method === "GET") return json(res, 200, { status: sceneStatus(gym), drafts: sceneDrafts(gym), references: listReferences(gym), audiences: AUDIENCES, maxCount: MAX_REFRESH_COUNT, maxWords: MAX_WORDS, siblings: siblings() });
+      if (what === "scenes" && req.method === "GET") return json(res, 200, { status: sceneStatus(gym), formats: SCENE_FORMATS, drafts: sceneDrafts(gym), references: listReferences(gym), audiences: AUDIENCES, maxCount: MAX_REFRESH_COUNT, maxWords: MAX_WORDS, siblings: siblings() });
       // A new gym's first scenes from another gym's library, as drafts for approval; the people's country swapped in the words.
       if (what === "scenes/copy" && req.method === "POST") {
         const { from } = await readBody(req);
@@ -1938,12 +1955,15 @@ const server = createServer(async (req, res) => {
         if (!Number.isInteger(body.count) || body.count < 1 || body.count > MAX_REFRESH_COUNT) return json(res, 400, { error: `count must be 1 to ${MAX_REFRESH_COUNT}` });
         if (body.words != null && (typeof body.words !== "string" || body.words.trim().length < 3 || body.words.length > MAX_WORDS)) return json(res, 400, { error: `words must describe the pictures wanted, up to ${MAX_WORDS} characters` });
         if (body.reference != null && (!REFERENCE_NAME.test(String(body.reference)) || !existsSync(join(referencesDir(body.gym), body.reference)))) return json(res, 400, { error: "reference must name an uploaded reference image" });
+        // The kind of photograph the drafts are (Phase 3): workout scenes, or studio portraits.
+        if (body.format != null && !SCENE_FORMATS[body.format]) return json(res, 400, { error: `format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}` });
+        if (body.cover != null && body.format && body.format !== "workout") return json(res, 400, { error: "cover is about exercises and equipment: it applies to workout scenes only" });
         // What the drafts must cover (2026-10-15, the Create screen's "Draft scenes for them"): tag:value pairs from the Spread's left-out list, checked against the vocabulary.
         if (body.cover != null) {
           const bad = !Array.isArray(body.cover) || !body.cover.length || body.cover.length > 8 || body.cover.some((c) => { const [tag, value] = String(c).split(":"); return !tag || !value || (tag !== "exercise" && !SCENE_TAGS[tag]) || (tag === "exercise" ? !/^[a-z][a-z-]{1,30}$/.test(value) : !SCENE_TAGS[tag].includes(value)); });
           if (bad) return json(res, 400, { error: `cover must list 1 to 8 tag:value pairs from the scene vocabulary (exercise, ${Object.keys(SCENE_TAGS).join(", ")})` });
         }
-        const run = startRun(kind, { gym: body.gym, audience: body.audience, count: body.count, words: body.words?.trim() || null, reference: body.reference || null, cover: body.cover || null });
+        const run = startRun(kind, { gym: body.gym, audience: body.audience, count: body.count, words: body.words?.trim() || null, reference: body.reference || null, cover: body.cover || null, format: body.format || null });
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "website-read") {

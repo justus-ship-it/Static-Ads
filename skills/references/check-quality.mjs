@@ -48,13 +48,23 @@ export const CONFIRM_MODEL = process.env.CONFIRM_MODEL || CHECK_MODEL;
 export const POSED_LOOKING_SHARE = 0.5;
 export const PROBLEM_KINDS = ["body", "equipment", "form", "hands", "face", "reflection", "other"];
 
-const QUESTION = (scene) => `You are checking whether a generated photograph looks like a real photo of a real gym session. It will be used in an advert for a real gym, so anything a viewer would read as fake, impossible or wrong ruins it.
+// A portrait is asked about as a portrait (Phase 3, 2026-11-10): there may be no exercise in it at all, and a pose,
+// a smile and a look into the lens are what the scene asked for.
+const INTRO = {
+  workout: "You are checking whether a generated photograph looks like a real photo of a real gym session.",
+  "studio-portrait": "You are checking whether a generated photograph looks like a real portrait photograph of real people, taken for a gym.",
+};
+const SHOWN = {
+  workout: "1. exercise_shown: does the photo show that exercise, at any point of its movement, done with the equipment it needs? (A lifter part-way through a lift is still doing the lift.) In exercise_seen, say what the photo actually shows.",
+  "studio-portrait": "1. exercise_shown: does the photo show what that describes — the people, what they are doing or holding, and the kind of backdrop? It is a posed portrait: a pose held for the camera, a smile and a look into the lens are correct, and small differences in clothing colour or the exact position of a hand do not matter. Answer false only if it shows something else (different people, a different activity, a different kind of place). In exercise_seen, say what the photo actually shows.",
+};
+const QUESTION = (scene, format = "workout") => `${INTRO[format] || INTRO.workout} It will be used in an advert for a real gym, so anything a viewer would read as fake, impossible or wrong ruins it.
 
 The photo was meant to show: ${scene}
 
 Look closely at the people, their hands and feet, the equipment and where it touches the body, the floor and any mirrors.
 
-1. exercise_shown: does the photo show that exercise, at any point of its movement, done with the equipment it needs? (A lifter part-way through a lift is still doing the lift.) In exercise_seen, say what the photo actually shows.
+${SHOWN[format] || SHOWN.workout}
 2. problems: list everything that could not happen in a real photo, or that is not how real equipment or the real exercise looks. Give each one what it is, its kind, its severity and a box.
    Kinds:
    - body: a person unsupported (sitting or leaning on nothing); limbs merged with each other or with equipment; extra or missing limbs, hands, fingers or feet; a body bent in a way a body cannot bend.
@@ -114,8 +124,8 @@ A first check reported the problems below (boxes are [ymin, xmin, ymax, xmax] on
 ${items.map((t, i) => `${i}. ${t.what}${t.box_2d ? ` at ${JSON.stringify(t.box_2d)}` : ""}`).join("\n")}`;
 const CONFIRM_SCHEMA = { type: "OBJECT", properties: { findings: { type: "ARRAY", items: { type: "OBJECT", properties: { index: { type: "INTEGER" }, real: { type: "BOOLEAN" }, seen: { type: "STRING" } }, required: ["index", "real"] } } }, required: ["findings"] };
 
-export async function askQuality(imagePath, { scene, ...opts }) {
-  return callVision(imagePath, QUESTION(scene), SCHEMA, { model: QUALITY_MODEL, ...opts });
+export async function askQuality(imagePath, { scene, format = "workout", ...opts }) {
+  return callVision(imagePath, QUESTION(scene, format), SCHEMA, { model: QUALITY_MODEL, ...opts });
 }
 
 /** Returns { kept, dismissed } — `dismissed` carries what the second look saw instead. */
@@ -156,14 +166,18 @@ export function heldNotes(answer) {
  * The rules (pure). `answer` has its serious findings already confirmed: `confirmed` lists the ones
  * that stand. `people` is the scene's head count, `setting` its tag (solo · coached · group).
  */
-export function judgeQuality(answer, { confirmed = seriousFindings(answer), dismissed = [], people = null, setting = null } = {}) {
+export function judgeQuality(answer, { confirmed = seriousFindings(answer), dismissed = [], people = null, setting = null, format = "workout" } = {}) {
   const failures = [], minor = [];
   for (const p of confirmed) failures.push(p.kind === "scene" ? `not the scene: ${p.what.replace(/^the photo /, "")}` : `looks fake (${p.kind}): ${p.what}`);
   // The scene's own head count decides whether the class rules apply: a bystander behind a solo lifter
   // does not make a class (extra people are the base check's note).
   const n = people ?? answer.people_count ?? 0;
   const looking = answer.looking_at_camera || 0;
-  if (n >= 2) {
+  // A portrait is posed by design (Phase 3): a pair side by side in the same pose, looking into the lens, is the
+  // picture that was asked for. Only what no real photograph has still fails it: the same face twice.
+  if (n >= 2 && format === "studio-portrait") {
+    if (answer.duplicate_faces) failures.push("the same face on more than one person");
+  } else if (n >= 2) {
     if (answer.poses_near_identical) failures.push(`posed, not candid: the ${n} people are near-copies of each other's pose`);
     if (answer.duplicate_faces) failures.push("the same face on more than one person");
     if (setting === "group" && !answer.interaction) failures.push("a group class with no interaction between the people");
@@ -185,11 +199,11 @@ export function judgeQuality(answer, { confirmed = seriousFindings(answer), dism
 }
 
 /** The whole check for one photo. `ask` and `confirm` are injectable so the flow is testable offline. */
-export async function checkQuality(imagePath, { scene, people = null, setting = null, ask = askQuality, confirm = confirmProblems, ...opts } = {}) {
+export async function checkQuality(imagePath, { scene, people = null, setting = null, format = "workout", ask = askQuality, confirm = confirmProblems, ...opts } = {}) {
   if (!scene) throw new Error("the quality check needs the scene the photo was meant to show");
-  const answer = await ask(imagePath, { scene, ...opts });
+  const answer = await ask(imagePath, { scene, format, ...opts });
   const { kept, dismissed } = await confirm(imagePath, seriousFindings(answer), { scene, ...opts });
-  return { ...judgeQuality(answer, { confirmed: kept, dismissed, people, setting }), answer };
+  return { ...judgeQuality(answer, { confirmed: kept, dismissed, people, setting, format }), answer };
 }
 
 // ── the sibling check (Step 8): is a 9:16 photo the same scene as the chosen 1:1? ──────────

@@ -915,3 +915,49 @@ test("B11 a formula batch at 4:5 (2026-11-10); every new batch is 4:5 and a squa
     assert.deepEqual([madeShape(join(dir, "outputs", "formula-batch")), madeShape(join(dir, "outputs", "old-square"))], ["4x5", "1x1"]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("B13 a batch is made in one format (Phase 3, 2026-11-10): a studio-portrait batch draws only from the approved portrait scenes, asks for portraits, attaches the room reference only where the gym is the backdrop, ignores a Spread wish, and says its format on the batch, its photos and its ads; a batch with no format is a workout batch and never takes a portrait scene; the gym's Ad default stands in; a format with no approved scenes is refused in words", async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const P = (id, over = {}) => ({ id, audience: "men", format: "studio-portrait", pose: "upright", people: 1, age: "prime", backdrop: "seamless-colour", stance: "easy-posed", expression: "smile", eye_contact: true, scene: `A man in his early thirties in a white t-shirt standing relaxed with his arms crossed and an easy smile, looking into the camera, against a seamless deep teal studio backdrop (${id}).`, ...over });
+    const libPath = join(dir, "scenes.json"), workout = JSON.parse(readFileSync(libPath, "utf-8")).scenes;
+    const portraits = [P("m-p-teal"), P("m-p-wall", { backdrop: "dark-wall", stance: "holding-equipment", eye_contact: false, scene: "A man in his late twenties in a black t-shirt holding a kettlebell by the horn at his side, grinning past the camera, against a plain dark charcoal wall (m-p-wall)." }), P("m-p-gym", { backdrop: "gym-floor", pose: "compact", scene: "A man in his forties sitting on the end of a flat bench with his forearms on his knees and a towel over one shoulder, a relaxed grin at the camera, the gym softened to a blur behind him (m-p-gym)." })];
+    writeFileSync(libPath, JSON.stringify({ approved: true, scenes: [...workout, ...portraits, P("m-p-draft", { draft: true })] }));
+    const gen = [], logs = [], f = fakes([]);
+    const check = async () => ({ ok: true, failures: [], notes: [], stray_text: [], excluded: [], dismissed: [], faces: [[280, 430, 400, 570]], focus: [0.5, 0.5], placement: { people_box: [240, 300, 980, 700], people_count: 1 } });
+    const deps = { ...f, generate: async (prompt, refs, opts) => { gen.push({ prompt, refs: refs.length }); return f.generate(prompt, refs, opts); }, check, browser };
+    const brief = { ...BRIEF, batch_id: "portraits", real: [], generated: 3, max_calls: 4, locations: ["JURONG WEST"], look: "formula", format: "studio-portrait", reference: "real/r1.png", must_show: { exercise: ["squat"] } };
+    assert.deepEqual(validateBrief({ ...brief, format: "poster" }).filter((e) => /format/.test(e)), ['format "poster" is not one of workout, studio-portrait']);
+    const r = await runBatch({ brandDir: dir, brief, deps, log: (m) => logs.push(m) });
+    assert.deepEqual([r.batch.format, r.batch.look, r.batch.ratio, r.batch.failed.length], ["studio-portrait", "formula", "4x5", 0], logs.join(" | "));
+    assert.deepEqual(r.batch.photos.map((p) => p.scene_id).sort(), ["m-p-gym", "m-p-teal", "m-p-wall"], "the three approved portrait scenes: never the draft, never a workout scene");
+    assert.ok(r.batch.photos.every((p) => p.format === "studio-portrait") && r.batch.ads.every((a) => a.format === "studio-portrait"));
+    const planned = JSON.parse(readFileSync(join(r.out, "visuals.json"), "utf-8")).visuals;
+    assert.deepEqual(planned.map((v) => [v.format, v.tags.backdrop, "exercise" in v.tags]).sort(), [["studio-portrait", "dark-wall", false], ["studio-portrait", "gym-floor", false], ["studio-portrait", "seamless-colour", false]], "one of each backdrop: a portrait batch spreads them by itself");
+    assert.ok(logs.some((l) => /must_show is ignored for a studio-portrait batch/.test(l)), logs.join(" | "));
+    assert.equal(gen.length, 3);
+    for (const g of gen) {
+      assert.match(g.prompt, /^A realistic editorial portrait photograph/);
+      assert.ok(!/candid and mid-movement/.test(g.prompt));
+      const gym = /the gym softened to a blur behind him/.test(g.prompt);
+      assert.equal(g.refs, gym ? 1 : 0, "the room reference rides only on the photo that shows the room");
+      assert.equal(/reference photo is the real gym/.test(g.prompt), gym);
+    }
+    // No format on the brief: a workout batch, from the workout scenes only.
+    gen.length = 0;
+    const { format, must_show, ...plain } = brief;
+    const w = await runBatch({ brandDir: dir, brief: { ...plain, batch_id: "workouts" }, deps, log: () => {} });
+    assert.equal(w.batch.format, "workout");
+    assert.ok(w.batch.photos.every((p) => p.format === "workout" && !/^m-p-/.test(p.scene_id)) && w.batch.ads.every((a) => a.format === "workout"));
+    assert.ok(gen.every((g) => !/editorial portrait/.test(g.prompt) && g.refs === 1));
+    // The gym's Ad default stands in for a brief that names none.
+    const pf = join(dir, "gym-profile.json"), profile = JSON.parse(readFileSync(pf, "utf-8"));
+    writeFileSync(pf, JSON.stringify({ ...profile, creative_defaults: { ...(profile.creative_defaults || {}), format: "studio-portrait" } }));
+    const d = await runBatch({ brandDir: dir, brief: { ...plain, batch_id: "by-default" }, deps, log: () => {} });
+    assert.deepEqual([d.batch.format, d.batch.photos.every((p) => /^m-p-/.test(p.scene_id))], ["studio-portrait", true]);
+    // A format with no approved scenes: refused, with the way out.
+    writeFileSync(libPath, JSON.stringify({ approved: true, scenes: [...workout, P("m-p-draft", { draft: true })] }));
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "none-yet" }, deps, log: () => {} }), /no approved studio-portrait scenes yet: draft some on Library → Scenes \(Refresh scenes…, format: studio-portrait\) and approve them/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

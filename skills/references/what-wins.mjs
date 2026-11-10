@@ -151,6 +151,27 @@ export function whatWins(gymDir, { currency = "SGD", scope = "active", track = "
 // 0.80 reads "20% cheaper than each gym's own average"; how many gyms agree is said beside it. (The first cut used
 // the median of the ads with 5+ leads as the baseline: a value's total includes the ads that spent for nothing, the
 // median does not, and nearly every value read as a loser — 2026-11-10.)
+/**
+ * A per-format shot guide from the gym's own winners (Phase 3, 2026-11-10): among its still ads read as `format` — the
+ * whole history that was after leads — what each backdrop, subject, pose, expression and gaze cost per lead. By rule,
+ * no model. `lines` are what the scene drafter is told, each value with its leads and cost per lead (5+ leads only),
+ * the cheapest first; null when the gym has no ad of that format with a lead. Only ever the gym's OWN ads.
+ */
+export const GUIDE_ATTRIBUTES = ["backdrop", "subject", "pose", "expression", "eye_contact"];
+export const formatGuide = (gymDir, format, opts = {}) => formatGuideFrom(gymRowsRead(gymDir), format, opts);
+/** The same from rows already joined to their readings (pure). */
+export function formatGuideFrom(every, format, { currency = "SGD" } = {}) {
+  const rows = inTrack(every, "stills").filter((r) => r.read?.format === format);
+  const leads = rows.reduce((t, r) => t + (r.leads || 0), 0);
+  if (!rows.length || !leads) return null;
+  const lines = [];
+  for (const t of attributeTables(rows).filter((x) => GUIDE_ATTRIBUTES.includes(x.key))) {
+    const vals = t.values.filter((v) => v.leads >= LEADS_EARLY && v.cost_per_lead != null).sort((a, b) => a.cost_per_lead - b.cost_per_lead);
+    if (vals.length) lines.push(`${t.label}: ${vals.map((v) => `${v.value} (${v.leads} leads at ${money(v.cost_per_lead, currency)})`).join(", ")}`);
+  }
+  return { format, ads: rows.length, leads, spend: round2(rows.reduce((t, r) => t + (r.spend || 0), 0)), lines };
+}
+
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
 /** Attributes that say something about a creative anywhere (an offer's name or a gym's own campaign does not travel). Media only when both tracks are read together. */
 export const PORTABLE = ["format", "subject", "backdrop", "pose", "expression", "ratio", "text_density", "logo", "eye_contact"];

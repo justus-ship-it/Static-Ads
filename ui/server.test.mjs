@@ -199,7 +199,7 @@ test("U3 the panel refuses exactly what Step 6 refuses, and saves the words exac
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
   const ok = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2 } } })).json();
   assert.deepEqual(ok.errors, []);
-  assert.deepEqual(ok.summary, { photos: 3, generated: 1, real: 2, looks: 2, locations: 2, ads: 12, max_calls: 2, scenes_for: "men" });
+  assert.deepEqual(ok.summary, { photos: 3, generated: 1, real: 2, looks: 2, locations: 2, ads: 12, max_calls: 2, scenes_for: "men", format: "workout" });
 });
 
 // ── U4 preview ──────────────────────────────────────────────────────────
@@ -2395,7 +2395,7 @@ test("U43 the Create screen says why Generate is grey, shows the brief's problem
   try {
     assert.ok(!(await ev(`STATE.clients.some(c=>c.gym==='newgym')`)), "unknown to the page so far");
     await ev(`location.hash='#/newgym/batch'; true`);
-    await until(`STATE.sel==='newgym' && !!document.querySelector('#bOffer')`, "the new gym's Create screen");
+    await until(`STATE.sel==='newgym' && B.gym==='newgym' && !!document.querySelector('#bOffer')`, "the new gym's Create screen, with the new gym's own form (not the first gym's left on screen)");
     await ev(`location.hash='#/nowhere/batch'; true`);
     await until(`/No gym called "nowhere" here/.test(${text("#toast")}) && location.hash==='#/newgym/batch' && STATE.sel==='newgym'`, "the unknown name said, the address put back");
     await ev(`location.hash='#/${GYM}/batch'; true`);
@@ -2619,4 +2619,59 @@ test("U48 the look, and 4:5 as the only feed shape (2026-11-10): a gym's Ad defa
     assert.deepEqual(await ev("[document.querySelector('#bLook').value, !!document.querySelector('#bRatio'), document.querySelector('#bShape').textContent, briefFromDraft().look, 'ratio' in briefFromDraft()]"), ["formula", false, "4:5 feed · 9:16 Stories", "formula", false], "the gym's look pre-fills the batch's own choice; the shape is not a choice");
     assert.deepEqual(await ev("bSet('look','reference'); ['look' in briefFromDraft(), 'ratio' in briefFromDraft()]"), [false, false]);
   } finally { writeFileSync(pf, before); }
+});
+
+test("U49 the kind of photograph (Phase 3, 2026-11-10): a gym's Ad defaults take a format (one that is not is refused); a brief checked for that gym carries it and its summary says it; a format with no approved scenes is said with the way out; the Spread is off for a portrait batch, in words; the scene refresh takes the format (a cover is workout-only) and its run is the portrait drafter's; Ad defaults, Create and the refresh show the choice", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), sp = join(g, "scenes.json");
+  await linkTestGym();
+  const before = readFileSync(pf, "utf-8"), profile = JSON.parse(before), scenesBefore = readFileSync(sp, "utf-8");
+  const P = (id, over = {}) => ({ id, audience: "any", format: "studio-portrait", pose: "upright", people: 1, age: "prime", backdrop: "seamless-colour", stance: "easy-posed", expression: "smile", eye_contact: true, scene: `A person in their thirties in a navy top standing relaxed with hands on hips and a warm smile, looking into the camera, against a seamless flat pink studio backdrop (${id}).`, ...over });
+  try {
+    let r = await call(`/api/client/${GYM}`, { method: "PUT", body: { ...profile, creative_defaults: { ...profile.creative_defaults, format: "poster" } } });
+    assert.equal(r.status, 400); assert.match(JSON.stringify(await r.json()), /creative_defaults.format must be one of workout, studio-portrait/);
+    const raw = { batch_id: "format-check", ...WORDS, free: false, generated: 2, real: [], looks_per_photo: 2, max_calls: 2, attempts: 1, scenes: null };
+    let c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: raw } })).json();
+    assert.deepEqual([c.errors, "format" in c.brief, c.summary.format], [[], false, "workout"], "a workout batch needs no saying");
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, format: "poster" } } })).json();
+    assert.ok(c.errors.some((e) => /format "poster" is not one of workout, studio-portrait/.test(e)), JSON.stringify(c.errors));
+    // No portrait scenes yet: said, with where to draft them.
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, format: "studio-portrait" } } })).json();
+    assert.deepEqual(c.errors, ["no approved studio portrait scenes yet: draft some on Library → Scenes (Refresh scenes…, format: studio portrait) and approve them"]);
+    // With approved portrait scenes the brief stands; the Spread switch is off for it, in words.
+    const lib = JSON.parse(scenesBefore);
+    writeFileSync(sp, JSON.stringify({ ...lib, scenes: [...lib.scenes, P("a-p-pink"), P("a-p-wall", { backdrop: "dark-wall", scene: "A person in their forties leaning one shoulder on a raw grey concrete wall, drinking from a clear water bottle, relaxed, in soft side light (a-p-wall)." })] }));
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, format: "studio-portrait", spread: true } } })).json();
+    assert.deepEqual([c.errors, c.brief.format, c.summary.format, "must_show" in c.brief, c.spread.reason], [[], "studio-portrait", "studio-portrait", false, "off for a studio portrait batch: it spreads across backdrops, poses and ages by itself"]);
+    let sc = await (await call(`/api/client/${GYM}/scenes`)).json();
+    assert.deepEqual([Object.keys(sc.formats), sc.status.formats["studio-portrait"].total], [["workout", "studio-portrait"], 2]);
+    // The gym's default rides on a brief that names none.
+    r = await call(`/api/client/${GYM}`, { method: "PUT", body: { ...profile, creative_defaults: { ...profile.creative_defaults, format: "studio-portrait" } } });
+    assert.equal(r.status, 200, await r.clone().text());
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: raw } })).json();
+    assert.deepEqual([c.errors, c.brief.format], [[], "studio-portrait"]);
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, format: "workout" } } })).json();
+    assert.deepEqual([c.errors, c.brief.format, c.summary.format], [[], "workout", "workout"], "a brief's own choice stands");
+    // The refresh run.
+    const post = (body) => call("/api/run", { method: "POST", body });
+    assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 2, format: "poster" })).status, 400);
+    r = await post({ kind: "scenes-refresh", gym: GYM, audience: "women", count: 2, format: "studio-portrait", cover: ["exercise:lunge"] });
+    assert.equal(r.status, 400); assert.match((await r.json()).error, /cover is about exercises and equipment: it applies to workout scenes only/);
+    const started = await (await post({ kind: "scenes-refresh", gym: GYM, audience: "any", count: 2, format: "studio-portrait" })).json();
+    assert.ok(started.id, JSON.stringify(started));
+    const log = await (await fetch(`${panel.url}/api/run/${started.id}/stream`)).text();
+    assert.match(log, /--format studio-portrait/, "the run is the portrait drafter's");
+    assert.match(log, /portrait scenes for any \(2 live\): (gym-floor \(0\)|dark-wall \(1\)|seamless-colour \(1\))/, log.slice(0, 600));
+    // The page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u49${hash.replace(/\W/g, "")}#/${GYM}/${hash}` }, sessionId); await loaded; const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); };
+    await open("defaults", "!!document.querySelector('input[name=cdFormat]')");
+    assert.deepEqual(await ev("[document.querySelectorAll('input[name=cdFormat]').length, document.querySelector('input[name=cdFormat]:checked').parentElement.textContent.includes('Studio portrait')]"), [2, true]);
+    await open("create", "!!document.querySelector('#bFormat')");
+    assert.deepEqual(await ev("[document.querySelector('#bFormat').value, briefFromDraft().format]"), ["studio-portrait", "studio-portrait"], "the gym's default pre-fills the batch's own choice");
+    assert.deepEqual(await ev("bSet('format','workout'); 'format' in briefFromDraft()"), false);
+    await open("scenes", "!!document.querySelector('#bSceneCard button')");
+    assert.match(await ev("document.querySelector('#bSceneCard').textContent"), /2 studio portrait/);
+    assert.deepEqual(await ev("bRefreshConfirm(); new Promise(r=>setTimeout(()=>r([[...document.querySelectorAll('#bRfFormat option')].map(o=>o.textContent), document.querySelector('#bRfFormat').value, /plain backdrop/.test(document.querySelector('#bRfFormatHint').textContent), document.querySelector('#bRfGapsWords').textContent]),80))"), [["Workout", "Studio portrait"], "studio-portrait", true, "Spread across backdrops (the ones this audience has fewest of first)"]);
+  } finally { writeFileSync(pf, before); writeFileSync(sp, scenesBefore); }
 });

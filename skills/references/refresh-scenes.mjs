@@ -45,7 +45,7 @@ import { parseArgs } from "util";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
 import { POSES, scrubNames, isAboutText, readShotGuide } from "./visual-prompts.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
-import { SCENE_TAGS, MAX_SCENE_PEOPLE, AUDIENCES, sceneProblems, sceneWarnings, readLibrary, writeLibrary, isRetired, isDraft, sceneSummary, approveScenes, rejectScene, libraryStatus, today } from "./scene-library.mjs";
+import { SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, MAX_PORTRAIT_PEOPLE, formatOf, MAX_SCENE_PEOPLE, AUDIENCES, sceneProblems, sceneWarnings, readLibrary, writeLibrary, isRetired, isDraft, sceneSummary, approveScenes, rejectScene, libraryStatus, today } from "./scene-library.mjs";
 
 export const DRAFT_MODEL = process.env.DRAFT_MODEL || CHECK_MODEL;
 export const READER_MODEL = process.env.READER_MODEL || CHECK_MODEL;
@@ -228,12 +228,26 @@ const DRAFT_SCHEMA = {
   required: ["scenes"],
 };
 
+// A portrait scene's fields (Phase 3): no exercise, equipment or muscles; a backdrop, a stance, an expression, a gaze.
+const PORTRAIT_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    scenes: { type: "ARRAY", items: { type: "OBJECT", properties: {
+      id: { type: "STRING" }, audience: { type: "STRING" }, pose: { type: "STRING" }, people: { type: "INTEGER" }, age: { type: "STRING" },
+      backdrop: { type: "STRING" }, stance: { type: "STRING" }, expression: { type: "STRING" }, eye_contact: { type: "BOOLEAN" }, scene: { type: "STRING" },
+    }, required: ["id", "audience", "pose", "people", "age", "backdrop", "stance", "expression", "eye_contact", "scene"] } },
+  },
+  required: ["scenes"],
+};
+
 const PREFIX = { men: "m-", women: "w-", any: "a-" };
 const WHO = { men: "men", women: "women", any: "a mix of men and women (or either)" };
 
 /** The drafting request: everything the model needs to write scenes for this gym that repeat nothing. */
-export function buildRefreshRequest({ audience = "any", count = 6, direction = { kind: "gaps", cover: [], exercises: [] }, scenes = [], photography = {}, brandNames = [], shotGuide = null }) {
+export function buildRefreshRequest({ audience = "any", count = 6, direction = { kind: "gaps", cover: [], exercises: [] }, scenes = [], photography = {}, brandNames = [], shotGuide = null, format = "workout", guide = null }) {
   if (!AUDIENCES.includes(audience)) throw new Error(`audience must be one of ${AUDIENCES.join(", ")}`);
+  if (!SCENE_FORMATS[format]) throw new Error(`format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+  if (format === "studio-portrait") return buildPortraitRequest({ audience, count, direction, scenes, photography, brandNames, guide });
   const must = (photography.must || []).map((t) => scrubNames(t, brandNames));
   const never = (photography.never || []).filter((t) => !isAboutText(t)).map((t) => scrubNames(t, brandNames));
   const lines = [
@@ -261,6 +275,43 @@ export function buildRefreshRequest({ audience = "any", count = 6, direction = {
   return { prompt: lines.join("\n\n"), schema: DRAFT_SCHEMA };
 }
 
+/**
+ * The drafting request for studio portraits (Phase 3, 2026-11-10): one person or a pair at ease on a plain backdrop —
+ * the kind of photograph the hand-built Jurong West set is. `guide` is the gym's own results for adverts of this kind
+ * (what-wins.mjs → formatGuide), or null.
+ */
+export function buildPortraitRequest({ audience = "any", count = 6, direction = { kind: "variety", cover: [] }, scenes = [], photography = {}, brandNames = [], guide = null }) {
+  const never = (photography.never || []).filter((t) => !isAboutText(t)).map((t) => scrubNames(t, brandNames));
+  const p = `${PREFIX[audience]}p-`;
+  const lines = [
+    "You write scene descriptions for a gym's advert photographs. Each scene is one PORTRAIT photograph, described in two or three short sentences: who is in it (age, build, hair, what they wear — plain colours, real training clothes with no logos), what they are doing with their expression and where they look, and the backdrop. The photographs are made by an image model from your words, so write what a camera would see.",
+    "PHOTOGRAPHS ONLY: the advert's words are added later by software. A scene never mentions text, signs, screens, logos, numbers or words of any kind, and never uses quotation marks.",
+    `THE PEOPLE: ${photography.people || "real people of the gym's own neighbourhood"} — natural builds, not fitness models.${never.length ? ` Never: ${never.join("; ")}.` : ""}`,
+    `AUDIENCE: ${audience} — every scene shows ${WHO[audience]}; set each scene's audience to "${audience}".`,
+    "PORTRAIT: one person, or two who clearly know each other (a couple, two friends) — never a coach with a client, never a class. They are at ease, never straining: standing relaxed, a hand on a hip, arms crossed, sitting on a bench or a box, crouched tying a lace, an easy stretch, a light version of a movement held with a smile, walking, a high five; or holding one piece of equipment at rest (a kettlebell, a pair of light dumbbells, a medicine ball, a resistance band, a skipping rope, a towel, a water bottle). Most smile or laugh; some look into the camera, others just past it or at each other.",
+    "BACKDROP: every scene names one and describes it in its last sentence — seamless-colour (a seamless studio backdrop in one flat colour: name the colour, vary the colours across the scenes, and dress the people in colours that stand out against it); dark-wall (a plain dark charcoal wall or raw grey concrete, soft side light); gym-floor (the gym behind them, softened to a blur).",
+    "REAL: any equipment is true to size and held the way it is really held.",
+    `FIELDS for each scene: id (a new lower-case slug starting with "${p}", e.g. ${p}kettlebell-smile); audience ("${audience}"); pose — how the body sits in the frame, one of ${Object.entries(POSES).map(([k, v]) => `${k} (${v})`).join("; ")}; people (1 or ${MAX_PORTRAIT_PEOPLE}); age — ${SCENE_TAGS.age.join(", ")} (20s; 30s–40s; 50s–60s); backdrop — ${PORTRAIT_TAGS.backdrop.join(", ")}; stance — ${PORTRAIT_TAGS.stance.join(", ")}; expression — ${PORTRAIT_TAGS.expression.join(", ")}; eye_contact (true when they look into the camera); scene (the description).`,
+  ];
+  if (guide?.lines?.length) lines.push(`WHAT THIS GYM'S OWN ADVERTS OF THIS KIND HAVE DONE (leads from its lead forms and what each cost; the cheapest first) — lean the new scenes toward what earns leads cheaply, while still trying one or two of the others:\n${guide.lines.map((l) => `- ${l}`).join("\n")}`);
+  if (direction.kind === "words") lines.push(`DIRECTION from the owner: ${direction.words.trim()} — every scene follows this.`);
+  else if (direction.kind === "reference") lines.push(`DIRECTION: ${describeReference(direction.description)}`, `Every scene: people = ${Math.min(MAX_PORTRAIT_PEOPLE, direction.description.people)}, pose = ${direction.description.pose}.`);
+  else if ((direction.cover || []).length) lines.push(`DIRECTION: the library is thin on ${direction.cover.map((c) => `${c.tag} ${c.value} (${c.count ?? 0} scene${c.count === 1 ? "" : "s"})`).join(", ")}. Spread the new scenes so each is covered at least once.`);
+  const existing = scenes.filter((s) => s && s.id);
+  const same = existing.filter((s) => formatOf(s) === "studio-portrait");
+  lines.push(`EXISTING PORTRAIT SCENES — do not repeat any of these or write a near-copy of one:\n${same.length ? same.map((s) => `- ${sceneSummary(s)}`).join("\n") : "- (none yet)"}`);
+  if (existing.length > same.length) lines.push(`Every id must be new. Ids already taken by other scenes: ${existing.filter((s) => formatOf(s) !== "studio-portrait").map((s) => s.id).join(", ")}.`);
+  lines.push(`Write exactly ${count} scene${count === 1 ? "" : "s"}, each different from the others in the person, the backdrop or what they are doing.`);
+  return { prompt: lines.join("\n\n"), schema: PORTRAIT_SCHEMA };
+}
+
+/** What a gym's portrait scenes are thin on: its backdrops by how many live scenes of this audience show each, fewest first. */
+export function portraitGaps(scenes, { audience = "any" } = {}) {
+  const live = scenes.filter((s) => !isRetired(s) && !isDraft(s) && formatOf(s) === "studio-portrait" && (audience === "any" ? !s.audience || s.audience === "any" : s.audience === audience));
+  const cover = PORTRAIT_TAGS.backdrop.map((value) => ({ tag: "backdrop", value, count: live.filter((s) => s.backdrop === value).length })).sort((a, b) => a.count - b.count);
+  return { live: live.length, cover };
+}
+
 // ── validation ────────────────────────────────────────────────────────────
 
 const STOP = new Set(["with", "their", "there", "that", "this", "from", "into", "onto", "over", "under", "while", "then", "than", "them", "they", "your", "just", "each", "about", "after", "before", "between", "being", "have", "some", "more", "other", "against", "through", "toward", "towards", "where", "which", "what", "when"]);
@@ -283,12 +334,15 @@ const hasWord = (text, word) => new RegExp(`(^|[^a-z0-9])${word.replace(/[.*+?^$
  * (people, setting — a draft that strays is dropped; pose and prefer_layout are set on every draft,
  * since framing is a matter of the crop).
  */
-export function validateDrafts(drafts, { scenes = [], audience = "any", forbidden = [], expect = null } = {}) {
+export function validateDrafts(drafts, { scenes = [], audience = "any", forbidden = [], expect = null, format = "workout" } = {}) {
   const kept = [], dropped = [];
   const ids = new Set(scenes.map((s) => s.id).filter(Boolean));
   for (const raw of Array.isArray(drafts) ? drafts : []) {
     const d = { ...raw };
-    for (const k of ["exercise", "age", "setting", "equipment", "muscles"]) if (d[k] === "" || d[k] === "none") delete d[k];
+    for (const k of ["exercise", "age", "setting", "equipment", "muscles", "stance", "expression"]) if (d[k] === "" || d[k] === "none") delete d[k];
+    // A draft is of the format that was asked for, whatever the model wrote; a portrait carries no workout tags.
+    if (format !== "workout") { d.format = format; for (const k of ["exercise", "equipment", "muscles", "setting"]) delete d[k]; if (d.people === 1) d.setting = "solo"; }
+    else { delete d.format; for (const k of ["backdrop", "stance", "expression", "eye_contact"]) delete d[k]; }
     if (typeof d.exercise === "string") d.exercise = d.exercise.trim().toLowerCase().replace(/\s+/g, "-");
     if (typeof d.id === "string") d.id = d.id.trim().toLowerCase();
     if (expect) { d.pose = expect.pose; if (expect.prefer_layout) d.prefer_layout = expect.prefer_layout; }
@@ -305,7 +359,7 @@ export function validateDrafts(drafts, { scenes = [], audience = "any", forbidde
       const bad = forbidden.filter((w) => w && hasWord(d.scene, w));
       if (bad.length) why.push(`names ${bad.map((w) => `"${w}"`).join(", ")}`);
       if (expect?.people != null && d.people !== expect.people) why.push(`${d.people} people; the reference has ${expect.people}`);
-      if (expect?.setting && d.setting !== expect.setting) why.push(`setting ${d.setting}; the reference is ${expect.setting}`);
+      if (expect?.setting && format === "workout" && d.setting !== expect.setting) why.push(`setting ${d.setting}; the reference is ${expect.setting}`);
     }
     if (why.length) { dropped.push({ id: d.id || null, scene: d.scene || null, reason: why.join("; ") }); continue; }
     ids.add(d.id); kept.push(d); scenes = [...scenes, d]; // later drafts are judged against earlier ones too
@@ -325,8 +379,10 @@ const forbiddenFrom = (photography, brandNames, description = null) => [...brand
  * was dropped and why, and the calls made. `ask` is the model call (callVision's shape: image or
  * null, question, schema, options) — injectable for tests.
  */
-export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath = join(brandDir, "scenes.json"), audience = "any", count = 6, direction = null, cover = null, source = "refresh", ask = callVision, catalogue = loadCatalogue(), dryRun = false, date = today(), log = console.log }) {
+export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath = join(brandDir, "scenes.json"), audience = "any", count = 6, direction = null, cover = null, source = "refresh", format = "workout", guide = undefined, ask = callVision, catalogue = loadCatalogue(), dryRun = false, date = today(), log = console.log }) {
   if (!AUDIENCES.includes(audience)) throw new Error(`audience must be one of ${AUDIENCES.join(", ")}`);
+  if (!SCENE_FORMATS[format]) throw new Error(`format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+  const portrait = format === "studio-portrait";
   if (!Number.isInteger(count) || count < 1 || count > 12) throw new Error("count must be 1 to 12");
   if (direction) { const errs = validateDirection(direction, { brandDir }); if (errs.length) throw new Error(`direction: ${errs.join("; ")}`); }
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
@@ -340,12 +396,18 @@ export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath 
     // The owner's words, when given with a reference, are folded into the activity line.
     if (direction.words) description = { ...description, activity: `${description.activity} ${direction.words.trim()}`.trim() };
     dir = { kind: "reference", description };
-    expect = { pose: description.pose, prefer_layout: description.prefer_layout, people: description.people, setting: description.setting };
+    expect = { pose: description.pose, prefer_layout: description.prefer_layout, people: portrait ? Math.min(MAX_PORTRAIT_PEOPLE, description.people) : description.people, setting: description.setting };
     stamp = { direction: { reference: relative(brandDir, path), ...(direction.words ? { words: direction.words } : {}), summary: `${description.activity} (${description.people} ${description.setting}, ${description.framing}, ${description.subject_position})` } };
     log(`· reference: ${description.activity} — ${description.people} ${description.setting}, ${description.framing}, people on the ${description.subject_position}${description.prefer_layout ? ` → ${description.prefer_layout}` : ""}${description.text_seen.length ? `; words on it kept out: ${description.text_seen.join(" / ")}` : ""}`);
   } else if (direction?.words) {
     dir = { kind: "words", words: direction.words };
     stamp = { direction: { words: direction.words } };
+  } else if (portrait) {
+    // A portrait library is spread across its backdrops: the ones it has fewest of first.
+    const gaps = portraitGaps(lib.scenes, { audience });
+    dir = { kind: "variety", cover: gaps.cover.filter((c) => c.count === gaps.cover[0].count || c.count < 2) };
+    stamp = (d) => ({ covers: dir.cover.filter((x) => d[x.tag] === x.value).map((x) => `${x.tag}:${x.value}`) });
+    log(`· portrait scenes for ${audience} (${gaps.live} live): ${gaps.cover.map((x) => `${x.value} (${x.count})`).join(", ")}`);
   } else {
     const gaps = sceneGaps(lib.scenes, { audience });
     const c = cover ? cover.map((x) => ({ ...x, count: gaps.tags.find((t) => t.tag === x.tag && t.value === x.value)?.count ?? 0 })) : coverFromGaps(gaps, count);
@@ -355,14 +417,22 @@ export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath 
     log(`· gaps for ${audience} (${gaps.live} live scene${gaps.live === 1 ? "" : "s"}): ${c.map((x) => `${x.tag} ${x.value} (${x.count})`).join(", ") || "none"}`);
   }
   const forbidden = forbiddenFrom(photography, brandNames, description);
+  // The gym's own results for adverts of this format (what-wins.mjs), told to the drafter; none for a workout scene,
+  // whose guide is the reference ads' shot guide. Loaded here so a refresh of workout scenes loads nothing more.
+  let formatLines = null;
+  if (portrait) {
+    if (guide !== undefined) formatLines = guide;
+    else try { const { formatGuide } = await import("./what-wins.mjs"); formatLines = formatGuide(brandDir, format, { currency: profile.locale?.currency || "SGD" }); } catch (e) { log(`· the gym's own results could not be read for the drafter: ${e.message}`); }
+    if (formatLines?.lines?.length) log(`· this gym's own ${format} adverts (${formatLines.ads} ads, ${formatLines.leads} leads): ${formatLines.lines.join(" · ")}`);
+  }
   const kept = [], dropped = [];
   for (let call = 0; call < MAX_DRAFT_CALLS && kept.length < count; call++) {
     const need = count - kept.length;
-    const { prompt, schema } = buildRefreshRequest({ audience, count: need, direction: dir, scenes: [...lib.scenes, ...kept], photography, brandNames, shotGuide: shotGuide === undefined ? readShotGuide() : shotGuide });
+    const { prompt, schema } = buildRefreshRequest({ audience, count: need, direction: dir, scenes: [...lib.scenes, ...kept], photography, brandNames, shotGuide: portrait ? null : shotGuide === undefined ? readShotGuide() : shotGuide, format, guide: formatLines });
     let answer;
     try { answer = await ask(null, prompt, schema, { model: DRAFT_MODEL }); text_calls++; }
     catch (e) { text_calls++; log(`⚑ the drafter's answer could not be used: ${e.message}`); continue; }
-    const v = validateDrafts(answer?.scenes, { scenes: [...lib.scenes, ...kept], audience, forbidden, expect });
+    const v = validateDrafts(answer?.scenes, { scenes: [...lib.scenes, ...kept], audience, forbidden, expect, format });
     for (const d of v.kept) kept.push({ ...d, draft: true, source, added: date, ...(typeof stamp === "function" ? stamp(d) : stamp) });
     dropped.push(...v.dropped);
     for (const d of v.dropped) log(`  dropped ${d.id || "(no id)"}: ${d.reason}`);
@@ -379,12 +449,12 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 if (isMain) {
   const { values: v } = parseArgs({ options: {
     "brand-dir": { type: "string" }, audience: { type: "string", default: "any" }, count: { type: "string", default: "6" },
-    cover: { type: "string" }, words: { type: "string" }, reference: { type: "string" },
+    cover: { type: "string" }, words: { type: "string" }, reference: { type: "string" }, format: { type: "string", default: "workout" },
     approve: { type: "string" }, reject: { type: "string" }, reason: { type: "string" }, list: { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
   } });
   if (!v["brand-dir"]) {
-    console.error("Usage: refresh-scenes.mjs --brand-dir <brands/x> [--audience men|women|any] [--count N] [--cover tag:value,…] [--words \"…\"] [--reference <image>] [--dry-run]\n       refresh-scenes.mjs --brand-dir <brands/x> --approve id,id | --reject id --reason \"…\" | --list");
+    console.error("Usage: refresh-scenes.mjs --brand-dir <brands/x> [--audience men|women|any] [--count N] [--format workout|studio-portrait] [--cover tag:value,…] [--words \"…\"] [--reference <image>] [--dry-run]\n       refresh-scenes.mjs --brand-dir <brands/x> --approve id,id | --reject id --reason \"…\" | --list");
     process.exit(1);
   }
   const brandDir = resolve(v["brand-dir"]), scenesPath = join(brandDir, "scenes.json");
@@ -401,7 +471,7 @@ if (isMain) {
       console.log(`retired ${r.retired}: ${r.reason}`);
     } else {
       const direction = v.words || v.reference ? { ...(v.words ? { words: v.words } : {}), ...(v.reference ? { reference: v.reference } : {}) } : null;
-      const r = await draftScenes({ brandDir, audience: v.audience, count: Number(v.count), direction, cover: v.cover ? parseCover(v.cover) : null, dryRun: v["dry-run"] });
+      const r = await draftScenes({ brandDir, audience: v.audience, count: Number(v.count), direction, format: v.format, cover: v.cover ? parseCover(v.cover) : null, dryRun: v["dry-run"] });
       console.log(`${r.drafts.length} draft(s)${v["dry-run"] ? " (dry run — not written)" : ` written to ${scenesPath}`}; ${r.dropped.length} dropped; ${r.text_calls} text call(s), ${r.vision_calls} vision call(s)`);
     }
   } catch (e) {

@@ -111,7 +111,7 @@ test("Q3 the picture check: quality runs only once text, placement and head coun
   const posed = await checkPicture("x.jpg", opts, { base: base(true), quality: quality(false) });
   assert.equal(posed.ok, false);
   assert.deepEqual(posed.failures, ["posed, not candid: the 3 people are near-copies of each other's pose"]);
-  assert.deepEqual(seen[0], { scene: opts.scene, people: 3, setting: "group" }, "the check is told the scene, its head count and its setting");
+  assert.deepEqual(seen[0], { scene: opts.scene, people: 3, setting: "group", format: "workout" }, "the check is told the scene, its head count, its setting and its format");
   assert.deepEqual(posed.faces, [[1, 1, 2, 2]], "the placement half's answer is kept");
 
   const good = await checkPicture("x.jpg", opts, { base: base(true), quality: quality(true) });

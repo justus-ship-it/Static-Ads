@@ -318,6 +318,7 @@ function parseHash(){
 }
 async function applyHash(){
   const r = parseHash(); if (!r) return;
+  const was = STATE.sel;
   if (r.gym && r.gym !== STATE.sel){
     // A gym this page has not seen (made in another tab, or after this page loaded): ask the panel again before giving up (2026-10-10).
     if (!STATE.clients.find(c=>c.gym===r.gym)) { try { await loadClients(); } catch {} }
@@ -325,7 +326,9 @@ async function applyHash(){
     else { const cur = STATE.clients.find(c=>c.gym===STATE.sel); toast(`No gym called "${r.gym}" here — showing ${cur?.display_name || STATE.sel || 'the first gym'}`, 'warn'); setHash(true); }
   }
   const tab = TITLES[r.tab] ? r.tab : 'batch', batch = ['review','generating','publish'].includes(tab) ? r.batch : null;
-  if (tab===STATE.tab && batch===STATE.batch && r.rmode===STATE.rmode) return;
+  // Another gym in the address on the same screen is a new screen: without this the page kept showing the first gym's
+  // form (its locations, its photos, its look) while every save and check went to the second (found 2026-11-10).
+  if (STATE.sel===was && tab===STATE.tab && batch===STATE.batch && r.rmode===STATE.rmode) return;
   STATE.tab = tab; STATE.batch = batch; STATE.rmode = r.rmode; render();
 }
 window.addEventListener('popstate', applyHash);
@@ -611,6 +614,9 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     <div class="chips">${auds.map((a,i)=>`<span class="locchip"><input value="${esc(a)}" style="width:170px" oninput="cdList('audiences',${i},this.value)"><button type="button" title="Remove" onclick="cdDel('audiences',${i})">✕</button></span>`).join('')}<span class="chip add" onclick="cdAdd('audiences')">+ audience</span></div>
   </div>
   <div class="card"><h3>Photos</h3>
+    <label style="margin-top:0">Kind of photograph</label>
+    ${[['workout','Workout','people training in the gym, caught mid-movement'],['studio-portrait','Studio portrait','one person or a pair at ease on a plain backdrop or in front of the blurred gym: an easy pose, a smile']].map(([m,l,d])=>`<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:6px"><input type="radio" name="cdFormat" style="width:auto;margin:0" ${(D.format||'workout')===m?'checked':''} onchange="setP('creative_defaults.format','${m}')"> ${l} <span class="hint" style="font-weight:400">· ${d}</span></label>`).join('')}
+    <p class="hint" style="margin:6px 0 12px">A batch is made in one kind; Create can choose the other. Each kind has its own scenes on Library → Scenes.</p>
     <div class="grid">${num('generated','New photos per batch',0,12)}${num('looks_per_photo','Looks per photo',1,6)}${num('attempts','Tries per photo',1,5)}${num('max_calls','Most image calls',0,40,'new photos × tries')}</div>
     <label style="display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text);margin-top:12px"><input type="checkbox" style="width:auto;margin:0" ${D.spread!==false?'checked':''} onchange="setP('creative_defaults.spread',this.checked)"> Spread across exercises, ages, settings and equipment</label>
     <label>Real photos in every batch</label>
@@ -1156,7 +1162,7 @@ function freshDraft(){
   const locs = (cd.locations||[]).filter(Boolean), real = (cd.real_photos||[]).filter(p=>clean.includes(p));
   return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 10, real: cd.real_photos?.length ? real : clean.slice(0,2),
     looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true,
-    look: cd.look || 'reference',
+    look: cd.look || 'reference', format: cd.format || 'workout',
     age_min: (B.setup.photo_ages||[25,60])[0], age_max: (B.setup.photo_ages||[25,60])[1] };
 }
 /** The offer wordings as chips: picking one is choosing its exact words. */
@@ -1183,7 +1189,7 @@ function briefFromDraft(){
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
-    ...(d.look && d.look!=='reference' ? { look: d.look } : {}),
+    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(d.format && d.format!=='workout' && generated>0 ? { format: d.format } : {}),
     ...(d.spread && generated>0 && !direction ? { spread: true } : {}) };
 }
 function autoId(){
@@ -1215,6 +1221,7 @@ function paintBatch(v){
         <div class="row" style="gap:28px">
           <div><label for="bGen" style="margin-top:0">New photos</label><div class="stepper"><button type="button" onclick="bStep('generated',-1)">−</button><input id="bGen" type="number" min="0" max="12" value="${esc(d.generated)}" oninput="bSet('generated',this.value)"><button type="button" onclick="bStep('generated',1)">+</button></div></div>
           <div><label for="bAgeMin" style="margin-top:0">Ages in the photos</label><div class="row" style="gap:6px;align-items:center"><input id="bAgeMin" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_min)}" oninput="bSet('age_min',this.value)"><span>to</span><input id="bAgeMax" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_max)}" oninput="bSet('age_max',this.value)"></div><div class="hint" style="margin-top:2px">Most near ${esc(Math.round(((Number(d.age_min)||25)+(Number(d.age_max)||60))/2))}, fewer toward the ends</div></div>
+          <div><label for="bFormat" style="margin-top:0">Kind of photo</label><select id="bFormat" onchange="bSet('format',this.value)"><option value="workout" ${d.format!=='studio-portrait'?'selected':''}>Workout</option><option value="studio-portrait" ${d.format==='studio-portrait'?'selected':''}>Studio portrait</option></select></div>
           <div><label for="bLook" style="margin-top:0">Look</label><select id="bLook" onchange="bSet('look',this.value)"><option value="reference" ${d.look!=='formula'?'selected':''}>Reference set</option><option value="formula" ${d.look==='formula'?'selected':''}>Formula (callout top, offer low)</option></select></div>
           <div><label style="margin-top:0">Shape</label><div class="hint" id="bShape" style="margin-top:6px" title="Every feed ad is portrait 4:5; its Stories and Reels version is 9:16, made from the ad's own photo">4:5 feed · 9:16 Stories</div></div>
           <div><label for="bLooks" style="margin-top:0">Looks per photo</label><div class="stepper"><button type="button" onclick="bStep('looks_per_photo',-1)">−</button><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"><button type="button" onclick="bStep('looks_per_photo',1)">+</button></div></div>
@@ -1292,7 +1299,7 @@ function paintDerived(){
   const c = B.check, s = c?.summary, sc = B.setup.scenes;
   const scenes = $('#bScenes');
   if (scenes) scenes.innerHTML = B.mode==='rerender' ? '' : !sc.exists ? 'Scene library: none yet — generated photos need approved scenes. <a href="#" onclick="go(\'scenes\');return false">Draft the first scenes</a>'
-    : `Scene library: ${sc.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${Object.entries(sc.counts).map(([k,n])=>`${n} for ${esc(k)}`).join(', ')}${sc.drafts?` · <span style="color:var(--warn)">${sc.drafts} new scene${sc.drafts===1?'':'s'} awaiting approval</span>`:''}${s?` · this audience draws from <b>${esc(s.scenes_for)}</b>`:''} · <a href="#" onclick="go('scenes');return false">manage</a>`;
+    : `Scene library: ${sc.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${(()=>{ const fm = B.draft?.format || 'workout', of = sc.formats?.[fm]; return `${esc((FORMAT_NAMES[fm]||fm).toLowerCase())} scenes: ${of?.total ? Object.entries(of.counts).map(([k,n])=>`${n} for ${esc(k)}`).join(', ') : '<span style="color:var(--warn)">none approved yet</span>'}`; })()}${sc.drafts?` · <span style="color:var(--warn)">${sc.drafts} new scene${sc.drafts===1?'':'s'} awaiting approval</span>`:''}${s?` · this audience draws from <b>${esc(s.scenes_for)}</b>`:''} · <a href="#" onclick="go('scenes');return false">manage</a>`;
   // What the Spread switch will ask for, cut to this gym's scenes for the batch's audience (the server's spreadFor).
   const sp = $('#bSpread'), spr = c?.spread;
   if (sp) sp.innerHTML = B.mode==='rerender' || !(Number(B.draft.generated)>0) ? '' : directionFromDraft() ? 'Spread is off for a directed batch: the reference or your words decide what the photos show.' : !B.draft.spread || !spr ? '' : spr.reason ? `Spread: ${esc(spr.reason)}.`
@@ -2422,7 +2429,8 @@ async function pbEstimate(callout){ const a = PB.data.plan.adsets.find(x=>x.call
   PB.busy = false; paintPublish($('#view')); }
 
 // ── Scene library ────────────────────────────────────────────────────────────
-const TAGS = s => [s.setting, s.people!=null?`${s.people} ${s.people===1?'person':'people'}`:null, s.exercise, s.age, s.equipment, s.muscles, s.pose].filter(Boolean).join(' · ');
+const FORMAT_NAMES = { workout: 'Workout', 'studio-portrait': 'Studio portrait' };
+const TAGS = s => [s.format&&s.format!=='workout'?FORMAT_NAMES[s.format]||s.format:null, s.backdrop, s.stance, s.expression, s.eye_contact===true?'looks at the camera':null, s.setting, s.people!=null?`${s.people} ${s.people===1?'person':'people'}`:null, s.exercise, s.age, s.equipment, s.muscles, s.pose].filter(Boolean).join(' · ');
 async function viewScenes(v, seq=VIEW_SEQ){
   v.innerHTML = '<h1>Scene library</h1><p class="sub">Loading…</p>';
   if (B.gym !== STATE.sel || !B.scenes){ B.gym = STATE.sel; await loadSetup(); }
@@ -2443,10 +2451,10 @@ function paintScenes(){
   const busy = STATE.run && !STATE.run.done;
   box.innerHTML = `<div class="row"><h3 style="margin:0">Scene library</h3><div class="spacer"></div>
       <button class="primary sm" onclick="bRefreshConfirm()" ${busy?'disabled':''}>Refresh scenes…</button></div>
-    <p class="hint" style="margin-top:8px">${st.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${st.total} live (${Object.entries(st.counts).map(([k,n])=>`${n} ${esc(k)}`).join(', ')})${st.retired?` · ${st.retired} retired`:''}${drafts.length?` · <span style="color:var(--warn)">${drafts.length} draft${drafts.length===1?'':'s'} awaiting approval</span>`:''}</p>
+    <p class="hint" style="margin-top:8px">${st.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${st.total} live (${Object.entries(st.counts).map(([k,n])=>`${n} ${esc(k)}`).join(', ')})${Object.keys(st.formats||{}).length?` · ${Object.entries(st.formats).map(([f,x])=>`${x.total} ${esc((FORMAT_NAMES[f]||f).toLowerCase())}`).join(', ')}`:''}${st.retired?` · ${st.retired} retired`:''}${drafts.length?` · <span style="color:var(--warn)">${drafts.length} draft${drafts.length===1?'':'s'} awaiting approval</span>`:''}</p>
     ${drafts.length ? `<div class="row" style="margin-bottom:6px"><button class="sm ok" onclick="bApprove(${JSON.stringify(drafts.map(d=>d.id)).replace(/"/g,'&quot;')})" ${busy?'disabled':''}>Approve all ${drafts.length}</button><span class="hint" style="margin:0">Nothing is generated from a draft until it is approved.</span></div>` : '<div class="hint">No drafts waiting. Press Refresh scenes to have the agent draft some.</div>'}
     ${drafts.map(d=>`<div class="scene"><div class="dot opt"></div><div class="body">
-      <div><span class="id">${esc(d.id)}</span> <span class="pill">${esc(d.audience)}</span>${d.source&&d.source.startsWith('batch:')?` <span class="pill navy">for batch ${esc(d.source.slice(6))}</span>`:''}${d.prefer_layout?` <span class="pill">${esc(d.prefer_layout.split('-')[0])}</span>`:''}</div>
+      <div><span class="id">${esc(d.id)}</span> <span class="pill">${esc(d.audience)}</span>${d.format&&d.format!=='workout'?` <span class="pill navy">${esc(FORMAT_NAMES[d.format]||d.format)}</span>`:''}${d.source&&d.source.startsWith('batch:')?` <span class="pill navy">for batch ${esc(d.source.slice(6))}</span>`:''}${d.prefer_layout?` <span class="pill">${esc(d.prefer_layout.split('-')[0])}</span>`:''}</div>
       <div class="tags">${esc(TAGS(d))}${d.covers?.length?` · covers ${esc(d.covers.join(', '))}`:''}${d.direction?.words?` · from your words`:''}${d.direction?.reference?` · from ${esc(d.direction.reference.split('/').pop())}`:''}</div>
       <div class="txt">${esc(d.scene)}</div>
       <div class="row"><button class="sm ok" onclick="bApprove(['${esc(d.id)}'])" ${busy?'disabled':''}>Approve</button><button class="sm danger" onclick="bReject('${esc(d.id)}')" ${busy?'disabled':''}>Reject…</button></div>
@@ -2477,28 +2485,39 @@ async function bReject(id){
 function bRefreshConfirm(){
   const sc = B.scenes, refs = sc.references || [];
   const aud = (B.check?.summary?.scenes_for) || 'any';
+  const fmt = (location.hash.includes('/create') ? B.draft?.format : null) || B.setup?.creative_defaults?.format || 'workout';
+  setTimeout(bRfFormatChanged, 0);
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
     <h2>Refresh scenes</h2>
     <p class="hint">The agent drafts new scenes for this gym, written to its photography rules and unlike anything in the library. They arrive as drafts for you to approve or reject. One or two text calls; no image calls.</p>
     <div class="grid">
       <div><label for="bRfAud">Audience</label><select id="bRfAud">${(sc.audiences||['men','women','any']).map(a=>`<option value="${a}" ${a===aud?'selected':''}>${a}</option>`).join('')}</select></div>
       <div><label for="bRfN">How many</label><input id="bRfN" type="number" min="1" max="${sc.maxCount||12}" value="6"></div>
+      <div><label for="bRfFormat">Kind of photograph</label><select id="bRfFormat" onchange="bRfFormatChanged()">${Object.keys(sc.formats||{workout:1}).map(f=>`<option value="${f}" ${f===fmt?'selected':''}>${esc(FORMAT_NAMES[f]||f)}</option>`).join('')}</select></div>
     </div>
+    <p class="hint" id="bRfFormatHint" style="margin:6px 0 0"></p>
     <label style="margin-top:12px">Direction</label>
-    <div><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="gaps" checked style="width:auto"> Fill the library's gaps (the thinnest exercises, ages, settings and equipment for this audience)</label></div>
+    <div><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="gaps" checked style="width:auto"> <span id="bRfGapsWords">Fill the library's gaps (the thinnest exercises, ages, settings and equipment for this audience)</span></label></div>
     <div><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="words" style="width:auto"> In words</label><textarea id="bRfWords" rows="2" placeholder="e.g. couples in their fifties training together, warm and unposed"></textarea></div>
     <div style="margin-top:8px"><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="reference" style="width:auto" ${refs.length?'':'disabled'}> Like a reference image${refs.length?'':' (upload one under References first)'}</label>
       ${refs.length?`<select id="bRfRef">${refs.map(r=>`<option value="${esc(r.name)}">${esc(r.name)}${r.read?' (read before)':''}</option>`).join('')}</select>`:''}</div>
     <div id="bRfErr"></div>
     <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="bRfGo" onclick="bRefreshGo()">Draft them</button></div></div></div>`;
 }
+/** What the refresh says for the chosen kind of photograph. */
+function bRfFormatChanged(){
+  const f = $('#bRfFormat')?.value || 'workout', h = $('#bRfFormatHint'), g = $('#bRfGapsWords');
+  if (h) h.textContent = f==='studio-portrait' ? "One person or a pair at ease on a plain backdrop (a seamless colour, a dark wall) or in front of the blurred gym. The drafter is told what this gym's own portrait ads have done, when it has run any." : '';
+  if (g) g.textContent = f==='studio-portrait' ? 'Spread across backdrops (the ones this audience has fewest of first)' : "Fill the library's gaps (the thinnest exercises, ages, settings and equipment for this audience)";
+}
 function bRefreshGo(){
+  const format = $('#bRfFormat')?.value || 'workout';
   const audience = $('#bRfAud').value, count = parseInt($('#bRfN').value, 10), dir = document.querySelector('input[name="bRfDir"]:checked')?.value;
   const words = ($('#bRfWords')?.value||'').trim(), reference = $('#bRfRef')?.value || null;
   if (dir==='words' && words.length < 3){ $('#bRfErr').innerHTML = '<div class="msg err">Say what the scenes should show.</div>'; return; }
   if (dir==='reference' && !reference){ $('#bRfErr').innerHTML = '<div class="msg err">Pick a reference image.</div>'; return; }
   bClose();
-  run({kind:'scenes-refresh', gym:STATE.sel, audience, count, ...(dir==='words'?{words}:{}), ...(dir==='reference'?{reference}:{})}, async()=>{ await reloadScenes(); });
+  run({kind:'scenes-refresh', gym:STATE.sel, audience, count, ...(format!=='workout'?{format}:{}), ...(dir==='words'?{words}:{}), ...(dir==='reference'?{reference}:{})}, async()=>{ await reloadScenes(); });
 }
 
 // ── From the website (onboarding, part one) ─────────────────────────────────
