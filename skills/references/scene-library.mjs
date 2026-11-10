@@ -34,6 +34,38 @@ export const SCENE_FORMATS = {
   "studio-portrait": "one or two people at ease on a plain backdrop (a seamless studio colour, a dark wall) or in front of the gym softened to a blur: an easy pose or a light movement, a smile, often looking into the camera",
 };
 export const formatOf = (s) => (s && SCENE_FORMATS[s.format] ? s.format : "workout");
+
+// ── the mix (Phase 4, 2026-11-10): how a batch's photos are shared between the formats ──
+/** A gym's mix when it has set none: every photo a workout photo, as before formats. Shares are whole percents that sum to 100. */
+export const DEFAULT_MIX = Object.freeze({ workout: 100 });
+/** What is wrong with a mix. Shares (`counts: false`): whole percents 0–100 summing to 100. Counts: whole photos, summing to `total` when given. */
+export function mixProblems(mix, { counts = false, total = null } = {}) {
+  if (!mix || typeof mix !== "object" || Array.isArray(mix)) return ["the mix maps each kind of photograph to its share"];
+  const errs = [], known = Object.keys(SCENE_FORMATS);
+  for (const [f, n] of Object.entries(mix)) {
+    if (!known.includes(f)) errs.push(`mix: "${f}" is not one of ${known.join(", ")}`);
+    else if (!Number.isInteger(n) || n < 0 || (!counts && n > 100)) errs.push(`mix.${f} must be a whole number${counts ? " of photos" : " from 0 to 100"}`);
+  }
+  if (errs.length) return errs;
+  const sum = Object.values(mix).reduce((a, b) => a + b, 0);
+  if (!counts && sum !== 100) errs.push(`the mix's shares must add up to 100 (they add up to ${sum})`);
+  if (counts && total != null && sum !== total) errs.push(`the mix's photos (${sum}) must add up to the batch's generated photos (${total})`);
+  return errs;
+}
+/** Whole photos per format for `count` photos from shares, the largest remainders first (ties: the larger share, then the
+ *  formats' own order), so the counts always add up to `count`. A format with a share but no photo is left out. */
+export function allocateMix(shares, count) {
+  const order = Object.keys(SCENE_FORMATS), live = order.filter((f) => (shares?.[f] || 0) > 0);
+  const total = live.reduce((a, f) => a + shares[f], 0);
+  if (!count || !total) return {};
+  const exact = live.map((f) => ({ f, x: (shares[f] / total) * count }));
+  const out = Object.fromEntries(exact.map(({ f, x }) => [f, Math.floor(x)]));
+  let left = count - Object.values(out).reduce((a, b) => a + b, 0);
+  for (const { f } of [...exact].sort((a, b) => (b.x - Math.floor(b.x)) - (a.x - Math.floor(a.x)) || shares[b.f] - shares[a.f] || order.indexOf(a.f) - order.indexOf(b.f))) { if (left-- <= 0) break; out[f]++; }
+  return Object.fromEntries(Object.entries(out).filter(([, n]) => n > 0));
+}
+/** One format when every photo is of it, else "mixed" (null for no photos). */
+export const mixName = (counts) => { const live = Object.entries(counts || {}).filter(([, n]) => n > 0).map(([f]) => f); return live.length === 1 ? live[0] : live.length ? "mixed" : null; };
 /** What a portrait scene says beyond the description. The words are the creative readings' own (read-creatives.mjs:
  *  BACKDROPS, POSES, EXPRESSIONS), so a scene and what Meta's numbers say about ads like it are named alike. */
 export const PORTRAIT_TAGS = {

@@ -32,7 +32,7 @@ import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
   scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
-  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase, FEED_RATIOS } from "../skills/references/client-config.mjs";
+  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase, FEED_RATIOS, mixOf } from "../skills/references/client-config.mjs";
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
@@ -45,13 +45,13 @@ const targetingLibrary = () => seedTargetingDrafts(TARGETING_LIBRARY_DIR).data;
 const targetingLibraryView = () => { const d = targetingLibrary(); return { entries: d.entries.map((e) => ({ ...e, preset_id: `lib:${e.id}`, summary: summarise(e.spec) })), approved: d.entries.filter((e) => e.approved_on && !e.retired).length, drafts: d.entries.filter((e) => !e.approved_on && !e.retired).length }; };
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { importExport } from "../skills/references/ads-export.mjs";
-import { whatWins, whatWinsAcross, nextWave, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
+import { whatWins, whatWinsAcross, nextWave, mixSuggestion, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
-import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, madeShape } from "../skills/references/plan-offer-batch.mjs";
-import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf } from "../skills/references/scene-library.mjs";
+import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, madeShape, batchMix } from "../skills/references/plan-offer-batch.mjs";
+import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 import { readReading, checkUrl as checkSiteUrl, MIN_PHOTO_PX, ONBOARDING_DIR } from "../skills/references/read-website.mjs";
@@ -684,21 +684,19 @@ function resolveSpread(gym, brief) {
   if (spread === true && rest.direction && (rest.direction.words || rest.direction.reference)) return { brief: rest, spread: { must_show: {}, left_out: [], reason: "off for a directed batch: the reference or your words decide what the photos show" } };
   if (spread !== true || !(rest.generated > 0) || rest.must_show) return { brief: rest, spread: null };
   // A portrait batch spreads across backdrops, poses and ages by itself: the Spread's wish is about exercises and equipment.
-  const fmt = formatFor(gym, rest);
-  if (fmt !== "workout") return { brief: rest, spread: { must_show: {}, left_out: [], reason: `off for a ${fmt.replace("-", " ")} batch: it spreads across backdrops, poses and ages by itself` } };
+  const m = mixFor(gym, rest), fmt = mixName(m) || "workout";
+  if (!(m.workout > 0)) return { brief: rest, spread: { must_show: {}, left_out: [], reason: `off for a ${fmt.replace("-", " ")} batch: it spreads across backdrops, poses and ages by itself` } };
   let scenes = [];
   try { scenes = loadScenes(join(brandDir(gym), "scenes.json")).filter((s) => formatOf(s) === "workout"); } catch { return { brief: rest, spread: { must_show: {}, left_out: [], reason: "no approved scenes yet" } }; }
   // With an age range the ages come from the bell curve (plan-offer-batch → ageTargets), so the spread leaves them out.
   const wish = Array.isArray(rest.age_range) ? Object.fromEntries(Object.entries(SPREAD_WISH).filter(([k]) => k !== "age")) : SPREAD_WISH;
-  const s = spreadFor({ scenes, audience: sceneAudience(rest.audience, rest.scene_audience), count: rest.generated, wish });
+  const s = spreadFor({ scenes, audience: sceneAudience(rest.audience, rest.scene_audience), count: m.workout, wish }); // the workout photos of the batch
   return { brief: Object.keys(s.must_show).length ? { ...rest, must_show: s.must_show } : rest, spread: s };
 }
-/** The format a brief's photos are made in: its own, else the gym's (Ad defaults), else workout. */
-function formatFor(gym, brief) {
-  const own = brief && typeof brief === "object" ? brief.format : null;
-  if (own != null) return SCENE_FORMATS[own] ? own : "workout"; // a format that is not one is refused by validateBrief
-  const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {};
-  return SCENE_FORMATS[cd.format] ? cd.format : "workout";
+/** A brief's photos per format (the planner's own rule, batchMix): its mix, else all of its one format, else the gym's default mix turned into photos. */
+function mixFor(gym, brief) {
+  if (!brief || typeof brief !== "object") return {};
+  return batchMix(brief, readJsonFile(join(brandDir(gym), "gym-profile.json")) || {});
 }
 function checkBrief(gym, raw) {
   const { brief, spread } = resolveSpread(gym, raw);
@@ -707,7 +705,13 @@ function checkBrief(gym, raw) {
   // rooms from nothing (F45 Xinyi, 2026-10-07). A real photo in the batch still stands in when the gym names none.
   if (brief && typeof brief === "object" && brief.reference == null) { const rr = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference; if (typeof rr === "string" && rr && !rr.includes("..") && existsSync(join(brandDir(gym), "brand-assets", rr))) brief.reference = rr; }
   // The gym's look (Ad defaults) rides on the brief when it names none and it differs from the standard, so the brief on disk says what ran.
-  if (brief && typeof brief === "object") { const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {}; if (brief.look == null && cd.look && cd.look !== "reference") brief.look = cd.look; if (brief.format == null && cd.format && cd.format !== "workout" && SCENE_FORMATS[cd.format]) brief.format = cd.format; }
+  if (brief && typeof brief === "object") { const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {}; if (brief.look == null && cd.look && cd.look !== "reference") brief.look = cd.look; }
+  // The gym's default mix (Ad defaults) rides on a brief that names neither a format nor a mix, as photos, when it is not
+  // all workout — so the brief on disk says what ran: one kind as `format`, several as `mix`.
+  if (brief && typeof brief === "object" && brief.format == null && brief.mix == null && Number.isInteger(brief.generated) && brief.generated > 0) {
+    const m = allocateMix(mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), brief.generated), one = mixName(m);
+    if (one === "mixed") brief.mix = m; else if (one && one !== "workout") brief.format = one;
+  }
   const errors = validateBrief(brief, { brandDir: brandDir(gym) });
   // The feed shape (the owner's rule, 2026-11-10): feed ads are 4:5 and Stories 9:16; the square is no longer made. Only a
   // batch already made as a square may name it (its words changed, run again) — and it keeps that shape whatever is asked.
@@ -717,21 +721,23 @@ function checkBrief(gym, raw) {
   }
   const g = brief?.generated ?? 0, real = Array.isArray(brief?.real) ? brief.real : [];
   const scenes = sceneStatus(gym);
-  const format = formatFor(gym, brief), directedBrief = !!(brief?.direction && (brief.direction.words || brief.direction.reference));
+  const mix = mixFor(gym, brief), format = mixName(mix) || "workout", directedBrief = !!(brief?.direction && (brief.direction.words || brief.direction.reference));
   const audienceFor = sceneAudience(brief?.audience, brief?.scene_audience);
   if (g > 0 && !brief?.scenes) {
     if (!scenes.exists) errors.push("no scene library yet: generated photos need approved scenes. Draft the first ones on Library → Scenes, or set generated photos to 0 and use real photos only");
     else if (!scenes.approved) errors.push("no approved scenes yet: approve some on Library → Scenes (nothing is generated from a draft)");
     else if (audienceFor !== "any" && !(scenes.counts[audienceFor] || scenes.counts.any)) errors.push(`the scene library has no scenes for a "${audienceFor}" audience`);
     else if (!directedBrief) {
-      // A batch is made in one format: that format needs its own approved scenes, for this audience.
-      const of = scenes.formats?.[format], name = format.replace("-", " ");
-      if (!of?.total) errors.push(`no approved ${name} scenes yet: draft some on Library → Scenes (Refresh scenes…, format: ${name}) and approve them`);
-      else if (audienceFor !== "any" && !(of.counts[audienceFor] || of.counts.any)) errors.push(`no approved ${name} scenes for a "${audienceFor}" audience yet: draft some on Library → Scenes`);
+      // Every kind of photograph in the batch needs its own approved scenes, for this audience.
+      for (const f of Object.keys(mix)) {
+        const of = scenes.formats?.[f], name = f.replace("-", " ");
+        if (!of?.total) errors.push(`no approved ${name} scenes yet: draft some on Library → Scenes (Refresh scenes…, format: ${name}) and approve them`);
+        else if (audienceFor !== "any" && !(of.counts[audienceFor] || of.counts.any)) errors.push(`no approved ${name} scenes for a "${audienceFor}" audience yet: draft some on Library → Scenes`);
+      }
     }
   }
   const photos = g + real.length, looks = brief?.looks_per_photo ?? 2, locs = Array.isArray(brief?.locations) ? brief.locations.length : 0;
-  return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format } };
+  return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format, mix } };
 }
 
 // ── Review and picks (sub-step 2) ────────────────────────────────────────────
@@ -799,7 +805,7 @@ function reviewState(gym, id) {
   const ads = (batch?.ads || []).map((a) => {
     const s = storyOf.get(a.folder);
     return {
-      folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, ratio: a.ratio || batch.ratio || "1x1", treatment: a.treatment, style: a.style, palette: a.palette,
+      folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, ratio: a.ratio || batch.ratio || "1x1", format: a.format || null, treatment: a.treatment, style: a.style, palette: a.palette,
       photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
     };
   });
@@ -1399,7 +1405,9 @@ const server = createServer(async (req, res) => {
       const currency = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).locale?.currency || "SGD";
       const wq = new URL(req.url, "http://x").searchParams, scope = WIN_SCOPES.includes(wq.get("scope")) ? wq.get("scope") : "active", track = WIN_TRACKS.includes(wq.get("track")) ? wq.get("track") : "stills";
       let wins = null; try { wins = whatWins(brandDir(gym), { currency, scope, track }); } catch (e) { wins = { error: e.message }; }
-      return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, exports: h.exports || [] } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length, wins });
+      // The mix (Phase 4): the gym's shares between the kinds of photograph, what each kind has done, and one suggested step — the owner's to take.
+      let mix = null; try { mix = mixSuggestion(brandDir(gym), { formats: Object.keys(SCENE_FORMATS), current: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), currency }); } catch (e) { mix = { error: e.message }; }
+      return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, exports: h.exports || [] } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length, wins, mix });
     }
     // /api/wins — What wins across every gym: each gym's ads against its own median, pooled; and what that says for one gym's next batch.
     if (p === "/api/wins" && req.method === "GET") {
@@ -1597,6 +1605,24 @@ const server = createServer(async (req, res) => {
       if (errors.length) return json(res, 400, { error: errors[0] });
       writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
       return json(res, 200, { ok: true, room_reference: profile.creative_defaults.room_reference });
+    }
+    // /api/client/{gym}/mix { mix } — the gym's default mix of formats, in shares that sum to 100 (Ad defaults, or the
+    // Results page's "Use this mix"). The owner's click; a suggestion is never saved by itself.
+    const mxm = p.match(/^\/api\/client\/([^/]+)\/mix$/);
+    if (mxm && req.method === "POST") {
+      const gym = mxm[1];
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const { mix } = await readBody(req);
+      const bad = mixProblems(mix);
+      if (bad.length) return json(res, 400, { error: bad[0], errors: bad });
+      const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
+      const cd = (profile.creative_defaults ||= {});
+      cd.mix = Object.fromEntries(Object.keys(SCENE_FORMATS).filter((f) => mix[f] > 0).map((f) => [f, mix[f]]));
+      delete cd.format; // the mix says it now
+      const { errors } = validateProfile(profile, { gymDir: brandDir(gym) });
+      if (errors.length) return json(res, 400, { error: errors[0] });
+      writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+      return json(res, 200, { ok: true, mix: cd.mix });
     }
     const ckm = p.match(/^\/api\/client\/([^/]+)\/clean\/(keep|discard)$/);
     if (ckm && req.method === "POST") {
@@ -1859,7 +1885,7 @@ const server = createServer(async (req, res) => {
     if (bm) {
       const [, gym, what, id] = bm;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym).filter((x) => !x.people), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
+      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym).filter((x) => !x.people), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, mix: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), formats: Object.keys(SCENE_FORMATS), photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
       if (what === "batch/check" && req.method === "POST") { const { brief } = await readBody(req); return json(res, 200, checkBrief(gym, brief)); }
       if (what === "batch" && req.method === "POST") {
         const { brief: raw, replace = false } = await readBody(req);

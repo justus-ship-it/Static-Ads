@@ -33,6 +33,8 @@ const yesNo = (v) => (v === true ? "yes" : v === false ? "no" : null);
 /** The value an ad has for an attribute: from the row (media, offer) or from its reading. */
 export function valueOf(row, key) {
   if (FROM_ROW.has(key)) return row[key] || null;
+  // An ad this app made knows its format from its batch (Phase 4): the record wins over what a reading of the picture guessed.
+  if (key === "format" && row.format) return row.format;
   const r = row.read; if (!r) return null;
   if (key === "logo" || key === "eye_contact") return yesNo(r[key]);
   return r[key] ?? null;
@@ -170,6 +172,70 @@ export function formatGuideFrom(every, format, { currency = "SGD" } = {}) {
     if (vals.length) lines.push(`${t.label}: ${vals.map((v) => `${v.value} (${v.leads} leads at ${money(v.cost_per_lead, currency)})`).join(", ")}`);
   }
   return { format, ads: rows.length, leads, spend: round2(rows.reduce((t, r) => t + (r.spend || 0), 0)), lines };
+}
+
+// ── the mix suggestion (Phase 4, 2026-11-10) ─────────────────────────────────
+// How a gym's next batches should be shared between the kinds of photograph the agent can make, from the gym's own
+// lead-form results. By rule, no model, one step at a time, and only ever a suggestion: the owner saves it or not.
+/** One suggestion moves this many points; no format the gym makes drops under the floor (testing never stops) or passes the cap. */
+export const MIX_STEP = 10, MIX_FLOOR = 20, MIX_CAP = 80;
+/**
+ * `rows`: the gym's rows joined to their readings (stills). `formats`: the kinds the agent can make, in order.
+ * `current`: the gym's mix in shares summing to 100. Returns { current, suggested, changed, formats[], reasons[],
+ * median } — `formats` carries each kind's ads, leads, spend, cost per lead, its ratio to the median and a confidence word.
+ *   · a kind with 20+ leads at 85% of the account's median cost per lead or less gains a step, taken from the dearest
+ *     other kind (one with results first), down to the floor;
+ *   · else a kind with 20+ leads at 125% of the median or more gives a step to the cheapest other kind that has 20+ leads itself;
+ *   · a kind the gym has never run keeps (or is given) the floor, so it gets tested;
+ *   · anything thinner than 20 leads moves nothing, and that is said.
+ */
+export function mixSuggestionFrom(rows, { formats, current, currency = "SGD" } = {}) {
+  const stills = inTrack(rows, "stills"), median = medianCpl(stills);
+  const stat = formats.map((f) => {
+    const x = stills.filter((r) => valueOf(r, "format") === f), spend = round2(x.reduce((a, r) => a + (r.spend || 0), 0)), leads = x.reduce((a, r) => a + (r.leads || 0), 0);
+    const cpl = leads ? round2(spend / leads) : null;
+    return { format: f, ads: x.length, spend, leads, cost_per_lead: cpl, vs_median: cpl != null && median ? round2(cpl / median) : null, confidence: confidence(leads), share: current[f] || 0 };
+  });
+  const next = Object.fromEntries(formats.map((f) => [f, current[f] || 0])), reasons = [];
+  const cap = Math.min(MIX_CAP, 100 - MIX_FLOOR * (formats.length - 1));
+  const move = (from, to, n) => { const m = Math.min(n, next[from] - MIX_FLOOR, cap - next[to]); if (m > 0) { next[from] -= m; next[to] += m; } return Math.max(0, m); };
+  const say = (s) => `${s.format} (${s.leads} leads at ${money(s.cost_per_lead, currency)})`;
+  // A kind never run, or with no share at all: it gets the floor from the largest share, so it is tested.
+  for (const s of stat) if (next[s.format] < MIX_FLOOR && formats.length > 1) {
+    const from = formats.filter((f) => f !== s.format).sort((a, b) => next[b] - next[a])[0];
+    const m = Math.min(MIX_FLOOR - next[s.format], next[from] - MIX_FLOOR);
+    if (m > 0) { next[from] -= m; next[s.format] += m; reasons.push(`${s.format} ${(current[s.format] || 0) === 0 ? "is not in the mix yet" : "is under the floor"}${s.ads ? "" : " and has never run in this account"}: give it ${next[s.format]}% so it is tested (the floor is ${MIX_FLOOR}%).`); }
+  }
+  const solid = stat.filter((s) => s.confidence === "solid" && s.vs_median != null).sort((a, b) => a.cost_per_lead - b.cost_per_lead);
+  const win = solid.find((s) => s.vs_median <= CHEAP), lose = [...solid].reverse().find((s) => s.vs_median >= LOSES);
+  if (win) {
+    const others = stat.filter((s) => s.format !== win.format).sort((a, b) => (b.cost_per_lead ?? -1) - (a.cost_per_lead ?? -1) || next[b.format] - next[a.format]);
+    let moved = 0, from = null;
+    for (const o of others) { moved = move(o.format, win.format, MIX_STEP); if (moved) { from = o; break; } }
+    if (moved) reasons.push(`${say(win)} is ${Math.round((1 - win.vs_median) * 100)}% under this account's median of ${money(median, currency)}: +${moved} points, from ${from.format}${from.leads ? ` (${from.leads} leads at ${money(from.cost_per_lead, currency)})` : ""}.`);
+    else reasons.push(`${say(win)} leads, and is already at its cap of ${cap}% (the others keep ${MIX_FLOOR}% each so testing never stops).`);
+  } else if (lose) {
+    // Share only moves toward a kind that has proven itself: 20+ leads of its own, cheaper than the dear one. (A thin kind's
+    // few cheap leads pull the median down and would make the proven kind look dear.)
+    const to = stat.filter((s) => s.format !== lose.format && s.confidence === "solid" && s.cost_per_lead < lose.cost_per_lead).sort((a, b) => a.cost_per_lead - b.cost_per_lead)[0];
+    const moved = to ? move(lose.format, to.format, MIX_STEP) : 0;
+    if (!to) { /* nothing proven to move to: the thin kinds are named below */ }
+    else if (moved) reasons.push(`${say(lose)} is ${Math.round((lose.vs_median - 1) * 100)}% over this account's median of ${money(median, currency)}: −${moved} points, to ${to.format}.`);
+    else reasons.push(`${say(lose)} is dear, and is already at the floor of ${MIX_FLOOR}%.`);
+  }
+  for (const s of stat) if (s.ads && s.confidence !== "solid") reasons.push(`${s.format}: ${s.leads} lead${s.leads === 1 ? "" : "s"} so far — too few to move the mix (it takes ${LEADS_SOLID}).`);
+  if (!reasons.length) reasons.push(median == null ? "No lead-form results to learn from yet: the mix stays as it is." : "No kind is clearly cheaper or dearer than the account's median: the mix stays as it is.");
+  const suggested = Object.fromEntries(Object.entries(next).filter(([, n]) => n > 0));
+  const changed = formats.some((f) => (suggested[f] || 0) !== (current[f] || 0));
+  return { current, suggested, changed, formats: stat, reasons, median, floor: MIX_FLOOR, cap, step: MIX_STEP };
+}
+/** The same for a gym on disk: its own account's stills (the lead ads in its history and this app's own). */
+export function mixSuggestion(gymDir, { now = new Date(), ...opts } = {}) {
+  // The owner's window: the last six months (running now included); the whole history only when that is empty.
+  const every = gymRowsRead(gymDir);
+  let scope = "recent", rows = inScope(every, scope, { now });
+  if (!rows.length) { scope = "all"; rows = every; }
+  return { ...mixSuggestionFrom(rows, opts), scope };
 }
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };

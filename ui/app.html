@@ -101,6 +101,8 @@
   .pv figcaption{font-size:11px;color:var(--dim);margin-top:3px}
   .pv .bad{color:var(--err)} .pv .good{color:var(--ok)}
   .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
+  /* the mix card: its own class, so "the page’s table" stays the results table */
+  table.mix{border-collapse:collapse;width:100%;font-size:13px} table.mix th{text-align:left;font-size:11.5px;color:var(--dim);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)} table.mix td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
   table.tbl{border-collapse:collapse;width:100%;font-size:13px} table.tbl tr.dim td{color:var(--faint)} table.tbl tr.sel td{background:var(--accent-soft)} table.tbl th{text-align:left;font-size:11.5px;color:var(--dim);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)} table.tbl td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
   .chip{padding:5px 12px;border-radius:99px;border:1px solid var(--line-2);font-size:13px;cursor:pointer;color:var(--dim);background:var(--surface);font-weight:500}
   .chip:hover{border-color:var(--navy);color:var(--text)}
@@ -614,9 +616,11 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     <div class="chips">${auds.map((a,i)=>`<span class="locchip"><input value="${esc(a)}" style="width:170px" oninput="cdList('audiences',${i},this.value)"><button type="button" title="Remove" onclick="cdDel('audiences',${i})">✕</button></span>`).join('')}<span class="chip add" onclick="cdAdd('audiences')">+ audience</span></div>
   </div>
   <div class="card"><h3>Photos</h3>
-    <label style="margin-top:0">Kind of photograph</label>
-    ${[['workout','Workout','people training in the gym, caught mid-movement'],['studio-portrait','Studio portrait','one person or a pair at ease on a plain backdrop or in front of the blurred gym: an easy pose, a smile']].map(([m,l,d])=>`<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:6px"><input type="radio" name="cdFormat" style="width:auto;margin:0" ${(D.format||'workout')===m?'checked':''} onchange="setP('creative_defaults.format','${m}')"> ${l} <span class="hint" style="font-weight:400">· ${d}</span></label>`).join('')}
-    <p class="hint" style="margin:6px 0 12px">A batch is made in one kind; Create can choose the other. Each kind has its own scenes on Library → Scenes.</p>
+    <label style="margin-top:0">The mix: what share of a batch's new photos is each kind</label>
+    ${(()=>{ const mx = profileMix(D), others = Object.keys(FORMAT_NAMES).filter(f=>f!=='workout'), w = 100 - others.reduce((a,f)=>a+(mx[f]||0),0);
+      return others.map(f=>`<div class="row" style="gap:8px;align-items:center;margin-top:6px"><input type="number" id="cdMix-${f}" min="0" max="100" step="10" style="width:76px" value="${mx[f]||0}" oninput="cdMix('${f}',this.value)"><span>% ${esc(FORMAT_PLURAL[f])} <span class="hint" style="font-weight:400">· one person or a pair at ease on a plain backdrop or in front of the blurred gym</span></span></div>`).join('')
+        + `<div class="hint" id="cdMixRest" style="margin-top:6px">The rest, ${w}%, are workout photos: people training in the gym, caught mid-movement.</div>`; })()}
+    <p class="hint" style="margin:6px 0 12px">Create starts every batch from this mix and lets you change the counts. Results suggests a change when one kind earns leads clearly cheaper. Each kind has its own scenes on Library → Scenes.</p>
     <div class="grid">${num('generated','New photos per batch',0,12)}${num('looks_per_photo','Looks per photo',1,6)}${num('attempts','Tries per photo',1,5)}${num('max_calls','Most image calls',0,40,'new photos × tries')}</div>
     <label style="display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text);margin-top:12px"><input type="checkbox" style="width:auto;margin:0" ${D.spread!==false?'checked':''} onchange="setP('creative_defaults.spread',this.checked)"> Spread across exercises, ages, settings and equipment</label>
     <label>Real photos in every batch</label>
@@ -1162,7 +1166,7 @@ function freshDraft(){
   const locs = (cd.locations||[]).filter(Boolean), real = (cd.real_photos||[]).filter(p=>clean.includes(p));
   return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 10, real: cd.real_photos?.length ? real : clean.slice(0,2),
     looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true,
-    look: cd.look || 'reference', format: cd.format || 'workout',
+    look: cd.look || 'reference', mix: (()=>{ const m = allocMix(B.setup.mix || profileMix(cd), cd.generated ?? 10); delete m.workout; return m; })(),
     age_min: (B.setup.photo_ages||[25,60])[0], age_max: (B.setup.photo_ages||[25,60])[1] };
 }
 /** The offer wordings as chips: picking one is choosing its exact words. */
@@ -1180,6 +1184,13 @@ function directionFromDraft(){
 }
 
 /** The brief exactly as typed: words are never trimmed or re-cased — the checks say if they need fixing. */
+/** The draft's photos per kind: the counts typed for the other kinds (never more than the batch has), workout the rest. */
+function draftMix(d, generated){
+  const out = {}; let left = generated;
+  for (const f of Object.keys(FORMAT_NAMES).filter(f=>f!=='workout')){ const n = Math.max(0, Math.min(left, Math.round(Number(d.mix?.[f])||0))); if (n > 0) out[f] = n; left -= n; }
+  if (left > 0) out.workout = left;
+  return Object.fromEntries(Object.keys(FORMAT_NAMES).filter(f=>out[f]>0).map(f=>[f,out[f]]));
+}
 function briefFromDraft(){
   const d = B.draft;
   const words = { offer:d.offer, locations:d.locations.filter(s=>s!==''), audience:d.audience===''?null:d.audience };
@@ -1189,7 +1200,7 @@ function briefFromDraft(){
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
-    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(d.format && d.format!=='workout' && generated>0 ? { format: d.format } : {}),
+    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m); return !generated || (live.length===1 && live[0]==='workout') ? {} : live.length===1 ? { format: live[0] } : { mix: m }; })(),
     ...(d.spread && generated>0 && !direction ? { spread: true } : {}) };
 }
 function autoId(){
@@ -1221,7 +1232,7 @@ function paintBatch(v){
         <div class="row" style="gap:28px">
           <div><label for="bGen" style="margin-top:0">New photos</label><div class="stepper"><button type="button" onclick="bStep('generated',-1)">−</button><input id="bGen" type="number" min="0" max="12" value="${esc(d.generated)}" oninput="bSet('generated',this.value)"><button type="button" onclick="bStep('generated',1)">+</button></div></div>
           <div><label for="bAgeMin" style="margin-top:0">Ages in the photos</label><div class="row" style="gap:6px;align-items:center"><input id="bAgeMin" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_min)}" oninput="bSet('age_min',this.value)"><span>to</span><input id="bAgeMax" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_max)}" oninput="bSet('age_max',this.value)"></div><div class="hint" style="margin-top:2px">Most near ${esc(Math.round(((Number(d.age_min)||25)+(Number(d.age_max)||60))/2))}, fewer toward the ends</div></div>
-          <div><label for="bFormat" style="margin-top:0">Kind of photo</label><select id="bFormat" onchange="bSet('format',this.value)"><option value="workout" ${d.format!=='studio-portrait'?'selected':''}>Workout</option><option value="studio-portrait" ${d.format==='studio-portrait'?'selected':''}>Studio portrait</option></select></div>
+          ${Object.keys(FORMAT_NAMES).filter(f=>f!=='workout').map(f=>`<div><label for="bMix-${f}" style="margin-top:0">Of which ${esc(FORMAT_PLURAL[f])}</label><div class="stepper"><button type="button" onclick="bMixStep('${f}',-1)">−</button><input id="bMix-${f}" type="number" min="0" max="12" value="${esc(d.mix?.[f]||0)}" oninput="bMixSet('${f}',this.value)"><button type="button" onclick="bMixStep('${f}',1)">+</button></div><div class="hint" id="bMixRest" style="margin-top:2px"></div></div>`).join('')}
           <div><label for="bLook" style="margin-top:0">Look</label><select id="bLook" onchange="bSet('look',this.value)"><option value="reference" ${d.look!=='formula'?'selected':''}>Reference set</option><option value="formula" ${d.look==='formula'?'selected':''}>Formula (callout top, offer low)</option></select></div>
           <div><label style="margin-top:0">Shape</label><div class="hint" id="bShape" style="margin-top:6px" title="Every feed ad is portrait 4:5; its Stories and Reels version is 9:16, made from the ad's own photo">4:5 feed · 9:16 Stories</div></div>
           <div><label for="bLooks" style="margin-top:0">Looks per photo</label><div class="stepper"><button type="button" onclick="bStep('looks_per_photo',-1)">−</button><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"><button type="button" onclick="bStep('looks_per_photo',1)">+</button></div></div>
@@ -1284,7 +1295,16 @@ function paintAud(){
   box.innerHTML = audiences().map(a=>`<span class="chip ${d.audience===a?'sel':''}" onclick="bAudPick('${a}')">${a}</span>`).join('') + `<span class="chip ${d.audience===''?'sel':''}" onclick="bAudPick('')">none</span>`;
 }
 function bAudPick(a){ B.draft.audience = a; const i=$('#bAud'); if (i) i.value = a; B.touched=true; paintAud(); scheduleCheck(); schedulePreview(); }
-function bStep(k, dir){ const min = k==='generated'?0:1, max = k==='generated'?12:6; const v = Math.min(max, Math.max(min, (Number(B.draft[k])||0)+dir)); B.draft[k]=v; const el=$(k==='generated'?'#bGen':'#bLooks'); if (el) el.value=v; B.touched=true; scheduleCheck(); if (k==='generated') schedulePreview(); }
+/** Create → how many of the new photos are of a kind; the rest are workout photos. */
+function bMixSet(f, v){ const g = Number(B.draft.generated)||0; (B.draft.mix ||= {})[f] = Math.max(0, Math.min(g, Math.round(Number(v)||0))); B.touched = true; paintMix(); scheduleCheck(); }
+function bMixStep(f, dir){ bMixSet(f, (Number(B.draft.mix?.[f])||0) + dir); }
+function paintMix(){
+  const g = Number(B.draft.generated)||0, m = draftMix(B.draft, g);
+  for (const f of Object.keys(FORMAT_NAMES).filter(f=>f!=='workout')){ const el = $('#bMix-'+f); if (el){ el.max = g; if (Number(el.value) !== (m[f]||0)) el.value = m[f]||0; } if (B.draft.mix && (B.draft.mix[f]||0) > g) B.draft.mix[f] = m[f]||0; }
+  const rest = $('#bMixRest'); if (rest) rest.textContent = g ? `${m.workout||0} workout` : '';
+  const sc = $('#bScenes'); if (sc && typeof paintDerived === 'function' && B.setup) { try { paintDerived(); } catch {} }
+}
+function bStep(k, dir){ const min = k==='generated'?0:1, max = k==='generated'?12:6; const v = Math.min(max, Math.max(min, (Number(B.draft[k])||0)+dir)); B.draft[k]=v; const el=$(k==='generated'?'#bGen':'#bLooks'); if (el) el.value=v; B.touched=true; scheduleCheck(); if (k==='generated'){ schedulePreview(); paintMix(); } }
 function paintList(){
   const bs = B.setup.batches, box = $('#bList'); if (!box) return;
   box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>{ const r = b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
@@ -1299,7 +1319,7 @@ function paintDerived(){
   const c = B.check, s = c?.summary, sc = B.setup.scenes;
   const scenes = $('#bScenes');
   if (scenes) scenes.innerHTML = B.mode==='rerender' ? '' : !sc.exists ? 'Scene library: none yet — generated photos need approved scenes. <a href="#" onclick="go(\'scenes\');return false">Draft the first scenes</a>'
-    : `Scene library: ${sc.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${(()=>{ const fm = B.draft?.format || 'workout', of = sc.formats?.[fm]; return `${esc((FORMAT_NAMES[fm]||fm).toLowerCase())} scenes: ${of?.total ? Object.entries(of.counts).map(([k,n])=>`${n} for ${esc(k)}`).join(', ') : '<span style="color:var(--warn)">none approved yet</span>'}`; })()}${sc.drafts?` · <span style="color:var(--warn)">${sc.drafts} new scene${sc.drafts===1?'':'s'} awaiting approval</span>`:''}${s?` · this audience draws from <b>${esc(s.scenes_for)}</b>`:''} · <a href="#" onclick="go('scenes');return false">manage</a>`;
+    : `Scene library: ${sc.approved?'<span style="color:var(--ok)">approved</span>':'<span style="color:var(--warn)">not approved yet</span>'} · ${(()=>{ const g = Number(B.draft?.generated)||0, kinds = Object.keys(draftMix(B.draft||{}, g)); return (kinds.length?kinds:['workout']).map(fm=>{ const of = sc.formats?.[fm]; return `${esc((FORMAT_NAMES[fm]||fm).toLowerCase())} scenes: ${of?.total ? Object.entries(of.counts).map(([k,n])=>`${n} for ${esc(k)}`).join(', ') : '<span style="color:var(--warn)">none approved yet</span>'}`; }).join(' · '); })()}${sc.drafts?` · <span style="color:var(--warn)">${sc.drafts} new scene${sc.drafts===1?'':'s'} awaiting approval</span>`:''}${s?` · this audience draws from <b>${esc(s.scenes_for)}</b>`:''} · <a href="#" onclick="go('scenes');return false">manage</a>`;
   // What the Spread switch will ask for, cut to this gym's scenes for the batch's audience (the server's spreadFor).
   const sp = $('#bSpread'), spr = c?.spread;
   if (sp) sp.innerHTML = B.mode==='rerender' || !(Number(B.draft.generated)>0) ? '' : directionFromDraft() ? 'Spread is off for a directed batch: the reference or your words decide what the photos show.' : !B.draft.spread || !spr ? '' : spr.reason ? `Spread: ${esc(spr.reason)}.`
@@ -1367,7 +1387,7 @@ function bDraftGapsGo(cover, audience, count){
   $('#gModal').innerHTML = '';
   run({kind:'scenes-refresh', gym:STATE.sel, audience, count, cover}, async(code)=>{ try { await reloadScenes(); } catch{} const d = B.scenes?.drafts?.length || 0; if (code===0) toast(`${d} scene draft${d===1?'':'s'} await your approval below`, 'ok'); paintBatch($('#view')); paintGapDrafts(); scheduleCheck(0); schedulePreview(0); });
 }
-function bSet(k, v){ B.draft[k]=v; B.touched=true; if (k==='audience') paintAud(); scheduleCheck(); if (WORDS.has(k) || k==='generated' || k==='look') schedulePreview(); }
+function bSet(k, v){ B.draft[k]=v; B.touched=true; if (k==='generated') setTimeout(paintMix, 0); if (k==='audience') paintAud(); scheduleCheck(); if (WORDS.has(k) || k==='generated' || k==='look') schedulePreview(); }
 function bLoc(i, v){ B.draft.locations[i]=v; B.touched=true; scheduleCheck(); schedulePreview(); }
 function bLocAdd(){ B.draft.locations.push(''); paintLocs(); $('#bLoc'+(B.draft.locations.length-1))?.focus(); scheduleCheck(); }
 function bLocDel(i){ B.draft.locations.splice(i,1); paintLocs(); scheduleCheck(); schedulePreview(0); }
@@ -1631,7 +1651,7 @@ function paintStage(){
   } else {
     box.innerHTML = `${nav}${badge}<figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt=""><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
       <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>`;
-    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${esc(layoutName(it.treatment))} · ${esc(nice(it.style))} · ${esc(nice(it.palette))}</span><span>photo${it.photos.length===1?'':'s'} ${esc(it.photos.join(' + '))}</span>${it.by_photo?`<span class="note">excluded with photo ${esc(it.by_photo)}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">${esc(it.notes)}</span>`:''}`;
+    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span>${it.format?`<span>${esc(FORMAT_NAMES[it.format]||it.format)}</span>`:''}<span>${esc(layoutName(it.treatment))} · ${esc(nice(it.style))} · ${esc(nice(it.palette))}</span><span>photo${it.photos.length===1?'':'s'} ${esc(it.photos.join(' + '))}</span>${it.by_photo?`<span class="note">excluded with photo ${esc(it.by_photo)}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">${esc(it.notes)}</span>`:''}`;
   }
   paintButtons(it);
   // The neighbours load ahead, so moving is instant.
@@ -2069,6 +2089,7 @@ function paintResults(v){
     <button class="${H?'sm':'primary'}" onclick="rsPullHistory()" ${RS.busy?'disabled':''}>${RS.busy?'Working…':H?'Pull the account again':"Pull the account's history from Meta"}</button></div>
   ${RS.msg?`<div class="msg ${/failed|could not|not set/i.test(RS.msg)?'err':'ok'}">${esc(RS.msg)}</div>`:''}
   ${winsCard(D)}
+  ${mixCard(D)}
   ${acrossCard()}
   <div class="card"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?(H.pulled?` · account pulled ${esc(H.pulled.slice(0,10))}`:' · from an Ads Manager export'):''}</span>${RS.level==='adsets'&&camp&&(D.texts||[]).some(t=>t.campaign_id===camp.campaign_id)?`<button class="sm" onclick="rsGo('texts')">Which copy wins</button>`:''}<div class="spacer"></div>
       ${RS.level==='ads'?`<button class="sm" onclick="rsPickTop(10)">Pick the top 10 by leads</button><button class="sm primary" onclick="rsImport()" ${RS.hsel.size&&!RS.busy?'':'disabled'}>Bring ${RS.hsel.size||''} into the library</button>`:`<span class="hint">${clickable?'click a row to open it · ':''}click a column to sort</span>`}</div>
@@ -2102,6 +2123,23 @@ function winsCard(D){
   </div>`;
 }
 /** Across every gym (2026-11-10): each gym's ads against its own median, pooled; what it says for this gym's next batch; the refresh and reading runs for the whole portfolio. */
+/** The mix (Phase 4): the gym's shares between the kinds of photograph, what each kind has done, and one suggested step — saved only when the owner takes it. */
+function mixCard(D){
+  const M = D.mix; if (!M || M.error) return M?.error ? `<div class="card"><h3>The mix</h3><div class="msg err">${esc(M.error)}</div></div>` : '';
+  const cur = D.wins?.currency || 'SGD', share = m => Object.keys(FORMAT_NAMES).filter(f=>(m[f]||0)>0).map(f=>`${m[f]}% ${esc(FORMAT_PLURAL[f]||f)}`).join(' · ') || '—';
+  const rows = (M.formats||[]).map(f=>`<tr><td>${esc(FORMAT_NAMES[f.format]||f.format)}</td><td class="num">${f.share}%</td><td class="num">${f.ads}</td><td class="num">${f.leads}</td><td class="num">${f.cost_per_lead==null?'—':money(f.cost_per_lead, cur)}</td><td class="num">${f.vs_median==null?'—':(f.vs_median<1?Math.round((1-f.vs_median)*100)+'% under':f.vs_median>1?Math.round((f.vs_median-1)*100)+'% over':'at')+' the median'}</td><td>${esc(f.confidence==='none'?'not run':f.confidence)}</td></tr>`).join('');
+  return `<div class="card" id="rsMix"><div class="row"><h3 style="margin:0">The mix</h3><div class="spacer"></div><span class="hint" style="margin:0">${M.scope==='recent'?'the last 6 months':'every ad on record'} · stills · lead-form leads · this gym's own account</span></div>
+    <p class="hint" style="margin-top:8px">How a batch's new photos are shared between the kinds of photograph. Now: <b id="rsMixNow">${share(M.current)}</b>${M.median!=null?` · the account's median cost per lead ${money(M.median, cur)}`:''}.</p>
+    <table class="mix"><thead><tr><th>Kind</th><th class="num">Share now</th><th class="num">Ads</th><th class="num">Leads</th><th class="num">Cost per lead</th><th class="num">Against the median</th><th>Evidence</th></tr></thead><tbody>${rows}</tbody></table>
+    <ul class="hint" style="margin:8px 0 8px 18px;line-height:1.5">${(M.reasons||[]).map(r=>`<li>${esc(r.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}</ul>
+    ${M.changed ? `<div class="row" style="gap:10px"><span>Suggested: <b id="rsMixNext">${share(M.suggested)}</b></span><button class="sm primary" id="rsMixUse" onclick="rsUseMix()">Use this mix</button><span class="hint" style="margin:0">Sets the gym's default on Ad defaults. Nothing changes until you press it; every kind keeps at least ${M.floor}% so testing never stops.</span></div>` : `<div class="hint">No change suggested. The mix is yours to set on Ad defaults.</div>`}
+    <div class="hint" id="rsMixMsg" style="margin-top:6px"></div></div>`;
+}
+async function rsUseMix(){
+  const M = RS.data?.mix; if (!M?.changed) return;
+  try { await api(`/api/client/${STATE.sel}/mix`, { method:'POST', body:{ mix: M.suggested } }); try { await refreshProfile(); } catch {} B.setup = null; await rsReload(); const m = $('#rsMixMsg'); if (m) m.textContent = 'Saved as this gym\'s mix.'; toast('The mix is saved on Ad defaults', 'ok'); }
+  catch(e){ const m = $('#rsMixMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+}
 function acrossCard(){
   const A = RS.across;
   if (!A) return `<div class="card" id="across"><h3 style="margin:0">Across every gym</h3><p class="hint">${RS.acrossError?esc(RS.acrossError):'Loading…'}</p></div>`;
@@ -2430,6 +2468,18 @@ async function pbEstimate(callout){ const a = PB.data.plan.adsets.find(x=>x.call
 
 // ── Scene library ────────────────────────────────────────────────────────────
 const FORMAT_NAMES = { workout: 'Workout', 'studio-portrait': 'Studio portrait' };
+const FORMAT_PLURAL = { workout: 'workout photos', 'studio-portrait': 'studio portraits' };
+/** Whole photos per kind from shares, the largest remainders first (the planner's own rule, allocateMix). */
+function allocMix(shares, count){
+  const order = Object.keys(FORMAT_NAMES), live = order.filter(f => (shares?.[f]||0) > 0), total = live.reduce((a,f)=>a+shares[f],0);
+  if (!count || !total) return {};
+  const exact = live.map(f => ({ f, x: shares[f]/total*count })), out = Object.fromEntries(exact.map(({f,x}) => [f, Math.floor(x)]));
+  let left = count - Object.values(out).reduce((a,b)=>a+b,0);
+  for (const {f} of [...exact].sort((a,b) => (b.x-Math.floor(b.x))-(a.x-Math.floor(a.x)) || shares[b.f]-shares[a.f] || order.indexOf(a.f)-order.indexOf(b.f))){ if (left-- <= 0) break; out[f]++; }
+  return out;
+}
+/** The gym's mix as the profile holds it: its mix, else all of its one kind, else all workout. */
+const profileMix = cd => cd?.mix && Object.keys(cd.mix).length ? cd.mix : cd?.format && FORMAT_NAMES[cd.format] ? { [cd.format]: 100 } : { workout: 100 };
 const TAGS = s => [s.format&&s.format!=='workout'?FORMAT_NAMES[s.format]||s.format:null, s.backdrop, s.stance, s.expression, s.eye_contact===true?'looks at the camera':null, s.setting, s.people!=null?`${s.people} ${s.people===1?'person':'people'}`:null, s.exercise, s.age, s.equipment, s.muscles, s.pose].filter(Boolean).join(' · ');
 async function viewScenes(v, seq=VIEW_SEQ){
   v.innerHTML = '<h1>Scene library</h1><p class="sub">Loading…</p>';
@@ -2461,6 +2511,19 @@ function paintScenes(){
     </div></div>`).join('')}
     <div id="bSceneMsg" class="hint" style="margin-top:8px"></div>`;
 }
+/** Ad defaults → the mix: a kind's share; workout takes the rest. */
+function cdMix(format, value){
+  const cur = { ...profileMix(STATE.profile.creative_defaults || {}) };
+  const others = Object.keys(FORMAT_NAMES).filter(f=>f!=='workout'), v = Math.max(0, Math.min(100, Math.round(Number(value)||0)));
+  cur[format] = v;
+  const used = others.reduce((a,f)=>a+(cur[f]||0),0);
+  if (used > 100){ cur[format] = v - (used - 100); }
+  cur.workout = 100 - others.reduce((a,f)=>a+(cur[f]||0),0);
+  const mix = Object.fromEntries(Object.keys(FORMAT_NAMES).filter(f=>cur[f]>0).map(f=>[f,cur[f]]));
+  setP('creative_defaults.mix', mix); setP('creative_defaults.format', undefined);
+  const el = $('#cdMix-'+format); if (el && Number(el.value) !== cur[format]) el.value = cur[format];
+  const rest = $('#cdMixRest'); if (rest) rest.textContent = `The rest, ${cur.workout}%, are workout photos: people training in the gym, caught mid-movement.`;
+}
 async function bCopyScenes(){
   const from = $('#bCopyFrom')?.value; if (!from) return;
   let msg;
@@ -2485,7 +2548,7 @@ async function bReject(id){
 function bRefreshConfirm(){
   const sc = B.scenes, refs = sc.references || [];
   const aud = (B.check?.summary?.scenes_for) || 'any';
-  const fmt = (location.hash.includes('/create') ? B.draft?.format : null) || B.setup?.creative_defaults?.format || 'workout';
+  const fmt = (()=>{ const m = profileMix(B.setup?.creative_defaults || {}), st = B.scenes?.status?.formats || {}; const missing = Object.keys(m).find(f=>m[f]>0 && !st[f]?.total); return missing || Object.keys(m).sort((a,b)=>m[b]-m[a])[0] || 'workout'; })(); // the kind the gym's mix needs scenes for first
   setTimeout(bRfFormatChanged, 0);
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
     <h2>Refresh scenes</h2>

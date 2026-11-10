@@ -24,7 +24,7 @@ import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { loadCatalogue, validateInputs, LOOKS } from "./render-composites.mjs";
-import { SCENE_FORMATS } from "./scene-library.mjs";
+import { SCENE_FORMATS, DEFAULT_MIX, mixProblems } from "./scene-library.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -282,6 +282,9 @@ export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: []
 // The feed ad's shape. One only since 2026-11-10 (the owner's rule): every feed ad is 4:5 and its Stories version 9:16;
 // the square is no longer made. A batch made at 1:1 before that keeps its shape (LEGACY_RATIOS, madeShape in plan-offer-batch).
 export const FEED_RATIOS = ["4x5"];
+/** A gym's default mix of formats, in shares that sum to 100: its own (`creative_defaults.mix`), else all of its one
+ *  format (`creative_defaults.format`, Phase 3), else all workout. */
+export const mixOf = (profile) => { const cd = profile?.creative_defaults || {}; return cd.mix && !mixProblems(cd.mix).length ? cd.mix : SCENE_FORMATS[cd.format] ? { [cd.format]: 100 } : { ...DEFAULT_MIX }; };
 export const LEGACY_RATIOS = ["1x1"];
 /**
  * The image model a gym's new photos are made with (batch photos and Stories). Pro by default since the
@@ -492,6 +495,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       if (cd.image_model != null && !IMAGE_MODELS[cd.image_model]) errors.push(`creative_defaults.image_model must be one of ${Object.keys(IMAGE_MODELS).join(", ")}`);
       if (cd.look != null && !LOOKS.includes(cd.look)) errors.push(`creative_defaults.look must be one of ${LOOKS.join(", ")}`);
       if (cd.format != null && !SCENE_FORMATS[cd.format]) errors.push(`creative_defaults.format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+      if (cd.mix != null) for (const e of mixProblems(cd.mix)) errors.push(`creative_defaults.${e.replace(/^the mix's/, "mix:")}`);
       if (cd.ratio != null && !FEED_RATIOS.includes(cd.ratio)) errors.push(`creative_defaults.ratio must be ${FEED_RATIOS.join(", ")}: feed ads are made at 4:5 and Stories at 9:16 (the square is no longer made)`);
       if (["brand", "both"].includes(cd.palettes) && !brandRoles(profile.brand_lock?.colors)) errors.push(`creative_defaults.palettes is "${cd.palettes}", but the brand has no colours yet (Brand & photography)`);
     }

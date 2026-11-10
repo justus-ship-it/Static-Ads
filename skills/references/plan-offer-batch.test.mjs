@@ -961,3 +961,46 @@ test("B13 a batch is made in one format (Phase 3, 2026-11-10): a studio-portrait
     await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "none-yet" }, deps, log: () => {} }), /no approved studio-portrait scenes yet: draft some on Library → Scenes \(Refresh scenes…, format: studio-portrait\) and approve them/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("B14 the mix (Phase 4, 2026-11-10): a batch's photos are shared between the kinds — the brief's own counts, else the gym's default shares turned into photos — each kind drawing from its own approved scenes; the Spread's wish goes to the workout photos; the batch, its photos and its ads say the kinds; a kind in the mix with no approved scenes is refused", async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const P = (id, over = {}) => ({ id, audience: "men", format: "studio-portrait", pose: "upright", people: 1, age: "prime", backdrop: "seamless-colour", stance: "easy-posed", expression: "smile", eye_contact: true, scene: `A man in his early thirties in a white t-shirt standing relaxed with his arms crossed and an easy smile, looking into the camera, against a seamless deep teal studio backdrop (${id}).`, ...over });
+    const libPath = join(dir, "scenes.json"), workout = JSON.parse(readFileSync(libPath, "utf-8")).scenes.map((s) => (s.id === "m-up" ? { ...s, exercise: "back-squat" } : s));
+    writeFileSync(libPath, JSON.stringify({ approved: true, scenes: [...workout, P("m-p-teal"), P("m-p-wall", { backdrop: "dark-wall", stance: "holding-equipment", scene: "A man in his late twenties in a black t-shirt holding a kettlebell by the horn at his side, grinning past the camera, against a plain dark charcoal wall (m-p-wall)." })] }));
+    const gen = [], logs = [], f = fakes([]);
+    const check = async () => ({ ok: true, failures: [], notes: [], stray_text: [], excluded: [], dismissed: [], faces: [[280, 430, 400, 570]], focus: [0.5, 0.5], placement: { people_box: [240, 300, 980, 700], people_count: 1 } });
+    const deps = { ...f, generate: async (prompt, refs, opts) => { gen.push(prompt); return f.generate(prompt, refs, opts); }, check, browser };
+    const base = { ...BRIEF, real: [], locations: ["JURONG WEST"], look: "formula" };
+    // The brief's own counts: 2 workout + 2 portraits.
+    const brief = { ...base, batch_id: "mixed", generated: 4, max_calls: 5, mix: { workout: 2, "studio-portrait": 2 }, must_show: { exercise: ["squat"] } };
+    const r = await runBatch({ brandDir: dir, brief, deps, log: (m) => logs.push(m) });
+    assert.deepEqual([r.batch.format, r.batch.mix, r.batch.failed.length], ["mixed", { workout: 2, "studio-portrait": 2 }, 0], logs.join(" | "));
+    assert.ok(logs.some((l) => /· mix: 2 workout, 2 studio-portrait/.test(l)), logs.join(" | "));
+    const kinds = r.batch.photos.map((p) => [p.format, /^m-p-/.test(p.scene_id)]);
+    assert.deepEqual(kinds.filter(([k]) => k === "studio-portrait"), [["studio-portrait", true], ["studio-portrait", true]], "portraits from portrait scenes");
+    assert.deepEqual(kinds.filter(([k]) => k === "workout"), [["workout", false], ["workout", false]], "workout photos from workout scenes");
+    assert.deepEqual([gen.filter((p) => /editorial portrait/.test(p)).length, gen.length], [2, 4], "each photo asked for as its own kind");
+    const byKind = (k) => r.batch.ads.filter((a) => a.format === k).length;
+    assert.deepEqual([byKind("workout"), byKind("studio-portrait"), r.batch.ads.length], [4, 4, 8], "two looks each; every ad says its kind");
+    // The Spread's wish is met by a workout photo (the planner still honours it in a mix).
+    const planned = JSON.parse(readFileSync(join(r.out, "visuals.json"), "utf-8")).visuals;
+    assert.ok(planned.some((v) => !v.format && /squat/.test(v.tags.exercise || "")), JSON.stringify(planned.map((v) => [v.format, v.tags.exercise])));
+    assert.ok(!logs.some((l) => /must_show is ignored/.test(l)));
+    // The gym's default shares, turned into photos: 50/50 of 3 → 2 workout, 1 portrait.
+    const pf = join(dir, "gym-profile.json"), profile = JSON.parse(readFileSync(pf, "utf-8"));
+    writeFileSync(pf, JSON.stringify({ ...profile, creative_defaults: { ...(profile.creative_defaults || {}), mix: { workout: 50, "studio-portrait": 50 } } }));
+    const d = await runBatch({ brandDir: dir, brief: { ...base, batch_id: "by-default-mix", generated: 3, max_calls: 4 }, deps, log: () => {} });
+    assert.deepEqual([d.batch.format, d.batch.mix], ["mixed", { workout: 2, "studio-portrait": 1 }]);
+    // A brief's one format still overrides the gym's mix; all-workout counts are a workout batch.
+    const one = await runBatch({ brandDir: dir, brief: { ...base, batch_id: "all-portraits", generated: 2, max_calls: 3, format: "studio-portrait" }, deps, log: () => {} });
+    assert.deepEqual([one.batch.format, one.batch.mix], ["studio-portrait", { "studio-portrait": 2 }]);
+    const allW = await runBatch({ brandDir: dir, brief: { ...base, batch_id: "all-workout", generated: 2, max_calls: 3, mix: { workout: 2, "studio-portrait": 0 } }, deps, log: () => {} });
+    assert.deepEqual([allW.batch.format, allW.batch.mix], ["workout", { workout: 2 }]);
+    // Refusals.
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "bad-sum", mix: { workout: 2, "studio-portrait": 1 } }, deps, log: () => {} }), /the mix's photos \(3\) must add up to the batch's generated photos \(4\)/);
+    writeFileSync(libPath, JSON.stringify({ approved: true, scenes: workout }));
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "no-portraits" }, deps, log: () => {} }), /no approved studio-portrait scenes yet/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

@@ -42,10 +42,10 @@ import { poseProblem, POSES, readShotGuide } from "./visual-prompts.mjs";
 import { fitLayouts, imageSize, checkTiled, splitMarks, ownerKept } from "./check-visual.mjs";
 import { QUALITY_VERSION } from "./check-quality.mjs";
 import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from "./assign-variants.mjs";
-import { catalogueFor, imageModelFor, FEED_RATIOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
+import { catalogueFor, imageModelFor, mixOf, FEED_RATIOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
-import { SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, formatOf, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
+import { SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
 import { draftScenes, validateDirection } from "./refresh-scenes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -124,6 +124,12 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
   if (brief.ratio && !T.canvas[brief.ratio]) errs.push(`ratio "${brief.ratio}" is not one of ${Object.keys(T.canvas).join(", ")}`);
   if (brief.look != null && !LOOKS.includes(brief.look)) errs.push(`look "${brief.look}" is not one of ${LOOKS.join(", ")}`);
   if (brief.format != null && !SCENE_FORMATS[brief.format]) errs.push(`format "${brief.format}" is not one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+  // The mix (Phase 4): how many of the generated photos are of each kind. Photos, not shares; they add up to `generated`.
+  if (brief.mix != null) {
+    errs.push(...mixProblems(brief.mix, { counts: true, total: g }));
+    if (brief.format != null) errs.push("give the batch a format or a mix, not both");
+    if (brief.direction != null && Object.values(brief.mix || {}).filter((n) => n > 0).length > 1) errs.push("a directed batch is one kind of photograph: its words or reference decide the pictures, so it cannot be a mix");
+  }
   // The owner's direction for the batch's photos: words, or a reference image read into words.
   if (brief.direction != null) {
     for (const e of validateDirection(brief.direction, { brandDir })) errs.push(`direction: ${e}`);
@@ -254,14 +260,20 @@ export function unshowable(mustShow = {}, scenes = []) {
   return Object.entries(mustShow || {}).flatMap(([tag, values]) => (values || []).filter((v) => !scenes.some((sc) => shows(sc, tag, v))).map((v) => `${tag} "${v}"`));
 }
 
-export function planVisuals({ count, scenes, audience, seed = "batch", mustShow = {}, catalogue = loadCatalogue(), ratio = "1x1", exclude = {}, ages = null }) {
+export function planVisuals({ count, scenes, audience, seed = "batch", mustShow = {}, catalogue = loadCatalogue(), ratio = "1x1", exclude = {}, ages = null, mix = null }) {
   if (!count) return [];
   const rand = rngFrom(`${seed}|visuals`);
   const shuffle = (xs) => { const a = [...xs]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   // A gendered callout ("LADIES WANTED") draws from its own scenes; the mixed ("any") scenes serve
   // ungendered callouts, and fill in only when the gendered scenes are fewer than the photos wanted
   // (2026-09-12: a women's batch had planned three mixed scenes with a man in frame).
-  const suits = shuffle(scenePool(scenes, audience, count));
+  // With a mix (photos per format) each format draws from its own scenes for the audience, and is given exactly its share.
+  const left = mix ? { ...mix } : null;
+  const suits = shuffle(mix ? Object.entries(mix).filter(([, n]) => n > 0).flatMap(([f, n]) => {
+    const pool = scenePool(scenes.filter((s) => formatOf(s) === f), audience, n);
+    if (!pool.length) throw new Error(`no ${f} scene in the library suits a "${audience}" audience`);
+    return pool;
+  }) : scenePool(scenes, audience, count));
   if (!suits.length) throw new Error(`no scene in the library suits a "${audience}" audience`);
   const layouts = shuffle(primaryLayouts(catalogue, ratio, exclude));
   const usedL = new Map(layouts.map((l) => [l, 0])), usedS = new Map(suits.map((s) => [s, 0]));
@@ -287,6 +299,7 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
   for (let i = 0; i < count; i++) {
     let pick = null;
     for (const s of suits) {
+      if (left && !(left[formatOf(s)] > 0)) continue; // this format has its photos
       const asked = wanted.filter((w) => !w.done && shows(s, w.tag, w.value)).length;
       const novelty = Object.entries(VARIETY_WEIGHTS).reduce((n, [k, w]) => n + (s[k] != null && !seen[k].has(s[k]) ? w : 0), 0)
         // Once every value has appeared, keep them even: a fourth older man counts against a scene.
@@ -305,6 +318,7 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
     }
     if (!pick) throw new Error("no scene in the library fits any layout the batch can use");
     usedL.set(pick.la, usedL.get(pick.la) + 1); usedS.set(pick.s, usedS.get(pick.s) + 1);
+    if (left) left[formatOf(pick.s)]--;
     for (const k of Object.keys(VARIETY_WEIGHTS)) if (pick.s[k] != null) { seen[k].add(pick.s[k]); uses[k].set(pick.s[k], (uses[k].get(pick.s[k]) || 0) + 1); }
     for (const w of wanted) if (shows(pick.s, w.tag, w.value)) w.done = true;
     const tags = Object.fromEntries(["exercise", ...Object.keys(SCENE_TAGS), ...Object.keys(PORTRAIT_TAGS), "eye_contact"].filter((k) => pick.s[k] != null).map((k) => [k, pick.s[k]]));
@@ -375,6 +389,16 @@ export function madeShape(out) {
   return null;
 }
 
+/** A batch's photos per format: the brief's own mix (counts), else all of its one format, else the gym's default shares
+ *  (Ad defaults → mix, or its one format) turned into photos by `allocateMix`. No generated photos: {}. */
+export function batchMix(brief, profile = null) {
+  const g = brief?.generated ?? 0;
+  if (!g) return {};
+  if (brief.mix && !mixProblems(brief.mix, { counts: true, total: g }).length) return Object.fromEntries(Object.entries(brief.mix).filter(([, n]) => n > 0));
+  if (SCENE_FORMATS[brief.format]) return { [brief.format]: g };
+  return allocateMix(mixOf(profile), g);
+}
+
 export function progressWriter(out, base) {
   const path = join(out, "progress.json");
   const state = { ...base, photos: { ...(base.photos || {}) } };
@@ -423,8 +447,10 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   // re-rendered and run again as a square); a new one is the brief's, else the gym's, else 4:5.
   // The batch's format — the kind of photograph its generated photos are (Phase 3): the brief's, else the gym's, else
   // workout. A batch is made in one format; its scenes are that format's (the mix across formats is Phase 4).
-  const format = brief.format || profile.creative_defaults?.format || "workout";
-  if (!SCENE_FORMATS[format]) throw new Error(`the brief cannot run:\n- format "${format}" is not one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+  if (brief.format != null && !SCENE_FORMATS[brief.format]) throw new Error(`the brief cannot run:\n- format "${brief.format}" is not one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+  // The mix (Phase 4): photos per format — the brief's own counts, else all of the brief's one format, else the gym's
+  // default shares (Ad defaults) turned into photos. `format` names the one kind when there is one, else "mixed".
+  const mix = batchMix(brief, profile), format = mixName(mix) || brief.format || "workout";
   const made = madeShape(out);
   const ratio = made || brief.ratio || profile.creative_defaults?.ratio || CREATIVE_DEFAULTS.ratio;
   if (made && brief.ratio && brief.ratio !== made) log(`· this batch was made at ${made.replace("x", ":")} and keeps that shape (the brief asked for ${brief.ratio.replace("x", ":")})`);
@@ -434,7 +460,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   // ── 1 plan ──
   const g = brief.generated ?? 0;
   const libraryPath = scenesPath || join(brandDir, "scenes.json");
-  let scenes;
+  let scenes, quota = null; // quota: photos per format, for scenes drawn from the library
   if (brief.scenes) scenes = brief.scenes;
   else if (!g) scenes = [];
   else if (brief.direction) {
@@ -445,8 +471,9 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     }
     scenes = await directedScenes({ brandDir, brief, scenesPath: libraryPath, audience: sceneAudience(audience, brief.scene_audience), dryRun, renderOnly, ...(deps.draft ? { draft: deps.draft } : {}), log });
   } else {
-    scenes = loadScenes(libraryPath, { allowDraft: dryRun }).filter((s) => formatOf(s) === format);
-    if (!scenes.length && !(renderOnly && existsSync(join(out, "visuals.json")))) throw new Error(`no approved ${format} scenes yet: draft some on Library → Scenes (Refresh scenes…, format: ${format}) and approve them — nothing is generated from a draft`);
+    scenes = loadScenes(libraryPath, { allowDraft: dryRun }).filter((s) => (mix[formatOf(s)] || 0) > 0);
+    quota = mix;
+    if (!(renderOnly && existsSync(join(out, "visuals.json")))) for (const f of Object.keys(mix)) if (!scenes.some((s) => formatOf(s) === f)) throw new Error(`no approved ${f} scenes yet: draft some on Library → Scenes (Refresh scenes…, format: ${f}) and approve them — nothing is generated from a draft`);
   }
   const plannedPath = join(out, "visuals.json");
   let visuals;
@@ -455,10 +482,11 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   const directed = !!(brief.direction && (brief.direction.words || brief.direction.reference));
   if (directed && brief.must_show && Object.keys(brief.must_show).length) log("· must_show is ignored for a directed batch: its reference or words decide what the photos show");
   // The Spread's wish is about exercises, settings and equipment: a portrait batch spreads its backdrops and stances by itself.
-  const spreadable = format === "workout";
+  const spreadable = (mix.workout || 0) > 0 || !!brief.scenes;
   if (!directed && !spreadable && brief.must_show && Object.keys(brief.must_show).length) log(`· must_show is ignored for a ${format} batch: it spreads across backdrops, poses and ages by itself`);
+  if (Object.keys(mix).length > 1) log(`· mix: ${Object.entries(mix).map(([f, n]) => `${n} ${f}`).join(", ")}`);
   if (renderOnly && existsSync(plannedPath)) visuals = JSON.parse(readFileSync(plannedPath, "utf-8")).visuals;
-  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: directed || !spreadable ? {} : brief.must_show, catalogue, ratio, exclude, ages: ageTargets({ range: brief.age_range, count: g, seed }) });
+  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: directed || !spreadable ? {} : brief.must_show, catalogue, ratio, exclude, ages: ageTargets({ range: brief.age_range, count: g, seed }), mix: quota });
   if (visuals.notShown) log(`  note: not everything asked for is shown — left out: ${visuals.notShown.join(", ")}`);
   for (const v of visuals) for (const w of sceneWarnings({ scene: v.scene, people: v.people, setting: v.tags?.setting, format: v.format })) log(`  warning: ${v.id} (${v.scene_id || "brief scene"}): ${w}`);
   for (const v of visuals) { const p = poseProblem(v.treatment, v.pose, catalogue); if (p) throw new Error(`${v.id}: ${p}`); }
@@ -641,7 +669,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
     // record of the calls that made its photos (the panel showed "0 image calls" after one).
     const batch = {
-      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, format, image_calls: spent, image_calls_this_run: calls,
+      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, format, mix: Object.fromEntries(Object.keys(SCENE_FORMATS).map((f) => [f, photos.filter((p) => p.format === f).length]).filter(([, n]) => n > 0)), image_calls: spent, image_calls_this_run: calls,
       photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.format ? { format: p.format } : {}), ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
       ads, failed,
     };

@@ -199,7 +199,7 @@ test("U3 the panel refuses exactly what Step 6 refuses, and saves the words exac
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
   const ok = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2 } } })).json();
   assert.deepEqual(ok.errors, []);
-  assert.deepEqual(ok.summary, { photos: 3, generated: 1, real: 2, looks: 2, locations: 2, ads: 12, max_calls: 2, scenes_for: "men", format: "workout" });
+  assert.deepEqual(ok.summary, { photos: 3, generated: 1, real: 2, looks: 2, locations: 2, ads: 12, max_calls: 2, scenes_for: "men", format: "workout", mix: { workout: 1 } });
 });
 
 // ── U4 preview ──────────────────────────────────────────────────────────
@@ -2665,13 +2665,69 @@ test("U49 the kind of photograph (Phase 3, 2026-11-10): a gym's Ad defaults take
     const { cdp, sessionId } = browser;
     const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
     const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u49${hash.replace(/\W/g, "")}#/${GYM}/${hash}` }, sessionId); await loaded; const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); };
-    await open("defaults", "!!document.querySelector('input[name=cdFormat]')");
-    assert.deepEqual(await ev("[document.querySelectorAll('input[name=cdFormat]').length, document.querySelector('input[name=cdFormat]:checked').parentElement.textContent.includes('Studio portrait')]"), [2, true]);
-    await open("create", "!!document.querySelector('#bFormat')");
-    assert.deepEqual(await ev("[document.querySelector('#bFormat').value, briefFromDraft().format]"), ["studio-portrait", "studio-portrait"], "the gym's default pre-fills the batch's own choice");
-    assert.deepEqual(await ev("bSet('format','workout'); 'format' in briefFromDraft()"), false);
+    await open("defaults", "!!document.querySelector('#cdMix-studio-portrait')");
+    assert.deepEqual(await ev("[document.querySelector('#cdMix-studio-portrait').value, /The rest, 0%, are workout photos/.test(document.querySelector('#cdMixRest').textContent)]"), ["100", true], "a gym set to one kind reads as all of that kind");
+    await open("create", "!!document.querySelector('#bMix-studio-portrait')");
+    assert.deepEqual(await ev("[Number(document.querySelector('#bMix-studio-portrait').value) === Number(B.draft.generated), briefFromDraft().format, 'mix' in briefFromDraft()]"), [true, "studio-portrait", false], "the gym's default pre-fills the batch: every new photo a portrait");
+    assert.deepEqual(await ev("bMixSet('studio-portrait', 0); ['format' in briefFromDraft(), 'mix' in briefFromDraft()]"), [false, false], "none of them portraits: a workout batch needs no saying");
     await open("scenes", "!!document.querySelector('#bSceneCard button')");
     assert.match(await ev("document.querySelector('#bSceneCard').textContent"), /2 studio portrait/);
     assert.deepEqual(await ev("bRefreshConfirm(); new Promise(r=>setTimeout(()=>r([[...document.querySelectorAll('#bRfFormat option')].map(o=>o.textContent), document.querySelector('#bRfFormat').value, /plain backdrop/.test(document.querySelector('#bRfFormatHint').textContent), document.querySelector('#bRfGapsWords').textContent]),80))"), [["Workout", "Studio portrait"], "studio-portrait", true, "Spread across backdrops (the ones this audience has fewest of first)"]);
+  } finally { writeFileSync(pf, before); writeFileSync(sp, scenesBefore); }
+});
+
+test("U50 the mix (Phase 4, 2026-11-10): a gym's default mix is shares that sum to 100, saved by the owner's click; a brief checked for that gym carries the mix as photos and its summary says the kinds; every kind in it needs its own approved scenes; Results shows each kind's numbers and one suggested step that is saved only when taken; Ad defaults, Create and Results show it", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), sp = join(g, "scenes.json");
+  await linkTestGym();
+  const before = readFileSync(pf, "utf-8"), profile = JSON.parse(before), scenesBefore = readFileSync(sp, "utf-8");
+  const P = (id, over = {}) => ({ id, audience: "any", format: "studio-portrait", pose: "upright", people: 1, age: "prime", backdrop: "seamless-colour", stance: "easy-posed", expression: "smile", eye_contact: true, scene: `A person in their thirties in a navy top standing relaxed with hands on hips and a warm smile, looking into the camera, against a seamless flat pink studio backdrop (${id}).`, ...over });
+  try {
+    let r = await call(`/api/client/${GYM}`, { method: "PUT", body: { ...profile, creative_defaults: { ...profile.creative_defaults, mix: { workout: 60, "studio-portrait": 30 } } } });
+    assert.equal(r.status, 400); assert.match(JSON.stringify(await r.json()), /creative_defaults.mix: shares must add up to 100 \(they add up to 90\)/);
+    assert.equal((await call(`/api/client/${GYM}/mix`, { method: "POST", body: { mix: { workout: 50, poster: 50 } } })).status, 400);
+    assert.equal((await call(`/api/client/${GYM}/mix`, { method: "POST", body: { mix: { workout: 70, "studio-portrait": 20 } } })).status, 400);
+    r = await call(`/api/client/${GYM}/mix`, { method: "POST", body: { mix: { workout: 50, "studio-portrait": 50 } } });
+    assert.deepEqual([r.status, (await r.json()).mix], [200, { workout: 50, "studio-portrait": 50 }]);
+    assert.deepEqual(JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.mix, { workout: 50, "studio-portrait": 50 });
+    const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
+    assert.deepEqual([setup.mix, setup.formats], [{ workout: 50, "studio-portrait": 50 }, ["workout", "studio-portrait"]]);
+    // A brief with neither a format nor a mix: the gym's shares as photos. No portrait scenes yet: said.
+    const raw = { batch_id: "mix-check", ...WORDS, free: false, generated: 4, real: [], looks_per_photo: 2, max_calls: 4, attempts: 1, scenes: null };
+    let c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: raw } })).json();
+    assert.deepEqual([c.brief.mix, c.summary.format, c.summary.mix], [{ workout: 2, "studio-portrait": 2 }, "mixed", { workout: 2, "studio-portrait": 2 }]);
+    assert.deepEqual(c.errors, ["no approved studio portrait scenes yet: draft some on Library → Scenes (Refresh scenes…, format: studio portrait) and approve them"]);
+    const lib = JSON.parse(scenesBefore);
+    writeFileSync(sp, JSON.stringify({ ...lib, scenes: [...lib.scenes, P("a-p-pink"), P("a-p-wall", { backdrop: "dark-wall", scene: "A person in their forties leaning one shoulder on a raw grey concrete wall, drinking from a clear water bottle, relaxed, in soft side light (a-p-wall)." })] }));
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, spread: true } } })).json();
+    assert.deepEqual([c.errors, c.brief.mix, c.spread?.reason || null], [[], { workout: 2, "studio-portrait": 2 }, null], "the Spread stays on for the workout photos of a mix");
+    // A brief's own counts stand; a sum that is not the batch's is refused; a format and a mix together are refused.
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, mix: { workout: 1, "studio-portrait": 3 } } } })).json();
+    assert.deepEqual([c.errors, c.summary.mix], [[], { workout: 1, "studio-portrait": 3 }]);
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, mix: { workout: 1, "studio-portrait": 1 } } } })).json();
+    assert.ok(c.errors.includes("the mix's photos (2) must add up to the batch's generated photos (4)"), JSON.stringify(c.errors));
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, format: "workout", mix: { workout: 2, "studio-portrait": 2 } } } })).json();
+    assert.ok(c.errors.includes("give the batch a format or a mix, not both"));
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, format: "workout" } } })).json();
+    assert.deepEqual([c.errors, "mix" in c.brief, c.summary.mix], [[], false, { workout: 4 }], "a brief's one format overrides the gym's mix");
+    // Results: the mix with each kind's numbers and what is suggested; nothing is saved by looking.
+    const res = await (await call(`/api/client/${GYM}/results`)).json();
+    assert.deepEqual([res.mix.current, res.mix.formats.map((x) => x.format), res.mix.floor, res.mix.cap, Array.isArray(res.mix.reasons)], [{ workout: 50, "studio-portrait": 50 }, ["workout", "studio-portrait"], 20, 80, true]);
+    assert.deepEqual(JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.mix, { workout: 50, "studio-portrait": 50 });
+    // The page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u50${hash.replace(/\W/g, "")}#/${GYM}/${hash}` }, sessionId); await loaded; const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); };
+    await open("defaults", "!!document.querySelector('#cdMix-studio-portrait')");
+    assert.deepEqual(await ev("[document.querySelector('#cdMix-studio-portrait').value, /The rest, 50%, are workout photos/.test(document.querySelector('#cdMixRest').textContent)]"), ["50", true]);
+    assert.deepEqual(await ev("cdMix('studio-portrait', 30); [STATE.profile.creative_defaults.mix, /The rest, 70%/.test(document.querySelector('#cdMixRest').textContent), !!DIRTY.profile]"), [{ workout: 70, "studio-portrait": 30 }, true, true], "typed, not saved until Save");
+    assert.deepEqual(await ev("cdMix('studio-portrait', 250); STATE.profile.creative_defaults.mix"), { "studio-portrait": 100 }, "never past 100");
+    await ev("DIRTY = {}; true");
+    await open("create", "!!document.querySelector('#bMix-studio-portrait')");
+    assert.deepEqual(await ev("(()=>{ const b = briefFromDraft(), g = b.generated; return [b.mix && b.mix.workout + b.mix['studio-portrait'] === g, b.mix && Math.abs(b.mix.workout - b.mix['studio-portrait']) <= 1, 'format' in b, document.querySelector('#bMixRest').textContent === (b.mix.workout + ' workout') || document.querySelector('#bMixRest').textContent === '']; })()"), [true, true, false, true], "half and half of the gym's photo count");
+    assert.deepEqual(await ev("bSet('generated', 6); bMixSet('studio-portrait', 2); [briefFromDraft().mix, document.querySelector('#bMixRest').textContent]"), [{ workout: 4, "studio-portrait": 2 }, "4 workout"]);
+    assert.deepEqual(await ev("bMixSet('studio-portrait', 9); [briefFromDraft().format, 'mix' in briefFromDraft(), document.querySelector('#bMix-studio-portrait').value]"), ["studio-portrait", false, "6"], "never more portraits than photos: all six, so one kind");
+    assert.deepEqual(await ev("bMixSet('studio-portrait', 0); ['format' in briefFromDraft(), 'mix' in briefFromDraft()]"), [false, false]);
+    await open("results", "!!document.querySelector('#rsMix')");
+    assert.deepEqual(await ev("[document.querySelectorAll('#rsMix tbody tr').length, document.querySelector('#rsMixNow').textContent, /Use this mix|No change suggested/.test(document.querySelector('#rsMix').textContent)]"), [2, "50% workout photos · 50% studio portraits", true]);
   } finally { writeFileSync(pf, before); writeFileSync(sp, scenesBefore); }
 });

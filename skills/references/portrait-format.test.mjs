@@ -204,3 +204,90 @@ test("SP5 the per-format guide, by rule: among the gym's own still ads read as t
   assert.equal(formatGuideFrom([R({ ad_id: "z", spend: 50, read: read({}) })], "studio-portrait"), null, "no lead: nothing to learn from yet");
   assert.match(formatGuideFrom(rows, "studio-portrait", { currency: "TWD" }).lines[0], /TWD/);
 });
+
+// ── Phase 4: the mix ──────────────────────────────────────────────────────
+import { DEFAULT_MIX, mixProblems, allocateMix, mixName } from "./scene-library.mjs";
+import { mixOf } from "./client-config.mjs";
+import { batchMix, validateBrief as validateBatchBrief } from "./plan-offer-batch.mjs";
+import { mixSuggestionFrom, MIX_STEP, MIX_FLOOR, MIX_CAP } from "./what-wins.mjs";
+
+test("SP6 the mix: shares that sum to 100 on the profile, photos that sum to the batch on a brief; shares become whole photos by the largest remainders; a brief's own mix, else its one format, else the gym's default; a mix and a format together, or a directed mix, are refused", () => {
+  assert.deepEqual(DEFAULT_MIX, { workout: 100 });
+  assert.deepEqual(mixProblems({ workout: 50, "studio-portrait": 50 }), []);
+  assert.deepEqual(mixProblems({ workout: 60, "studio-portrait": 30 }), ["the mix's shares must add up to 100 (they add up to 90)"]);
+  assert.deepEqual(mixProblems({ workout: 50, poster: 50 }), ['mix: "poster" is not one of workout, studio-portrait']);
+  assert.deepEqual(mixProblems({ workout: 99.5, "studio-portrait": 0.5 }), ["mix.workout must be a whole number from 0 to 100", "mix.studio-portrait must be a whole number from 0 to 100"]);
+  assert.deepEqual(mixProblems([50, 50]), ["the mix maps each kind of photograph to its share"]);
+  assert.deepEqual(mixProblems({ workout: 4, "studio-portrait": 2 }, { counts: true, total: 6 }), []);
+  assert.deepEqual(mixProblems({ workout: 4, "studio-portrait": 3 }, { counts: true, total: 6 }), ["the mix's photos (7) must add up to the batch's generated photos (6)"]);
+  // Shares → photos.
+  assert.deepEqual(allocateMix({ workout: 50, "studio-portrait": 50 }, 10), { workout: 5, "studio-portrait": 5 });
+  assert.deepEqual(allocateMix({ workout: 50, "studio-portrait": 50 }, 5), { workout: 3, "studio-portrait": 2 }, "a tie goes to the first kind");
+  assert.deepEqual(allocateMix({ workout: 30, "studio-portrait": 70 }, 6), { workout: 2, "studio-portrait": 4 });
+  assert.deepEqual(allocateMix({ workout: 80, "studio-portrait": 20 }, 3), { workout: 2, "studio-portrait": 1 }, "the larger remainder gets the last photo");
+  assert.deepEqual(allocateMix({ workout: 80, "studio-portrait": 20 }, 1), { workout: 1 }, "a kind with a share but no photo is left out");
+  assert.deepEqual(allocateMix({ workout: 100 }, 4), { workout: 4 });
+  assert.deepEqual(allocateMix({ workout: 50, "studio-portrait": 50 }, 0), {});
+  for (let n = 1; n <= 12; n++) for (const p of [10, 20, 30, 50, 70]) assert.equal(Object.values(allocateMix({ workout: 100 - p, "studio-portrait": p }, n)).reduce((a, b) => a + b, 0), n, `${p}% of ${n}`);
+  assert.deepEqual([mixName({ workout: 3 }), mixName({ "studio-portrait": 2, workout: 0 }), mixName({ workout: 1, "studio-portrait": 1 }), mixName({})], ["workout", "studio-portrait", "mixed", null]);
+  // The gym's default.
+  const p = PROFILE_STARTER("testgym", "Test Gym", "SG");
+  assert.deepEqual(mixOf(p), { workout: 100 });
+  assert.deepEqual(mixOf({ creative_defaults: { format: "studio-portrait" } }), { "studio-portrait": 100 }, "Phase 3's one format still reads");
+  assert.deepEqual(mixOf({ creative_defaults: { format: "workout", mix: { workout: 40, "studio-portrait": 60 } } }), { workout: 40, "studio-portrait": 60 }, "the mix wins");
+  assert.deepEqual(validateProfile({ ...p, creative_defaults: { ...p.creative_defaults, mix: { workout: 40, "studio-portrait": 60 } } }).errors, []);
+  assert.deepEqual(validateProfile({ ...p, creative_defaults: { ...p.creative_defaults, mix: { workout: 40, "studio-portrait": 50 } } }).errors.filter((e) => /mix/.test(e)), ["creative_defaults.mix: shares must add up to 100 (they add up to 90)"]);
+  // A batch's photos per kind.
+  const gym = { creative_defaults: { mix: { workout: 50, "studio-portrait": 50 } } };
+  assert.deepEqual(batchMix({ generated: 6 }, gym), { workout: 3, "studio-portrait": 3 }, "the gym's default");
+  assert.deepEqual(batchMix({ generated: 6, format: "studio-portrait" }, gym), { "studio-portrait": 6 }, "the brief's one format");
+  assert.deepEqual(batchMix({ generated: 6, mix: { workout: 5, "studio-portrait": 1 } }, gym), { workout: 5, "studio-portrait": 1 }, "the brief's own counts");
+  assert.deepEqual(batchMix({ generated: 4, mix: { workout: 4, "studio-portrait": 0 } }, gym), { workout: 4 });
+  assert.deepEqual([batchMix({ generated: 0 }, gym), batchMix({ generated: 3 }, null)], [{}, { workout: 3 }]);
+  const brief = { batch_id: "mix-test", offer: "6 Week Reset", locations: ["BISHAN"], generated: 4, real: [], max_calls: 4, scenes: null };
+  assert.deepEqual(validateBatchBrief({ ...brief, mix: { workout: 2, "studio-portrait": 2 } }), []);
+  assert.deepEqual(validateBatchBrief({ ...brief, mix: { workout: 2, "studio-portrait": 1 } }), ["the mix's photos (3) must add up to the batch's generated photos (4)"]);
+  assert.deepEqual(validateBatchBrief({ ...brief, mix: { workout: 2, "studio-portrait": 2 }, format: "workout" }), ["give the batch a format or a mix, not both"]);
+  assert.ok(validateBatchBrief({ ...brief, mix: { workout: 2, "studio-portrait": 2 }, direction: { words: "couples in their fifties, warm and unposed" } }).includes("a directed batch is one kind of photograph: its words or reference decide the pictures, so it cannot be a mix"));
+});
+
+test("SP7 the mix suggestion, by rule and one step at a time: a kind with 20+ leads well under the account's median gains 10 points from the dearest other kind; a dear one gives 10 away; a kind not in the mix is given the floor so it is tested; no kind drops under the floor or passes the cap; thin numbers move nothing; an app-made ad's kind is its batch's record, not the reading's guess", () => {
+  assert.deepEqual([MIX_STEP, MIX_FLOOR, MIX_CAP], [10, 20, 80]);
+  const R = (id, format, spend, leads, over = {}) => ({ source: "account", ad_id: id, status: "active", media: "image", spend, leads, cost_per_lead: leads ? spend / leads : null, read: { format }, ...over });
+  const formats = ["workout", "studio-portrait"];
+  // Portraits clearly cheaper: 12.00 a lead against a median of 20.
+  const cheap = [R("a", "studio-portrait", 600, 50), R("b", "workout", 1000, 50), R("c", "workout", 900, 30), R("d", "workout", 400, 20)];
+  let s = mixSuggestionFrom(cheap, { formats, current: { workout: 50, "studio-portrait": 50 } });
+  assert.deepEqual([s.current, s.suggested, s.changed, s.median], [{ workout: 50, "studio-portrait": 50 }, { workout: 40, "studio-portrait": 60 }, true, 20]);
+  assert.deepEqual(s.formats.map((f) => [f.format, f.ads, f.leads, f.cost_per_lead, f.vs_median, f.confidence, f.share]), [["workout", 3, 100, 23, 1.15, "solid", 50], ["studio-portrait", 1, 50, 12, 0.6, "solid", 50]]);
+  assert.deepEqual(s.reasons, ["studio-portrait (50 leads at SGD 12.00) is 40% under this account's median of SGD 20.00: +10 points, from workout (100 leads at SGD 23.00)."]);
+  // At the cap it stops; the other keeps its floor.
+  s = mixSuggestionFrom(cheap, { formats, current: { workout: 20, "studio-portrait": 80 } });
+  assert.deepEqual([s.suggested, s.changed, s.cap, s.floor], [{ workout: 20, "studio-portrait": 80 }, false, 80, 20]);
+  assert.match(s.reasons[0], /leads, and is already at its cap of 80% \(the others keep 20% each so testing never stops\)/);
+  s = mixSuggestionFrom(cheap, { formats, current: { workout: 25, "studio-portrait": 75 } });
+  assert.deepEqual(s.suggested, { workout: 20, "studio-portrait": 80 }, "a part step, down to the floor");
+  // A kind that is not in the mix yet is given the floor, then the winner's step is taken on top.
+  s = mixSuggestionFrom(cheap, { formats, current: { workout: 100 } });
+  assert.deepEqual(s.suggested, { workout: 70, "studio-portrait": 30 });
+  assert.match(s.reasons[0], /^studio-portrait is not in the mix yet: give it 20% so it is tested \(the floor is 20%\)\.$/);
+  s = mixSuggestionFrom([R("b", "workout", 1000, 50), R("c", "workout", 900, 30)], { formats, current: { workout: 100 } });
+  assert.deepEqual(s.suggested, { workout: 80, "studio-portrait": 20 });
+  assert.match(s.reasons[0], /^studio-portrait is not in the mix yet and has never run in this account: give it 20%/);
+  // A dear kind gives a step away when nothing is clearly cheap.
+  const dear = [R("a", "studio-portrait", 1500, 50), R("b", "workout", 1000, 50), R("c", "workout", 600, 30), R("d", "workout", 380, 20)];
+  s = mixSuggestionFrom(dear, { formats, current: { workout: 50, "studio-portrait": 50 } });
+  assert.deepEqual([s.median, s.suggested], [20, { workout: 60, "studio-portrait": 40 }]);
+  assert.match(s.reasons[0], /^studio-portrait \(50 leads at SGD 30\.00\) is 50% over this account's median of SGD 20\.00: −10 points, to workout\.$/);
+  // Thin numbers move nothing, and that is said; near the median nothing moves either.
+  s = mixSuggestionFrom([R("a", "studio-portrait", 60, 12), R("b", "workout", 1000, 50)], { formats, current: { workout: 50, "studio-portrait": 50 } });
+  assert.deepEqual([s.changed, s.reasons], [false, ["studio-portrait: 12 leads so far — too few to move the mix (it takes 20)."]]);
+  s = mixSuggestionFrom([R("a", "studio-portrait", 950, 50), R("b", "workout", 1000, 50)], { formats, current: { workout: 50, "studio-portrait": 50 } });
+  assert.deepEqual([s.changed, s.reasons], [false, ["No kind is clearly cheaper or dearer than the account's median: the mix stays as it is."]]);
+  assert.deepEqual(mixSuggestionFrom([], { formats, current: { workout: 100 } }).reasons.at(-1), "studio-portrait is not in the mix yet and has never run in this account: give it 20% so it is tested (the floor is 20%).");
+  assert.deepEqual(mixSuggestionFrom([], { formats: ["workout"], current: { workout: 100 } }).reasons, ["No lead-form results to learn from yet: the mix stays as it is."]);
+  // Video is its own track, and an ad this app made is the kind its batch says, whatever a reading of its picture guessed.
+  s = mixSuggestionFrom([...cheap, R("v", "studio-portrait", 5000, 50, { media: "video" }), R("app", "workout", 240, 20, { source: "app", format: "studio-portrait" })], { formats, current: { workout: 50, "studio-portrait": 50 } });
+  assert.deepEqual(s.formats.find((f) => f.format === "studio-portrait").leads, 70, "50 from the account's still + 20 from the app's own portrait ad; the video stays out");
+  assert.match(mixSuggestionFrom(cheap, { formats, current: { workout: 50, "studio-portrait": 50 }, currency: "TWD" }).reasons[0], /TWD 12\.00/);
+});
