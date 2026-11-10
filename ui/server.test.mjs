@@ -564,7 +564,7 @@ test("U10 picks are saved in the batch folder as they are made — review.json, 
   assert.deepEqual(s.excluded, [f0]);
   assert.deepEqual(Object.keys(s).filter((k) => k !== "excluded").sort(), batch.ads.map((a) => a.folder).filter((f) => f !== f0).sort());
   const a1 = batch.ads[1];
-  assert.deepEqual(s[a1.folder], { "1x1": a1.file, "9x16": storyOf[a1.folder] }, "each kept ad names its square and Stories files");
+  assert.deepEqual(s[a1.folder], { "4x5": a1.file, "9x16": storyOf[a1.folder] }, "each kept ad names its feed (4:5) and Stories files");
   assert.equal(resolveSelections(out).length, batch.ads.length - 1, "the Stories step reads it as it reads the gallery's");
   // A photo excluded takes every ad it appears in; the ads' own decisions stay underneath.
   const withR1 = batch.ads.filter((a) => a.photos.includes("r01")).map((a) => a.folder);
@@ -599,7 +599,7 @@ test("U10 picks are saved in the batch folder as they are made — review.json, 
 
 // ── U11 the review and Generating screens (sub-step 2) ───────────────────────
 
-test("U11 the review screen: 1:1 and 9:16 side by side on one screen; arrows move; K/X/U keep, exclude, undo — saved as made; photos exclude their ads; Back works; the Generating screen shows each photo as it passes", async () => {
+test("U11 the review screen: the 4:5 feed ad and its 9:16 side by side on one screen; arrows move; K/X/U keep, exclude, undo — saved as made; photos exclude their ads; Back works; the Generating screen shows each photo as it passes", async () => {
   const { cdp, sessionId } = browser;
   const ev = async (expression) => {
     const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
@@ -629,8 +629,8 @@ test("U11 the review screen: 1:1 and 9:16 side by side on one screen; arrows mov
   await until(`typeof R!=='undefined' && R.data && ${stageReady}`, "the review screen from its address");
   // Side by side, and the whole screen fits the window: no scrolling down to the filmstrip, none sideways.
   const geo = await ev(`(()=>{const [a,b]=[...document.querySelectorAll('#rvStage img')].map(i=>i.getBoundingClientRect()); const strip=document.querySelector('#rvStrip').getBoundingClientRect(); return {a:[a.left,a.right,a.top,a.width,a.height],b:[b.left,b.right,b.top,b.width,b.height],strip:strip.bottom,foot:document.querySelector('#rvFoot').getBoundingClientRect().bottom,h:innerHeight,sh:document.documentElement.scrollHeight,sw:document.documentElement.scrollWidth,w:innerWidth}})()`);
-  assert.ok(geo.b[0] > geo.a[1], "the 9:16 sits to the right of the 1:1");
-  assert.ok(Math.abs(geo.a[4] - geo.b[4]) < 2 && Math.abs(geo.a[3] - geo.a[4]) < 2 && Math.abs(geo.b[3] / geo.b[4] - 9 / 16) < 0.02, `same height, square and 9:16: ${JSON.stringify(geo)}`);
+  assert.ok(geo.b[0] > geo.a[1], "the 9:16 sits to the right of the 4:5");
+  assert.ok(Math.abs(geo.a[4] - geo.b[4]) < 2 && Math.abs(geo.a[3] / geo.a[4] - 4 / 5) < 0.02 && Math.abs(geo.b[3] / geo.b[4] - 9 / 16) < 0.02, `same height, 4:5 and 9:16: ${JSON.stringify(geo)}`);
   assert.ok(geo.a[4] > 400, "big enough to judge");
   assert.ok(geo.foot <= geo.h && geo.sh <= geo.h + 1, `everything on one screen: ${JSON.stringify(geo)}`);
   assert.ok(geo.sw <= geo.w, "no sideways scrolling");
@@ -1616,7 +1616,7 @@ test("U25 the kept ads as a zip for Ads Manager: every kept ad's images by ad se
   assert.equal(buf.readUInt32LE(0), 0x04034b50, "a zip");
   const text = buf.toString("latin1");
   assert.ok(text.includes("ads.csv") && text.includes("README.txt"), "the list and the instructions");
-  assert.ok(/Bishan\/[^\/]+_1x1\.png/.test(text) && !/_v1\.png/.test(text), "one folder per ad set; names that pair (no _v1)");
+  assert.ok(/Bishan\/[^\/]+_4x5\.png/.test(text) && !/_v1\.png/.test(text), "one folder per ad set; names that pair (no _v1)");
   assert.equal((await call(`/api/client/${GYM}/batch/no-such-batch/images.zip`)).status, 404);
   assert.equal((await call(`/api/client/..%2F..%2Fx/batch/${BRIEF.batch_id}/images.zip`)).status, 400);
   const { cdp, sessionId } = browser;
@@ -2569,7 +2569,7 @@ test("U47 once a week, by itself (2026-11-10): a panel with the weekly refresh o
   } finally { await panel.stop(); panel = main; graph.server.close(); rmSync(file, { force: true }); }
 });
 
-test("U48 the look and the feed shape (Phase 2, 2026-11-10): a gym's Ad defaults take a look family and a feed shape (a look or shape that is not one is refused); a brief checked for that gym carries them, so the brief on disk says what ran; the Create preview renders the formula's three layouts at 4:5; Ad defaults and Create show the two choices and the brief built on the page sends them", async () => {
+test("U48 the look, and 4:5 as the only feed shape (2026-11-10): a gym's Ad defaults take a look family (one that is not is refused) and no shape but 4:5 — the square is refused on a profile and on a new brief, and allowed only for a batch already made as a square; a brief checked for that gym carries its look; the Create preview renders at 4:5 whatever is asked; Ad defaults and Create show the look as a choice and the shape as a fact", async () => {
   const g = join(brands, GYM), pf = join(g, "gym-profile.json");
   await linkTestGym();
   const before = readFileSync(pf, "utf-8"), profile = JSON.parse(before);
@@ -2578,6 +2578,8 @@ test("U48 the look and the feed shape (Phase 2, 2026-11-10): a gym's Ad defaults
     assert.equal(r.status, 400); assert.match(JSON.stringify(await r.json()), /creative_defaults.look must be one of reference, formula/);
     r = await call(`/api/client/${GYM}`, { method: "PUT", body: { ...profile, creative_defaults: { ...profile.creative_defaults, ratio: "9x16" } } });
     assert.equal(r.status, 400);
+    r = await call(`/api/client/${GYM}`, { method: "PUT", body: { ...profile, creative_defaults: { ...profile.creative_defaults, ratio: "1x1" } } });
+    assert.equal(r.status, 400); assert.match(JSON.stringify(await r.json()), /creative_defaults.ratio must be 4x5: feed ads are made at 4:5 and Stories at 9:16 \(the square is no longer made\)/);
     // A brief with neither, for a gym on the standard defaults: nothing is added.
     const raw = { batch_id: "look-check", ...WORDS, free: false, generated: 0, real: BRIEF.real, looks_per_photo: 2, max_calls: 0, attempts: 1, scenes: null };
     let c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: raw } })).json();
@@ -2585,9 +2587,19 @@ test("U48 the look and the feed shape (Phase 2, 2026-11-10): a gym's Ad defaults
     r = await call(`/api/client/${GYM}`, { method: "PUT", body: { ...profile, creative_defaults: { ...profile.creative_defaults, look: "formula", ratio: "4x5" } } });
     assert.equal(r.status, 200, await r.clone().text());
     c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: raw } })).json();
-    assert.deepEqual([c.errors, c.brief.look, c.brief.ratio], [[], "formula", "4x5"], "the gym's defaults ride on the brief");
-    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, look: "reference", ratio: "1x1" } } })).json();
-    assert.deepEqual([c.brief.look, c.brief.ratio], ["reference", "1x1"], "a brief's own choice stands");
+    assert.deepEqual([c.errors, c.brief.look, "ratio" in c.brief], [[], "formula", false], "the gym's look rides on the brief; the shape needs no saying");
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, look: "reference", ratio: "4x5" } } })).json();
+    assert.deepEqual([c.errors, c.brief.look, c.brief.ratio], [[], "reference", "4x5"], "a brief's own look stands");
+    // The square is no longer made: a new brief that asks for it is refused …
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, ratio: "1x1" } } })).json();
+    assert.deepEqual(c.errors, ["feed ads are made at 4:5 and their Stories versions at 9:16: the square (1:1) is no longer made"]);
+    // … and only a batch already made as a square may name it (its words changed, run again).
+    const sqDir = join(g, "outputs", "look-square");
+    mkdirSync(sqDir, { recursive: true }); writeFileSync(join(sqDir, "batch.json"), JSON.stringify({ batch_id: "look-square", ratio: "1x1", ads: [] }));
+    try {
+      c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, batch_id: "look-square", ratio: "1x1" } } })).json();
+      assert.deepEqual(c.errors, []);
+    } finally { rmSync(sqDir, { recursive: true, force: true }); }
     c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, look: "loud" } } })).json();
     assert.ok(c.errors.some((e) => /look "loud" is not one of reference, formula/.test(e)));
     // The preview: the gym's look and shape by default, the Create screen's own when it sends them.
@@ -2596,14 +2608,15 @@ test("U48 the look and the feed shape (Phase 2, 2026-11-10): a gym's Ad defaults
     for (const l of pv.looks) { assert.ok(l.ok, `${l.id}: ${l.failures}`); const png = Buffer.from(await (await fetch(panel.url + l.url)).arrayBuffer()); assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1080, 1350], `${l.id} at 4:5`); }
     pv = await (await call("/api/preview", { method: "POST", body: { gym: GYM, offer: WORDS.offer, location: "ANG MO KIO", audience: "MEN", look: "reference", ratio: "1x1" } })).json();
     assert.deepEqual(pv.looks.map((l) => l.id), ["t1", "t3", "t5", "t8"]);
+    { const png = Buffer.from(await (await fetch(panel.url + pv.looks[0].url)).arrayBuffer()); assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1080, 1350], "the reference set at 4:5 too: a square is not rendered whatever is asked"); }
     // The page.
     const { cdp, sessionId } = browser;
     const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
     const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u48${hash.replace(/\W/g, "")}#/${GYM}/${hash}` }, sessionId); await loaded; const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); };
     await open("defaults", "!!document.querySelector('input[name=cdLook]')");
-    assert.deepEqual(await ev("[document.querySelector('input[name=cdLook]:checked').parentElement.textContent.includes('The formula'), document.querySelector('input[name=cdRatio]:checked').parentElement.textContent.includes('Portrait (4:5)'), /No look adds a logo or the gym's brand colours unless you ask/.test(document.querySelector('#view').textContent)]"), [true, true, true]);
-    await open("create", "!!document.querySelector('#bLook') && !!document.querySelector('#bRatio')");
-    assert.deepEqual(await ev("[document.querySelector('#bLook').value, document.querySelector('#bRatio').value, briefFromDraft().look, briefFromDraft().ratio]"), ["formula", "4x5", "formula", "4x5"], "the gym's defaults pre-fill the batch's own choice");
-    assert.deepEqual(await ev("bSet('look','reference'); bSet('ratio','1x1'); ['look' in briefFromDraft(), 'ratio' in briefFromDraft()]"), [false, false]);
+    assert.deepEqual(await ev("[document.querySelector('input[name=cdLook]:checked').parentElement.textContent.includes('The formula'), !!document.querySelector('input[name=cdRatio]'), /every feed ad is portrait 4:5 and its Stories and Reels version 9:16/.test(document.querySelector('#cdShape').textContent), /The square \\(1:1\\) is no longer made/.test(document.querySelector('#cdShape').textContent), /No look adds a logo or the gym's brand colours unless you ask/.test(document.querySelector('#view').textContent)]"), [true, false, true, true, true]);
+    await open("create", "!!document.querySelector('#bLook') && !!document.querySelector('#bShape')");
+    assert.deepEqual(await ev("[document.querySelector('#bLook').value, !!document.querySelector('#bRatio'), document.querySelector('#bShape').textContent, briefFromDraft().look, 'ratio' in briefFromDraft()]"), ["formula", false, "4:5 feed · 9:16 Stories", "formula", false], "the gym's look pre-fills the batch's own choice; the shape is not a choice");
+    assert.deepEqual(await ev("bSet('look','reference'); ['look' in briefFromDraft(), 'ratio' in briefFromDraft()]"), [false, false]);
   } finally { writeFileSync(pf, before); }
 });

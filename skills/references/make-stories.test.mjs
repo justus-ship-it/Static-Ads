@@ -72,7 +72,7 @@ async function finishedBatch(dir) {
   const calls = [];
   const deps = { generate: generate(calls), check: check1x1, checkRef: async () => [], checkPhoto: async () => ({ text: [], never: [], people_count: 0, people_box: null, face_boxes: [] }), compositor: null, browser };
   const r = await runBatch({ brandDir: dir, brief: BRIEF, deps, log: () => {} });
-  const selections = Object.fromEntries(r.batch.ads.map((a) => [a.folder, { "1x1": a.file }]));
+  const selections = Object.fromEntries(r.batch.ads.map((a) => [a.folder, { [a.ratio]: a.file }]));
   writeFileSync(join(r.out, "selections.json"), JSON.stringify({ ...selections, excluded: [] }));
   return { out: r.out, batch: r.batch };
 }
@@ -242,7 +242,7 @@ test("S4 every Stories version renders inside Meta's safe zone with its 1:1's lo
     const S = safe(), byFolder = new Map(batch.ads.map((a) => [a.folder, a]));
     for (const ad of r.stories.ads) {
       const one = byFolder.get(ad.folder);
-      assert.equal(ad.file, storiesFile(one.file));
+      assert.equal(ad.file, storiesFile(one.file, one.ratio));
       assert.match(ad.file, /\/9x16\/.*_9x16_v1\.png$/);
       const png = readFileSync(join(out, ad.file));
       assert.deepEqual(pngSize(png), T.canvas[RATIO], `${ad.folder}: 1080×1920`);
@@ -357,14 +357,14 @@ test("S6 a look the scene's pose cannot be composed for is skipped, not fatal; a
       const rec = r.stories.photos[id];
       assert.equal(rec.kind, "band", id);
       assert.deepEqual(pngSize(readFileSync(rec.file)), [1080, 1920]);
-      assert.match(rec.notes[0], /^the 1:1 ad's crop of the chosen photo as a band/);
+      assert.match(rec.notes[0], /^the 4:5 ad's crop of the chosen photo as a band/);
       assert.equal(rec.crop.length, 4, "the window the 1:1 ad showed");
       // The 1:1 check's boxes, moved onto the canvas: inside where the band drew the photo.
       const [bx, by, bw, bh] = rec.band, within = ([y0, x0, y1, x1]) => y0 >= (by / 1920) * 1000 - 1 && x0 >= (bx / 1080) * 1000 - 1 && y1 <= ((by + bh) / 1920) * 1000 + 1 && x1 <= ((bx + bw) / 1080) * 1000 + 1;
       assert.ok(rec.answer.people_box && within(rec.answer.people_box), `${id}: people inside the band`);
       assert.ok(rec.answer.face_boxes.length && rec.answer.face_boxes.every(within), `${id}: faces inside the band`);
     }
-    assert.ok(logs.some((l) => new RegExp(`${Q}: t\\d from the chosen photo's 1:1 crop as a band \\(no image call\\)`).test(l)), logs.join(" | "));
+    assert.ok(logs.some((l) => new RegExp(`${Q}: t\\d from the chosen photo's 4:5 crop as a band \\(no image call\\)`).test(l)), logs.join(" | "));
     assert.equal(JSON.parse(readFileSync(join(out, "spend.json"), "utf-8")).stories_image_calls, 3);
     assert.equal(r.stories.partial, undefined, "the final record is not a checkpoint");
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -433,7 +433,7 @@ test("S8 a band keeps the layout its 1:1 ad verified even when its own 9:16 fit 
       if (y0 + h > 1000) continue;
       const inPhoto = toPhoto([y0, x0, y0 + h, x0 + w]);
       const a1 = { people_box: inPhoto, face_boxes: [[inPhoto[0], inPhoto[1], inPhoto[0] + 40, inPhoto[1] + 40]], people_count: 1 };
-      const f1 = fitLayouts(a1, { ratio: "1x1", imageSize: size, expectPeople: true, maxPeople: 1, catalogue: CAT })[la];
+      const f1 = fitLayouts(a1, { ratio: "4x5", imageSize: size, expectPeople: true, maxPeople: 1, catalogue: CAT })[la];
       const f9 = fitLayouts(inBand(a1, band, { crop, size }), { ratio: RATIO, imageSize: [1080, 1920], expectPeople: true, maxPeople: 1, catalogue: CAT })[la];
       if (f1.ok && !f9.ok && /under text areas/.test(f9.failures.join(" "))) { found = { a1, f9 }; break; }
     }
@@ -446,8 +446,8 @@ test("S8 a band keeps the layout its 1:1 ad verified even when its own 9:16 fit 
     const r = await runStories({ brandDir: dir, batchId: "test-batch", deps: { generate: generate(calls), check, sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser, gallery: () => {} }, log: (m) => logs.push(m) });
     const bandId = `${Q}-${RATIO}-band-${short(la)}`, rec = r.stories.photos[bandId];
     assert.ok(rec, "the band was made");
-    assert.match(rec.notes.join(" | "), new RegExp(`placement inherited from the 1:1 ad, which verified with this crop \\(the band's own fit for ${short(la)}: \\d+% of the people sit under text areas`));
-    assert.ok(logs.some((l) => new RegExp(`${Q}: the ${short(la)} band keeps the 1:1 ad's placement`).test(l)), logs.join(" | "));
+    assert.match(rec.notes.join(" | "), new RegExp(`placement inherited from the 4:5 ad, which verified with this crop \\(the band's own fit for ${short(la)}: \\d+% of the people sit under text areas`));
+    assert.ok(logs.some((l) => new RegExp(`${Q}: the ${short(la)} band keeps the 4:5 ad's placement`).test(l)), logs.join(" | "));
     const wanted = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).ads.filter((a) => a.candidate === victim.candidate).length;
     const made = r.stories.ads.filter((a) => a.candidate === victim.candidate);
     assert.equal(made.length, wanted, `every location made from the band: left out ${JSON.stringify(r.stories.left_out)}, failed ${JSON.stringify(r.stories.failed)}`);
@@ -622,7 +622,7 @@ test("S14 the photo above the words (2026-10-07): an ad no layout can carry at 9
     assert.match(mine.photos[0], new RegExp(`^${first}-${RATIO}-stack-t\\d$`));
     const rec = r.stories.photos[mine.photos[0]];
     assert.deepEqual([rec.kind, rec.stacked, rec.treatment], ["band", true, mine.treatment]);
-    assert.match(rec.notes[0], /^the 1:1 ad's crop of the chosen photo above the words/);
+    assert.match(rec.notes[0], /^the 4:5 ad's crop of the chosen photo above the words/);
     // The photo sits above the layout's text: the band's bottom is above the topmost text region.
     const top = Math.min(...layoutFor(T.treatments[mine.treatment], RATIO, T).groups.map((g) => (g.region[1] / 100) * 1920));
     assert.ok(rec.band[1] + rec.band[3] <= top, `band ${rec.band} ends above the words at ${top}`);
@@ -657,5 +657,28 @@ test("S15 Stories from a 4:5 formula batch (2026-11-10): each ad's 9:16 is a nat
       assert.ok(s.stories.photos[ad.photos[0]]?.status === "passed" && s.stories.photos[ad.photos[0]].kind !== "band", `${ad.folder}: a native 9:16 photo, not a band`);
     }
     for (const res of s.results) { assert.ok(!res.failed, `${res.id}: ${JSON.stringify(res.failed)}`); for (const { r: rr } of res.renders) for (const b of rr.report.blocks) assert.ok(inside(b.rect, S), `${res.id}: "${b.text}" inside the live area: ${JSON.stringify(b.rect)} in ${JSON.stringify(S)} ${JSON.stringify(rr.report.groups.map((g) => [g.id, g.floated, g.region]))}`); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("S16 a square batch from before the 4:5 rule (2026-11-10) still gets its Stories versions: each 9:16 beside its 1:1, the same look and words, the band named for the 1:1 ad", async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const calls = [];
+    const deps = { generate: generate(calls), check: check1x1, checkRef: async () => [], checkPhoto: async () => ({ text: [], never: [], people_count: 0, people_box: null, face_boxes: [] }), compositor: null, browser };
+    const r = await runBatch({ brandDir: dir, brief: { ...BRIEF, batch_id: "old-square", ratio: "1x1" }, deps, log: () => {} }); // as those batches are on disk
+    assert.ok(r.batch.ratio === "1x1" && r.batch.ads.every((a) => /\/1x1\/.*_1x1_v1\.png$/.test(a.file)));
+    writeFileSync(join(r.out, "selections.json"), JSON.stringify({ ...Object.fromEntries(r.batch.ads.map((a) => [a.folder, { "1x1": a.file }])), excluded: [] }));
+    const logs = [];
+    const s = await runStories({ brandDir: dir, batchId: "old-square", deps: { generate: generate([]), check: check9, sibling: async () => ({ ok: true, failures: [], notes: [] }), compositor: null, browser }, log: (m) => logs.push(m) });
+    assert.ok(s.stories.ads.length > 0, logs.join(" | "));
+    const byFolder = new Map(r.batch.ads.map((a) => [a.folder, a]));
+    for (const ad of s.stories.ads) {
+      const one = byFolder.get(ad.folder);
+      assert.equal(ad.file, storiesFile(one.file)); assert.match(ad.file, /\/9x16\/.*_9x16_v1\.png$/);
+      assert.deepEqual([ad.treatment, ad.style, ad.palette, ad.location], [one.treatment, one.style, one.palette, one.location]);
+      assert.deepEqual(pngSize(readFileSync(join(r.out, ad.file))), [1080, 1920]);
+    }
+    assert.ok(!logs.some((l) => /4:5/.test(l)), "nothing about this batch is called 4:5");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

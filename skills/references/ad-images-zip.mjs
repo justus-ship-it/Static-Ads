@@ -4,7 +4,7 @@
  *
  *   {Location}/{ad}_1x1.png     the feed image
  *   {Location}/{ad}_9x16.png    its Stories and Reels version, when it has one
- *   ads.csv                     ad set · ad · the 1:1 file · the 9:16 file
+ *   ads.csv                     ad set · ad · the feed file (4:5; 1:1 on a batch made before 2026-11-10) · the 9:16 file
  *   README.txt                  how the files pair in Ads Manager
  *
  * One folder per location callout, which is one ad set (the app's own rule). The version suffix (_v1) is
@@ -49,7 +49,7 @@ export function zipStore(entries) {
   return Buffer.concat([...locals, cd, end]);
 }
 
-/** What goes in a batch's zip: every kept ad's 1:1 and 9:16, by ad set, with the list and the instructions. */
+/** What goes in a batch's zip: every kept ad's feed image and its 9:16, by ad set, with the list and the instructions. */
 export function keptImagesZip(batchDir, { batchId = "batch" } = {}) {
   const kept = keptAds(batchDir), entries = [], rows = [["ad set", "ad", "feed image (1x1 or 4x5)", "9x16 (Stories and Reels)"]], missing = [];
   for (const a of kept) {

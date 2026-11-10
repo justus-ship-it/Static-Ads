@@ -19,7 +19,7 @@ import { launchBrowser, loadCatalogue, renderComposite } from "./render-composit
 import { fitLayouts } from "./check-visual.mjs";
 import { assignVariants } from "./assign-variants.mjs";
 import { cropImage } from "./clean-photo.mjs";
-import { ageTargets, ageBand, spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
+import { ageTargets, ageBand, spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, madeShape, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
 const sceneProblemsOf = (s) => sceneProblems(s).join("; ");
 import { poseProblem } from "./visual-prompts.mjs";
 import { rejectScene } from "./scene-library.mjs";
@@ -866,7 +866,7 @@ test("B12 a gym's brand palettes: with palettes \"brand\" every ad uses one of t
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("B11 a formula batch at 4:5 (2026-11-10): the brief's look and feed shape pick the catalogue and the canvas — photos asked for at 4:5, every ad a formula layout, style and pairing, rendered 1080 × 1350 into a 4x5 folder, with the look and ratio on batch.json; the gym's Ad defaults stand in when the brief names neither; a look that is not a family is refused", async () => {
+test("B11 a formula batch at 4:5 (2026-11-10); every new batch is 4:5 and a square batch from before keeps its shape: the brief's look and feed shape pick the catalogue and the canvas — photos asked for at 4:5, every ad a formula layout, style and pairing, rendered 1080 × 1350 into a 4x5 folder, with the look and ratio on batch.json; the gym's Ad defaults stand in when the brief names neither; a look that is not a family is refused", async () => {
   const dir = brandSetup();
   try {
     const calls = [], logs = [];
@@ -890,8 +890,28 @@ test("B11 a formula batch at 4:5 (2026-11-10): the brief's look and feed shape p
     const { look, ratio, ...plain } = brief;
     const r2 = await runBatch({ brandDir: dir, brief: { ...plain, batch_id: "formula-default" }, deps, log: () => {} });
     assert.deepEqual([r2.batch.ratio, r2.batch.look, r2.batch.ads.every((a) => /^f[123]-/.test(a.treatment))], ["4x5", "formula", true]);
-    // And a brief may still ask for the reference set at a square.
-    const r3 = await runBatch({ brandDir: dir, brief: { ...plain, batch_id: "reference-again", look: "reference", ratio: "1x1" }, deps, log: () => {} });
-    assert.deepEqual([r3.batch.ratio, r3.batch.look, r3.batch.ads.every((a) => /^t\d-/.test(a.treatment))], ["1x1", "reference", true]);
+    // A brief may still ask for the reference set — at 4:5 like every feed ad (the owner's rule, 2026-11-10: 4:5 and 9:16 only).
+    const r3 = await runBatch({ brandDir: dir, brief: { ...plain, batch_id: "reference-again", look: "reference" }, deps, log: () => {} });
+    assert.deepEqual([r3.batch.ratio, r3.batch.look, r3.batch.ads.every((a) => /^t\d-/.test(a.treatment) && /\/4x5\/c\d\d-jurong-west_4x5_v1\.png$/.test(a.file))], ["4x5", "reference", true]);
+    // A batch made as a square before the rule keeps its shape: its words changed, or run again, it is a square still —
+    // whatever the brief says now. (Made here the way those batches are on disk: a square batch.json.)
+    const sq = { ...plain, batch_id: "old-square", look: "reference" };
+    const r4 = await runBatch({ brandDir: dir, brief: { ...sq, ratio: "1x1" }, deps, log: () => {} });
+    assert.equal(r4.batch.ratio, "1x1");
+    const before = calls.length, said = [];
+    const r5 = await runBatch({ brandDir: dir, brief: { ...sq, offer: "8 Week Body Reset" }, renderOnly: true, deps, log: (l) => said.push(l) });
+    assert.deepEqual([r5.batch.ratio, calls.length - before, r5.batch.ads.every((a) => /\/1x1\/.*_1x1_v1\.png$/.test(a.file))], ["1x1", 0, true], "no shape on the brief: the batch's own");
+    const r6 = await runBatch({ brandDir: dir, brief: { ...sq, ratio: "4x5" }, renderOnly: true, deps, log: (l) => said.push(l) });
+    assert.equal(r6.batch.ratio, "1x1");
+    assert.ok(said.some((l) => /this batch was made at 1:1 and keeps that shape \(the brief asked for 4:5\)/.test(l)), said.join(" | "));
+    // madeShape: nothing made → none; a finished batch says it (one from before shapes were recorded is a square); a
+    // run under way says it in progress.json; photos or spend with no shape on record are a square's.
+    const shapes = join(dir, "shapes"); mkdirSync(shapes, { recursive: true });
+    assert.equal(madeShape(shapes), null);
+    writeFileSync(join(shapes, "progress.json"), JSON.stringify({ stage: "photos" })); assert.equal(madeShape(shapes), null, "an old progress file alone says nothing");
+    writeFileSync(join(shapes, "spend.json"), "{}"); assert.equal(madeShape(shapes), "1x1");
+    writeFileSync(join(shapes, "progress.json"), JSON.stringify({ stage: "photos", ratio: "4x5" })); assert.equal(madeShape(shapes), "4x5");
+    writeFileSync(join(shapes, "batch.json"), JSON.stringify({ ads: [] })); assert.equal(madeShape(shapes), "1x1");
+    assert.deepEqual([madeShape(join(dir, "outputs", "formula-batch")), madeShape(join(dir, "outputs", "old-square"))], ["4x5", "1x1"]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

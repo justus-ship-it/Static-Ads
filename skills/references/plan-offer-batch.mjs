@@ -361,6 +361,19 @@ const hashFile = (p) => createHash("sha256").update(readFileSync(p)).digest("hex
  *   stage: photos → fit → looks → render → gallery → done | failed
  *   photos[id].state: queued · checking · generating · retrying · passed · flagged · skipped · error
  */
+/**
+ * The feed shape a batch folder's work was made at, or null when nothing has been made there yet. A finished batch says
+ * it (batch.json; one from before shapes were recorded is a square), a run under way or stopped says it in progress.json,
+ * and photos or spend from before 2026-11-10 with no shape on record are a square's. A batch keeps its shape for good.
+ */
+export function madeShape(out) {
+  const read = (f) => { try { return JSON.parse(readFileSync(join(out, f), "utf-8")); } catch { return null; } };
+  const b = read("batch.json"); if (b) return b.ratio || "1x1";
+  const p = read("progress.json"); if (p?.ratio) return p.ratio;
+  if (existsSync(join(out, "pictures.json")) || existsSync(join(out, "spend.json"))) return "1x1";
+  return null;
+}
+
 export function progressWriter(out, base) {
   const path = join(out, "progress.json");
   const state = { ...base, photos: { ...(base.photos || {}) } };
@@ -398,13 +411,18 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   const catalogue = catalogueFor(profile, null, { look });
   const errs = validateBrief(brief, { brandDir, catalogue });
   if (errs.length) throw new Error(`the brief cannot run:\n- ${errs.join("\n- ")}`);
-  const ratio = brief.ratio || profile.creative_defaults?.ratio || CREATIVE_DEFAULTS.ratio, looks = brief.looks_per_photo ?? 2, seed = brief.seed || brief.batch_id;
+  const looks = brief.looks_per_photo ?? 2, seed = brief.seed || brief.batch_id;
   const exclude = excludeFromProfile(profile.creative);
   const audience = brief.audience ?? null;
   const texts = brief.locations.map((location) => ({ location, audience, offer: brief.offer, free: brief.free === true }));
   const photography = profile.brand_lock?.photography || {};
   const brandNames = [profile.display_name, profile.formerly?.split(/\s[—–-]\s|[;,(]/)[0].trim()].filter(Boolean);
   const out = resolve(outDir || join(brandDir, "outputs", brief.batch_id));
+  // The feed shape: a batch with work on disk keeps the shape it was made at (a square batch from before 2026-11-10 is
+  // re-rendered and run again as a square); a new one is the brief's, else the gym's, else 4:5.
+  const made = madeShape(out);
+  const ratio = made || brief.ratio || profile.creative_defaults?.ratio || CREATIVE_DEFAULTS.ratio;
+  if (made && brief.ratio && brief.ratio !== made) log(`· this batch was made at ${made.replace("x", ":")} and keeps that shape (the brief asked for ${brief.ratio.replace("x", ":")})`);
   mkdirSync(out, { recursive: true });
   const at = (p) => (existsSync(join(brandDir, "brand-assets", p)) ? join(brandDir, "brand-assets", p) : resolve(p));
 
@@ -440,7 +458,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   log(`· plan: ${visuals.length} photo(s) to generate (${visuals.map((v) => `${v.id} for ${shortLayout(v.treatment)}: ${v.scene_id || "brief scene"}`).join("; ") || "none"}), ${(brief.real || []).length} real; ${looks} look(s) each × ${brief.locations.length} location(s); at most ${plan.max_calls} image call(s)`);
   if (dryRun) return { dryRun: true, plan, out };
   // What this run is doing, photo by photo: the panel's Generating screen reads it (progress.json).
-  const prog = progressWriter(out, { batch_id: brief.batch_id, run: renderOnly ? "render-only" : "run", started: new Date().toISOString(), pid: process.pid, stage: "photos", max_calls: plan.max_calls, attempts: plan.attempts, spent_before: 0, calls: 0, real: (brief.real || []).length, ads: null, failed: 0, error: null,
+  const prog = progressWriter(out, { batch_id: brief.batch_id, run: renderOnly ? "render-only" : "run", started: new Date().toISOString(), pid: process.pid, stage: "photos", ratio, max_calls: plan.max_calls, attempts: plan.attempts, spent_before: 0, calls: 0, real: (brief.real || []).length, ads: null, failed: 0, error: null,
     photos: Object.fromEntries(visuals.map((v) => [v.id, { scene_id: v.scene_id || null, scene: v.scene, treatment: v.treatment, state: "queued" }])) });
   try {
 

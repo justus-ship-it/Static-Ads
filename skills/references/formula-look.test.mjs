@@ -49,10 +49,12 @@ test("F1 two families, one catalogue: a batch's loops see its own family only, a
   // The reference layouts derive to 4:5 as they do to 9:16.
   assert.deepEqual(validateLayout(layoutFor(REF.treatments.treatments["t1-bottom-stack"], "4x5", REF.treatments), "t1", [1080, 1350], [5, 5, 90, 90]), []);
   // Ad defaults: the look family and the feed shape.
-  assert.deepEqual([CREATIVE_DEFAULTS.look, CREATIVE_DEFAULTS.ratio, FEED_RATIOS], ["reference", "1x1", ["1x1", "4x5"]]);
+  // The owner's rule (2026-11-10): feed ads are 4:5 only, Stories 9:16; the square is no longer made, and a profile cannot ask for it.
+  assert.deepEqual([CREATIVE_DEFAULTS.look, CREATIVE_DEFAULTS.ratio, FEED_RATIOS], ["reference", "4x5", ["4x5"]]);
   const p = PROFILE_STARTER("testgym", "Test Gym", "SG");
+  assert.match(validateProfile({ ...p, creative_defaults: { ...p.creative_defaults, ratio: "1x1" } }).errors.join(" | "), /creative_defaults\.ratio must be 4x5: feed ads are made at 4:5 and Stories at 9:16 \(the square is no longer made\)/);
   assert.deepEqual(validateProfile({ ...p, creative_defaults: { ...p.creative_defaults, look: "formula", ratio: "4x5" } }).errors, []);
-  assert.deepEqual(validateProfile({ ...p, creative_defaults: { ...p.creative_defaults, look: "loud", ratio: "9x16" } }).errors.filter((e) => /look|ratio/.test(e)), ["creative_defaults.look must be one of reference, formula", "creative_defaults.ratio must be one of 1x1, 4x5"]);
+  assert.deepEqual(validateProfile({ ...p, creative_defaults: { ...p.creative_defaults, look: "loud", ratio: "9x16" } }).errors.filter((e) => /look|ratio/.test(e)), ["creative_defaults.look must be one of reference, formula", "creative_defaults.ratio must be 4x5: feed ads are made at 4:5 and Stories at 9:16 (the square is no longer made)"]);
   assert.deepEqual([catalogueFor({ creative_defaults: { look: "formula" } }).look, catalogueFor({ creative_defaults: { look: "formula" } }, null, { look: "reference" }).look, catalogueFor({}).look, Object.keys(catalogueFor({ creative_defaults: { look: "formula", palettes: "brand" } }).palettes.palettes).length], ["formula", "reference", "reference", 12], "the batch's look wins over the gym's; the formula brings its own pairings whatever the brand-palette mode");
   // The Stories file sits beside the feed image whatever its shape; the feed ad's crop window is its own shape.
   assert.deepEqual([storiesFile("101-c01-x-f1-f-cream/4x5/c01-x_4x5_v1.png", "4x5"), storiesFile("101-c01-x-t1-red/1x1/c01-x_1x1_v1.png")], ["101-c01-x-f1-f-cream/9x16/c01-x_9x16_v1.png", "101-c01-x-t1-red/9x16/c01-x_9x16_v1.png"]);

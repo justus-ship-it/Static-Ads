@@ -172,7 +172,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
   const catalogue = catalogueFor(profile, null, { look: batch.look }); // the feed ads' look family and palettes, brand ones included
   const T = catalogue.treatments;
-  const feed = batch.ratio || "1x1", feedCanvas = T.canvas[feed] || [1080, 1080]; // the feed ad's shape: its crop window is that shape, not always a square
+  const feed = batch.ratio || "1x1", feedName = feed.replace("x", ":"), feedCanvas = T.canvas[feed] || [1080, 1080]; // the feed ad's shape: its crop window is that shape, not always a square
   const photography = profile.brand_lock?.photography || {}, brandNames = [profile.display_name].filter(Boolean);
   const visualsById = Object.fromEntries((existsSync(join(out, "visuals.json")) ? JSON.parse(readFileSync(join(out, "visuals.json"), "utf-8")).visuals : []).map((v) => [v.id, v]));
   const pictures = existsSync(join(out, "pictures.json")) ? JSON.parse(readFileSync(join(out, "pictures.json"), "utf-8")) : {};
@@ -325,8 +325,8 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
         const crop = cropWindow(size, ad?.crop?.[0] || [0.5, 0.5], feedCanvas);
         const file = join(visualsDir, `${id}.png`), band = await bandImage(browser, src, file, { crop }), pic = pictures[p.id]?.check;
         const answer = inBand(pic?.placement ? { people_box: pic.placement.people_box, face_boxes: pic.faces, people_count: pic.placement.people_count } : null, band, { crop, size });
-        prior[id] = { status: "passed", kind: "band", for: p.id, treatment: la, file, band, crop, checks: STORIES_CHECKS, answer, notes: [`the 1:1 ad's crop of the chosen photo as a band: ${why}`], failures: [] };
-        log(`· ${p.id}: ${short(la)} from the chosen photo's 1:1 crop as a band (no image call)`);
+        prior[id] = { status: "passed", kind: "band", for: p.id, treatment: la, file, band, crop, checks: STORIES_CHECKS, answer, notes: [`the ${feedName} ad's crop of the chosen photo as a band: ${why}`], failures: [] };
+        log(`· ${p.id}: ${short(la)} from the chosen photo's ${feedName} crop as a band (no image call)`);
       }
       const fit = admit(id, prior[id], visualsById[p.id]?.people ?? null);
       // The 9:16 layouts are derived from the 1:1 ones with different horizontal and vertical scales,
@@ -337,8 +337,8 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
       if (!allowed[id].includes(la)) {
         const own = fit[la]?.failures?.join("; ") || "not judged";
         allowed[id].push(la); focus[id][la] = fit[la]?.focus || [0.5, 0.5];
-        if (!prior[id].notes.some((n) => n.startsWith("placement inherited"))) prior[id].notes.push(`placement inherited from the 1:1 ad, which verified with this crop (the band's own fit for ${short(la)}: ${own})`);
-        log(`· ${p.id}: the ${short(la)} band keeps the 1:1 ad's placement (its own fit: ${own})`);
+        if (!prior[id].notes.some((n) => n.startsWith("placement inherited"))) prior[id].notes.push(`placement inherited from the ${feedName} ad, which verified with this crop (the band's own fit for ${short(la)}: ${own})`);
+        log(`· ${p.id}: the ${short(la)} band keeps the ${feedName} ad's placement (its own fit: ${own})`);
       }
       return id;
     };
@@ -449,8 +449,8 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
         const crop = cropWindow(size, ad?.crop?.[0] || [0.5, 0.5], feedCanvas);
         const file = join(visualsDir, `${id}.png`), band = await bandImage(browser, src, file, { crop, window: win }), pic = pictures[p.id]?.check;
         const answer = inBand(pic?.placement ? { people_box: pic.placement.people_box, face_boxes: pic.faces, people_count: pic.placement.people_count } : null, band, { crop, size });
-        prior[id] = { status: "passed", kind: "band", stacked: true, for: p.id, treatment: la, file, band, crop, checks: STORIES_CHECKS, answer, notes: [`the 1:1 ad's crop of the chosen photo above the words, on the blurred backdrop: ${why}`], failures: [] };
-        log(`· ${p.id}: ${short(la)} with the chosen photo's 1:1 crop above the words (no image call)`);
+        prior[id] = { status: "passed", kind: "band", stacked: true, for: p.id, treatment: la, file, band, crop, checks: STORIES_CHECKS, answer, notes: [`the ${feedName} ad's crop of the chosen photo above the words, on the blurred backdrop: ${why}`], failures: [] };
+        log(`· ${p.id}: ${short(la)} with the chosen photo's ${feedName} crop above the words (no image call)`);
       }
       admit(id, prior[id], visualsById[p.id]?.people ?? null);
       // The words sit below the photo by construction, so the layout is allowed whatever its placement rule says of the photo above.

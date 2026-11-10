@@ -50,7 +50,7 @@ import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHi
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
-import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
+import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, madeShape } from "../skills/references/plan-offer-batch.mjs";
 import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
@@ -696,9 +696,15 @@ function checkBrief(gym, raw) {
   // cleaned coach/member photo that is only ever a reference). Without one, a gym without premises photos generated
   // rooms from nothing (F45 Xinyi, 2026-10-07). A real photo in the batch still stands in when the gym names none.
   if (brief && typeof brief === "object" && brief.reference == null) { const rr = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference; if (typeof rr === "string" && rr && !rr.includes("..") && existsSync(join(brandDir(gym), "brand-assets", rr))) brief.reference = rr; }
-  // The gym's look and feed shape (Ad defaults) ride on the brief when it names none and they differ from the standard, so the brief on disk says what ran.
-  if (brief && typeof brief === "object") { const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {}; if (brief.look == null && cd.look && cd.look !== "reference") brief.look = cd.look; if (brief.ratio == null && cd.ratio && cd.ratio !== "1x1") brief.ratio = cd.ratio; }
+  // The gym's look (Ad defaults) rides on the brief when it names none and it differs from the standard, so the brief on disk says what ran.
+  if (brief && typeof brief === "object") { const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {}; if (brief.look == null && cd.look && cd.look !== "reference") brief.look = cd.look; }
   const errors = validateBrief(brief, { brandDir: brandDir(gym) });
+  // The feed shape (the owner's rule, 2026-11-10): feed ads are 4:5 and Stories 9:16; the square is no longer made. Only a
+  // batch already made as a square may name it (its words changed, run again) — and it keeps that shape whatever is asked.
+  if (brief && typeof brief === "object" && brief.ratio != null && !FEED_RATIOS.includes(brief.ratio)) {
+    const made = typeof brief.batch_id === "string" && /^[\w.-]+$/.test(brief.batch_id) && !brief.batch_id.includes("..") ? madeShape(join(brandDir(gym), "outputs", brief.batch_id)) : null;
+    if (made !== brief.ratio) errors.push("feed ads are made at 4:5 and their Stories versions at 9:16: the square (1:1) is no longer made");
+  }
   const g = brief?.generated ?? 0, real = Array.isArray(brief?.real) ? brief.real : [];
   const scenes = sceneStatus(gym);
   const audienceFor = sceneAudience(brief?.audience, brief?.scene_audience);
@@ -776,7 +782,7 @@ function reviewState(gym, id) {
   const ads = (batch?.ads || []).map((a) => {
     const s = storyOf.get(a.folder);
     return {
-      folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, treatment: a.treatment, style: a.style, palette: a.palette,
+      folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, ratio: a.ratio || batch.ratio || "1x1", treatment: a.treatment, style: a.style, palette: a.palette,
       photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
     };
   });
@@ -877,7 +883,7 @@ async function renderPreview(gym, { offer, location, audience, photos, look = nu
   const profile = readJsonFile(join(brandDir(gym), "gym-profile.json"));
   // The look family and the feed shape: the Create screen's own choice, else the gym's (Ad defaults).
   const family = PREVIEW_FAMILIES.includes(look) ? look : (profile?.creative_defaults?.look || "reference");
-  const shape = FEED_RATIOS.includes(ratio) ? ratio : (profile?.creative_defaults?.ratio || "1x1");
+  const shape = FEED_RATIOS.includes(ratio) ? ratio : FEED_RATIOS[0];
   let catalogue = null;
   try { catalogue = catalogueFor(profile, null, { look: family }); } catch {}
   const brand = family === "reference" && catalogue?.palettes.palettes.brand ? "brand" : null;

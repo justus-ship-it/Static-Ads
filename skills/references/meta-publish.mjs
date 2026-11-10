@@ -174,7 +174,7 @@ export function campaignWords(profile, batch, words = {}) {
   if (!w.description) { w.description = ph.description; placeholders.push("description"); }
   return { ...w, placeholders };
 }
-/** The placement rules for one creative: the 9:16 on Stories and Reels, the 1:1 everywhere else (their own ads' shape). */
+/** The placement rules for one creative: the 9:16 on Stories and Reels, the feed image (4:5; a square on a batch made before 2026-11-10) everywhere else. The labels' names stay "square" and "story": they are part of every creative already on Meta. */
 export const PLACEMENT_RULES = (squareLabel, storyLabel, copyLabel = null) => [
   { customization_spec: { publisher_platforms: ["facebook", "instagram"], facebook_positions: ["story", "facebook_reels"], instagram_positions: ["story", "reels"] }, image_label: { name: storyLabel }, ...(copyLabel ? { body_label: { name: copyLabel }, title_label: { name: copyLabel }, description_label: { name: copyLabel } } : {}), priority: 1 },
   { customization_spec: { age_min: 13, age_max: 65 }, image_label: { name: squareLabel }, ...(copyLabel ? { body_label: { name: copyLabel }, title_label: { name: copyLabel }, description_label: { name: copyLabel } } : {}), priority: 2 },
@@ -321,7 +321,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   if (keptCopy.length && !keptHead.length && !keptCopy.some((c) => c.headline)) warnings.push("no headline kept: draft and keep headlines on the Publish screen; until then every ad carries a placeholder headline that says so");
   if (keptHead.length > maxHeadlines) warnings.push(`${keptHead.length} headlines kept, ${maxHeadlines} per ad: they rotate across the ads so every one runs`);
   const noStory = kept.filter((a) => !a.story);
-  if (noStory.length) warnings.push(`${noStory.length} of ${kept.length} ads have no Stories version: on Stories and Reels Meta will show the 1:1 (Make Stories versions on the Review screen first)`);
+  if (noStory.length) warnings.push(`${noStory.length} of ${kept.length} ads have no Stories version: on Stories and Reels Meta will show the feed image (Make Stories versions on the Review screen first)`);
   const ads = kept.map((a, i) => {
     const callout = String(a.location || a.words?.location || "ALL").toUpperCase();
     const name = `${date} ${titleCase(callout)} | ${offer} | Image: ${a.folder}`;
@@ -596,7 +596,7 @@ export function publishReadiness(plan, { formName = null } = {}) {
   if (!c.headlines?.kept) check(false, "no headline kept: the ads carry the copies' own headlines, or a placeholder — draft or add headlines below and keep some", "copy");
   else check(true, `${c.headlines.kept} headline${c.headlines.kept === 1 ? "" : "s"} kept, ${c.headlines.per_ad} per ad`, "copy");
   const noStory = (plan.ads || []).filter((a) => !a.story).length;
-  if (noStory) check(false, `${noStory} of ${plan.ads.length} ads ${noStory === 1 ? "has" : "have"} no Stories version: they run the 1:1 on Stories and Reels too — make the Stories versions on Review`, "ads");
+  if (noStory) check(false, `${noStory} of ${plan.ads.length} ads ${noStory === 1 ? "has" : "have"} no Stories version: they run the feed image on Stories and Reels too — make the Stories versions on Review`, "ads");
   else if (plan.ads?.length) check(true, "every ad has a Stories version", "ads");
   return { ready: plan.ready, blocking: plan.problems || [], checks, to_check: checks.filter((x) => x.ok !== true).length };
 }
