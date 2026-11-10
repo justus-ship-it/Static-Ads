@@ -2428,3 +2428,62 @@ test("U44 take Meta's figure: a budget or name changed in Ads Manager becomes th
     assert.equal(r.status, 404);
   } finally { for (const [f, v] of Object.entries(keep)) { if (v == null) rmSync(join(out, f), { force: true }); else writeFileSync(join(out, f), v); } }
 });
+
+test("U45 what wins (the data loop, 2026-11-09): an Ads Manager export uploaded from Results joins the history as rows of origin export with its rankings and frequency; the results answer carries What wins — the scope (the ads running now, every ad), the median, the attribute tables with a confidence word, the suggestions by rule; the creative-reading run is refused with a bad cap or without a history; the page shows the card, the scope switch, the upload, and names an export's rows", async () => {
+  const g = join(brands, GYM);
+  await linkTestGym();
+  rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "creative-reads.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true });
+  const HEADER = `"Reporting starts","Reporting ends","Ad name","Ad delivery","Attribution setting",Results,"Result indicator","Cost per results","Ad set budget","Ad set budget type","Amount spent (SGD)",Impressions,Reach,Ends,Bid,"Bid type","Last significant edit","Quality ranking","Engagement rate ranking","Conversion rate ranking","Ad set name","Results (initial)","Results (initial) indicator"`;
+  const row = (ad, results, spend, imp, reach, delivery = "active") => `2023-10-08,2026-11-08,"${ad}",${delivery},"7-day click or 1-day view",${results},actions:leadgen.other,${results ? (spend / results).toFixed(4) : 0},100,Daily,${spend},${imp},${reach},Ongoing,0,ABSOLUTE_OCPM,2026-10-15T19:04:37+0800,Average,"Above average","Above average","0413 Broad Audience | Both Genders | 25-50 | +3KM",,`;
+  const CSV = [HEADER, row("0413 Beginner's Body Reset | Image 5: Couple Smiling With Dumbbells", 86, 1248.58, 135032, 30412), row("0413 Beginner's Body Reset | Video 2: Shami Intro 3", 2, 64.29, 4428, 2491), row("0413 Total Body Reset | Image 5: Girl Running Outdoors Grayscale", 2, 59.24, 3849, 1875, "inactive")].join("\n") + "\n";
+  const put = (name, body, headers = {}) => fetch(`${panel.url}/api/client/${GYM}/history/export/${encodeURIComponent(name)}`, { method: "PUT", headers: { "content-type": "text/csv", "x-panel-token": panel.token, ...headers }, body });
+  try {
+    let r = await put("notes.txt", CSV); assert.equal(r.status, 400, "a .csv only");
+    r = await put("export.csv", "Ad set name,Results\nx,1\n"); assert.equal(r.status, 400); assert.match((await r.json()).error, /Ad name/);
+    assert.ok(!existsSync(join(g, "onboarding", "exports", "export.csv")), "a refused file is not kept");
+    r = await put("Shamanee-Param-Ads.csv", CSV, { "x-export-label": "Shami's account" });
+    const body = await r.text(); assert.equal(r.status, 200, body);
+    let j = JSON.parse(body);
+    assert.deepEqual([j.ads, j.adsets, j.leads, j.spend, j.currency, j.history.exports.length, j.history.exports[0].label, j.rows.length], [3, 1, 90, 1372.11, "SGD", 1, "Shami's account", 3]);
+    const couple = j.rows.find((x) => /Couple/.test(x.ad_name));
+    assert.deepEqual([couple.origin, couple.offer, couple.frequency, couple.quality_ranking, couple.leads, couple.cost_per_lead, couple.importable, couple.status], ["export", "Beginner's Body Reset", 4.44, "average", 86, 14.52, false, "active"]);
+    assert.ok(existsSync(join(g, "onboarding", "exports", "Shamanee-Param-Ads.csv")));
+    // The results answer: What wins over the ads running now, every ad on request.
+    r = await (await call(`/api/client/${GYM}/results`)).json();
+    const W = r.wins;
+    // Earlier tests may leave this app's own (paused) ads in the gym's outputs: they join "every ad", never the running ones.
+    const appRows = r.rows.length;
+    assert.deepEqual([W.scope, W.active, W.every, W.ads, W.leads, W.median, W.read, W.currency], ["active", 2, 3 + appRows, 2, 88, 14.52, 0, "SGD"]);
+    const media = W.tables.find((t) => t.key === "media"), offer = W.tables.find((t) => t.key === "offer"), fmt = W.tables.find((t) => t.key === "format");
+    assert.deepEqual(media.values.map((v) => [v.value, v.leads, v.cost_per_lead, v.confidence]), [["image", 86, 14.52, "solid"], ["video", 2, 32.15, "early"]]);
+    assert.deepEqual([offer.values[0].value, fmt.values.length, fmt.unread, fmt.unread_leads], ["Beginner's Body Reset", 0, 2, 88], "nothing read yet: the picture attributes are empty, media and offer come from the rows");
+    assert.deepEqual(W.suggestions.map((s) => s.kind), ["tiring", "unread"], "the one ad with 5+ leads IS the median, so nothing is cheaper than 85% of it: no keeper; the couple is tiring; the unread are named");
+    assert.match(W.suggestions[0].text, /Couple.*seen 4.44 times per person/);
+    assert.deepEqual([r.history.exports.length, r.history.pulled, r.campaigns.filter((c) => c.origin === "export").length, r.adsets.filter((c) => c.origin === "export").length, r.campaigns.find((c) => c.origin === "export").ads], [1, null, 1, 1, 3]);
+    const all = (await (await call(`/api/client/${GYM}/results?scope=all`)).json()).wins;
+    assert.deepEqual([all.scope, all.ads, all.leads >= 90], ["all", 3 + appRows, true]);
+    // The reading run: checked before anything starts.
+    r = await call("/api/run", { method: "POST", body: { kind: "creatives-read", gym: GYM, max: 0 } }); assert.equal(r.status, 400);
+    const bare = join(brands, "nohistory"); mkdirSync(bare, { recursive: true }); writeFileSync(join(bare, "gym-profile.json"), readFileSync(join(g, "gym-profile.json")));
+    try { r = await call("/api/run", { method: "POST", body: { kind: "creatives-read", gym: "nohistory", max: 10 } }); assert.equal(r.status, 409); assert.match((await r.json()).error, /no account history yet/); }
+    finally { rmSync(bare, { recursive: true, force: true }); }
+    // The page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u45#/${GYM}/results` }, sessionId); await loaded;
+    const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!RS.data && !!document.querySelector('#wins')"))) await new Promise((x) => setTimeout(x, 120));
+    let text = await ev("document.querySelector('#wins').textContent");
+    assert.match(text, /What wins/); assert.match(text, /88 leads over 2 ads · median SGD 14.52 a lead · 0 of 2 pictures read/);
+    assert.match(text, /Tiring/); assert.match(text, /Not read yet/); assert.match(text, /the ads running now \(2\)/);
+    assert.match(text, /Media.*image · 86 leads at SGD 14.52/); assert.match(text, /Ads Manager exports: Shamanee-Param-Ads.csv — 3 ads/);
+    assert.ok(await ev("!!document.querySelector('#wins input[type=file]') && [...document.querySelectorAll('#wins button')].some(b=>/Read the creatives/.test(b.textContent))"));
+    assert.match(await ev("document.querySelector('#view').textContent"), /from an Ads Manager export/, "no API pull: the card says where the rows came from");
+    await ev("rsScope('all')"); const t1 = Date.now(); while (Date.now() - t1 < 10000 && !(await ev("RS.data.wins.scope==='all'"))) await new Promise((x) => setTimeout(x, 100));
+    assert.match(await ev("document.querySelector('#wins').textContent"), new RegExp(`\\d+ leads over ${3 + appRows} ads`));
+    await ev("const c = RS.data.campaigns.find(x=>x.origin==='export'); rsOpenCampaign(c.campaign_id); rsOpenAdset(RS.data.adsets.find(s=>s.campaign_id===c.campaign_id).adset_id); true");
+    assert.match(await ev("document.querySelector('table.tbl tbody').textContent"), /export/, "the Source column names an export's rows");
+    await ev("rsReadCreatives(); true");
+    assert.ok(await ev("!!document.querySelector('#rsMax') && document.querySelector('#gModal').textContent.includes('one call per picture')"));
+    await ev("document.querySelector('#gModal').innerHTML=''; true");
+  } finally { rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true }); }
+});

@@ -2034,7 +2034,7 @@ function paintResults(v){
   const D = RS.data, cur = STATE.profile?.locale?.currency || 'SGD', H = D.history;
   const camp = RS.campaign ? (D.campaigns||[]).find(c=>c.campaign_id===RS.campaign) : null, set = RS.adset ? (D.adsets||[]).find(s=>s.adset_id===RS.adset) : null;
   const rows = rsRows(), cols = RCOLS[RS.level], k = RS.sort[RS.level];
-  const fmt = (r,c) => c==='text' ? String(r.text||'').replace(/\n+/g,' ').slice(0,90) : c==='from' ? (r.from ? r.from : r.matched ? 'own words' : 'not from this app') : c==='spend'||c==='cost_per_lead'||c==='daily_budget' ? (r[c]!=null?money(r[c],cur):'—') : c==='age_min' ? (r.age_min!=null?`${r.age_min}–${r.age_max}`:'—') : c==='source' ? (r.source==='app'?'this app':'account') : c==='ads' ? `${r.ads}${r.superseded?` (+${r.superseded} remade)`:''}` : c==='pulled'||c==='created' ? String(r[c]||'—').slice(0,10) : c==='in_library' ? (r.in_library===true?'yes':'') : ['name','campaign','targeting','pin','headline'].includes(c) ? String(r[c]??'—').slice(0,70) : (r[c]==null?'—':String(r[c]));
+  const fmt = (r,c) => c==='text' ? String(r.text||'').replace(/\n+/g,' ').slice(0,90) : c==='from' ? (r.from ? r.from : r.matched ? 'own words' : 'not from this app') : c==='spend'||c==='cost_per_lead'||c==='daily_budget' ? (r[c]!=null?money(r[c],cur):'—') : c==='age_min' ? (r.age_min!=null?`${r.age_min}–${r.age_max}`:'—') : c==='source' ? (r.source==='app'?'this app':r.origin==='export'?'export':'account') : c==='ads' ? `${r.ads}${r.superseded?` (+${r.superseded} remade)`:''}` : c==='pulled'||c==='created' ? String(r[c]||'—').slice(0,10) : c==='in_library' ? (r.in_library===true?'yes':'') : ['name','campaign','targeting','pin','headline'].includes(c) ? String(r[c]??'—').slice(0,70) : (r[c]==null?'—':String(r[c]));
   const crumb = [`<a href="#" onclick="rsGo('campaigns');return false">Campaigns</a>`, ...(RS.level!=='campaigns' ? [camp ? `<a href="#" onclick="rsGo('adsets');return false">${esc(camp.name.slice(0,50))}</a>` : `<a href="#" onclick="rsGo('adsets');return false">All ad sets</a>`] : []), ...(RS.level==='ads' && set ? [`<span>${esc(set.name.slice(0,50))}</span>`] : [])].join(' <span class="hint">›</span> ');
   const title = RS.level==='campaigns' ? `Campaigns · ${rows.length}` : RS.level==='adsets' ? `Ad sets${camp?` of ${esc(camp.name.slice(0,60))}`:''} · ${rows.length}` : RS.level==='texts' ? `Which copy wins${camp?` in ${esc(camp.name.slice(0,60))}`:''} · ${rows.length} texts` : `Ads in ${esc(set?.name.slice(0,60)||'')} · ${rows.length}`;
   const tot = rows.reduce((t,r)=>({ spend:t.spend+(r.spend||0), leads:t.leads+(r.leads||0) }), { spend:0, leads:0 });
@@ -2051,7 +2051,8 @@ function paintResults(v){
     <select onchange="RS.source=this.value;paintResults($('#view'))"><option value="all" ${RS.source==='all'?'selected':''}>both sources</option><option value="app" ${RS.source==='app'?'selected':''}>this app</option><option value="account" ${RS.source==='account'?'selected':''}>the account before</option></select>
     <button class="${H?'sm':'primary'}" onclick="rsPullHistory()" ${RS.busy?'disabled':''}>${RS.busy?'Working…':H?'Pull the account again':"Pull the account's history from Meta"}</button></div>
   ${RS.msg?`<div class="msg ${/failed|could not|not set/i.test(RS.msg)?'err':'ok'}">${esc(RS.msg)}</div>`:''}
-  <div class="card"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?` · account pulled ${esc(H.pulled.slice(0,10))}`:''}</span>${RS.level==='adsets'&&camp&&(D.texts||[]).some(t=>t.campaign_id===camp.campaign_id)?`<button class="sm" onclick="rsGo('texts')">Which copy wins</button>`:''}<div class="spacer"></div>
+  ${winsCard(D)}
+  <div class="card"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?(H.pulled?` · account pulled ${esc(H.pulled.slice(0,10))}`:' · from an Ads Manager export'):''}</span>${RS.level==='adsets'&&camp&&(D.texts||[]).some(t=>t.campaign_id===camp.campaign_id)?`<button class="sm" onclick="rsGo('texts')">Which copy wins</button>`:''}<div class="spacer"></div>
       ${RS.level==='ads'?`<button class="sm" onclick="rsPickTop(10)">Pick the top 10 by leads</button><button class="sm primary" onclick="rsImport()" ${RS.hsel.size&&!RS.busy?'':'disabled'}>Bring ${RS.hsel.size||''} into the library</button>`:`<span class="hint">${clickable?'click a row to open it · ':''}click a column to sort</span>`}</div>
     ${RS.level==='ads'?"<p class=\"hint\">Ads from the account before this app can be brought into the library: the picture joins Reference images (a video's poster frame counts), the primary text and headline join the copy references with their results. Rows from outside the gym's country are greyed and left out of the top picks.</p>":''}
     ${rows.length?`<div style="overflow:auto;margin-top:8px"><table class="tbl"><thead><tr>${cols.map(([c,l])=>`<th style="${c==='pick'||c==='thumbnail'?'':'cursor:pointer;'}white-space:nowrap" onclick="if('${c}'!=='pick'&&'${c}'!=='thumbnail'){RS.sort['${RS.level}']='${c}';paintResults($('#view'))}">${l}${k===c?' ▾':''}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr class="${r.abroad?'dim':''} ${r.superseded?'dim':''}" ${clickable?`style="cursor:pointer" ${onRow(r)}`:''}>${cols.map(([c])=>cell(r,c)).join('')}</tr>`).join('')}</tbody></table></div>`:`<div class="empty">${RS.level==='campaigns'?(H?'No campaigns for this source.':"Nothing on Meta yet from this app. Pull the account's history to see what ran before, or publish a campaign."):'Nothing here.'}</div>`}
@@ -2059,6 +2060,47 @@ function paintResults(v){
     ${RS.level==='campaigns'&&(D.batches||[]).length?`<div class="hint" style="margin-top:10px">This app's campaigns: ${D.batches.map(b=>`<a href="#" onclick="openPublish('${esc(b.id)}');return false">${esc(b.id)}</a> (${b.results?'pull results again on its Publish screen':'not pulled yet — pull on its Publish screen'})`).join(' · ')}</div>`:''}
   </div>`;
 }
+/** What wins (2026-11-09): Meta's leads per kind of ad, from the vision reading of each picture; the suggestions by rule; the scope; the export upload; the reading run. */
+function winsCard(D){
+  const W = D.wins, cur = STATE.profile?.locale?.currency || 'SGD';
+  if (!W) return '';
+  if (W.error) return `<div class="msg err">What wins could not be read: ${esc(W.error)}</div>`;
+  const conf = (c) => c==='solid'?'':c==='enough'?' <span class="hint">(enough)</span>':c==='early'?' <span class="hint">(early)</span>':'';
+  const pill = (v) => `<span class="pill" style="${v.confidence==='early'||v.confidence==='none'?'opacity:.6':''}" title="${esc(`${v.ads} ad${v.ads===1?'':'s'} · ${money(v.spend,cur)} spent · ${v.share}% of the leads${v.vs_median!=null?` · ${Math.round(v.vs_median*100)}% of the median`:''}`)}">${esc(String(v.value))} · ${v.leads} lead${v.leads===1?'':'s'}${v.cost_per_lead!=null?` at ${money(v.cost_per_lead,cur)}`:''}${conf(v.confidence)}</span>`;
+  const kindWord = { keep:'Keep', tiring:'Tiring', pause:'Consider pausing', matters:'What matters', test:'Never tried', unread:'Not read yet', thin:'Too thin' };
+  const exports = D.history?.exports || [];
+  return `<div class="card" id="wins">
+    <div class="row" style="flex-wrap:wrap"><h3 style="margin:0">What wins</h3><span class="hint">${W.leads} leads over ${W.ads} ad${W.ads===1?'':'s'}${W.median!=null?` · median ${money(W.median,cur)} a lead`:''} · ${W.read} of ${W.ads} pictures read</span>
+      <select onchange="rsScope(this.value)"><option value="active" ${W.scope==='active'?'selected':''}>the ads running now (${W.active})</option><option value="all" ${W.scope==='all'?'selected':''}>every ad the gym ran (${W.every})</option></select>
+      <div class="spacer"></div>
+      <label class="sm" style="display:inline-flex;align-items:center;padding:5px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:13px">Import an Ads Manager export (CSV)<input type="file" accept=".csv,text/csv" hidden onchange="rsUploadExport(this)"></label>
+      <button class="sm" onclick="rsReadCreatives()" ${RS.busy?'disabled':''}>Read the creatives…</button></div>
+    <p class="hint">Meta's leads per kind of ad. The vision model reads each picture once — its format, who is in it, the backdrop, the pose, the expression, the ratio, a logo or not — and the leads behind a value say how far to trust it: early under ${W.floors.early}, solid from ${W.floors.solid}. Tiring means seen ${W.floors.tired} times per person or more. Suggestions are by rule; nothing here changes anything on Meta.</p>
+    ${W.suggestions.length?`<ul style="margin:6px 0 10px;padding-left:18px">${W.suggestions.map(s=>`<li style="margin:3px 0"><span class="pill">${kindWord[s.kind]||s.kind}</span> ${esc(s.text)}</li>`).join('')}</ul>`:''}
+    <div style="display:grid;gap:6px">${W.tables.filter(t=>t.values.length).map(t=>`<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"><b style="min-width:160px;font-size:13px">${esc(t.label)}</b>${t.values.map(pill).join('')}${t.unread?`<span class="hint">· ${t.unread} not read`+(t.unread_leads?` (${t.unread_leads} leads)`:'')+'</span>':''}</div>`).join('')}</div>
+    ${exports.length?`<div class="hint" style="margin-top:8px">Ads Manager exports: ${exports.map(e=>`${esc(e.file)} — ${e.ads} ads, ${esc((e.reporting?.from||'?')+' → '+(e.reporting?.to||'?'))}${e.label?`, ${esc(e.label)}`:''}`).join(' · ')}. Their creatives and copy files come in from the command line: <code>ads-export.mjs --creatives … --copy …</code>.</div>`:''}
+  </div>`;
+}
+async function rsReload(){ try { RS.data = { ...RS.data, ...(await api(`/api/client/${STATE.sel}/results?scope=${RS.scope||'active'}`)) }; } catch(e){ RS.msg = 'Could not reload: ' + e.message; } if (STATE.tab==='results') paintResults($('#view')); }
+async function rsScope(v){ RS.scope = v; await rsReload(); }
+async function rsUploadExport(input){
+  const f = input.files && input.files[0]; if (!f) return; input.value = '';
+  RS.busy = true; RS.msg = null; paintResults($('#view'));
+  try {
+    const r = await panelFetch(`/api/client/${STATE.sel}/history/export/${encodeURIComponent(f.name)}`, { method:'PUT', headers:{'content-type':'text/csv'}, body: await f.arrayBuffer() });
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
+    RS.msg = `Imported ${j.file}: ${j.ads} ads in ${j.adsets} ad set${j.adsets===1?'':'s'}, ${j.leads} leads, ${money(j.spend, j.currency)} spent (${j.reporting.from||'?'} → ${j.reporting.to||'?'}).${j.offers.length?' Offers: '+j.offers.map(o=>`${o.offer} (${o.ads} ads, ${o.leads} leads)`).join('; ')+'.':''}`;
+  } catch(e){ RS.msg = 'The import failed: ' + e.message; }
+  RS.busy = false; await rsReload();
+}
+function rsReadCreatives(){
+  const W = RS.data?.wins || {};
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Read the creatives</h3>
+    <p class="hint">The vision model reads each picture in this gym's history that has not been read yet — its format, who is in it, the backdrop, the pose, the expression, the words on it — one call per picture, the reading kept so it is never made twice. ${W.ads?`In scope now: ${W.ads} ads, ${W.read} read.`:''} A video without a poster frame is skipped and said.</p>
+    <label>At most this many pictures (one call each)</label><input id="rsMax" type="number" min="1" max="200" value="60">
+    <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" onclick="rsReadGo()">Read</button></div></div></div>`;
+}
+function rsReadGo(){ const max = parseInt($('#rsMax').value, 10); if (!(max >= 1)) return; $('#gModal').innerHTML = ''; run({ kind:'creatives-read', gym: STATE.sel, max }, async () => { await rsReload(); }); }
 function rsGo(level){ RS.level = level; if (level==='campaigns'){ RS.campaign = null; RS.adset = null; } if (level==='adsets') RS.adset = null; paintResults($('#view')); }
 function rsBack(){ rsGo(RS.level==='ads' || RS.level==='texts' ? 'adsets' : 'campaigns'); }
 function rsOpenCampaign(id){ RS.campaign = id; RS.adset = null; RS.level = 'adsets'; paintResults($('#view')); window.scrollTo(0,0); }

@@ -35,9 +35,12 @@ export const statusWords = (s) => STATUS_WORDS[s] || (s ? String(s).toLowerCase(
 export function metrics(r) {
   const act = (name) => num((r?.actions || []).find((a) => a.action_type === name)?.value);
   const spend = num(r?.spend), impressions = num(r?.impressions), clicks = num(r?.inline_link_clicks ?? r?.clicks), leads = act("lead");
+  const reach = num(r?.reach), rank = (k) => (r?.[k] && r[k] !== "UNKNOWN" ? String(r[k]).toLowerCase().replace(/_/g, " ") : null);
   return {
-    spend: round2(spend), impressions, reach: num(r?.reach), clicks, leads,
+    spend: round2(spend), impressions, reach, clicks, leads,
     cost_per_lead: leads ? round2(spend / leads) : null, ctr: impressions ? round2((clicks / impressions) * 100) : null, cpm: impressions ? round2((spend / impressions) * 1000) : null,
+    frequency: r?.frequency != null ? round2(num(r.frequency)) : reach ? round2(impressions / reach) : null,
+    ...(r?.quality_ranking || r?.engagement_rate_ranking || r?.conversion_rate_ranking ? { quality_ranking: rank("quality_ranking"), engagement_ranking: rank("engagement_rate_ranking"), conversion_ranking: rank("conversion_rate_ranking") } : {}),
     from: r?.date_start || null, to: r?.date_stop || null,
   };
 }
@@ -247,7 +250,7 @@ export async function pullAccountHistory({ client, accountId, gymDir, now = new 
     client.list(`${acct}/campaigns`, { fields: "id,name,status,effective_status,objective,created_time,daily_budget", limit: 100 }),
     client.list(`${acct}/adsets`, { fields: "id,name,campaign_id,status,effective_status,daily_budget,created_time,targeting{genders,age_min,age_max,flexible_spec,exclusions,custom_audiences,excluded_custom_audiences,geo_locations}", limit: 100 }),
     client.list(`${acct}/ads`, { fields: "id,name,adset_id,campaign_id,status,effective_status,created_time,creative{id,object_type,thumbnail_url,image_hash,video_id,body,title,object_story_spec,asset_feed_spec{images,videos,bodies,titles,call_to_actions}}", limit: 100 }),
-    client.list(`${acct}/insights`, { level: "ad", fields: "ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions,date_start,date_stop", date_preset: "maximum", limit: 100 }),
+    client.list(`${acct}/insights`, { level: "ad", fields: "ad_id,spend,impressions,reach,frequency,clicks,inline_link_clicks,actions,quality_ranking,engagement_rate_ranking,conversion_rate_ranking,date_start,date_stop", date_preset: "maximum", limit: 100 }),
     client.list(`${acct}/insights`, { level: "ad", fields: "ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions,date_start,date_stop", time_range: JSON.stringify(last30), limit: 100 }).catch(() => []),
   ]);
   const all = Object.fromEntries(allTime.map((r) => [r.ad_id, metrics(r)])), month30 = Object.fromEntries(month.map((r) => [r.ad_id, metrics(r)]));
@@ -270,6 +273,9 @@ export async function pullAccountHistory({ client, accountId, gymDir, now = new 
         all_time: all[a.id] || EMPTY(), last_30d: month30[a.id] || EMPTY() };
     }),
   };
+  // Rows brought in from an Ads Manager export (ads-export.mjs: an account the system user does not reach) stay.
+  const before = readJson(join(gymDir, HISTORY));
+  if (before?.exports?.length) { out.exports = before.exports; for (const k of ["campaigns", "adsets", "ads"]) out[k].push(...(before[k] || []).filter((x) => x.origin === "export")); }
   writeWhole(join(gymDir, HISTORY), JSON.stringify(out, null, 2) + "\n");
   return out;
 }
@@ -289,13 +295,15 @@ export function historyRows(gymDir) {
   const imported = new Set(readCopyRefs(gymDir).refs.map((r) => r.ad_id).filter(Boolean));
   const refDir = join(gymDir, "references");
   return h.ads.filter((a) => !ours.has(a.id)).map((a) => { const s = setOf[a.adset_id] || {}; return {
-    source: "account", gym: gymDir.split("/").pop(), batch: null, folder: null, ad_id: a.id, creative_id: a.creative_id, adset_id: a.adset_id, campaign_id: a.campaign_id, published: a.created, superseded: false,
-    campaign: a.campaign, campaign_status: campOf[a.campaign_id]?.words || null, campaign_created: campOf[a.campaign_id]?.created || null, adset_name: a.adset, ad_name: a.name, media: a.media, thumbnail: a.thumbnail, hashes: a.hashes, importable: !!a.importable,
-    offer: null, location: null, audience: s.audience || null, callout: null, photos: null, scenes: null, exercise: null, age_tag: null, setting: null, equipment: null, layout: null, style: null, palette: null, has_story: null,
+    source: "account", origin: a.origin || "account", gym: gymDir.split("/").pop(), batch: null, folder: null, ad_id: a.id, creative_id: a.creative_id, adset_id: a.adset_id, campaign_id: a.campaign_id, published: a.created, superseded: false,
+    campaign: a.campaign, campaign_status: campOf[a.campaign_id]?.words || null, campaign_created: campOf[a.campaign_id]?.created || null, adset_name: a.adset, ad_name: a.name, media: a.media, hashes: a.hashes, importable: !!a.importable,
+    thumbnail: a.origin === "export" ? (a.creative_file && a.media === "image" ? `/files/brands/${gymDir.split("/").pop()}/${a.creative_file}` : null) : a.thumbnail,
+    creative_file: a.creative_file || null, description: a.description || null, frequency: a.all_time?.frequency ?? null, quality_ranking: a.export?.quality_ranking ?? a.all_time?.quality_ranking ?? null, engagement_ranking: a.export?.engagement_ranking ?? a.all_time?.engagement_ranking ?? null, conversion_ranking: a.export?.conversion_ranking ?? a.all_time?.conversion_ranking ?? null,
+    offer: a.offer || null, location: null, audience: s.audience || null, callout: null, photos: null, scenes: null, exercise: null, age_tag: null, setting: null, equipment: null, layout: null, style: null, palette: null, has_story: null,
     pin: s.geo || null, countries: (s.countries || []).join("+") || null, abroad: !!s.abroad, radius_km: null, age_min: s.age_min ?? null, age_max: s.age_max ?? null, gender: s.gender || null, preset: s.targeting || null, preset_id: null, daily_budget: s.daily_budget ?? null, budget_level: null,
     form_id: a.form_id, cta: null, headline: a.title, primary_text: a.body, placeholder_words: null,
-    status: a.words, adset_status: s.words || null, ...Object.fromEntries(Object.entries(a.all_time).filter(([k]) => !["from", "to"].includes(k))), leads_7d: null, spend_7d: null, leads_30d: a.last_30d?.leads ?? null, spend_30d: a.last_30d?.spend ?? null, pulled: h.pulled,
-    in_library: imported.has(a.id) || existsSync(join(refDir, `meta-${a.id}.jpg`)) || existsSync(join(refDir, `meta-${a.id}.png`)),
+    status: a.words, adset_status: s.words || null, ...Object.fromEntries(Object.entries(a.all_time).filter(([k]) => !["from", "to", "frequency", "quality_ranking", "engagement_ranking", "conversion_ranking"].includes(k))), leads_7d: null, spend_7d: null, leads_30d: a.last_30d?.leads ?? null, spend_30d: a.last_30d?.spend ?? null, pulled: h.pulled,
+    in_library: imported.has(a.id) || existsSync(join(refDir, `meta-${a.id}.jpg`)) || existsSync(join(refDir, `meta-${a.id}.png`)) || !!(a.creative_file && existsSync(join(gymDir, a.creative_file))),
   }; }).sort((x, y) => (x.cost_per_lead ?? Infinity) - (y.cost_per_lead ?? Infinity) || y.leads - x.leads || (y.spend || 0) - (x.spend || 0));
 }
 /** The ad-set level: every ad set the rows belong to (both sources), its facts and the sum of its ads' numbers, the cheapest lead first. */
@@ -303,7 +311,7 @@ export function adsetRows(rows) {
   const by = new Map();
   for (const r of rows) {
     if (!r.adset_id) continue;
-    const g = by.get(r.adset_id) || { adset_id: r.adset_id, source: r.source, name: r.source === "app" ? (r.callout ? `${r.callout} · ${r.batch}` : r.batch) : (r.adset_name || r.adset_id), callout: r.callout || null, batch: r.batch || null, campaign: r.source === "app" ? r.batch : (r.campaign || null), campaign_id: r.campaign_id || null,
+    const g = by.get(r.adset_id) || { adset_id: r.adset_id, source: r.source, origin: r.origin || (r.source === "app" ? "app" : "account"), name: r.source === "app" ? (r.callout ? `${r.callout} · ${r.batch}` : r.batch) : (r.adset_name || r.adset_id), callout: r.callout || null, batch: r.batch || null, campaign: r.source === "app" ? r.batch : (r.campaign || null), campaign_id: r.campaign_id || null,
       status: r.adset_status || null, gender: r.gender || null, age_min: r.age_min ?? null, age_max: r.age_max ?? null, pin: r.pin || null, countries: r.countries || null, abroad: !!r.abroad, targeting: r.preset || null, daily_budget: r.daily_budget ?? null, audience: r.audience || null,
       ads: 0, superseded: 0, spend: 0, impressions: 0, reach: 0, clicks: 0, leads: 0, pulled: r.pulled || null };
     if (r.superseded) g.superseded++; else g.ads++;
@@ -318,7 +326,7 @@ export function campaignRows(rows) {
   const by = new Map();
   for (const r of rows) {
     if (!r.campaign_id) continue;
-    const g = by.get(r.campaign_id) || { campaign_id: r.campaign_id, source: r.source, name: r.campaign || r.batch || r.campaign_id, batch: r.batch || null, status: r.campaign_status || null, created: r.source === "app" ? (r.published || "").slice(0, 10) || null : r.campaign_created || null, adset_ids: new Set(), ads: 0, superseded: 0, spend: 0, impressions: 0, reach: 0, clicks: 0, leads: 0, abroad: false, pulled: r.pulled || null };
+    const g = by.get(r.campaign_id) || { campaign_id: r.campaign_id, source: r.source, origin: r.origin || (r.source === "app" ? "app" : "account"), name: r.campaign || r.batch || r.campaign_id, batch: r.batch || null, status: r.campaign_status || null, created: r.source === "app" ? (r.published || "").slice(0, 10) || null : r.campaign_created || null, adset_ids: new Set(), ads: 0, superseded: 0, spend: 0, impressions: 0, reach: 0, clicks: 0, leads: 0, abroad: false, pulled: r.pulled || null };
     if (r.adset_id) g.adset_ids.add(r.adset_id);
     if (r.superseded) g.superseded++; else g.ads++;
     if (r.abroad) g.abroad = true;

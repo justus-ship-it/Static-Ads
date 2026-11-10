@@ -44,6 +44,8 @@ import { TARGETING_LIBRARY_DIR, readLibrary as readTargetingLibrary, seedDrafts 
 const targetingLibrary = () => seedTargetingDrafts(TARGETING_LIBRARY_DIR).data;
 const targetingLibraryView = () => { const d = targetingLibrary(); return { entries: d.entries.map((e) => ({ ...e, preset_id: `lib:${e.id}`, summary: summarise(e.spec) })), approved: d.entries.filter((e) => e.approved_on && !e.retired).length, drafts: d.entries.filter((e) => !e.approved_on && !e.retired).length }; };
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
+import { importExport } from "../skills/references/ads-export.mjs";
+import { whatWins } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
@@ -67,6 +69,9 @@ const REFRESH_SCRIPT = join(REPO_ROOT, "skills", "references", "refresh-scenes.m
 const CLEAN_SCRIPT = join(REPO_ROOT, "skills", "references", "clean-photo.mjs");
 const READ_SCRIPT = join(REPO_ROOT, "skills", "references", "read-website.mjs");
 const IG_SCRIPT = join(REPO_ROOT, "skills", "references", "read-instagram.mjs");
+const CREATIVES_SCRIPT = join(REPO_ROOT, "skills", "references", "read-creatives.mjs");
+/** An Ads Manager export (CSV) uploaded from Results: its name, and where it is kept. */
+const EXPORT_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,100}\.csv$/, MAX_EXPORT_BYTES = 10 * 1024 * 1024, EXPORTS_DIR = join("onboarding", "exports");
 // The tests serve a fake gym site from this machine; a real panel reads public websites only.
 const ALLOW_LOCAL_SITES = process.env.READ_WEBSITE_ALLOW_LOCAL === "1";
 const PUBLISH_SCRIPT = join(REPO_ROOT, "skills", "references", "meta-publish.mjs");
@@ -140,6 +145,8 @@ const RUNNABLE = {
   // Onboarding, part two: a gym's Instagram photos through Meta's Business Discovery (read-only; model calls
   // for the sort). The handle is checked for shape before it becomes an argument.
   "instagram-read": { label: "Read Instagram", argv: ({ gym, handle, posts }) => [IG_SCRIPT, "--brand-dir", brandDir(gym), "--handle", handle, "--posts", String(posts)] },
+  // What wins (2026-11-09): the vision model reads each picture in the gym's history once (format, subject, backdrop, pose…); one call per unread picture under the confirmed cap.
+  "creatives-read": { label: "Read the creatives", argv: ({ gym, max }) => [CREATIVES_SCRIPT, "--brand-dir", brandDir(gym), "--max", String(max)] },
   "photo-clean": { label: "Clean photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...(photos.some((p) => p.includes("/") && !p.startsWith("facility/")) ? ["--clean-dir", join(brandDir(gym), "brand-assets", "reference-clean")] : []), ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", p.includes("/") ? p : `facility/${p}`)])] },
 };
 
@@ -1317,7 +1324,28 @@ const server = createServer(async (req, res) => {
       const batches = [...new Set(rows.map((r) => r.batch))].map((id) => ({ id, results: readJsonFile(join(brandDir(gym), "outputs", id, "results.json")), record: (({ campaign, adsets, ads, done }) => ({ campaign, adsets: Object.keys(adsets || {}).length, ads: Object.keys(ads || {}).length, done }))(readJsonFile(join(brandDir(gym), "outputs", id, "publish.json")) || {}) }));
       const h = readHistory(brandDir(gym));
       const hrows = h ? historyRows(brandDir(gym)) : [];
-      return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length });
+      const currency = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).locale?.currency || "SGD";
+      const scope = new URL(req.url, "http://x").searchParams.get("scope") === "all" ? "all" : "active";
+      let wins = null; try { wins = whatWins(brandDir(gym), { currency, scope }); } catch (e) { wins = { error: e.message }; }
+      return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, exports: h.exports || [] } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length, wins });
+    }
+    // An Ads Manager export (CSV) for an account the system user does not reach: uploaded as raw bytes, kept under
+    // onboarding/exports/, its ads brought into the history as rows of origin "export" (ads-export.mjs).
+    const hx = p.match(/^\/api\/client\/([^/]+)\/history\/export\/([^/]+)$/);
+    if (hx && req.method === "PUT") {
+      const gym = hx[1], name = decodeURIComponent(hx[2]);
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      if (!EXPORT_NAME.test(name)) return json(res, 400, { error: "the file must be a .csv exported from Ads Manager (letters, digits, spaces, dots, dashes in its name)" });
+      let buf;
+      try { buf = await readRaw(req, MAX_EXPORT_BYTES); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
+      if (!buf.length || buf.includes(0)) return json(res, 400, { error: "not a text CSV file" });
+      const dir = join(brandDir(gym), EXPORTS_DIR); mkdirSync(dir, { recursive: true });
+      const csv = join(dir, name); writeFileSync(csv, buf);
+      try {
+        const done = importExport({ gymDir: brandDir(gym), csv, label: req.headers["x-export-label"] ? String(req.headers["x-export-label"]).slice(0, 80) : null });
+        const hrows = historyRows(brandDir(gym)), h = readHistory(brandDir(gym));
+        return json(res, 200, { ...done, rows: hrows, history: { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, exports: h.exports || [] }, adsets_rows: adsetRows([...gymRows(brandDir(gym)), ...hrows]), campaign_rows: campaignRows([...gymRows(brandDir(gym)), ...hrows]) });
+      } catch (e) { rmSync(csv, { force: true }); return json(res, 400, { error: e.message }); }
     }
     // The account's history: pulled from Meta (read-only), and chosen ads brought into the library.
     const hs = p.match(/^\/api\/client\/([^/]+)\/history\/(pull|import)$/);
@@ -1870,6 +1898,14 @@ const server = createServer(async (req, res) => {
         if (!Number.isInteger(posts) || posts < 25 || posts > MAX_POSTS) return json(res, 400, { error: `how many posts to read must be 25 to ${MAX_POSTS}` });
         if (!metaConfig({ gym: body.gym }).token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page): Instagram is read through it" });
         const run = startRun(kind, { gym: body.gym, handle, posts });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "creatives-read") {
+        if (!okSlug(body.gym) || !existsSync(join(brandDir(body.gym), "gym-profile.json"))) return json(res, 400, { error: "reading the creatives needs a client with a profile" });
+        if (!existsSync(join(brandDir(body.gym), "account-history.json"))) return json(res, 409, { error: "no account history yet: pull the account from Meta or import an Ads Manager export first (Results)" });
+        const max = body.max ?? 60;
+        if (!Number.isInteger(max) || max < 1 || max > MAX_CALLS_CAP) return json(res, 400, { error: `how many pictures to read must be 1 to ${MAX_CALLS_CAP}` });
+        const run = startRun(kind, { gym: body.gym, max });
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "photo-survey" || kind === "photo-clean") {
