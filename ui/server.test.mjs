@@ -3194,7 +3194,7 @@ test("U55 the step indicator (2026-11-11): inside each of the five steps, its ow
     await until("document.querySelector('#stpGo')?.textContent === 'Go to the offer'");
     assert.deepEqual((await read()).parts.map((p) => p[1]), ["now", "later", "later", "later"]);
     // Steps 4 and 5, the lists: a batch that is waiting is the one button; with none waiting the step says so and points on.
-    for (const [tab, n, first, fn] of [["review", 4, "Open a batch", "partsReviewList"], ["exports", 5, "Open a batch", "partsExports"]]) {
+    for (const [tab, n, first, fn] of [["review", 4, "Open a batch", "partsReviewList"], ["exports", 6, "Open a batch", "partsExports"]]) {
       await ev(`go('${tab}'); true`);
       await until(`STATE.tab === '${tab}' && document.querySelectorAll('#stpParts .stpp').length === ${n}`);
       S = await read();
@@ -3203,7 +3203,7 @@ test("U55 the step indicator (2026-11-11): inside each of the five steps, its ow
       assert.deepEqual(await ev(`(()=>{ const s = ${fn}(${made({})}); return [!!s.idle, s.parts[0].label, s.parts.length]; })()`), [false, "Open it →", n]);
       assert.deepEqual(await ev(`(()=>{ const s = ${fn}(${made({ open: false, unreviewed: 0, stories: 8, published: { done: true, ads: 8 } })}); return [typeof s.idle, s.parts.every(p => !p.done && !p.label)]; })()`), ["string", true], "published and done: nothing is waiting here");
     }
-    assert.deepEqual(await ev("[PICK_PARTS, PUB_PARTS]"), [["Open a batch", "Keep or exclude each ad", "Make Stories versions", "Go to publish"], ["Open a batch", "Keep copy and headlines", "Check the ad sets", "Create on Facebook, paused", "Turn the ads on"]]);
+    assert.deepEqual(await ev("[PICK_PARTS, PUB_PARTS]"), [["Open a batch", "Keep or exclude each ad", "Make Stories versions", "Go to publish"], ["Open a batch", "Keep copy and headlines", "Check the ad sets", "Choose the lead form", "Create on Facebook, paused", "Turn the ads on"]]);
     // No indicator outside the cycle.
     await ev("go('copy'); true");
     await until("STATE.tab === 'copy' && document.querySelector('#stepper').innerHTML === ''");
@@ -3211,4 +3211,106 @@ test("U55 the step indicator (2026-11-11): inside each of the five steps, its ow
     for (const [p, body] of keep) { if (body) writeFileSync(p, body); else rmSync(p, { force: true }); }
     rmSync(bdir, { recursive: true, force: true }); rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true });
   }
+});
+
+test("U56 waiting (2026-11-11): whenever the page waits on something it says so — every request is seen; a named wait (the agent drafting, Meta answering) shows after a moment in the bar under the header, in the header's line with how long it has been, and in the step indicator, whose bar turns to Working with its button off; the checks that run as you type never show; a plain load leaves the step indicator alone; a run shows with its latest line; the indicator says so while it reads where the gym stands", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+  const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+  const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u56#/${GYM}/scenes` }, sessionId); await loaded;
+  await until(`STATE.sel === ${JSON.stringify(GYM)} && CY.gym === STATE.sel && !!CY.data && !!document.querySelector('#stpDo') && WAIT.items.size === 0`);
+  const shown = () => ev("({ bar: document.querySelector('#waitbar').classList.contains('on'), chip: document.querySelector('#waitchip').hidden ? null : document.querySelector('#waitchip').textContent, working: document.querySelector('#stpDo').classList.contains('working'), k: document.querySelector('#stpDo .k').textContent, t: document.querySelector('#stpDo .t').textContent, go: document.querySelector('#stpGo') ? [document.querySelector('#stpGo').textContent, document.querySelector('#stpGo').disabled] : null, busy: document.querySelectorAll('#stpParts .stpp.busy').length })");
+  // What each request is, in plain words; the ones that never show.
+  assert.deepEqual(await ev(`[waitLabel('POST','/api/client/x/batch/y/copy/draft','{"kind":"headline","count":10}'), waitLabel('POST','/api/client/x/batch/y/copy/draft','{"kind":"copy"}').text.slice(0, 29), waitLabel('POST','/api/client/x/batch/y/results/pull').text, waitLabel('POST','/api/client/x/batch/check'), waitLabel('POST','/api/preview'), waitLabel('PUT','/api/client/x/batch/y/picks'), waitLabel('GET','/api/client/x/cycle'), waitLabel('GET','/api/client/x/offer/y'), waitLabel('POST','/api/client/x/wordings'), waitLabel('GET','/api/client/x/results?scope=all').text]`),
+    [{ text: "The agent is drafting headlines from the copy library, then judging each one for clarity. This takes about a minute.", named: true }, "The agent is drafting copies ", "Reading this campaign's results from Meta.", null, null, null, null, { text: "Loading.", named: false }, { text: "Saving.", named: false }, "Reading the results on file."]);
+  // Every request goes through one door, and leaves nothing behind.
+  const seq = await ev("WAIT.seq");
+  await ev(`api('/api/client/${GYM}/account-review').then(() => true)`);
+  assert.deepEqual(await ev(`[WAIT.seq > ${seq}, WAIT.items.size]`), [true, 0]);
+  const calm = await shown();
+  assert.deepEqual([calm.bar, calm.chip, calm.working], [false, null, false]);
+  // The agent is drafting: nothing for the first moment (no flicker), then all three places say it, with how long it has been.
+  const id = await ev(`waitStart('POST', '/api/client/${GYM}/batch/b/copy/draft', '{"kind":"copy","count":10}')`);
+  await ev("paintWait(); true");
+  assert.deepEqual([(await shown()).bar, (await shown()).working], [false, false], "not in the first moment");
+  await ev(`WAIT.items.get(${id}).at -= 14000; paintWait(); true`);
+  let S = await shown();
+  assert.deepEqual([S.bar, S.working, S.busy <= 1], [true, true, true]);
+  assert.match(S.chip, /^The agent is drafting copies from the copy library, then judging each one for clarity\. This takes about a minute\. · 14 s$/);
+  assert.match(S.k, /^Working( · \d of \d)?$/); assert.match(S.t, /^The agent is drafting copies .* · 14 s$/);
+  if (S.go) assert.deepEqual(S.go, ["Working…", true], "the button is off until it is over");
+  assert.equal(await ev("(()=>{ stpGo(); return !!document.querySelector('.modal'); })()"), false, "and does nothing");
+  await ev(`waitEnd(${id}); true`);
+  S = await shown();
+  assert.deepEqual([S.bar, S.chip, S.working, S.busy], [false, null, false, 0]); assert.doesNotMatch(S.k, /^Working/);
+  if (S.go) assert.equal(S.go[1], false);
+  // A plain load says so in the header and leaves the step's bar alone.
+  const lid = await ev(`waitStart('GET', '/api/client/${GYM}/offer/y')`);
+  await ev(`WAIT.items.get(${lid}).at -= 2000; paintWait(); true`);
+  S = await shown();
+  assert.deepEqual([S.bar, S.chip, S.working], [true, "Loading.", false]);
+  await ev(`waitEnd(${lid}); true`);
+  // A run: its name and its latest line, minutes and seconds; over when it ends.
+  await ev("STATE.run = { label: 'Refresh scenes (drafts for approval)', lines: [{ stream: 'meta', line: '$ node …' }, { stream: 'out', line: '· gaps for men (2 live scenes)' }], done: false, code: null, at: Date.now() - 65000 }; paintWait(); true");
+  S = await shown();
+  assert.deepEqual([S.bar, S.working], [true, true]);
+  assert.match(S.chip, /^Refresh scenes \(drafts for approval\) — · gaps for men \(2 live scenes\) · 1 min 5 s$/);
+  await ev("STATE.run.done = true; STATE.run.code = 0; paintWait(); true");
+  S = await shown();
+  assert.deepEqual([S.bar, S.chip, S.working], [false, null, false]);
+  await ev("STATE.run = null; paintWait(); true");
+  // Before the cycle's answer is in, the indicator says what it is reading rather than showing nothing.
+  await ev("CY.gym = null; CY.data = null; CY.error = null; paintStepper(); true");
+  assert.deepEqual(await ev("[document.querySelector('#stpDo').classList.contains('working'), document.querySelector('#stpDo .t').textContent]"), [true, "Reading where this gym stands in the cycle."]);
+  await ev("loadCycle().then(() => true)");
+  await until("CY.gym === STATE.sel && !!CY.data && !document.querySelector('#stpDo').classList.contains('working')");
+});
+
+test("U57 the lead form, a part of its own in Publish Ads (2026-11-11): between the ad sets and Create on Facebook the owner says which form these ads use — an existing form of the Page, or a new one; the yes is kept per campaign (destination.form_confirmed) and a bad one is refused; another form picked afterwards must be confirmed again; the Destination card and the create confirmation say whether it is confirmed", async () => {
+  const g = join(brands, GYM), sfile = join(g, "outputs", BRIEF.batch_id, "publish-settings.json");
+  const saved = existsSync(sfile) ? readFileSync(sfile) : null;
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+  const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+  try {
+    // The setting: digits only.
+    const cur = (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json()).settings || {};
+    let r = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { ...cur, destination: { ...(cur.destination || {}), form_confirmed: "the right one" } } });
+    assert.equal(r.status, 400);
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u57#/${GYM}/publish/${BRIEF.batch_id}` }, sessionId); await loaded;
+    await until(`!!PB.data && PB.id === ${JSON.stringify(BRIEF.batch_id)} && !!document.querySelector('#stpParts') && !!document.querySelector('#pbFormOk')`);
+    assert.deepEqual(await ev("PUB_PARTS"), ["Open a batch", "Keep copy and headlines", "Check the ad sets", "Choose the lead form", "Create on Facebook, paused", "Turn the ads on"]);
+    assert.deepEqual(await ev("[...document.querySelectorAll('#stpParts .stpp .nm')].map(e => e.textContent)"), await ev("PUB_PARTS"), "the indicator shows all six");
+    const form = await ev("PB.data.plan.lead_form_id");
+    assert.match(String(form), /^\d{5,20}$/, "the test gym has a form on its profile");
+    // Not confirmed: the part is open, in words, with its one button. (A campaign already created counts as settled: looked at here as not yet created.)
+    const partOf = "(()=>{ const keep = PB.data.published; PB.data.published = null; try { const p = partsPublish().parts[3]; return [p.name, p.done, p.label, p.text]; } finally { PB.data.published = keep; } })()";
+    let p = await ev(partOf);
+    assert.deepEqual(p.slice(0, 3), ["Choose the lead form", false, "Choose the lead form…"]);
+    assert.match(p[3], /^Leads from these ads go to the form ".+"\. Check it is the right form for this offer — or pick another, or make a new one — and confirm it\.$/);
+    assert.deepEqual(await ev("[pbFormConfirmed(), document.querySelector('#pbFormOk').textContent]"), [false, "not confirmed yet"]);
+    // The dialog: the Page's forms when they can be listed, the form on file when they cannot; a new one from the template; nothing saved until Use this form.
+    await ev("pbFormChoose().then(() => true)");
+    await until("!!document.querySelector('#bModal .modal #pbFormUse')");
+    assert.deepEqual(await ev("[document.querySelector('#bModal h2').textContent, document.querySelector('input[name=pbForm]:checked')?.value, document.querySelector('#pbFormUse').disabled, !!document.querySelector('#pbFormNew'), /or make a new one/.test(document.querySelector('#bModal').innerText)]"), ["Which lead form do these ads use?", String(form), false, true, true]);
+    assert.equal(JSON.parse(existsSync(sfile) ? readFileSync(sfile, "utf-8") : "{}").destination?.form_confirmed ?? null, null, "looking confirms nothing");
+    await ev("document.querySelector('#pbFormUse').click(); true");
+    await until(`pbFormConfirmed() && document.querySelector('#pbFormOk')?.textContent === 'confirmed for this campaign' && !document.querySelector('.modal')`);
+    const onDisk = JSON.parse(readFileSync(sfile, "utf-8")).destination;
+    assert.deepEqual([onDisk.lead_form_id, onDisk.form_confirmed], [String(form), String(form)], "the owner's yes, kept with the campaign's settings");
+    assert.equal((await ev(partOf))[1], true);
+    // The create confirmation says where the leads go, and that it is confirmed.
+    await ev("pbCreateConfirm(); true");
+    assert.match(await ev("document.querySelector('#pbCreateForm').innerText"), /^Leads go to the form .+ confirmed$/);
+    await ev("bClose(); true");
+    // Another form picked on the card: the yes was for the other one.
+    await ev("pbSet('destination.lead_form_id', '998877665544'); true");
+    await until("PB.data.plan.lead_form_id === '998877665544' && document.querySelector('#pbFormOk')?.textContent === 'not confirmed yet'");
+    assert.deepEqual([await ev("pbFormConfirmed()"), (await ev(partOf))[1]], [false, false]);
+    await ev("pbCreateConfirm(); true");
+    assert.match(await ev("document.querySelector('#pbCreateForm').innerText"), /not confirmed yet choose and confirm it first$/);
+    await ev("bClose(); true");
+    // The names a form is marked by: the whole offer, the offer without its duration, or its long words.
+    assert.deepEqual(await ev("[formNamesOffer('v9 - 11月 6 Week Strength Kickstart', '6 Week Strength Kickstart'), formNamesOffer('Strength Kickstart leads', '6 Week Strength Kickstart'), formNamesOffer('Kickstart: strength in a week or six, men', '6 Week Strength Kickstart'), formNamesOffer('12 Week Total Body Reset', '6 Week Strength Kickstart'), formNamesOffer('', 'x')]"), [true, true, true, false, null]);
+  } finally { if (saved) writeFileSync(sfile, saved); else rmSync(sfile, { force: true }); }
 });

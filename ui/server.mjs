@@ -865,7 +865,7 @@ function settingsProblem(b) {
   if (!isPlainObject(w) || (w.message != null && (typeof w.message !== "string" || w.message.length > 2000)) || !str(w.headline, 255) || !str(w.description, 255) || !str(w.cta, 20)) return "words: primary text up to 2000 characters, a one-line headline and description, a call-to-action type";
   if (/[\u2013\u2014]/.test(`${w.message || ""}${w.headline || ""}${w.description || ""}`)) return "words: no em or en dashes (they break the Ads Uploader import); use a plain hyphen";
   const d = b.destination || {};
-  if (!isPlainObject(d) || (d.lead_form_id != null && !/^\d{5,20}$/.test(String(d.lead_form_id))) || (d.instagram_user_id != null && d.instagram_user_id !== "" && !/^\d{5,20}$/.test(String(d.instagram_user_id)))) return "destination: the lead form and Instagram account are ids";
+  if (!isPlainObject(d) || (d.lead_form_id != null && !/^\d{5,20}$/.test(String(d.lead_form_id))) || (d.instagram_user_id != null && d.instagram_user_id !== "" && !/^\d{5,20}$/.test(String(d.instagram_user_id))) || (d.form_confirmed != null && !/^\d{5,20}$/.test(String(d.form_confirmed)))) return "destination: the lead form and Instagram account are ids";
   return null;
 }
 const DECISIONS = new Set(["keep", "exclude", null]);
