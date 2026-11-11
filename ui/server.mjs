@@ -705,7 +705,10 @@ function checkBrief(gym, raw) {
   // The room reference: the brief's own, else the gym's (Ad defaults → Room reference: a cleaned premises photo, or a
   // cleaned coach/member photo that is only ever a reference). Without one, a gym without premises photos generated
   // rooms from nothing (F45 Xinyi, 2026-10-07). A real photo in the batch still stands in when the gym names none.
-  if (brief && typeof brief === "object" && brief.reference == null) { const rr = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference; if (typeof rr === "string" && rr && !rr.includes("..") && existsSync(join(brandDir(gym), "brand-assets", rr))) brief.reference = rr; }
+  if (brief && typeof brief === "object" && brief.reference == null) { const rr = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference; if (typeof rr === "string" && rr && !rr.includes("..") && existsSync(join(brandDir(gym), "brand-assets", rr))) brief.reference = rr;
+    // A gym that has set none, in a batch with no real photo to stand in (none is ticked by itself since 2026-11-11): its
+    // first cleaned premises photo is the reference — only ever a reference, never an ad — so the rooms still match.
+    else if (!(Array.isArray(brief.real) && brief.real.length) && (brief.generated ?? 0) > 0) { const first = cleanPhotos(gym).find((x) => !x.people); if (first) brief.reference = first.path; } }
   // The gym's look (Ad defaults) rides on the brief when it names none and it differs from the standard, so the brief on disk says what ran.
   if (brief && typeof brief === "object") { const cd = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults || {}; if (brief.look == null && cd.look && cd.look !== "reference") brief.look = cd.look; }
   // The gym's default mix (Ad defaults) rides on a brief that names neither a format nor a mix, as photos, when it is not

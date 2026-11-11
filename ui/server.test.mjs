@@ -303,6 +303,8 @@ test("U7 the New Batch tab: typing updates the preview, a bad word shows its err
   // 10 new photos by default (the real batches' size), 2 looks, 1 location — and no photo of the empty room unless one is ticked (2026-11-11).
   await until(`/= <b>20 ads<\\/b>/.test(document.querySelector('#bSummary').innerHTML) && !document.querySelector('#bRun').disabled`, "the summary and an enabled Run");
   assert.deepEqual(await ev(`[B.draft.real, briefFromDraft().real]`), [[], []], "no premises photo is ticked by itself: an ad of the empty room is the owner's choice");
+  // The room still matches: with no real photo in the batch and no room reference set, the first cleaned premises photo is the reference (never an ad).
+  assert.deepEqual(await ev(`[B.check.brief.reference, B.check.brief.real]`), ["facility-clean/r1.png", []]);
   // An em dash: an inline error from the server's rules, and Run is disabled.
   await type("#bOffer", "12 Week — Reset");
   await until(`/em\\/en dash/.test(document.querySelector('#bErrors').textContent) && document.querySelector('#bRun').disabled`, "the dash error and a disabled Run");
