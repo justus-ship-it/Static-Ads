@@ -2169,6 +2169,9 @@ function reviewCard(){
         <h4 style="margin-top:0">The next batch</h4>
         <div class="rvbrief"><div><span class="k">Offer</span> ${b.offer?esc(b.offer):'<i>for you to type</i>'}</div><div><span class="k">Where</span> ${esc((b.locations||[]).join(', ')||'—')}${b.audience?` · ${esc(b.audience)}`:''}</div><div><span class="k">Photos</span> ${mixLine}</div>${b.cards?`<div><span class="k">Cards</span> ${Object.entries(b.cards).map(([k,c])=>`${c} ${esc(CARD_NAMES[k]||k)}`).join(', ')}</div>`:''}${(b.lean||[]).length?`<div><span class="k">Lean on</span> ${b.lean.map(l=>`<span class="pill">${esc(LEAN_WORD(l))}</span>`).join(' ')}</div>`:''}</div>
         <ul class="hint" style="margin:8px 0 8px 18px;line-height:1.5">${R.reasons.map(x=>`<li>${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}${R.left.map(x=>`<li>Not yet — ${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}</ul>
+        ${(R.scenes||[]).length || R.scenes_waiting ? `<div class="rvsec" id="rsScenes"><h4>Scenes to draft first</h4>
+          ${(R.scenes||[]).map((s,i)=>`<div style="margin:0 0 8px"><div class="hint" style="margin:0 0 4px;line-height:1.5">${s.needed?'<b>Needed.</b> ':''}${esc(s.why.replace(/studio-portrait/g,'studio portrait'))}${s.drafts_waiting?` ${s.drafts_waiting} draft${s.drafts_waiting===1?'':'s'} of this kind already await your approval.`:''}</div><button class="sm" onclick="rsDraftScenes(${i})" ${STATE.run&&!STATE.run.done?'disabled':''}>Draft ${esc(FORMAT_NAMES[s.format]||s.format).toLowerCase()} scenes${s.from_results?' from the results':''}…</button></div>`).join('')}
+          ${R.scenes_waiting?`<div class="hint" style="margin:0"><a href="#/${esc(STATE.sel)}/scenes">${R.scenes_waiting} scene draft${R.scenes_waiting===1?'':'s'} await your approval on Library → Scenes</a>. A batch only uses approved scenes.</div>`:''}</div>` : ''}
         <button class="primary" id="rsNextBatch" onclick="rsStartNext()">Start the next batch from this →</button>
         <div class="hint" style="margin-top:6px">Opens Create with these filled in. Every word is yours to change, and nothing is generated until you confirm the run there.</div>
       </div>
@@ -2183,6 +2186,23 @@ function rsReviewAccount(){
     <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="rsRevGo" onclick="rsReviewGo()">Review</button></div></div></div>`;
 }
 function rsReviewGo(){ const max = parseInt($('#rsRevMax').value, 10); if (!(max >= 0)) return; $('#gModal').innerHTML = ''; run({ kind:'account-review', gym: STATE.sel, max }, async () => { RS.data = null; if (STATE.tab==='results') await viewResults($('#view')); }); }
+/** Scenes drafted from the results (2026-11-11): the confirmation for one of the review's drafting jobs, then the scenes-refresh run. Text calls only; drafts for approval. */
+function rsDraftScenes(i){
+  const s = (RS.review?.scenes||[])[i]; if (!s) return;
+  const kind = (FORMAT_NAMES[s.format]||s.format).toLowerCase();
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Draft ${esc(kind)} scenes${s.from_results?' from the results':''}</h3>
+    <p class="hint">${esc(s.why.replace(/studio-portrait/g,'studio portrait'))}</p>
+    <p class="hint">${s.from_results ? "The drafter is told what this gym's own ads of this kind have done — what each kind of shot cost per lead and its best pictures — and writes about two thirds of the scenes as new versions of what earns leads, the rest to keep testing." : "This gym's ads of this kind have no lead on record yet, so the drafter goes by what the library has fewest of."} One or two text calls; no image calls. They arrive as drafts on Library → Scenes, and a batch only uses the ones you approve.</p>
+    <div class="grid"><div><label for="rsDsAud">Audience</label><select id="rsDsAud">${['men','women','any'].map(a=>`<option value="${a}" ${a===s.audience?'selected':''}>${a}</option>`).join('')}</select></div>
+      <div><label for="rsDsN">How many</label><input id="rsDsN" type="number" min="1" max="12" value="${s.count}"></div></div>
+    <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="rsDsGo" onclick="rsDraftScenesGo(${i})">Draft them</button></div></div></div>`;
+}
+function rsDraftScenesGo(i){
+  const s = (RS.review?.scenes||[])[i]; if (!s) return;
+  const count = parseInt($('#rsDsN').value, 10), audience = $('#rsDsAud').value; if (!(count >= 1 && count <= 12)) return;
+  $('#gModal').innerHTML = '';
+  run({ kind:'scenes-refresh', gym: STATE.sel, audience, count, ...(s.format!=='workout'?{format:s.format}:{}), ...(s.from_results?{from_results:true}:{}) }, async (code) => { await rsLoadReview(); const w = RS.review?.scenes_waiting || 0; if (code===0) toast(`${w} scene draft${w===1?'':'s'} await your approval on Library → Scenes`, 'ok'); });
+}
 /** Create, opened on the review's suggestion: the owner's own last words, the suggested photos and cards, the lean — each changeable there. */
 function rsStartNext(){ if (!RS.review) return; B.pendingSuggest = RS.review; go('batch'); }
 
@@ -2705,7 +2725,7 @@ function paintScenes(){
     ${drafts.length ? `<div class="row" style="margin-bottom:6px"><button class="sm ok" onclick="bApprove(${JSON.stringify(drafts.map(d=>d.id)).replace(/"/g,'&quot;')})" ${busy?'disabled':''}>Approve all ${drafts.length}</button><span class="hint" style="margin:0">Nothing is generated from a draft until it is approved.</span></div>` : '<div class="hint">No drafts waiting. Press Refresh scenes to have the agent draft some.</div>'}
     ${drafts.map(d=>`<div class="scene"><div class="dot opt"></div><div class="body">
       <div><span class="id">${esc(d.id)}</span> <span class="pill">${esc(d.audience)}</span>${d.format&&d.format!=='workout'?` <span class="pill navy">${esc(FORMAT_NAMES[d.format]||d.format)}</span>`:''}${d.source&&d.source.startsWith('batch:')?` <span class="pill navy">for batch ${esc(d.source.slice(6))}</span>`:''}${d.prefer_layout?` <span class="pill">${esc(d.prefer_layout.split('-')[0])}</span>`:''}</div>
-      <div class="tags">${esc(TAGS(d))}${d.covers?.length?` · covers ${esc(d.covers.join(', '))}`:''}${d.direction?.words?` · from your words`:''}${d.direction?.reference?` · from ${esc(d.direction.reference.split('/').pop())}`:''}</div>
+      <div class="tags">${esc(TAGS(d))}${d.covers?.length?` · covers ${esc(d.covers.join(', '))}`:''}${d.direction?.words?` · from your words`:''}${d.direction?.results?` · from the account's results`:''}${d.direction?.reference?` · from ${esc(d.direction.reference.split('/').pop())}`:''}</div>
       <div class="txt">${esc(d.scene)}</div>
       <div class="row"><button class="sm ok" onclick="bApprove(['${esc(d.id)}'])" ${busy?'disabled':''}>Approve</button><button class="sm danger" onclick="bReject('${esc(d.id)}')" ${busy?'disabled':''}>Reject…</button></div>
     </div></div>`).join('')}
@@ -2761,6 +2781,7 @@ function bRefreshConfirm(){
     <p class="hint" id="bRfFormatHint" style="margin:6px 0 0"></p>
     <label style="margin-top:12px">Direction</label>
     <div><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="gaps" checked style="width:auto"> <span id="bRfGapsWords">Fill the library's gaps (the thinnest exercises, ages, settings and equipment for this audience)</span></label></div>
+    <div><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="results" style="width:auto"> From the account's results <span class="hint">· new versions of what earns this gym's leads; the rest keep testing. Goes by the gaps when its ads of this kind have no lead yet.</span></label></div>
     <div><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="words" style="width:auto"> In words</label><textarea id="bRfWords" rows="2" placeholder="e.g. couples in their fifties training together, warm and unposed"></textarea></div>
     <div style="margin-top:8px"><label style="font-weight:400;color:var(--text)"><input type="radio" name="bRfDir" value="reference" style="width:auto" ${refs.length?'':'disabled'}> Like a reference image${refs.length?'':' (upload one under References first)'}</label>
       ${refs.length?`<select id="bRfRef">${refs.map(r=>`<option value="${esc(r.name)}">${esc(r.name)}${r.read?' (read before)':''}</option>`).join('')}</select>`:''}</div>
@@ -2780,7 +2801,7 @@ function bRefreshGo(){
   if (dir==='words' && words.length < 3){ $('#bRfErr').innerHTML = '<div class="msg err">Say what the scenes should show.</div>'; return; }
   if (dir==='reference' && !reference){ $('#bRfErr').innerHTML = '<div class="msg err">Pick a reference image.</div>'; return; }
   bClose();
-  run({kind:'scenes-refresh', gym:STATE.sel, audience, count, ...(format!=='workout'?{format}:{}), ...(dir==='words'?{words}:{}), ...(dir==='reference'?{reference}:{})}, async()=>{ await reloadScenes(); });
+  run({kind:'scenes-refresh', gym:STATE.sel, audience, count, ...(format!=='workout'?{format}:{}), ...(dir==='words'?{words}:{}), ...(dir==='reference'?{reference}:{}), ...(dir==='results'?{from_results:true}:{})}, async()=>{ await reloadScenes(); });
 }
 
 // ── From the website (onboarding, part one) ─────────────────────────────────

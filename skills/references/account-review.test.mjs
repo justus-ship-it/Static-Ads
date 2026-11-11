@@ -15,6 +15,7 @@ import { importExport } from "./ads-export.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 import { validateBrief, planVisuals, leanProblems, LEAN_SHARE } from "./plan-offer-batch.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
+import { sceneGuideFrom, sceneKindOf, pictureKey, WINNERS_MAX } from "./what-wins.mjs";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 /** A different picture each time: the bytes differ, so each is read once. */
@@ -194,5 +195,59 @@ test("AR4 the review, from what is on disk and with no call: an export's running
     assert.match(leanProblems([{ tag: "setting", value: "group", format: "square" }])[0], /format "square" is not one of/);
     assert.match(leanProblems("dark walls")[0], /lean must be a list of up to 6/);
     assert.ok(existsSync(join(g, REVIEW_FILE)));
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("AR5 scenes drafted from the results (2026-11-11): the guide the drafter is told, by rule — a picture's kind as a scene would be drafted for it (this app's ad is what its batch says, a class or group shot is a workout scene, a card or premises photo is none); the recent ads when they have 20+ leads, else every ad; each attribute's values with 5+ leads, the cheapest first, and this app's own scene tags; the best pictures — one picture in two places counts once — with the scene each was made from; the review warns when the mix names a kind with no approved scene and lists the scenes to draft first, from the results where the gym has any", () => {
+  const NOW = new Date("2026-11-11T00:00:00Z"), wr = (over) => read({ format: "workout", backdrop: "gym-floor", pose: "mid-exercise", expression: "effort", ...over });
+  assert.deepEqual([sceneKindOf(R({ read: wr({ format: "class-group" }) })), sceneKindOf(R({ read: read({}) })), sceneKindOf(R({ read: wr({ format: "premises" }) })), sceneKindOf(R({})), sceneKindOf(R({ source: "app", format: "review", read: wr({}) })), sceneKindOf(R({ source: "app", format: "studio-portrait", read: wr({}) }))], ["workout", "studio-portrait", null, null, null, "studio-portrait"]);
+  assert.equal(pictureKey({ source: "app", batch: "b1", photos: "r03" }), "b1/r03");
+  const app = (ad_id, over) => R({ ad_id, source: "app", batch: "b1", published: "2026-10-20", status: "live", read: wr({ format: "class-group", subject: "group", backdrop: "studio-room", expression: "neutral" }), ...over });
+  const rows = [
+    app("a1", { photos: "r03", scenes: "w-group-swing", setting: "group", equipment: "kettlebell", exercise: "kettlebell-swing", age_tag: "prime", location: "BISHAN", spend: 1800, leads: 100, cost_per_lead: 18 }),
+    app("a2", { photos: "r03", scenes: "w-group-swing", setting: "group", equipment: "kettlebell", exercise: "kettlebell-swing", age_tag: "prime", location: "ANG MO KIO", spend: 1700, leads: 98, cost_per_lead: 17.35 }),
+    app("a3", { photos: "r05", scenes: "w-lunge", setting: "solo", equipment: "bodyweight", exercise: "lunge", age_tag: "older", spend: 660, leads: 30, cost_per_lead: 22, read: wr({ subject: "woman", backdrop: "studio-room", expression: "neutral" }) }),
+    app("a4", { photos: "r07+r08", scenes: "w-press+w-row", setting: "solo+solo", equipment: "machine+cable", exercise: "chest-press+cable-row", spend: 500, leads: 12, cost_per_lead: 41.67, read: wr({ subject: "man" }) }),
+    app("a5", { photos: "r09", scenes: "real photo", spend: 60, leads: 0, format: null, read: wr({ format: "premises", subject: "none" }) }), // the empty room: no kind
+    R({ ad_id: "old", status: "paused", published: "2024-03-01", spend: 300, leads: 60, cost_per_lead: 5, read: wr({ subject: "woman", backdrop: "seamless-colour", expression: "smile" }) }), // an old campaign, another offer
+    R({ ad_id: "vid", media: "video", status: "active", spend: 100, leads: 50, cost_per_lead: 2, read: wr({}) }),
+    R({ ad_id: "p1", status: "active", spend: 430, leads: 10, cost_per_lead: 43, read: read({ backdrop: "studio-room", expression: "neutral" }) }),
+  ];
+  const scenes = [workout("w-group-swing", { audience: "women", people: 3, setting: "group", equipment: "kettlebell", exercise: "kettlebell-swing", scene: "Three women swinging kettlebells, loosely spaced." }), workout("w-lunge", { audience: "women", exercise: "lunge", equipment: "bodyweight", age: "older", scene: "A woman in her sixties in a reverse lunge." })];
+  const g = sceneGuideFrom(rows, "workout", { currency: "SGD", scenes, now: NOW });
+  assert.deepEqual([g.format, g.scope, g.ads, g.leads, g.median], ["workout", "recent", 4, 240, 22], "the four recent workout stills: the old campaign, the video, the premises photo and the portrait are out; the median is the account's recent stills' (17.35, 18, 22, 41.67 and the portrait's 43)");
+  assert.deepEqual(g.lines.slice(0, 3), ["Kind of shot: class-group (198 leads at SGD 17.68), workout (42 leads at SGD 27.62)", "Subject: group (198 leads at SGD 17.68), woman (30 leads at SGD 22.00), man (12 leads at SGD 41.67)", "Backdrop: studio-room (228 leads at SGD 18.25), gym-floor (12 leads at SGD 41.67)"]);
+  assert.ok(g.lines.includes("Setting (the ads this app made): group (198 leads at SGD 17.68), solo (30 leads at SGD 22.00)"), "a two-photo ad's joined tags are skipped: " + g.lines.join(" | "));
+  assert.ok(g.lines.includes("Exercise (the ads this app made): kettlebell-swing (198 leads at SGD 17.68), lunge (30 leads at SGD 22.00)"));
+  assert.deepEqual(g.winners.map((w) => [w.leads, w.cost_per_lead, w.ads, w.scene_id]), [[198, 17.68, 2, "w-group-swing"], [30, 22, 1, "w-lunge"]], "one picture in two locations is one winner; 30 leads at the median counts; 12 at 41.67 is dear");
+  assert.equal(g.winners[0].text, "198 leads at SGD 17.68 over 2 ads — made from this scene: Three women swinging kettlebells, loosely spaced.");
+  assert.ok(WINNERS_MAX >= 3);
+  // Under 20 recent leads the whole history is read; an account's ad says what its reading saw.
+  const thin = sceneGuideFrom(rows.filter((r) => ["a4", "old"].includes(r.ad_id)), "workout", { currency: "SGD", now: NOW });
+  assert.deepEqual([thin.scope, thin.ads, thin.leads, thin.winners.map((w) => w.text)], ["all", 2, 72, ["60 leads at SGD 5.00 — the picture shows: workout, woman, seamless-colour, mid-exercise, smile"]]);
+  const pg = sceneGuideFrom(rows, "studio-portrait", { now: NOW });
+  assert.deepEqual([pg.leads, pg.scope, pg.winners], [10, "all", []], "the gym's one portrait at 43 is no winner: the bar is the account's median, not its own");
+  assert.equal(sceneGuideFrom([R({ ad_id: "z", spend: 50, leads: 0, read: wr({}) })], "workout", { now: NOW }), null, "no lead: nothing to draft from");
+
+  // The review: the mix names studio portraits, the library has none approved; the workout winner has a scene.
+  const { d, g: dir } = gym({ scenes: [...scenes, { ...portrait("w-p-draft", { audience: "women" }), draft: true }], brief: { batch_id: "2026-10-20-offer", offer: "6 Week Reset", locations: ["BISHAN"], audience: "LADIES" } });
+  try {
+    const profile = JSON.parse(readFileSync(join(dir, "gym-profile.json"), "utf-8")); profile.creative_defaults = { ...profile.creative_defaults, generated: 10, mix: { workout: 80, "studio-portrait": 20 } };
+    const s = suggestBrief(dir, { rows, every: rows, currency: "SGD", profile, now: NOW });
+    assert.deepEqual(s.brief.mix, { workout: 8, "studio-portrait": 2 });
+    const none = s.left.find((l) => l.kind === "no_scenes");
+    assert.match(none.text, /^2 studio portraits in the mix, but no studio portrait scene is approved for women \(1 draft await your approval on Library → Scenes\)\. Create refuses the batch until one is: draft some first, or take them out of the mix on Create\.$/);
+    assert.deepEqual(s.scenes.map((x) => [x.format, x.audience, x.count, x.from_results, x.needed, x.approved, x.drafts_waiting]), [["workout", "women", 6, true, false, 2, 0], ["studio-portrait", "women", 6, true, true, 0, 1]]);
+    assert.match(s.scenes[0].why, /^New versions of what earns this gym's leads: its best workout picture has 198 leads at SGD 17\.68 \(scene w-group-swing\)\.$/);
+    assert.match(s.scenes[1].why, /^2 studio portraits are in the mix, but no studio portrait scene is approved for women: Create refuses the batch until one is\. The drafter is told what this gym's studio portrait ads have done \(10 leads over 1 ad\)\.$/);
+    assert.equal(s.scenes_waiting, 1);
+    // Nothing to say for a kind with approved scenes and no results; and the report carries the list.
+    const quiet = suggestBrief(dir, { rows: [], every: [], currency: "SGD", profile: { ...profile, creative_defaults: { ...profile.creative_defaults, mix: { workout: 100 } } }, now: NOW });
+    assert.deepEqual(quiet.scenes, []);
+    const bare = suggestBrief(dir, { rows: [], every: [], currency: "SGD", profile, now: NOW }).scenes;
+    assert.deepEqual(bare.map((x) => [x.format, x.from_results, x.needed]), [["studio-portrait", false, true]], "no results for the kind: drafted by what the library has fewest of");
+    const review = buildReview(dir, { now: NOW });
+    assert.ok(Array.isArray(review.scenes) && review.scenes_waiting === 1);
+    assert.match(reviewText({ ...review, scenes: s.scenes }), /Scenes to draft first \(text calls only, drafts for your approval\):\n- 6 workout scenes for women, from the results: New versions[^\n]+\n- 6 studio portrait scenes for women, from the results: [^\n]+\n- 1 scene draft await your approval on Library → Scenes\./);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

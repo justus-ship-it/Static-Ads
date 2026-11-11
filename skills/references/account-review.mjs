@@ -19,10 +19,10 @@ import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statS
 import { join, resolve } from "path";
 import { parseArgs } from "util";
 import { fileURLToPath } from "url";
-import { whatWins, whatWinsAcross, nextWave, mixSuggestion, refreshGym, gymRowsRead, inScope, inTrack, isActive, valueOf, CHEAP } from "./what-wins.mjs";
+import { whatWins, whatWinsAcross, nextWave, mixSuggestion, refreshGym, gymRowsRead, inScope, inTrack, isActive, valueOf, pictureKey, sceneGuideFrom, CHEAP } from "./what-wins.mjs";
 import { gymTextRows } from "./meta-results.mjs";
 import { readCreatives, unreadCount } from "./read-creatives.mjs";
-import { SCENE_FORMATS, PORTRAIT_TAGS, allocateMix, formatOf, loadScenes } from "./scene-library.mjs";
+import { SCENE_FORMATS, PORTRAIT_TAGS, allocateMix, formatOf, loadScenes, isDraft, isRetired } from "./scene-library.mjs";
 import { mixOf } from "./client-config.mjs";
 import { scenePool, shows, sceneAudience, leanName, MAX_LEANS } from "./plan-offer-batch.mjs";
 import { cardsAvailable } from "./cards.mjs";
@@ -42,8 +42,6 @@ export const LEAN_MIN_LEADS = 20, LEAN_COMPARE_LEADS = 10, LEAN_GAP = 0.85;
  *  backdrop's (Jurong West's couple shot alone would have named a pose, an expression and a head count; Sculpt Society's one
  *  kettlebell photo, run in two locations, a setting, a piece of equipment and an exercise). */
 export const LEAN_MIN_PICTURES = 2;
-/** Which picture a row's ad shows: the batch's photo for this app's ads, the image for the account's. */
-const pictureKey = (r) => (r.source === "app" ? `${r.batch}/${r.photos}` : (Array.isArray(r.hashes) && r.hashes[0]) || r.creative_file || r.thumbnail || r.ad_id);
 /** How a picture's reading names a scene tag, per kind of photograph the agent makes. A value that maps to nothing is not something a scene can be asked for. */
 const READ_TO_TAG = {
   "studio-portrait": {
@@ -121,7 +119,7 @@ export function lastBrief(gymDir) {
  * locations, audience (the owner's last words), generated, mix (photos per kind), cards, lean — Create fills the rest
  * from the gym's Ad defaults as it always does. `reasons` say where each part comes from; `left` what could not be used.
  */
-export function suggestBrief(gymDir, { rows = gymRowsRead(gymDir), mix = null, next = [], currency = "SGD", profile = readJson(join(gymDir, "gym-profile.json")) || {} } = {}) {
+export function suggestBrief(gymDir, { rows = gymRowsRead(gymDir), every = rows, mix = null, next = [], currency = "SGD", profile = readJson(join(gymDir, "gym-profile.json")) || {}, now = new Date() } = {}) {
   const cd = profile.creative_defaults || {}, reasons = [], left = [];
   const last = lastBrief(gymDir), wording = readWordings(gymDir)[0]?.text || null;
   const offer = last?.brief.offer || wording || "";
@@ -151,12 +149,31 @@ export function suggestBrief(gymDir, { rows = gymRowsRead(gymDir), mix = null, n
   }
   if (generated && !lean.length && !left.length) reasons.push({ field: "lean", text: "Nothing in the results is clear enough yet to lean the photos one way: the batch spreads across the approved scenes." });
 
+  // Scenes to draft first (2026-11-11): the lean only steers among scenes already approved, so a kind in the mix with
+  // no approved scene would be refused on Create, and the best ads' kind is repeated only if scenes of it exist. One
+  // job per kind of photograph: drafted from the gym's own results where it has any (the drafter is told what each
+  // kind of shot cost and the best pictures), else by the library's gaps. Text calls only; the owner's click.
+  const raw = readJson(join(gymDir, "scenes.json"))?.scenes || [], waiting = raw.filter((s) => isDraft(s) && !isRetired(s)), toDraft = [];
+  for (const f of formats) {
+    const name = f.replace("-", " "), n = photos[f], approved = scenePool(scenes.filter((s) => formatOf(s) === f), aud, n).length;
+    const drafts = waiting.filter((s) => formatOf(s) === f && (aud === "any" ? !s.audience || s.audience === "any" : !s.audience || s.audience === aud || s.audience === "any")).length;
+    const guide = sceneGuideFrom(every, f, { currency, scenes: raw, now }), best = guide?.winners?.[0] || null, leftHere = left.filter((l) => l.format === f);
+    const why = [];
+    if (!approved) why.push(`${n} ${name}${n === 1 ? " is" : "s are"} in the mix, but no ${name} scene is approved for ${aud === "any" ? "a mixed audience" : aud}: Create refuses the batch until one is.`);
+    if (best) why.push(`New versions of what earns this gym's leads: its best ${name} picture has ${best.leads} leads at ${money(best.cost_per_lead, currency)}${best.scene_id ? ` (scene ${best.scene_id})` : best.saw ? ` (${best.saw})` : ""}.`);
+    else if (guide?.lines?.length && !approved) why.push(`The drafter is told what this gym's ${name} ads have done (${guide.leads} leads over ${guide.ads} ad${guide.ads === 1 ? "" : "s"}).`);
+    if (leftHere.length) why.push(`No approved scene shows ${leftHere.map((l) => leanName(l)).join(", ")}, which the results favour.`);
+    if (!why.length) continue;
+    toDraft.push({ format: f, audience: aud, count: 6, from_results: !!(guide?.lines?.length || guide?.winners?.length), needed: !approved, approved, drafts_waiting: drafts, why: why.join(" ") });
+    if (!approved) left.push({ kind: "no_scenes", format: f, text: `${n} ${name}${n === 1 ? "" : "s"} in the mix, but no ${name} scene is approved for ${aud === "any" ? "a mixed audience" : aud}${drafts ? ` (${drafts} draft${drafts === 1 ? "" : "s"} await your approval on Library → Scenes)` : ""}. Create refuses the batch until one is: draft some first, or take them out of the mix on Create.` });
+  }
+
   // A card of each kind that is ready and has never run here: it costs no image call to test.
   const ready = cardsAvailable(gymDir, { offer: offer || null, profile }), ran = new Set(rows.map((r) => r.format).filter(Boolean)), cards = {};
   for (const k of ["review", "statement", "timeline"]) if (ready[k] > 0 && !ran.has(k)) cards[k] = 1;
   if (Object.keys(cards).length) reasons.push({ field: "cards", text: `One ${Object.keys(cards).join(", one ")} card: ready and never run here, and a card costs no image call.` });
 
-  return { brief: { offer, locations, audience, generated, ...(Object.keys(photos).length > 1 || (formats[0] && formats[0] !== "workout") ? { mix: photos } : {}), ...(Object.keys(cards).length ? { cards } : {}), ...(lean.length ? { lean } : {}) }, from: last?.id || null, reasons, left };
+  return { brief: { offer, locations, audience, generated, ...(Object.keys(photos).length > 1 || (formats[0] && formats[0] !== "workout") ? { mix: photos } : {}), ...(Object.keys(cards).length ? { cards } : {}), ...(lean.length ? { lean } : {}) }, from: last?.id || null, reasons, left, scenes: toDraft, scenes_waiting: waiting.length };
 }
 
 // ── the review ───────────────────────────────────────────────────────────────
@@ -178,7 +195,7 @@ export function buildReview(gymDir, { brandsDir = resolve(gymDir, ".."), now = n
   const drift = [], outDir = join(gymDir, "outputs");
   if (existsSync(outDir)) for (const id of readdirSync(outDir).sort()) for (const d of readJson(join(outDir, id, "results.json"))?.drift || []) drift.push({ batch: id, kind: d.kind, text: d.text, fixable: !!d.fixable });
   const history = readJson(join(gymDir, "account-history.json")), u = (() => { try { return unreadCount(gymDir); } catch { return { pictures: 0, unread: 0 }; } })();
-  const suggested = suggestBrief(gymDir, { rows: inScope(rows, "recent", { now }).length ? inScope(rows, "recent", { now }) : rows, mix, next, currency, profile });
+  const suggested = suggestBrief(gymDir, { rows: inScope(rows, "recent", { now }).length ? inScope(rows, "recent", { now }) : rows, every: rows, mix, next, currency, profile, now });
   const pick = (kind) => wins.suggestions.filter((s) => s.kind === kind).map((s) => s.text);
   return {
     gym, name: profile.display_name || gym, currency, built: now.toISOString(), last: readJson(join(gymDir, REVIEW_FILE)),
@@ -187,7 +204,7 @@ export function buildReview(gymDir, { brandsDir = resolve(gymDir, ".."), now = n
     keep: pick("keep"), tiring: pick("tiring"), pause: pick("pause"), matters: pick("matters"), notes: [...pick("thin"), ...pick("test"), ...pick("unread")],
     copy: { copies: copyOf("copy"), headlines: copyOf("headline"), never_led: dead },
     drift, mix: { current: mix.current, suggested: mix.suggested, changed: mix.changed, reasons: mix.reasons, formats: mix.formats },
-    next, across, brief: suggested.brief, brief_from: suggested.from, reasons: suggested.reasons, left: suggested.left,
+    next, across, brief: suggested.brief, brief_from: suggested.from, reasons: suggested.reasons, left: suggested.left, scenes: suggested.scenes, scenes_waiting: suggested.scenes_waiting,
   };
 }
 /** The review in plain lines: for the run's log, and for copying into a message. */
@@ -200,6 +217,8 @@ export function reviewText(r) {
   if (r.drift.length) { L.push("", "Meta differs from what the app sent:"); for (const d of r.drift) L.push(`- ${d.batch}: ${d.text}`); }
   L.push("", "The mix:"); for (const x of r.mix.reasons) L.push(`- ${x}`);
   L.push("", "The next batch:"); for (const x of r.reasons) L.push(`- ${x.text}`); for (const x of r.left) L.push(`- Not yet: ${x.text}`);
+  if (r.scenes?.length) { L.push("", "Scenes to draft first (text calls only, drafts for your approval):"); for (const x of r.scenes) L.push(`- ${x.count} ${x.format.replace("-", " ")} scenes for ${x.audience === "any" ? "a mixed audience" : x.audience}${x.from_results ? ", from the results" : ""}: ${x.why}`); }
+  if (r.scenes_waiting) L.push(`- ${r.scenes_waiting} scene draft${r.scenes_waiting === 1 ? "" : "s"} await your approval on Library → Scenes.`);
   return L.join("\n");
 }
 

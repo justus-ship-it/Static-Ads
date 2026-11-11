@@ -191,6 +191,64 @@ export function formatGuideFrom(every, format, { currency = "SGD" } = {}) {
   return { format, ads: rows.length, leads, spend: round2(rows.reduce((t, r) => t + (r.spend || 0), 0)), lines };
 }
 
+// ── drafting scenes from the results (2026-11-11) ────────────────────────────
+// The scene drafter knew the library's gaps, the owner's words or a reference image — never what the gym's own ads
+// had done. This is what it is told when the owner asks for scenes "from the results": per kind of photograph the
+// agent makes, what each kind of shot cost per lead, and the gym's best PICTURES with what they showed. By rule, no
+// model; only ever the gym's own ads (stills, after leads, the home country).
+/** Which picture a row's ad shows: the batch's photo for this app's ads, the image for the account's. */
+export const pictureKey = (r) => (r.source === "app" ? `${r.batch}/${r.photos}` : (Array.isArray(r.hashes) && r.hashes[0]) || r.creative_file || r.thumbnail || r.ad_id);
+/** The kind of photograph the agent makes that a picture's reading is: a class or group shot is a workout scene with a group in it. */
+export const READ_KIND = { workout: "workout", "class-group": "workout", "studio-portrait": "studio-portrait" };
+const MAKEABLE = new Set(Object.values(READ_KIND));
+/** The kind of photograph an ad's picture is, as a scene would be drafted for it: this app's ad is what its batch says; any other, what its reading says; a card, a premises photo or an unread picture is none. */
+export const sceneKindOf = (r) => (r.format ? (MAKEABLE.has(r.format) ? r.format : null) : READ_KIND[r.read?.format] || null);
+/** The scene tags this app's own ads carry on their rows (one photo per ad: a joined value is skipped). */
+const GUIDE_ROW_TAGS = [["setting", "Setting"], ["equipment", "Equipment"], ["exercise", "Exercise"], ["age_tag", "Age"]];
+export const WINNERS_MAX = 4;
+/**
+ * What the drafter is told for one kind of photograph: { format, scope, ads, leads, spend, median, lines[], winners[] }, or
+ * null when the gym has no ad of that kind with a lead. The ads running now or made in the last 6 months when they
+ * have 20+ leads between them (an old campaign's offer and prices would otherwise set the median: Jurong West's 2024
+ * trial ads put it at SGD 58 against the running campaign's 17), else every ad the gym ran. `lines`: each attribute's values with 5+ leads and their cost per
+ * lead, the cheapest first. `winners`: its best pictures — one picture run in several places counts once — with 10+
+ * leads at or under the ACCOUNT's median cost per lead in that scope (every still, whatever its kind: a kind's own
+ * median would call its only ad a winner — Sculpt Society's one portrait at SGD 43 against an account at 22), the most leads first; each says the scene it was made from when
+ * this app made it (`scenes`: the library's scenes, any state), else what the reading saw.
+ */
+export function sceneGuideFrom(every, format, { currency = "SGD", scenes = [], now = new Date() } = {}) {
+  const stills = inTrack(every, "stills"), kind = stills.filter((r) => sceneKindOf(r) === format), sumLeads = (x) => x.reduce((t, r) => t + (r.leads || 0), 0);
+  const recent = inScope(kind, "recent", { now }), scope = sumLeads(recent) >= LEADS_SOLID ? "recent" : "all", rows = scope === "recent" ? recent : kind;
+  const leads = sumLeads(rows);
+  if (!rows.length || !leads) return null;
+  const lines = [], say = (label, vals) => { const v = vals.filter((x) => x.leads >= LEADS_EARLY && x.cost_per_lead != null).sort((a, b) => a.cost_per_lead - b.cost_per_lead); if (v.length) lines.push(`${label}: ${v.map((x) => `${x.value} (${x.leads} leads at ${money(x.cost_per_lead, currency)})`).join(", ")}`); };
+  const keys = format === "workout" ? ["subject", ...GUIDE_ATTRIBUTES.filter((k) => k !== "subject")] : GUIDE_ATTRIBUTES;
+  const tables = attributeTables(rows);
+  // A workout scene is one person, a coached pair or a group: what the readings called the shot says which.
+  if (format === "workout") say("Kind of shot", tally(rows.filter((r) => r.read?.format), (r) => r.read.format));
+  for (const k of keys) { const t = tables.find((x) => x.key === k); if (t) say(t.label, t.values); }
+  if (format === "workout") for (const [col, label] of GUIDE_ROW_TAGS) say(`${label} (the ads this app made)`, tally(rows.filter((r) => r.source === "app"), (r) => r[col]));
+  const median = medianCpl(scope === "recent" ? inScope(stills, "recent", { now }) : stills), byId = new Map(scenes.filter((s) => s && s.id).map((s) => [s.id, s]));
+  const pics = new Map();
+  for (const r of rows) { const k = pictureKey(r), p = pics.get(k) || pics.set(k, { ads: 0, leads: 0, spend: 0, row: r }).get(k); p.ads++; p.leads += r.leads || 0; p.spend += r.spend || 0; if ((r.leads || 0) > (p.row.leads || 0)) p.row = r; }
+  const winners = median == null ? [] : [...pics.values()].map((p) => ({ ...p, cost_per_lead: p.leads ? round2(p.spend / p.leads) : null })).filter((p) => p.leads >= LEADS_KEEP && p.cost_per_lead <= median).sort((a, b) => b.leads - a.leads || a.cost_per_lead - b.cost_per_lead).slice(0, WINNERS_MAX)
+    .map((p) => { const r = p.row, sc = r.source === "app" && r.scenes && !String(r.scenes).includes("+") ? byId.get(r.scenes) : null, d = r.read;
+      const saw = d ? [d.format, d.subject && d.subject !== "none" ? d.subject : null, d.backdrop, d.pose, d.expression].filter(Boolean).join(", ") : null;
+      return { name: adName(r), ads: p.ads, leads: p.leads, cost_per_lead: p.cost_per_lead, scene_id: sc?.id || null, scene: sc?.scene || null, saw, text: `${p.leads} leads at ${money(p.cost_per_lead, currency)}${p.ads > 1 ? ` over ${p.ads} ads` : ""} — ${sc?.scene ? `made from this scene: ${sc.scene}` : saw ? `the picture shows: ${saw}` : adName(r)}` }; });
+  return { format, scope, ads: rows.length, leads, spend: round2(rows.reduce((t, r) => t + (r.spend || 0), 0)), median, lines, winners };
+}
+/** Values of one row field among rows: ads, leads, spend, cost per lead (a joined value — two photos in one ad — is skipped). */
+function tally(rows, get) {
+  const m = new Map();
+  for (const r of rows) { const v = get(r); if (v == null || v === "" || String(v).includes("+")) continue; const x = m.get(v) || m.set(v, { value: v, ads: 0, spend: 0, leads: 0 }).get(v); x.ads++; x.spend += r.spend || 0; x.leads += r.leads || 0; }
+  return [...m.values()].map((x) => ({ ...x, spend: round2(x.spend), cost_per_lead: x.leads ? round2(x.spend / x.leads) : null }));
+}
+/** The guide for a gym folder: its rows and its scene library as they are on disk. */
+export function sceneGuide(gymDir, format, opts = {}) {
+  let scenes = []; try { scenes = JSON.parse(readFileSync(join(gymDir, "scenes.json"), "utf-8")).scenes || []; } catch { scenes = []; }
+  return sceneGuideFrom(gymRowsRead(gymDir), format, { ...opts, scenes });
+}
+
 // ── the mix suggestion (Phase 4, 2026-11-10) ─────────────────────────────────
 // How a gym's next batches should be shared between the kinds of photograph the agent can make, from the gym's own
 // lead-form results. By rule, no model, one step at a time, and only ever a suggestion: the owner saves it or not.

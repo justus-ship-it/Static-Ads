@@ -33,6 +33,7 @@
  *   node skills/references/refresh-scenes.mjs --brand-dir brands/x --audience women --count 4 --cover exercise:lunge,age:older
  *   node skills/references/refresh-scenes.mjs --brand-dir brands/x --audience any --count 3 --words "…"
  *   node skills/references/refresh-scenes.mjs --brand-dir brands/x --audience men --count 3 --reference references/ad.jpg
+ *   node skills/references/refresh-scenes.mjs --brand-dir brands/x --audience women --count 6 --from-results [--format studio-portrait]
  *   node skills/references/refresh-scenes.mjs --brand-dir brands/x --approve w-lunge-coach,w-row
  *   node skills/references/refresh-scenes.mjs --brand-dir brands/x --reject w-row --reason "not our kind of session"
  *   node skills/references/refresh-scenes.mjs --brand-dir brands/x --list
@@ -243,6 +244,22 @@ const PORTRAIT_SCHEMA = {
 const PREFIX = { men: "m-", women: "w-", any: "a-" };
 const WHO = { men: "men", women: "women", any: "a mix of men and women (or either)" };
 
+/** How much of a from-the-results refresh follows what earns leads; the rest keeps testing what the gym's ads have not shown. */
+export const RESULTS_SHARE = "two thirds";
+/**
+ * What the drafter is told when the owner asks for scenes from the account's results (2026-11-11): what each kind of
+ * shot cost per lead, the gym's best pictures — the scene each was made from, or what its reading saw — and the
+ * direction. `guide` is what-wins.mjs → sceneGuide. The values are the picture readings' words, not the scene
+ * vocabulary: the drafter writes scenes in the vocabulary that show the same thing.
+ */
+export function resultsLines(guide, format = "workout") {
+  const out = [];
+  if (guide?.lines?.length) out.push(`WHAT THIS GYM'S OWN ADVERTS OF THIS KIND HAVE DONE (leads from its lead forms and what each cost, the cheapest first${format === "workout" ? "; class-group is a class or a group training together, workout one person or a coached pair" : ""}; the words are how each picture was read, not the fields below):\n${guide.lines.map((l) => `- ${l}`).join("\n")}`);
+  if (guide?.winners?.length) out.push(`ITS BEST ADVERTS (the most leads, at or under the gym's median cost per lead):\n${guide.winners.map((w) => `- ${w.text}`).join("\n")}`);
+  out.push(`DIRECTION: draft from these results. About ${RESULTS_SHARE} of the new scenes are NEW VERSIONS of what earns this gym's leads cheaply — the same kind of picture as its best adverts (the same grouping, kind of place and mood) with a different ${format === "workout" ? "exercise, piece of equipment, age or moment" : "person, colour, stance or thing in their hands"}, never a copy or a near-copy of an existing scene. The rest try something its adverts have not shown yet, so that keeps being tested.${format === "workout" ? " Where these results and the shot types above disagree on how many people a scene has, the results decide." : ""}`);
+  return out;
+}
+
 /** The drafting request: everything the model needs to write scenes for this gym that repeat nothing. */
 export function buildRefreshRequest({ audience = "any", count = 6, direction = { kind: "gaps", cover: [], exercises: [] }, scenes = [], photography = {}, brandNames = [], shotGuide = null, format = "workout", guide = null }) {
   if (!AUDIENCES.includes(audience)) throw new Error(`audience must be one of ${AUDIENCES.join(", ")}`);
@@ -261,7 +278,8 @@ export function buildRefreshRequest({ audience = "any", count = 6, direction = {
   ];
   // The high-performing references' shot types (reference-shots.mjs): scenes that can be photographed that way.
   if (shotGuide?.recipes?.length) lines.push(`SHOT TYPES that perform best — write scenes a photographer could shoot as one of these, close and at eye level, caught mid-rep or at peak effort with a clear expression: ${shotGuide.recipes.map((r) => `${r.name} (${r.when || r.moment})`).join("; ")}. About half the scenes have two people: a coach or a training partner.`);
-  if (direction.kind === "words") lines.push(`DIRECTION from the owner: ${direction.words.trim()} — every scene follows this, in this gym.`);
+  if (direction.kind === "results") lines.push(...resultsLines(direction.guide, "workout"));
+  else if (direction.kind === "words") lines.push(`DIRECTION from the owner: ${direction.words.trim()} — every scene follows this, in this gym.`);
   else if (direction.kind === "reference") {
     lines.push(`DIRECTION: ${describeReference(direction.description)}`);
     lines.push(`Every scene: people = ${direction.description.people}, setting = ${direction.description.setting}, pose = ${direction.description.pose}.`);
@@ -293,8 +311,10 @@ export function buildPortraitRequest({ audience = "any", count = 6, direction = 
     "REAL: any equipment is true to size and held the way it is really held.",
     `FIELDS for each scene: id (a new lower-case slug starting with "${p}", e.g. ${p}kettlebell-smile); audience ("${audience}"); pose — how the body sits in the frame, one of ${Object.entries(POSES).map(([k, v]) => `${k} (${v})`).join("; ")}; people (1 or ${MAX_PORTRAIT_PEOPLE}); age — ${SCENE_TAGS.age.join(", ")} (20s; 30s–40s; 50s–60s); backdrop — ${PORTRAIT_TAGS.backdrop.join(", ")}; stance — ${PORTRAIT_TAGS.stance.join(", ")}; expression — ${PORTRAIT_TAGS.expression.join(", ")}; eye_contact (true when they look into the camera); scene (the description).`,
   ];
-  if (guide?.lines?.length) lines.push(`WHAT THIS GYM'S OWN ADVERTS OF THIS KIND HAVE DONE (leads from its lead forms and what each cost; the cheapest first) — lean the new scenes toward what earns leads cheaply, while still trying one or two of the others:\n${guide.lines.map((l) => `- ${l}`).join("\n")}`);
-  if (direction.kind === "words") lines.push(`DIRECTION from the owner: ${direction.words.trim()} — every scene follows this.`);
+  if (direction.kind === "results") lines.push(...resultsLines(direction.guide, "studio-portrait"));
+  else if (guide?.lines?.length) lines.push(`WHAT THIS GYM'S OWN ADVERTS OF THIS KIND HAVE DONE (leads from its lead forms and what each cost; the cheapest first) — lean the new scenes toward what earns leads cheaply, while still trying one or two of the others:\n${guide.lines.map((l) => `- ${l}`).join("\n")}`);
+  if (direction.kind === "results") {} // said above, with the gym's results
+  else if (direction.kind === "words") lines.push(`DIRECTION from the owner: ${direction.words.trim()} — every scene follows this.`);
   else if (direction.kind === "reference") lines.push(`DIRECTION: ${describeReference(direction.description)}`, `Every scene: people = ${Math.min(MAX_PORTRAIT_PEOPLE, direction.description.people)}, pose = ${direction.description.pose}.`);
   else if ((direction.cover || []).length) lines.push(`DIRECTION: the library is thin on ${direction.cover.map((c) => `${c.tag} ${c.value} (${c.count ?? 0} scene${c.count === 1 ? "" : "s"})`).join(", ")}. Spread the new scenes so each is covered at least once.`);
   const existing = scenes.filter((s) => s && s.id);
@@ -379,13 +399,22 @@ const forbiddenFrom = (photography, brandNames, description = null) => [...brand
  * was dropped and why, and the calls made. `ask` is the model call (callVision's shape: image or
  * null, question, schema, options) — injectable for tests.
  */
-export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath = join(brandDir, "scenes.json"), audience = "any", count = 6, direction = null, cover = null, source = "refresh", format = "workout", guide = undefined, ask = callVision, catalogue = loadCatalogue(), dryRun = false, date = today(), log = console.log }) {
+export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath = join(brandDir, "scenes.json"), audience = "any", count = 6, direction = null, cover = null, source = "refresh", format = "workout", guide = undefined, fromResults = false, results = undefined, ask = callVision, catalogue = loadCatalogue(), dryRun = false, date = today(), log = console.log }) {
   if (!AUDIENCES.includes(audience)) throw new Error(`audience must be one of ${AUDIENCES.join(", ")}`);
   if (!SCENE_FORMATS[format]) throw new Error(`format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
   const portrait = format === "studio-portrait";
   if (!Number.isInteger(count) || count < 1 || count > 12) throw new Error("count must be 1 to 12");
   if (direction) { const errs = validateDirection(direction, { brandDir }); if (errs.length) throw new Error(`direction: ${errs.join("; ")}`); }
+  if (fromResults && (direction || cover)) throw new Error("from the results is a direction of its own: not together with words, a reference image or a cover list");
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
+  // From the results (2026-11-11): what the gym's own ads of this kind have done, by rule (what-wins.mjs). A gym whose
+  // ads of this kind have no lead yet has nothing to draft from: said, and the refresh goes by the library's gaps.
+  let fromGuide = null;
+  if (fromResults) {
+    if (results !== undefined) fromGuide = results;
+    else try { const { sceneGuide } = await import("./what-wins.mjs"); fromGuide = sceneGuide(brandDir, format, { currency: profile.locale?.currency || "SGD" }); } catch (e) { log(`· the gym's own results could not be read for the drafter: ${e.message}`); }
+    if (!fromGuide?.lines?.length && !fromGuide?.winners?.length) { fromGuide = null; log(`· this gym's ${format.replace("-", " ")} adverts have no lead on record yet, so there are no results to draft from: drafting by ${portrait ? "the backdrops it has fewest of" : "the library's gaps"} instead`); }
+  }
   const photography = profile.brand_lock?.photography || {}, brandNames = brandNamesOf(profile);
   const lib = readLibrary(scenesPath, { create: true }); // a new gym's first refresh starts its library
   let text_calls = 0, vision_calls = 0, dir, expect = null, description = null, stamp;
@@ -402,6 +431,13 @@ export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath 
   } else if (direction?.words) {
     dir = { kind: "words", words: direction.words };
     stamp = { direction: { words: direction.words } };
+  } else if (fromGuide) {
+    dir = { kind: "results", guide: fromGuide };
+    const best = fromGuide.winners[0];
+    stamp = { direction: { results: true, summary: `from this gym's results: ${fromGuide.leads} leads over ${fromGuide.ads} ${format.replace("-", " ")} ads${best ? `; its best, ${best.leads} leads at ${best.cost_per_lead}${best.scene_id ? ` (${best.scene_id})` : best.saw ? ` (${best.saw})` : ""}` : ""}` } };
+    log(`· from the results (${fromGuide.scope === "recent" ? "running now or the last 6 months" : "every ad on record"}): ${fromGuide.leads} leads over ${fromGuide.ads} ${format.replace("-", " ")} ads`);
+    for (const l of fromGuide.lines) log(`    ${l}`);
+    for (const w of fromGuide.winners) log(`    best: ${w.text}`);
   } else if (portrait) {
     // A portrait library is spread across its backdrops: the ones it has fewest of first.
     const gaps = portraitGaps(lib.scenes, { audience });
@@ -421,7 +457,7 @@ export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath 
   // The gym's own results for adverts of this format (what-wins.mjs), told to the drafter; none for a workout scene,
   // whose guide is the reference ads' shot guide. Loaded here so a refresh of workout scenes loads nothing more.
   let formatLines = null;
-  if (portrait) {
+  if (portrait && !fromGuide) {
     if (guide !== undefined) formatLines = guide;
     else try { const { formatGuide } = await import("./what-wins.mjs"); formatLines = formatGuide(brandDir, format, { currency: profile.locale?.currency || "SGD" }); } catch (e) { log(`· the gym's own results could not be read for the drafter: ${e.message}`); }
     if (formatLines?.lines?.length) log(`· this gym's own ${format} adverts (${formatLines.ads} ads, ${formatLines.leads} leads): ${formatLines.lines.join(" · ")}`);
@@ -450,12 +486,12 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 if (isMain) {
   const { values: v } = parseArgs({ options: {
     "brand-dir": { type: "string" }, audience: { type: "string", default: "any" }, count: { type: "string", default: "6" },
-    cover: { type: "string" }, words: { type: "string" }, reference: { type: "string" }, format: { type: "string", default: "workout" },
+    cover: { type: "string" }, words: { type: "string" }, reference: { type: "string" }, format: { type: "string", default: "workout" }, "from-results": { type: "boolean", default: false },
     approve: { type: "string" }, reject: { type: "string" }, reason: { type: "string" }, list: { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
   } });
   if (!v["brand-dir"]) {
-    console.error("Usage: refresh-scenes.mjs --brand-dir <brands/x> [--audience men|women|any] [--count N] [--format workout|studio-portrait] [--cover tag:value,…] [--words \"…\"] [--reference <image>] [--dry-run]\n       refresh-scenes.mjs --brand-dir <brands/x> --approve id,id | --reject id --reason \"…\" | --list");
+    console.error("Usage: refresh-scenes.mjs --brand-dir <brands/x> [--audience men|women|any] [--count N] [--format workout|studio-portrait] [--cover tag:value,… | --words \"…\" | --reference <image> | --from-results] [--dry-run]\n       refresh-scenes.mjs --brand-dir <brands/x> --approve id,id | --reject id --reason \"…\" | --list");
     process.exit(1);
   }
   const brandDir = resolve(v["brand-dir"]), scenesPath = join(brandDir, "scenes.json");
@@ -472,7 +508,7 @@ if (isMain) {
       console.log(`retired ${r.retired}: ${r.reason}`);
     } else {
       const direction = v.words || v.reference ? { ...(v.words ? { words: v.words } : {}), ...(v.reference ? { reference: v.reference } : {}) } : null;
-      const r = await draftScenes({ brandDir, audience: v.audience, count: Number(v.count), direction, format: v.format, cover: v.cover ? parseCover(v.cover) : null, dryRun: v["dry-run"] });
+      const r = await draftScenes({ brandDir, audience: v.audience, count: Number(v.count), direction, format: v.format, cover: v.cover ? parseCover(v.cover) : null, fromResults: v["from-results"], dryRun: v["dry-run"] });
       console.log(`${r.drafts.length} draft(s)${v["dry-run"] ? " (dry run — not written)" : ` written to ${scenesPath}`}; ${r.dropped.length} dropped; ${r.text_calls} text call(s), ${r.vision_calls} vision call(s)`);
     }
   } catch (e) {

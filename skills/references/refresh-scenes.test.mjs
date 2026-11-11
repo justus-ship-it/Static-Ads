@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sceneGaps, coverFromGaps, buildRefreshRequest, validateDrafts, nearDuplicate, draftScenes, readReference, normaliseDescription, layoutFromPosition, validateDirection, parseCover, referencePath, MAX_DRAFT_CALLS } from "./refresh-scenes.mjs";
+import { resultsLines, RESULTS_SHARE, sceneGaps, coverFromGaps, buildRefreshRequest, validateDrafts, nearDuplicate, draftScenes, readReference, normaliseDescription, layoutFromPosition, validateDirection, parseCover, referencePath, MAX_DRAFT_CALLS } from "./refresh-scenes.mjs";
 import { loadScenes, readLibrary, approveScenes, rejectScene, libraryStatus, sceneSummary, isRetired, isDraft, copyScenesFrom } from "./scene-library.mjs";
 import { planVisuals, validateBrief } from "./plan-offer-batch.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
@@ -385,4 +385,44 @@ test("R11 a new gym's first scenes from another gym's library (2026-10-07): ever
   assert.deepEqual(loadScenes(dst).map((s) => s.id), ["a-one"]);
   writeFileSync(join(d, "empty.json"), JSON.stringify({ schema_version: 1, approved: true, scenes: [scene("z", { draft: true })] }));
   assert.throws(() => copyScenesFrom(dst, join(d, "empty.json"), { fromGym: "empty" }), /no live scenes to copy/);
+});
+
+test("R12 a refresh from the account's results (2026-11-11): the drafter is told what the gym's own ads of the kind cost per lead and its best pictures, and asked for new versions of what earns leads with the rest left to test; the drafts say where they came from; a gym with no lead of that kind goes by the gaps and says so; it is a direction of its own, never with words, a reference or a cover list; a refresh by gaps is word for word what it was", async () => {
+  const guide = { format: "workout", scope: "recent", ads: 4, leads: 240, median: 20, lines: ["Kind of shot: class-group (198 leads at SGD 17.68), workout (42 leads at SGD 27.62)", "Setting (the ads this app made): group (198 leads at SGD 17.68), solo (30 leads at SGD 22.00)"], winners: [{ leads: 198, cost_per_lead: 17.68, scene_id: "w-plank", saw: null, text: "198 leads at SGD 17.68 over 2 ads — made from this scene: Three women holding forearm planks on black mats." }] };
+  const base = { audience: "women", count: 4, scenes: LIB, photography: PROFILE.brand_lock.photography, brandNames: ["Test Gym", "OldName"] };
+  const { prompt } = buildRefreshRequest({ ...base, direction: { kind: "results", guide } });
+  assert.match(prompt, /WHAT THIS GYM'S OWN ADVERTS OF THIS KIND HAVE DONE \(leads from its lead forms and what each cost, the cheapest first; class-group is a class or a group training together, workout one person or a coached pair; the words are how each picture was read, not the fields below\):\n- Kind of shot: class-group \(198 leads at SGD 17\.68\), workout \(42 leads at SGD 27\.62\)\n- Setting/);
+  assert.match(prompt, /ITS BEST ADVERTS \(the most leads, at or under the gym's median cost per lead\):\n- 198 leads at SGD 17\.68 over 2 ads — made from this scene: Three women holding forearm planks on black mats\./);
+  assert.match(prompt, new RegExp(`DIRECTION: draft from these results\\. About ${RESULTS_SHARE} of the new scenes are NEW VERSIONS of what earns this gym's leads cheaply .* never a copy or a near-copy of an existing scene\\. The rest try something its adverts have not shown yet`));
+  assert.ok(!/the library is thin on/.test(prompt), "the gaps are not the direction");
+  assert.match(prompt, /EXISTING SCENES — do not repeat any of these/, "the rest of the request stands");
+  assert.deepEqual(resultsLines({ lines: [], winners: [] }).length, 1, "the direction alone when there is nothing to list");
+  // A portrait refresh from the results says it once, with the portrait's own words.
+  const pp = buildRefreshRequest({ ...base, format: "studio-portrait", direction: { kind: "results", guide: { ...guide, format: "studio-portrait", lines: ["Backdrop: dark-wall (136 leads at SGD 15.19)"], winners: [] } }, guide: { lines: ["Backdrop: dark-wall (136 leads at SGD 15.19)"] } }).prompt;
+  assert.equal(pp.split("WHAT THIS GYM'S OWN ADVERTS OF THIS KIND HAVE DONE").length, 2); assert.match(pp, /with a different person, colour, stance or thing in their hands/); assert.ok(!/class-group is a class/.test(pp));
+  // A refresh by gaps is untouched.
+  assert.ok(!/ADVERTS|draft from these results/.test(buildRefreshRequest({ ...base, direction: { kind: "gaps", cover: [{ tag: "age", value: "older", count: 1 }], exercises: [] } }).prompt));
+
+  const dir = brand();
+  try {
+    const prompts = [], logs = [];
+    const ask = async (image, text) => { prompts.push(text); return { scenes: [draft("w-group-row", { people: 3, setting: "group", exercise: "ring-row", scene: "Three women at the rings, each at a different point of a row, one laughing at her neighbour." }), draft("w-step-up")] }; };
+    const r = await draftScenes({ brandDir: dir, audience: "women", count: 2, fromResults: true, results: guide, ask, catalogue: CAT, shotGuide: null, date: "2026-11-11", log: (m) => logs.push(m) });
+    assert.deepEqual([r.text_calls, r.direction.kind, r.drafts.map((d) => d.id)], [1, "results", ["w-group-row", "w-step-up"]]);
+    assert.match(prompts[0], /ITS BEST ADVERTS/);
+    assert.deepEqual(r.drafts[0].direction, { results: true, summary: "from this gym's results: 240 leads over 4 workout ads; its best, 198 leads at 17.68 (w-plank)" });
+    assert.ok(logs.some((l) => /^· from the results \(running now or the last 6 months\): 240 leads over 4 workout ads$/.test(l)) && logs.some((l) => /best: 198 leads/.test(l)), logs.join("\n"));
+    const saved = readLibrary(join(dir, "scenes.json")).scenes.find((s) => s.id === "w-group-row");
+    assert.deepEqual([saved.draft, saved.source, saved.direction.results], [true, "refresh", true], "a draft for approval, like any other");
+    // No lead of this kind on record: said, and the gaps direct the refresh.
+    logs.length = 0; prompts.length = 0;
+    const none = await draftScenes({ brandDir: dir, audience: "women", count: 1, fromResults: true, results: null, ask: async (i, t) => { prompts.push(t); return { scenes: [draft("w-carry", { exercise: "farmers-carry", scene: "A woman walking a farmers carry down the turf, jaw set, shoulders back." })] }; }, catalogue: CAT, shotGuide: null, log: (m) => logs.push(m) });
+    assert.equal(none.direction.kind, "gaps"); assert.match(prompts[0], /the library is thin on/);
+    assert.ok(logs.some((l) => /this gym's workout adverts have no lead on record yet, so there are no results to draft from: drafting by the library's gaps instead/.test(l)));
+    // A gym folder with no account data at all reads as no results (the real reader, nothing injected).
+    const real = await draftScenes({ brandDir: dir, audience: "women", count: 1, fromResults: true, ask: async () => ({ scenes: [draft("w-sled", { exercise: "sled-push", scene: "A woman driving a sled down the turf, low and steady, breath out." })] }), catalogue: CAT, shotGuide: null, log: () => {} });
+    assert.equal(real.direction.kind, "gaps");
+    await assert.rejects(draftScenes({ brandDir: dir, audience: "women", count: 1, fromResults: true, direction: { words: "older women lunging" }, ask, catalogue: CAT, log: () => {} }), /from the results is a direction of its own/);
+    await assert.rejects(draftScenes({ brandDir: dir, audience: "women", count: 1, fromResults: true, cover: [{ tag: "age", value: "older" }], ask, catalogue: CAT, log: () => {} }), /from the results is a direction of its own/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

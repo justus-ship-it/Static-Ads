@@ -138,7 +138,7 @@ const RUNNABLE = {
   "batch-stories-rerender": { label: "Re-render Stories versions (free)", needsBrief: true, argv: ({ gym, batch }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--render-only"] },
   // A scene refresh (text calls only): the audience, the count and the direction — words and/or an
   // uploaded reference image — each checked for shape before it becomes an argument.
-  "scenes-refresh": { label: "Refresh scenes (drafts for approval)", argv: ({ gym, audience, count, words, reference, cover, format }) => [REFRESH_SCRIPT, "--brand-dir", brandDir(gym), "--audience", audience, "--count", String(count), ...(format && format !== "workout" ? ["--format", format] : []), ...(words ? ["--words", words] : []), ...(reference ? ["--reference", reference] : []), ...(cover?.length ? ["--cover", cover.join(",")] : [])] },
+  "scenes-refresh": { label: "Refresh scenes (drafts for approval)", argv: ({ gym, audience, count, words, reference, cover, format, from_results }) => [REFRESH_SCRIPT, "--brand-dir", brandDir(gym), "--audience", audience, "--count", String(count), ...(format && format !== "workout" ? ["--format", format] : []), ...(words ? ["--words", words] : []), ...(reference ? ["--reference", reference] : []), ...(cover?.length ? ["--cover", cover.join(",")] : []), ...(from_results ? ["--from-results"] : [])] },
   // The premises photos' clean-up (Step 5): a free survey of what an edit would remove, and the edit
   // itself under a confirmed call cap. Photos are names in brand-assets/facility, checked before they
   // become arguments; the clean copies land in brand-assets/facility-clean as the CLI's do.
@@ -2062,7 +2062,10 @@ const server = createServer(async (req, res) => {
           const bad = !Array.isArray(body.cover) || !body.cover.length || body.cover.length > 8 || body.cover.some((c) => { const [tag, value] = String(c).split(":"); return !tag || !value || (tag !== "exercise" && !SCENE_TAGS[tag]) || (tag === "exercise" ? !/^[a-z][a-z-]{1,30}$/.test(value) : !SCENE_TAGS[tag].includes(value)); });
           if (bad) return json(res, 400, { error: `cover must list 1 to 8 tag:value pairs from the scene vocabulary (exercise, ${Object.keys(SCENE_TAGS).join(", ")})` });
         }
-        const run = startRun(kind, { gym: body.gym, audience: body.audience, count: body.count, words: body.words?.trim() || null, reference: body.reference || null, cover: body.cover || null, format: body.format || null });
+        // From the account's results (2026-11-11): the drafter is told what the gym's own ads of this kind have done. A direction of its own.
+        if (body.from_results != null && typeof body.from_results !== "boolean") return json(res, 400, { error: "from_results must be true or false" });
+        if (body.from_results && (body.words != null || body.reference != null || body.cover != null)) return json(res, 400, { error: "from the results is a direction of its own: not together with words, a reference image or a cover list" });
+        const run = startRun(kind, { gym: body.gym, audience: body.audience, count: body.count, words: body.words?.trim() || null, reference: body.reference || null, cover: body.cover || null, format: body.format || null, from_results: body.from_results === true });
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "website-read") {
