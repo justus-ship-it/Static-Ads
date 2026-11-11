@@ -328,6 +328,18 @@ export function nextWave(gym, across, { currency = "SGD" } = {}) {
 }
 
 // ── every account, refreshed and read ────────────────────────────────────────
+/** One gym's account pulled again: its history, its own campaigns' results, its delivered ads' pictures. Read-only on Meta; no model call. A step that fails is said and the rest go on. */
+export async function refreshGym({ gymDir, account, client }) {
+  const steps = {};
+  try { const h = await pullAccountHistory({ client, accountId: account, gymDir }); steps.history = `${h.campaigns.length} campaigns, ${h.ads.length} ads`; } catch (e) { steps.history = `failed: ${scrubTokens(e.message)}`; }
+  const outDir = join(gymDir, "outputs");
+  if (existsSync(outDir)) for (const id of readdirSync(outDir)) {
+    const rec = readJson(join(outDir, id, "publish.json")); if (!rec?.campaign?.id) continue;
+    try { await pullResults({ client, record: rec, batchDir: join(outDir, id) }); steps[`results ${id}`] = "pulled"; } catch (e) { steps[`results ${id}`] = `failed: ${scrubTokens(e.message)}`; }
+  }
+  try { const p = await fetchPictures({ client, accountId: account, gymDir }); steps.pictures = `${p.fetched} fetched, ${p.kept} already here${p.skipped.length ? `, ${p.skipped.length} skipped` : ""}`; } catch (e) { steps.pictures = `failed: ${scrubTokens(e.message)}`; }
+  return steps;
+}
 /** Pull every gym's account again (history, the app's own campaigns' results, the delivered ads' pictures). Read-only on Meta; no model call. */
 export async function refreshAll({ brandsDir, log = console.log, clientFor = (gym) => { const config = metaConfig({ gym }); return config.token ? graphClient({ config }) : null; } }) {
   const done = [];
@@ -336,13 +348,7 @@ export async function refreshAll({ brandsDir, log = console.log, clientFor = (gy
     if (!g.account) { log(`${g.name}: no ad account on its profile — skipped`); d.skipped = "no ad account"; done.push(d); continue; }
     const client = clientFor(g.gym);
     if (!client) { log(`${g.name}: the Meta link is not set up — skipped`); d.skipped = "no Meta link"; done.push(d); continue; }
-    try { const h = await pullAccountHistory({ client, accountId: g.account, gymDir: dir }); d.steps.history = `${h.campaigns.length} campaigns, ${h.ads.length} ads`; } catch (e) { d.steps.history = `failed: ${scrubTokens(e.message)}`; }
-    const outDir = join(dir, "outputs");
-    if (existsSync(outDir)) for (const id of readdirSync(outDir)) {
-      const rec = readJson(join(outDir, id, "publish.json")); if (!rec?.campaign?.id) continue;
-      try { await pullResults({ client, record: rec, batchDir: join(outDir, id) }); d.steps[`results ${id}`] = "pulled"; } catch (e) { d.steps[`results ${id}`] = `failed: ${scrubTokens(e.message)}`; }
-    }
-    try { const p = await fetchPictures({ client, accountId: g.account, gymDir: dir }); d.steps.pictures = `${p.fetched} fetched, ${p.kept} already here${p.skipped.length ? `, ${p.skipped.length} skipped` : ""}`; } catch (e) { d.steps.pictures = `failed: ${scrubTokens(e.message)}`; }
+    d.steps = await refreshGym({ gymDir: dir, account: g.account, client });
     const u = unreadCount(dir); d.pictures = u.pictures; d.unread = u.unread;
     log(`${g.name}: ${Object.entries(d.steps).map(([k, v]) => `${k} ${v}`).join(" · ")} · ${u.unread} of ${u.pictures} pictures not read yet`);
     done.push(d);

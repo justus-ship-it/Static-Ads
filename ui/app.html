@@ -76,6 +76,13 @@
   .msg.err{background:var(--err-soft);border-color:#f0c4c4;color:var(--err)}
   .msg.warn{background:var(--warn-soft);border-color:#ecd9a6;color:var(--warn)}
   .msg.ok{background:var(--ok-soft);border-color:#bfe6cd;color:var(--ok)}
+  .rvgrid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:22px}
+  @media (max-width:980px){ .rvgrid{grid-template-columns:1fr} }
+  .rvsec h4,.rvnext h4{margin:10px 0 4px;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
+  .rvsec ul{margin:0 0 0 18px;line-height:1.5;font-size:13px}
+  .rvnext{border-left:1px solid var(--line);padding-left:20px}
+  @media (max-width:980px){ .rvnext{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:12px} }
+  .rvbrief{font-size:13.5px;line-height:1.7} .rvbrief .k{display:inline-block;min-width:62px;color:var(--dim);font-size:12px}
   .log{background:#0b1430;color:#c9d3ea;border-radius:8px;padding:11px;height:280px;overflow:auto;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap}
   .log .out{color:#c9d3ea} .log .err{color:#ff9b9b} .log .meta{color:#8fb0ff}
   .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:600;background:var(--bg);border:1px solid var(--line);color:var(--dim)}
@@ -1127,6 +1134,7 @@ async function viewBatch(v, seq=VIEW_SEQ){
   await loadSetup();
   if (seq !== VIEW_SEQ) return; // a newer render took over while loading
   if (B.pendingWords){ const id = B.pendingWords; B.pendingWords = null; return bWords(id); }
+  if (B.pendingSuggest){ const R = B.pendingSuggest; B.pendingSuggest = null; if (R.gym === STATE.sel) applySuggestion(R); }
   if (!B.draft) B.draft = freshDraft();
   paintBatch(v);
   scheduleCheck(0); schedulePreview(0);
@@ -1171,6 +1179,24 @@ function freshDraft(){
     look: cd.look || 'reference', mix: (()=>{ const m = allocMix(B.setup.mix || profileMix(cd), cd.generated ?? 10); delete m.workout; return m; })(),
     age_min: (B.setup.photo_ages||[25,60])[0], age_max: (B.setup.photo_ages||[25,60])[1] };
 }
+/** The account review's next batch on the Create form (Phase 6): the owner's last words, the photos per kind, a card of each ready kind, the lean. Everything else is the gym's Ad defaults. */
+function applySuggestion(R){
+  const s = R.brief || {}, d = freshDraft();
+  d.offer = s.offer || ''; if ((s.locations||[]).length) d.locations = s.locations.slice(0, B.setup.maxLocations||4); d.audience = s.audience ?? '';
+  if (Number.isInteger(s.generated)) d.generated = s.generated;
+  d.mix = Object.fromEntries(Object.entries(s.mix||{}).filter(([f])=>f!=='workout'));
+  d.cards = { review:0, statement:0, timeline:0, ...(s.cards||{}) };
+  d.lean = (s.lean||[]).map(l=>({ ...l }));
+  d.suggested = { built:R.built, reasons:R.reasons||[], left:R.left||[] };
+  Object.assign(B, { mode:'new', view:null, draft:d, savedId:null, touched:true, loc:0 });
+}
+function bLeanDrop(i){ B.draft.lean.splice(i,1); B.touched = true; paintLean(); scheduleCheck(); }
+function bSuggestClear(){ bNew(); }
+function paintLean(){
+  const box = $('#bLean'); if (!box) return;
+  const d = B.draft, lean = d.lean||[], off = !!directionFromDraft();
+  box.innerHTML = !lean.length || B.mode==='rerender' ? '' : `<label style="margin-top:10px">Lean on <span class="n">· from the account review; about ${Math.round(0.6*100)}% of that kind's photos follow it, the rest keep the variety</span></label><div class="chips">${lean.map((l,i)=>`<span class="chip sel" title="${esc(l.why||'')}" style="${off?'opacity:.5':''}">${esc(LEAN_WORD(l))} <a href="#" onclick="bLeanDrop(${i});return false" title="Do not lean on this" style="margin-left:4px;color:inherit;text-decoration:none">×</a></span>`).join('')}</div>${off?'<div class="hint">Off for a directed batch: the reference or your words decide what the photos show.</div>':''}`;
+}
 /** The offer wordings as chips: picking one is choosing its exact words. */
 function paintWordChips(){
   const box = $('#bWords'); if (!box) return;
@@ -1204,6 +1230,7 @@ function briefFromDraft(){
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
     ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(),
     ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m); return !generated || (live.length===1 && live[0]==='workout') ? {} : live.length===1 ? { format: live[0] } : { mix: m }; })(),
+    ...(generated>0 && !direction && (d.lean||[]).length ? { lean: d.lean.map(({ tag, value, format, why })=>({ tag, value, ...(format?{format}:{}), ...(why?{why}:{}) })) } : {}),
     ...(d.spread && generated>0 && !direction ? { spread: true } : {}) };
 }
 function autoId(){
@@ -1220,6 +1247,7 @@ function paintBatch(v){
   <div class="row" style="margin-bottom:4px"><h1 style="margin:0">${re?`Change the words of ${esc(B.view.brief.batch_id)}`:'Create'}</h1><div class="spacer"></div>${re?`<button onclick="bNew()">Start a new campaign instead</button>`:''}</div>
   <p class="sub">${re?'Same photos and looks; only the words change. Re-rendering is free.':'Everything the batch needs, on one screen. Every word on the ads is exactly what you type. Nothing spends until you confirm.'}</p>
   ${!re && STATE.view?.completeness && !STATE.view.completeness.ready_to_create ? `<div class="msg warn">This gym's profile still needs: ${STATE.view.completeness.sections.filter(s=>s.for!=='publishing'&&s.status!=='done').map(s=>esc(s.label)).join(', ')}. <a href="#" onclick="go('overview');return false">Open the overview →</a></div>` : ''}
+  ${!re && d.suggested ? `<div class="msg ok" id="bSuggest" style="color:var(--text)"><div class="row"><b>Pre-filled from the account review${d.suggested.built?` of ${esc(d.suggested.built.slice(0,10))}`:''}</b><div class="spacer"></div><a href="#" onclick="bSuggestClear();return false">Start blank instead</a></div><ul style="margin:6px 0 0 18px;line-height:1.5">${d.suggested.reasons.map(x=>`<li>${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}${d.suggested.left.map(x=>`<li>Not yet — ${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}</ul><div class="hint" style="margin-top:6px">Every word is yours to change. Nothing is generated until you confirm the run.</div></div>` : ''}
   <div class="nb">
     <div class="card">
       <h3>Brief</h3>
@@ -1243,6 +1271,7 @@ function paintBatch(v){
           <label style="margin-top:0;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text)"><input type="checkbox" style="width:auto;margin:0" ${d.spread?'checked':''} ${directionFromDraft()?'disabled title="Off for a directed batch: the reference or your words decide what the photos show"':''} onchange="bSet('spread',this.checked)"> Spread across exercises, settings and equipment</label>
           <div id="bSpread" class="hint" style="margin-top:4px;max-width:520px"></div>
         </div>
+        <div id="bLean"></div>
         <label>Real photos <span class="n">· cleaned</span></label>
         <div class="thumbs">${photos.length ? photos.map(p=>`<label><input type="checkbox" value="${esc(p.path)}" ${d.real.includes(p.path)?'checked':''} onchange="bReal(this.value,this.checked)"><img src="${esc(p.url)}" alt=""><span style="font-size:11px">${esc(p.path.split('/').pop())}</span></label>`).join('') : '<span class="hint">No cleaned photos yet — see clean-photo.mjs.</span>'}</div>
       </fieldset>
@@ -1285,7 +1314,7 @@ function paintBatch(v){
   <div id="bList"></div>
   <div id="runbox"></div>
   <div id="bModal"></div>`;
-  paintLocs(); paintAud(); paintWordChips(); paintRefs(); paintList(); renderRunBox(); paintDerived();
+  paintLocs(); paintAud(); paintWordChips(); paintRefs(); paintList(); renderRunBox(); paintDerived(); paintLean();
 }
 
 function paintLocs(){
@@ -1393,7 +1422,7 @@ function bDraftGapsGo(cover, audience, count){
   $('#gModal').innerHTML = '';
   run({kind:'scenes-refresh', gym:STATE.sel, audience, count, cover}, async(code)=>{ try { await reloadScenes(); } catch{} const d = B.scenes?.drafts?.length || 0; if (code===0) toast(`${d} scene draft${d===1?'':'s'} await your approval below`, 'ok'); paintBatch($('#view')); paintGapDrafts(); scheduleCheck(0); schedulePreview(0); });
 }
-function bSet(k, v){ B.draft[k]=v; B.touched=true; if (k==='generated') setTimeout(paintMix, 0); if (k==='audience') paintAud(); scheduleCheck(); if (WORDS.has(k) || k==='generated' || k==='look') schedulePreview(); }
+function bSet(k, v){ B.draft[k]=v; B.touched=true; if (k==='direction_words') paintLean(); if (k==='generated') setTimeout(paintMix, 0); if (k==='audience') paintAud(); scheduleCheck(); if (WORDS.has(k) || k==='generated' || k==='look') schedulePreview(); }
 function bLoc(i, v){ B.draft.locations[i]=v; B.touched=true; scheduleCheck(); schedulePreview(); }
 function bLocAdd(){ B.draft.locations.push(''); paintLocs(); $('#bLoc'+(B.draft.locations.length-1))?.focus(); scheduleCheck(); }
 function bLocDel(i){ B.draft.locations.splice(i,1); paintLocs(); scheduleCheck(); schedulePreview(0); }
@@ -2055,7 +2084,7 @@ async function libRestore(id){ try { CR.lib = await api(`/api/library/copy/${enc
 const RS = { gym:null, data:null, level:'campaigns', campaign:null, adset:null, sort:{ campaigns:'cost_per_lead', adsets:'cost_per_lead', ads:'cost_per_lead' }, source:'all', busy:false, error:null, hsel:new Set(), msg:null };
 function openResults(){ go('results'); }
 async function viewResults(v, seq=VIEW_SEQ){
-  if (RS.gym !== STATE.sel || !RS.data){ v.innerHTML = '<h1>Results</h1><p class="sub">Loading…</p>'; RS.gym = STATE.sel; RS.data = null; RS.level = 'campaigns'; RS.campaign = null; RS.adset = null; try { RS.data = await api(`/api/client/${STATE.sel}/results`); } catch(e){ RS.error = e.message; RS.data = { rows:[], batches:[], adsets:[], campaigns:[], history:null }; } if (seq !== VIEW_SEQ) return; RS.across = null; RS.acrossError = null; rsLoadAcross(); }
+  if (RS.gym !== STATE.sel || !RS.data){ v.innerHTML = '<h1>Results</h1><p class="sub">Loading…</p>'; RS.gym = STATE.sel; RS.data = null; RS.level = 'campaigns'; RS.campaign = null; RS.adset = null; try { RS.data = await api(`/api/client/${STATE.sel}/results`); } catch(e){ RS.error = e.message; RS.data = { rows:[], batches:[], adsets:[], campaigns:[], history:null }; } if (seq !== VIEW_SEQ) return; RS.across = null; RS.acrossError = null; RS.review = null; RS.reviewError = null; rsLoadAcross(); rsLoadReview(); }
   paintResults(v);
 }
 const RCOLS = {
@@ -2094,6 +2123,7 @@ function paintResults(v){
     <select onchange="RS.source=this.value;paintResults($('#view'))"><option value="all" ${RS.source==='all'?'selected':''}>both sources</option><option value="app" ${RS.source==='app'?'selected':''}>this app</option><option value="account" ${RS.source==='account'?'selected':''}>the account before</option></select>
     <button class="${H?'sm':'primary'}" onclick="rsPullHistory()" ${RS.busy?'disabled':''}>${RS.busy?'Working…':H?'Pull the account again':"Pull the account's history from Meta"}</button></div>
   ${RS.msg?`<div class="msg ${/failed|could not|not set/i.test(RS.msg)?'err':'ok'}">${esc(RS.msg)}</div>`:''}
+  ${reviewCard()}
   ${winsCard(D)}
   ${mixCard(D)}
   ${acrossCard()}
@@ -2105,6 +2135,57 @@ function paintResults(v){
     ${RS.level==='campaigns'&&(D.batches||[]).length?`<div class="hint" style="margin-top:10px">This app's campaigns: ${D.batches.map(b=>`<a href="#" onclick="openPublish('${esc(b.id)}');return false">${esc(b.id)}</a> (${b.results?'pull results again on its Publish screen':'not pulled yet — pull on its Publish screen'})`).join(' · ')}</div>`:''}
   </div>`;
 }
+/** The account review (Phase 6, 2026-11-11): one read-only action — the account read again, its new pictures read — and one card:
+ *  the numbers, what to keep and pause, which copy wins, where Meta differs, and the next batch pre-filled on Create with its reasons. */
+async function rsLoadReview(){ const gym = STATE.sel; try { const r = await api(`/api/client/${gym}/account-review`); if (gym !== STATE.sel) return; RS.review = r; RS.reviewError = null; } catch(e){ RS.review = null; RS.reviewError = e.message; } if (STATE.tab==='results' && RS.data) paintResults($('#view')); }
+const LEAN_WORD = (l) => (l.tag==='people' ? `${l.value===2?'a pair':l.value===1?'one person':l.value+' people'}` : l.tag==='eye_contact' ? (l.value?'looking into the camera':'looking away') : `${String(l.value).replace(/-/g,' ')} ${l.tag}`) + (l.format ? ` · ${(FORMAT_PLURAL[l.format]||l.format)}` : '');
+function reviewCard(){
+  const R = RS.review, cur = STATE.profile?.locale?.currency || 'SGD';
+  if (RS.reviewError) return `<div class="card" id="rsReview"><h3>Account review</h3><div class="msg err">The review could not be built: ${esc(RS.reviewError)}</div></div>`;
+  if (!R) return `<div class="card" id="rsReview"><h3>Account review</h3><p class="hint">Loading…</p></div>`;
+  const n = R.numbers, tot = (x) => `${x.ads} ad${x.ads===1?'':'s'} · ${money(x.spend,cur)} spent · <b>${x.leads} lead${x.leads===1?'':'s'}${x.cost_per_lead!=null?` at ${money(x.cost_per_lead,cur)}`:''}</b>`;
+  const list = (title, items, cls='') => items.length ? `<div class="rvsec"><h4>${title}</h4><ul class="${cls}">${items.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+  const copy = [...R.copy.copies.map(x=>['Copy',x]), ...R.copy.headlines.map(x=>['Headline',x])];
+  const b = R.brief, mixLine = b.mix ? Object.entries(b.mix).map(([f,k])=>`${k} ${esc(FORMAT_PLURAL[f]||f)}`).join(', ') : `${b.generated} workout photos`;
+  const fresh = R.last?.reviewed ? `reviewed ${esc(R.last.reviewed.slice(0,10))}` : 'not reviewed yet';
+  const from = R.data.pulled ? `account read ${esc(R.data.pulled.slice(0,10))}` : R.data.exports.length ? 'from an Ads Manager export' : 'no account data yet';
+  return `<div class="card" id="rsReview">
+    <div class="row" style="flex-wrap:wrap"><h3 style="margin:0">Account review</h3><span class="hint" style="margin:0">${fresh} · ${from}${R.data.unread?` · ${R.data.unread} picture${R.data.unread===1?'':'s'} not read yet`:''}</span><div class="spacer"></div>
+      <button class="sm" onclick="rsCopyReview()" title="The review as plain text">Copy the report</button>
+      <button class="sm primary" id="rsReviewGo" onclick="rsReviewAccount()" ${STATE.run&&!STATE.run.done?'disabled':''}>Review the account…</button></div>
+    <p class="hint" style="margin:8px 0 10px">Running now: ${tot(n.running)}${n.last_30d?` &nbsp;·&nbsp; last 30 days: ${money(n.last_30d.spend,cur)} spent, ${n.last_30d.leads} leads${n.last_30d.cost_per_lead!=null?` at ${money(n.last_30d.cost_per_lead,cur)}`:''}`:''} &nbsp;·&nbsp; all time: ${tot(n.all_time)}. Everything below is by rule over Meta's numbers; nothing changes until you act.</p>
+    <div class="rvgrid">
+      <div>
+        ${list('Keep running', R.keep.map(x=>x.replace(/^Keep running: /,'')))}
+        ${list('Tiring', R.tiring.map(x=>x.replace(/^Tiring: /,'')))}
+        ${list('Consider pausing', R.pause.map(x=>x.replace(/^Consider pausing: /,'')))}
+        ${list('What matters', R.matters)}
+        ${copy.length ? `<div class="rvsec"><h4>Which copy wins</h4><ul>${copy.map(([k,x])=>`<li><b>${k}</b> · ${x.leads} lead${x.leads===1?'':'s'}${x.cost_per_lead!=null?` at ${money(x.cost_per_lead,cur)}`:''} — ${esc(String(x.text).split('\n')[0].slice(0,110))}</li>`).join('')}</ul>${R.copy.never_led?`<div class="hint">${R.copy.never_led} text${R.copy.never_led===1?'':'s'} shown a thousand times or more without a lead.</div>`:''}</div>` : ''}
+        ${R.drift.length ? `<div class="rvsec"><h4>Meta differs from what the app sent</h4><ul>${R.drift.map(d=>`<li><a href="#" onclick="openPublish('${esc(d.batch)}');return false">${esc(d.batch)}</a>: ${esc(d.text)}</li>`).join('')}</ul></div>` : ''}
+        ${list('Notes', R.notes, 'hint')}
+        ${!(R.keep.length||R.tiring.length||R.pause.length||R.matters.length||copy.length||R.drift.length||R.notes.length) ? '<p class="hint">Nothing to say yet: no ad has enough leads to judge.</p>' : ''}
+      </div>
+      <div class="rvnext">
+        <h4 style="margin-top:0">The next batch</h4>
+        <div class="rvbrief"><div><span class="k">Offer</span> ${b.offer?esc(b.offer):'<i>for you to type</i>'}</div><div><span class="k">Where</span> ${esc((b.locations||[]).join(', ')||'—')}${b.audience?` · ${esc(b.audience)}`:''}</div><div><span class="k">Photos</span> ${mixLine}</div>${b.cards?`<div><span class="k">Cards</span> ${Object.entries(b.cards).map(([k,c])=>`${c} ${esc(CARD_NAMES[k]||k)}`).join(', ')}</div>`:''}${(b.lean||[]).length?`<div><span class="k">Lean on</span> ${b.lean.map(l=>`<span class="pill">${esc(LEAN_WORD(l))}</span>`).join(' ')}</div>`:''}</div>
+        <ul class="hint" style="margin:8px 0 8px 18px;line-height:1.5">${R.reasons.map(x=>`<li>${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}${R.left.map(x=>`<li>Not yet — ${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}</ul>
+        <button class="primary" id="rsNextBatch" onclick="rsStartNext()">Start the next batch from this →</button>
+        <div class="hint" style="margin-top:6px">Opens Create with these filled in. Every word is yours to change, and nothing is generated until you confirm the run there.</div>
+      </div>
+    </div></div>`;
+}
+function rsCopyReview(){ const t = RS.review?.text; if (!t) return; (navigator.clipboard?.writeText(t) || Promise.reject()).then(()=>toast('The report is copied', 'ok'), ()=>{ $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>The report</h3><textarea rows="18" style="width:100%" readonly>${esc(t)}</textarea><div class="row" style="margin-top:10px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Close</button></div></div></div>`; }); }
+function rsReviewAccount(){
+  const R = RS.review || { data:{} }, unread = R.data.unread || 0, can = R.data.account && R.linked;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Review the account</h3>
+    <p class="hint">${can ? "Reads this gym's ad account again: every campaign, ad set and ad with Meta's numbers, this app's own campaigns' results, and the pictures of ads that have run. Read-only: nothing on Meta is changed." : R.data.account ? 'The Meta link is not set up, so nothing is pulled: the review uses what is on file.' : "This gym has no ad account on its profile, so nothing is pulled from Meta: the review uses what is on file (an Ads Manager export counts)."} Then the review is built by rule, with the next batch pre-filled.</p>
+    <label>Read at most this many new pictures <span class="n">· one vision call each; ${unread} not read now, and the pull may bring more</span></label><input id="rsRevMax" type="number" min="0" max="${R.max_read||800}" value="${Math.min(60, Math.max(unread, 20))}">
+    <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="rsRevGo" onclick="rsReviewGo()">Review</button></div></div></div>`;
+}
+function rsReviewGo(){ const max = parseInt($('#rsRevMax').value, 10); if (!(max >= 0)) return; $('#gModal').innerHTML = ''; run({ kind:'account-review', gym: STATE.sel, max }, async () => { RS.data = null; if (STATE.tab==='results') await viewResults($('#view')); }); }
+/** Create, opened on the review's suggestion: the owner's own last words, the suggested photos and cards, the lean — each changeable there. */
+function rsStartNext(){ if (!RS.review) return; B.pendingSuggest = RS.review; go('batch'); }
+
 /** What wins (2026-11-09): Meta's leads per kind of ad, from the vision reading of each picture; the suggestions by rule; the scope; the export upload; the reading run. */
 function winsCard(D){
   const W = D.wins, cur = STATE.profile?.locale?.currency || 'SGD';
@@ -2189,7 +2270,7 @@ function rsPortfolioRead(){
     <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" onclick="rsPortfolioReadGo()">Read</button></div></div></div>`;
 }
 function rsPortfolioReadGo(){ const max = parseInt($('#rsMaxAll').value, 10); if (!(max >= 1)) return; $('#gModal').innerHTML = ''; run({ kind:'portfolio-read', max }, async () => { await rsReload(); await rsLoadAcross(); }); }
-async function rsReload(){ try { RS.data = { ...RS.data, ...(await api(`/api/client/${STATE.sel}/results?scope=${RS.scope||'active'}&track=${RS.track||'stills'}`)) }; } catch(e){ RS.msg = 'Could not reload: ' + e.message; } if (STATE.tab==='results') paintResults($('#view')); }
+async function rsReload(){ rsLoadReview(); try { RS.data = { ...RS.data, ...(await api(`/api/client/${STATE.sel}/results?scope=${RS.scope||'active'}&track=${RS.track||'stills'}`)) }; } catch(e){ RS.msg = 'Could not reload: ' + e.message; } if (STATE.tab==='results') paintResults($('#view')); }
 async function rsScope(v){ RS.scope = v; await rsReload(); }
 async function rsTrack(v){ RS.track = v; await rsReload(); await rsLoadAcross(); }
 async function rsUploadExport(input){

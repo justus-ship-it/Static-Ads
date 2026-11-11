@@ -15,7 +15,7 @@
  *   node skills/references/read-creatives.mjs --brand-dir brands/{gym} [--max 60] [--show]
  */
 
-import { readFileSync, writeFileSync, existsSync, renameSync, readdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, readdirSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { createHash } from "crypto";
 import { parseArgs } from "util";
@@ -125,7 +125,15 @@ export function pictures(gymDir) {
   return out;
 }
 export const readReads = (gymDir) => { const j = readJson(join(gymDir, READS_FILE)); return { schema: 1, model: CHECK_MODEL, reads: {}, ...(j || {}), reads: j?.reads && typeof j.reads === "object" ? j.reads : {} }; };
-const hashOf = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
+// A picture's content hash, remembered while the file is unchanged (its size and time): the panel's Results page asks for
+// every gym's pictures several times a look, and hashing a few hundred images each time took seconds (2026-11-11).
+const HASHES = new Map();
+const hashOf = (p) => {
+  const st = statSync(p), key = `${st.size}:${st.mtimeMs}`, hit = HASHES.get(p);
+  if (hit && hit.key === key) return hit.sha;
+  const sha = createHash("sha256").update(readFileSync(p)).digest("hex");
+  HASHES.set(p, { key, sha }); return sha;
+};
 
 /** Read every unread picture the gym's ads have, under `max` calls. Returns what was read, what was cached, what was skipped and why. */
 export async function readCreatives({ gymDir, ask = callVision, max = 60, log = () => {}, now = () => new Date().toISOString() }) {

@@ -47,6 +47,7 @@ import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { importExport } from "../skills/references/ads-export.mjs";
 import { readReviews, reviewView, addReview, editReview, findPlace, pullGoogleReviews, placesKey, readWords, addStatement, addTimeline, decideWords, draftCardWords, cardsAvailable, cardCount, durationOf, CARD_KINDS, MAX_CARDS, MIN_STARS, EXCERPT_LIMIT, STATEMENT_LIMIT } from "../skills/references/cards.mjs";
 import { renderCard, loadCards } from "../skills/references/render-cards.mjs";
+import { buildReview, reviewText } from "../skills/references/account-review.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -73,6 +74,7 @@ const READ_SCRIPT = join(REPO_ROOT, "skills", "references", "read-website.mjs");
 const IG_SCRIPT = join(REPO_ROOT, "skills", "references", "read-instagram.mjs");
 const CREATIVES_SCRIPT = join(REPO_ROOT, "skills", "references", "read-creatives.mjs");
 const WINS_SCRIPT = join(REPO_ROOT, "skills", "references", "what-wins.mjs");
+const REVIEW_SCRIPT = join(REPO_ROOT, "skills", "references", "account-review.mjs");
 /** A reading run's cap: one vision call per picture, a portfolio holds a few hundred. */
 const MAX_READ_CALLS = 800;
 /** An Ads Manager export (CSV) uploaded from Results: its name, and where it is kept. */
@@ -153,6 +155,8 @@ const RUNNABLE = {
   // What wins (2026-11-09): the vision model reads each picture in the gym's history once (format, subject, backdrop, pose…); one call per unread picture under the confirmed cap.
   "creatives-read": { label: "Read the creatives", argv: ({ gym, max }) => [CREATIVES_SCRIPT, "--brand-dir", brandDir(gym), "--max", String(max)] },
   // Every gym at once (2026-11-10): each account pulled again with its delivered ads' pictures (read-only on Meta, no model call), and every gym's unread pictures read under one cap.
+  // Review the account (Phase 6, 2026-11-11): this gym's account read again (read-only on Meta), up to `max` new pictures read (one vision call each), the review built.
+  "account-review": { label: "Review the account (read-only)", argv: ({ gym, max }) => [REVIEW_SCRIPT, "--brand-dir", brandDir(gym), "--read-max", String(max)] },
   "portfolio-refresh": { label: "Refresh every gym's account (read-only)", argv: () => [WINS_SCRIPT, "--refresh", "--brands-dir", BRANDS] },
   "portfolio-read": { label: "Read every gym's creatives", argv: ({ max }) => [WINS_SCRIPT, "--read", "--max", String(max), "--brands-dir", BRANDS] },
   "photo-clean": { label: "Clean photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...(photos.some((p) => p.includes("/") && !p.startsWith("facility/")) ? ["--clean-dir", join(brandDir(gym), "brand-assets", "reference-clean")] : []), ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", p.includes("/") ? p : `facility/${p}`)])] },
@@ -717,6 +721,7 @@ function checkBrief(gym, raw) {
     const m = allocateMix(mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), brief.generated), one = mixName(m);
     if (one === "mixed") brief.mix = m; else if (one && one !== "workout") brief.format = one;
   }
+  if (brief && typeof brief === "object" && brief.lean != null && brief.direction && (brief.direction.words || brief.direction.reference)) delete brief.lean; // a directed batch's words or reference decide the pictures
   const errors = validateBrief(brief, { brandDir: brandDir(gym) });
   // The feed shape (the owner's rule, 2026-11-10): feed ads are 4:5 and Stories 9:16; the square is no longer made. Only a
   // batch already made as a square may name it (its words changed, run again) — and it keeps that shape whatever is asked.
@@ -1422,6 +1427,15 @@ const server = createServer(async (req, res) => {
       let mix = null; try { mix = mixSuggestion(brandDir(gym), { formats: Object.keys(SCENE_FORMATS), current: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), currency }); } catch (e) { mix = { error: e.message }; }
       return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, exports: h.exports || [] } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length, wins, mix });
     }
+    // /api/client/{gym}/account-review — the review, built from what is on disk (no Meta call, no model call): the numbers,
+    // what to keep and pause, which copy wins, the drift, the mix, and the suggested next brief with its reasons.
+    const ar = p.match(/^\/api\/client\/([^/]+)\/account-review$/);
+    if (ar && req.method === "GET") {
+      const gym = ar[1];
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      try { const r = buildReview(brandDir(gym), { brandsDir: BRANDS }); return json(res, 200, { ...r, text: reviewText(r), max_read: MAX_READ_CALLS, linked: !!metaConfig({ gym }).token }); }
+      catch (e) { return json(res, 500, { error: scrubTokens(e.message) }); }
+    }
     // /api/wins — What wins across every gym: each gym's ads against its own median, pooled; and what that says for one gym's next batch.
     if (p === "/api/wins" && req.method === "GET") {
       const q = new URL(req.url, "http://x").searchParams, scope = WIN_SCOPES.includes(q.get("scope")) ? q.get("scope") : "recent", track = WIN_TRACKS.includes(q.get("track")) ? q.get("track") : "stills", gym = q.get("gym");
@@ -2072,6 +2086,13 @@ const server = createServer(async (req, res) => {
         if (!existsSync(join(brandDir(body.gym), "account-history.json"))) return json(res, 409, { error: "no account history yet: pull the account from Meta or import an Ads Manager export first (Results)" });
         const max = body.max ?? 60;
         if (!Number.isInteger(max) || max < 1 || max > MAX_READ_CALLS) return json(res, 400, { error: `how many pictures to read must be 1 to ${MAX_READ_CALLS}` });
+        const run = startRun(kind, { gym: body.gym, max });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "account-review") {
+        if (!okSlug(body.gym) || !existsSync(join(brandDir(body.gym), "gym-profile.json"))) return json(res, 400, { error: "a review needs a client with a profile" });
+        const max = body.max ?? 0;
+        if (!Number.isInteger(max) || max < 0 || max > MAX_READ_CALLS) return json(res, 400, { error: `how many new pictures to read must be 0 to ${MAX_READ_CALLS}` });
         const run = startRun(kind, { gym: body.gym, max });
         return json(res, 200, { id: run.id, label: run.label });
       }

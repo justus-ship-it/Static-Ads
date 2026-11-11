@@ -2803,3 +2803,74 @@ test("U51 cards (Phase 5, 2026-11-11): a pasted Google review is kept word for w
     assert.deepEqual(await ev("bCardSet('review', 1); bCardSet('timeline', 99); briefFromDraft().cards"), { review: 1, timeline: 6 });
   } finally { for (const f of files) rmSync(f, { force: true }); }
 });
+
+test("U52 the account review (Phase 6, 2026-11-11): the review is built from what is on file with no call — the numbers, the notes, the mix, and the next batch pre-filled with the owner's own last words; the run is refused with a bad cap or an unknown gym, and without the Meta link it says so, pulls nothing and still reviews; a brief's lean is checked by the batch's rules and dropped for a directed batch; Results shows the card and Create opens pre-filled with the reasons and the lean, each of which the owner can drop", async () => {
+  const g = join(brands, GYM);
+  await linkTestGym();
+  rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "creative-reads.json"), { force: true }); rmSync(join(g, "account-review.json"), { force: true });
+  const bdir = join(g, "batches", "2099-01-01-review-check");
+  const HEADER = `"Reporting starts","Reporting ends","Ad name","Ad delivery","Attribution setting",Results,"Result indicator","Cost per results","Ad set budget","Ad set budget type","Amount spent (SGD)",Impressions,Reach`;
+  const row = (ad, results, spend, delivery = "active") => `2026-04-13,2026-11-08,"${ad}",${delivery},"7-day click or 1-day view",${results},actions:leadgen.other,${results ? (spend / results).toFixed(4) : 0},100,Daily,${spend},${results * 900 + 500},${results * 300 + 200}`;
+  const CSV = [HEADER, row("0413 Body Reset | Image 1: Lady One", 30, 450), row("0413 Body Reset | Image 2: Lady Two", 10, 250), row("0413 Old Offer | Image 3: Lady Three", 4, 300, "inactive")].join("\n") + "\n";
+  try {
+    mkdirSync(bdir, { recursive: true });
+    writeFileSync(join(bdir, "brief.json"), JSON.stringify({ batch_id: "2099-01-01-review-check", offer: "6 Week Review Check", locations: ["BISHAN"], audience: "MEN", generated: 4 }));
+    let r = await fetch(`${panel.url}/api/client/${GYM}/history/export/review.csv`, { method: "PUT", headers: { "content-type": "text/csv", "x-panel-token": panel.token }, body: CSV });
+    assert.equal(r.status, 200);
+    // The review: built on a GET, nothing written, no call.
+    r = await call(`/api/client/${GYM}/account-review`); assert.equal(r.status, 200);
+    const R = await r.json();
+    assert.deepEqual([R.gym, R.numbers.running.ads, R.numbers.running.leads, R.numbers.running.cost_per_lead, R.numbers.last_30d], [GYM, 2, 40, 17.5, null]);
+    assert.ok(R.numbers.all_time.ads >= 3, "the export's three ads, and whatever this gym published in the tests before");
+    assert.deepEqual([R.brief.offer, R.brief.locations, R.brief.audience, R.brief_from], ["6 Week Review Check", ["BISHAN"], "MEN", "2099-01-01-review-check"]);
+    assert.match(R.reasons[0].text, /your last batch's own words \(2099-01-01-review-check\)/);
+    assert.ok(R.reasons.some((x) => /Running now: Body Reset \(40 leads at SGD 17\.50\)/.test(x.text)));
+    assert.ok(R.notes.some((x) => /no picture read yet/.test(x)) || R.notes.length >= 0);
+    assert.match(R.text, /account review\nRunning now: 2 ads, SGD 700\.00 spent, 40 leads at SGD 17\.50\./);
+    assert.equal(R.last, null); assert.equal(existsSync(join(g, "account-review.json")), false, "looking writes nothing");
+    assert.equal(R.linked, false);
+    assert.equal((await call("/api/client/nosuchgym/account-review")).status, 400);
+    // The run: its cap and its gym are checked; without the Meta link it pulls nothing, says so, and still reviews.
+    for (const bad of [{ gym: GYM, max: -1 }, { gym: GYM, max: 5000 }, { gym: GYM, max: 1.5 }, { gym: "nosuchgym", max: 0 }]) assert.equal((await call("/api/run", { method: "POST", body: { kind: "account-review", ...bad } })).status, 400, JSON.stringify(bad));
+    const ran = await runAndWait({ kind: "account-review", gym: GYM, max: 0 });
+    assert.deepEqual([ran.status, ran.code], [200, 0], ran.lines?.join("\n"));
+    const out = ran.lines.join("\n");
+    assert.match(out, /the Meta link is not set up: nothing pulled, the review uses what is on disk/);
+    assert.match(out, /account review/); assert.match(out, /The next batch:/); assert.match(out, /your last batch's own words/);
+    assert.doesNotMatch(out, /EAA[A-Za-z0-9]{20,}/);
+    const rec = JSON.parse(readFileSync(join(g, "account-review.json"), "utf-8"));
+    assert.deepEqual([rec.pulled, rec.read, typeof rec.reviewed], [false, null, "string"]);
+    assert.ok((await (await call(`/api/client/${GYM}/account-review`)).json()).last.reviewed);
+    // A brief's lean: checked by the batch's rules, never a refusal for what it asks, dropped when the batch is directed.
+    const raw = { batch_id: "lean-check", ...WORDS, free: false, generated: 4, real: [], looks_per_photo: 2, max_calls: 4, attempts: 1, scenes: null };
+    const lean = [{ tag: "setting", value: "group", format: "workout", why: "a test" }];
+    let c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, lean } } })).json();
+    assert.deepEqual([c.errors.filter((e) => /lean/.test(e)), c.brief.lean], [[], lean]);
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, lean: [{ tag: "backdrop", value: "pink" }, { tag: "logo", value: "yes" }] } } })).json();
+    assert.deepEqual(c.errors.filter((e) => /lean/.test(e)).length, 2, JSON.stringify(c.errors));
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, lean, direction: { words: "older men lifting with a coach, bright" } } } })).json();
+    assert.equal("lean" in c.brief, false, "a directed batch's words decide the pictures");
+    // The page: the card on Results, then Create pre-filled.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u52#/${GYM}/results` }, sessionId); await loaded;
+    await until("!!document.querySelector('#rsNextBatch')");
+    const card = await ev("document.querySelector('#rsReview').innerText");
+    for (const re of [/Account review/i, /reviewed \d{4}-\d\d-\d\d/, /from an Ads Manager export/, /Running now: 2 ads/, /40 leads at SGD 17\.50/, /The next batch/i, /6 Week Review Check/, /BISHAN · MEN/, /your last batch's own words/]) assert.match(card, re);
+    assert.equal(await ev("document.querySelector('#rsReviewGo').disabled"), false);
+    await ev("rsReviewAccount(); true");
+    assert.deepEqual(await ev("[/The Meta link is not set up, so nothing is pulled/.test(document.querySelector('#gModal').innerText), document.querySelector('#rsRevMax').min, !!document.querySelector('#rsRevGo')]"), [true, "0", true]);
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // A lean on the suggestion (as a gym with results would have), then the owner's click.
+    await ev(`RS.review.brief.lean = ${JSON.stringify(lean)}; RS.review.brief.cards = { statement: 1 }; rsStartNext(); true`);
+    await until("!!document.querySelector('#bSuggest') && !!document.querySelector('#bLean .chip')");
+    assert.deepEqual(await ev("[location.hash, document.querySelector('#bOffer').value, B.draft.locations, B.draft.audience, /Pre-filled from the account review of \\d{4}-\\d\\d-\\d\\d/.test(document.querySelector('#bSuggest').innerText), /your last batch's own words/.test(document.querySelector('#bSuggest').innerText), document.querySelector('#bLean .chip').innerText.replace(/\\s+/g,' ').trim(), document.querySelector('#bCard-statement').value]"),
+      [`#/${GYM}/batch`, "6 Week Review Check", ["BISHAN"], "MEN", true, true, "group setting · workout photos ×", "1"]);
+    assert.deepEqual(await ev("(()=>{ const b = briefFromDraft(); return [b.offer, b.lean, b.cards]; })()"), ["6 Week Review Check", lean, { statement: 1 }]);
+    // A direction turns the lean off (the words decide); dropping the chip removes it; Start blank clears the suggestion.
+    assert.deepEqual(await ev("bSet('direction_words', 'older men lifting with a coach'); ['lean' in briefFromDraft(), /Off for a directed batch/.test(document.querySelector('#bLean').innerText)]"), [false, true]);
+    assert.deepEqual(await ev("bSet('direction_words', ''); bLeanDrop(0); ['lean' in briefFromDraft(), document.querySelector('#bLean').innerText]"), [false, ""]);
+    assert.deepEqual(await ev("bSuggestClear(); [!!document.querySelector('#bSuggest'), document.querySelector('#bOffer').value, B.draft.lean === undefined]"), [false, "", true], "the offer is never among the gym's defaults");
+  } finally { rmSync(bdir, { recursive: true, force: true }); for (const f of ["account-history.json", "creative-reads.json", "account-review.json"]) rmSync(join(g, f), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); }
+});
