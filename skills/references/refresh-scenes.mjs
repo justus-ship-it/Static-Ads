@@ -409,7 +409,8 @@ export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath 
     stamp = (d) => ({ covers: dir.cover.filter((x) => d[x.tag] === x.value).map((x) => `${x.tag}:${x.value}`) });
     log(`· portrait scenes for ${audience} (${gaps.live} live): ${gaps.cover.map((x) => `${x.value} (${x.count})`).join(", ")}`);
   } else {
-    const gaps = sceneGaps(lib.scenes, { audience });
+    // A workout refresh fills the workout scenes' gaps: a portrait shows no exercise or setting to count.
+    const gaps = sceneGaps(lib.scenes.filter((x) => formatOf(x) === "workout"), { audience });
     const c = cover ? cover.map((x) => ({ ...x, count: gaps.tags.find((t) => t.tag === x.tag && t.value === x.value)?.count ?? 0 })) : coverFromGaps(gaps, count);
     dir = { kind: "gaps", cover: c, exercises: gaps.exercises };
     // Each draft records the gaps it actually fills, so the library says why a scene was written.
