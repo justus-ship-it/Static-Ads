@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "note": "Text-led cards (Phase 5 of the formats plan, 2026-11-11): a Google review, a statement or a timeline set by software on a plain colour. No photograph, no image call, no logo, no drawn button. Each pairing: the card's own colour (bg), its type (ink), the accent (stars, dots, the callout), the quiet type (muted), and the paper panel a review sits on (paper, paper_ink). Contrast is checked in code (render-cards.mjs): ink on bg and paper_ink on paper at 4.5:1 or more, accent on bg at 3:1 or more.",
+  "canvas": { "4x5": [1080, 1350], "9x16": [1080, 1920] },
+  "safe_area": { "4x5": [6, 5, 88, 90], "9x16": [6, 14, 88, 51] },
+  "min_px": { "body": 34, "small": 26, "callout": 56, "offer": 40 },
+  "max_px": { "body": 66, "callout": 132, "duration": 120, "offer": 64 },
+  "palettes": {
+    "k-navy-cream": { "bg": "#0F1B3D", "ink": "#FFF6E0", "accent": "#FFC94A", "muted": "#B9C2DA", "paper": "#FFF6E0", "paper_ink": "#0F1B3D", "star": "#F5A300" },
+    "k-cream-navy": { "bg": "#F6EEDD", "ink": "#14213D", "accent": "#B3261E", "muted": "#5A6072", "paper": "#FFFFFF", "paper_ink": "#14213D", "star": "#F5A300" },
+    "k-black-gold": { "bg": "#111111", "ink": "#FFFFFF", "accent": "#F4C430", "muted": "#B5B5B5", "paper": "#FFFFFF", "paper_ink": "#111111", "star": "#F5A300" },
+    "k-forest-cream": { "bg": "#17402F", "ink": "#FBF3E1", "accent": "#F2C14E", "muted": "#B7CABF", "paper": "#FBF3E1", "paper_ink": "#17402F", "star": "#F5A300" },
+    "k-terracotta": { "bg": "#A63D2A", "ink": "#FFF4E6", "accent": "#FFD36B", "muted": "#F1C9BE", "paper": "#FFF4E6", "paper_ink": "#3A1A12", "star": "#F5A300" },
+    "k-white-black": { "bg": "#FFFFFF", "ink": "#111111", "accent": "#C8102E", "muted": "#5C5C5C", "paper": "#F3F1EC", "paper_ink": "#111111", "star": "#F5A300" }
+  }
+}

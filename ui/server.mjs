@@ -45,6 +45,8 @@ const targetingLibrary = () => seedTargetingDrafts(TARGETING_LIBRARY_DIR).data;
 const targetingLibraryView = () => { const d = targetingLibrary(); return { entries: d.entries.map((e) => ({ ...e, preset_id: `lib:${e.id}`, summary: summarise(e.spec) })), approved: d.entries.filter((e) => e.approved_on && !e.retired).length, drafts: d.entries.filter((e) => !e.approved_on && !e.retired).length }; };
 import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { importExport } from "../skills/references/ads-export.mjs";
+import { readReviews, reviewView, addReview, editReview, findPlace, pullGoogleReviews, placesKey, readWords, addStatement, addTimeline, decideWords, draftCardWords, cardsAvailable, cardCount, durationOf, CARD_KINDS, MAX_CARDS, MIN_STARS, EXCERPT_LIMIT, STATEMENT_LIMIT } from "../skills/references/cards.mjs";
+import { renderCard, loadCards } from "../skills/references/render-cards.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -736,8 +738,16 @@ function checkBrief(gym, raw) {
       }
     }
   }
+  // Cards (Phase 5): each kind asked for must have that many ready — usable reviews, kept statements, kept timelines for this offer's length.
+  const cards = brief?.cards && typeof brief.cards === "object" && !Array.isArray(brief.cards) ? Object.fromEntries(Object.entries(brief.cards).filter(([k, n]) => CARD_KINDS.includes(k) && Number.isInteger(n) && n > 0)) : {};
+  if (Object.keys(cards).length) {
+    const have = cardsAvailable(brandDir(gym), { offer: brief.offer || null, profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {} });
+    const need = { review: "paste or pull 5-star Google reviews on Library → Cards", statement: "draft some and keep the ones you want on Library → Cards", timeline: `draft some for a ${durationOf(brief.offer) || "?"} offer and keep the ones you want on Library → Cards` };
+    for (const [k, n] of Object.entries(cards)) if (have[k] < n) errors.push(`${n} ${k} card${n === 1 ? "" : "s"} asked for, ${have[k]} ready: ${need[k]}`);
+    if (cards.timeline && !durationOf(brief.offer)) errors.push("a timeline card needs an offer that names its length (6 Week …, 42 Day …)");
+  }
   const photos = g + real.length, looks = brief?.looks_per_photo ?? 2, locs = Array.isArray(brief?.locations) ? brief.locations.length : 0;
-  return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format, mix } };
+  return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs + cardCount(cards) * locs, cards, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format, mix } };
 }
 
 // ── Review and picks (sub-step 2) ────────────────────────────────────────────
@@ -803,10 +813,10 @@ function reviewState(gym, id) {
   for (const f of [...(stories?.failed || []), ...(stories?.left_out || [])]) for (const folder of f.folders || []) storyFail.set(folder, (f.failures || [f.reason]).filter(Boolean).join("; "));
   const d = readDecisions(gym, id);
   const ads = (batch?.ads || []).map((a) => {
-    const s = storyOf.get(a.folder);
+    const s = storyOf.get(a.folder) || (a.story_file && existsSync(join(out, a.story_file)) ? { file: a.story_file } : null);
     return {
       folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, ratio: a.ratio || batch.ratio || "1x1", format: a.format || null, treatment: a.treatment, style: a.style, palette: a.palette,
-      photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
+      photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || a.story_failure || null, card: a.card || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
     };
   });
   const photos = batchPhotos(gym, id).map((p) => ({ ...p, status: d.photos[p.id] || null, ads: ads.filter((a) => a.photos.includes(p.id)).length }));
@@ -870,7 +880,7 @@ function savePicks(gym, id, change) {
     const stories = new Map((readJsonFile(join(out, "stories.json"))?.ads || []).filter((a) => existsSync(join(out, a.file))).map((a) => [a.folder, a.file]));
     const excluded = batch.ads.filter((a) => standing(a, d).status === "exclude").map((a) => a.folder).sort();
     const sel = { excluded };
-    for (const a of batch.ads) if (!excluded.includes(a.folder)) sel[a.folder] = { [a.ratio || batch.ratio || "1x1"]: a.file, ...(stories.has(a.folder) ? { "9x16": stories.get(a.folder) } : {}) };
+    for (const a of batch.ads) if (!excluded.includes(a.folder)) sel[a.folder] = { [a.ratio || batch.ratio || "1x1"]: a.file, ...(stories.has(a.folder) ? { "9x16": stories.get(a.folder) } : a.story_file && existsSync(join(out, a.story_file)) ? { "9x16": a.story_file } : {}) };
     writeWhole(join(out, "selections.json"), JSON.stringify(sel, null, 2) + "\n");
   }
   return null;
@@ -1606,6 +1616,50 @@ const server = createServer(async (req, res) => {
       writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
       return json(res, 200, { ok: true, room_reference: profile.creative_defaults.room_reference });
     }
+    // /api/client/{gym}/cards… — what goes on a text-led card (cards.mjs): the gym's Google reviews, word for word, and the
+    // statements and timelines the owner has kept. GET the lot; POST /review a pasted one; PUT /review/{id} its excerpt
+    // (whole sentences only) or retire it; POST /google/find and /google/pull (the Places key in .env; Google returns five
+    // at most); POST /words the owner's own statement or timeline; PUT /words/{kind}/{id} keep, edit, put back, retire;
+    // POST /draft (one text call, the owner's click) and POST /preview (one card rendered, no image call).
+    const cdm = p.match(/^\/api\/client\/([^/]+)\/cards(?:\/(review|google\/find|google\/pull|words|draft|preview)(?:\/([\w-]+))?(?:\/([\w-]+))?)?$/);
+    if (cdm) {
+      const [, gym, what, x1, x2] = cdm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym), profile = readJsonFile(join(dir, "gym-profile.json")) || {};
+      const view = () => { const rv = readReviews(dir), w = readWords(dir); return { reviews: rv.reviews.map((r) => reviewView(r, profile)), place: rv.place, pulled: rv.pulled, statements: w.statements, timelines: w.timelines, has_key: !!placesKey(), kinds: CARD_KINDS, limits: { min_stars: MIN_STARS, excerpt: EXCERPT_LIMIT, statement: STATEMENT_LIMIT, max_cards: MAX_CARDS }, palettes: Object.keys(loadCards().palettes), search: [profile.display_name, profile.locations?.[0]?.address].filter(Boolean).join(", ") }; };
+      try {
+        if (!what && req.method === "GET") return json(res, 200, view());
+        if (req.method !== "POST" && req.method !== "PUT") return json(res, 405, { error: "method not allowed" });
+        const body = await readBody(req);
+        if (what === "review" && req.method === "POST") { const r = addReview(dir, { author: body.author, rating: Number(body.rating), text: body.text, url: body.url || null, date: body.date || null, source: "pasted" }, { profile }); return json(res, 200, { ok: true, review: r, ...view() }); }
+        if (what === "review" && req.method === "PUT" && x1) { const r = editReview(dir, x1, { excerpt: body.excerpt, retired: body.retired, reason: body.reason }, { profile }); return json(res, 200, { ok: true, review: r, ...view() }); }
+        if (what === "google/find" && req.method === "POST") { if (!placesKey()) return json(res, 409, { error: "no Google Places key yet: add GOOGLE_PLACES_KEY to .env, or paste the reviews" }); return json(res, 200, { ok: true, places: await findPlace(String(body.query || "").slice(0, 200)) }); }
+        if (what === "google/pull" && req.method === "POST") { if (!placesKey()) return json(res, 409, { error: "no Google Places key yet: add GOOGLE_PLACES_KEY to .env, or paste the reviews" }); const r = await pullGoogleReviews(dir, { placeId: body.place_id || null, profile }); return json(res, 200, { ok: true, pull: r, ...view() }); }
+        if (what === "words" && req.method === "POST") { const row = body.kind === "timeline" ? addTimeline(dir, body.timeline || {}, { source: "owner", profile }) : addStatement(dir, body.text, { source: "owner", profile }); return json(res, 200, { ok: true, row, ...view() }); }
+        if (what === "words" && req.method === "PUT" && x1 && x2) { const row = decideWords(dir, x1, x2, { status: body.status, reason: body.reason, text: body.text, timeline: body.timeline }, { profile }); return json(res, 200, { ok: true, row, ...view() }); }
+        if (what === "draft" && req.method === "POST") {
+          if (!["statement", "timeline"].includes(body.kind)) return json(res, 400, { error: "kind must be statement or timeline" });
+          const count = Number.isInteger(body.count) ? body.count : 6;
+          const r = await draftCardWords({ brandDir: dir, kind: body.kind, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count });
+          return json(res, 200, { ok: true, drafted: r.added.length, dropped: r.dropped, calls: r.calls, ...view() });
+        }
+        if (what === "preview" && req.method === "POST") {
+          const rv = readReviews(dir), w = readWords(dir), id = String(body.id || "");
+          const src = body.kind === "review" ? rv.reviews.find((r) => r.id === id) : body.kind === "statement" ? w.statements.find((s) => s.id === id) : body.kind === "timeline" ? w.timelines.find((t) => t.id === id) : null;
+          if (!src) return json(res, 404, { error: "no such card" });
+          const content = body.kind === "review" ? { excerpt: typeof body.excerpt === "string" && body.excerpt.trim() ? body.excerpt.trim() : src.excerpt, author: src.author, rating: src.rating } : body.kind === "statement" ? { text: src.text } : { title: src.title, steps: src.steps };
+          const offer = typeof body.offer === "string" && body.offer.trim() ? body.offer.trim() : (body.kind === "timeline" ? `${src.duration.replace(/^(\d+) (\w)/, (m, n, c) => `${n} ${c.toUpperCase()}`)} Programme` : "6 Week Programme");
+          const location = typeof body.location === "string" && body.location.trim() ? body.location.trim() : (profile.creative_defaults?.locations?.[0] || "YOUR AREA");
+          const ratio = body.ratio === "9x16" ? "9x16" : "4x5", palette = loadCards().palettes[body.palette] ? body.palette : "k-navy-cream";
+          browserP ||= launchBrowser();
+          const job = queue.then(async () => renderCard(await browserP, { kind: body.kind, content, location, offer, palette, ratio }));
+          queue = job.catch(() => {});
+          const r = await job;
+          return json(res, 200, { ok: r.ok, failures: r.failures, image: `data:image/png;base64,${r.png.toString("base64")}`, sizes: r.report?.sizes || null });
+        }
+        return json(res, 404, { error: "not found" });
+      } catch (e) { return json(res, e.duplicate ? 409 : 400, { error: e.message }); }
+    }
     // /api/client/{gym}/mix { mix } — the gym's default mix of formats, in shares that sum to 100 (Ad defaults, or the
     // Results page's "Use this mix"). The owner's click; a suggestion is never saved by itself.
     const mxm = p.match(/^\/api\/client\/([^/]+)\/mix$/);
@@ -1885,7 +1939,7 @@ const server = createServer(async (req, res) => {
     if (bm) {
       const [, gym, what, id] = bm;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym).filter((x) => !x.people), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, mix: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), formats: Object.keys(SCENE_FORMATS), photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
+      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym).filter((x) => !x.people), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, cards_ready: cardsAvailable(brandDir(gym), { profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {} }), max_cards: MAX_CARDS, mix: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), formats: Object.keys(SCENE_FORMATS), photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
       if (what === "batch/check" && req.method === "POST") { const { brief } = await readBody(req); return json(res, 200, checkBrief(gym, brief)); }
       if (what === "batch" && req.method === "POST") {
         const { brief: raw, replace = false } = await readBody(req);

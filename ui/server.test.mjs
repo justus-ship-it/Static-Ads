@@ -34,7 +34,7 @@ function startPanel(env = {}) {
   return new Promise((res, rej) => {
     const child = spawn(process.execPath, [join(ROOT, "ui", "server.mjs"), "--port", "0"], {
       // No Meta keys unless a test gives them: whatever this machine's .env holds, the panel under test has none.
-      cwd: ROOT, env: { ...process.env, PANEL_BRANDS_DIR: brands, COPY_LIBRARY_DIR: join(dirname(brands), "library"), TARGETING_LIBRARY_DIR: join(dirname(brands), "library"), NODE_OPTIONS: `--import=${stub}`, META_ACCESS_TOKEN: "", META_APP_ID: "", META_APP_SECRET: "", META_GRAPH_URL: "", ...env },
+      cwd: ROOT, env: { ...process.env, PANEL_BRANDS_DIR: brands, COPY_LIBRARY_DIR: join(dirname(brands), "library"), TARGETING_LIBRARY_DIR: join(dirname(brands), "library"), NODE_OPTIONS: `--import=${stub}`, META_ACCESS_TOKEN: "", META_APP_ID: "", META_APP_SECRET: "", META_GRAPH_URL: "", GOOGLE_PLACES_KEY: "", ...env },
     });
     let out = "", err = "";
     child.stdout.on("data", async (d) => {
@@ -199,7 +199,7 @@ test("U3 the panel refuses exactly what Step 6 refuses, and saves the words exac
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
   const ok = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2 } } })).json();
   assert.deepEqual(ok.errors, []);
-  assert.deepEqual(ok.summary, { photos: 3, generated: 1, real: 2, looks: 2, locations: 2, ads: 12, max_calls: 2, scenes_for: "men", format: "workout", mix: { workout: 1 } });
+  assert.deepEqual(ok.summary, { photos: 3, generated: 1, real: 2, looks: 2, locations: 2, ads: 12, cards: {}, max_calls: 2, scenes_for: "men", format: "workout", mix: { workout: 1 } });
 });
 
 // ── U4 preview ──────────────────────────────────────────────────────────
@@ -2730,4 +2730,73 @@ test("U50 the mix (Phase 4, 2026-11-10): a gym's default mix is shares that sum 
     await open("results", "!!document.querySelector('#rsMix')");
     assert.deepEqual(await ev("[document.querySelectorAll('#rsMix tbody tr').length, document.querySelector('#rsMixNow').textContent, /Use this mix|No change suggested/.test(document.querySelector('#rsMix').textContent)]"), [2, "50% workout photos · 50% studio portraits", true]);
   } finally { writeFileSync(pf, before); writeFileSync(sp, scenesBefore); }
+});
+
+test("U51 cards (Phase 5, 2026-11-11): a pasted Google review is kept word for word and its excerpt is whole sentences only; a statement of the owner's is kept at once, a draft waits; a brief's cards need that many ready and count in its ads; Google is refused in words without a key; a card previews with no image call; the Cards page and Create show it", async () => {
+  const g = join(brands, GYM);
+  await linkTestGym();
+  const files = ["reviews.json", "card-words.json"].map((f) => join(g, f));
+  const TEXT = "I was nervous walking in on day one. The coaches knew my name by the second session. Only $99 a month too.";
+  try {
+    let d = await (await call(`/api/client/${GYM}/cards`)).json();
+    assert.deepEqual([d.reviews, d.statements, d.timelines, d.has_key, d.kinds, d.limits.min_stars], [[], [], [], false, ["review", "statement", "timeline"], 5]);
+    let r = await call(`/api/client/${GYM}/cards/review`, { method: "POST", body: { author: "Mei Ling T.", rating: 5, text: TEXT } });
+    d = await r.json();
+    assert.deepEqual([r.status, d.review.usable, d.review.excerpt, d.reviews.length], [200, true, "I was nervous walking in on day one. The coaches knew my name by the second session.", 1], "the default excerpt leaves the price sentence out");
+    const id = d.review.id;
+    assert.equal(JSON.parse(readFileSync(files[0], "utf-8")).reviews[0].text, TEXT, "word for word on disk");
+    assert.equal((await call(`/api/client/${GYM}/cards/review`, { method: "POST", body: { author: "Again", rating: 5, text: TEXT } })).status, 409, "the same review twice");
+    r = await call(`/api/client/${GYM}/cards/review/${id}`, { method: "PUT", body: { excerpt: "The coaches knew my name" } });
+    assert.equal(r.status, 400); assert.match((await r.json()).error, /whole sentences of the review, in order, with nothing changed/);
+    d = await (await call(`/api/client/${GYM}/cards/review/${id}`, { method: "PUT", body: { excerpt: "Only $99 a month too." } })).json();
+    assert.deepEqual([d.review.usable, d.review.problems], [false, ["the excerpt has a price: choose other sentences"]]);
+    d = await (await call(`/api/client/${GYM}/cards/review/${id}`, { method: "PUT", body: { excerpt: "The coaches knew my name by the second session." } })).json();
+    assert.equal(d.review.usable, true);
+    // Google: no key, said in words (the tests' panel has none; nothing is ever sent).
+    r = await call(`/api/client/${GYM}/cards/google/find`, { method: "POST", body: { query: "Test Gym" } });
+    assert.equal(r.status, 409); assert.match((await r.json()).error, /no Google Places key yet: add GOOGLE_PLACES_KEY to \.env, or paste the reviews/);
+    assert.equal((await call(`/api/client/${GYM}/cards/google/pull`, { method: "POST", body: {} })).status, 409);
+    // Statements: the owner's own is kept; a broken one is refused with the reason.
+    r = await call(`/api/client/${GYM}/cards/words`, { method: "POST", body: { kind: "statement", text: "Lose 5kg for $99, guaranteed, this month only." } });
+    assert.equal(r.status, 400); assert.match((await r.json()).error, /a price; says "guaranteed"; a weight-loss number/);
+    d = await (await call(`/api/client/${GYM}/cards/words`, { method: "POST", body: { kind: "statement", text: "Getting older is not what slows you down. Losing **strength** does." } })).json();
+    assert.deepEqual([d.row.status, d.statements.length], ["kept", 1]);
+    r = await call(`/api/client/${GYM}/cards/words/statement/${d.row.id}`, { method: "PUT", body: { status: "retired" } });
+    assert.equal(r.status, 400, "retiring needs a reason");
+    // The drafter reaches the model (blocked here): refused in words, nothing written.
+    r = await call(`/api/client/${GYM}/cards/draft`, { method: "POST", body: { kind: "timeline", offer: "Summer Shred" } });
+    assert.equal(r.status, 400); assert.match((await r.json()).error, /names its length/);
+    // A brief's cards.
+    const raw = { batch_id: "cards-check", ...WORDS, free: false, generated: 0, real: BRIEF.real, looks_per_photo: 2, max_calls: 0, attempts: 1, scenes: null };
+    let c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, cards: { review: 1, statement: 1 } } } })).json();
+    assert.deepEqual([c.errors, c.summary.cards, c.summary.ads], [[], { review: 1, statement: 1 }, c.summary.photos * 2 * c.summary.locations + 2 * c.summary.locations]);
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, cards: { review: 2, timeline: 1 } } } })).json();
+    assert.ok(c.errors.includes("2 review cards asked for, 1 ready: paste or pull 5-star Google reviews on Library → Cards") && c.errors.some((e) => /^1 timeline card asked for, 0 ready: draft some for a/.test(e)), JSON.stringify(c.errors));
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, cards: { poster: 1 } } } })).json();
+    assert.ok(c.errors.includes('cards: "poster" is not one of review, statement, timeline'));
+    c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, real: [], cards: { review: 1 } } } })).json();
+    assert.deepEqual([c.errors, c.summary.ads], [[], c.summary.locations], "a batch may be cards alone");
+    const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
+    assert.deepEqual([setup.cards_ready, setup.max_cards], [{ review: 1, statement: 1, timeline: 0 }, 6]);
+    // A preview: the card itself, set by software.
+    const pv = await (await call(`/api/client/${GYM}/cards/preview`, { method: "POST", body: { kind: "review", id, ratio: "9x16" } })).json();
+    const png = Buffer.from(pv.image.split(",")[1], "base64");
+    assert.deepEqual([pv.ok, pv.failures, png.readUInt32BE(16), png.readUInt32BE(20)], [true, [], 1080, 1920]);
+    assert.equal((await call(`/api/client/${GYM}/cards/preview`, { method: "POST", body: { kind: "review", id: "r-none" } })).status, 404);
+    // The page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u51${hash.replace(/\W/g, "")}#/${GYM}/${hash}` }, sessionId); await loaded; const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); };
+    await open("cards", "!!document.querySelector('#cdReviews') && !!document.querySelector('[data-review]')");
+    assert.deepEqual(await ev("[/Google reviews · 1 ready of 1/.test(document.querySelector('#cdReviews h3').textContent), document.querySelector('#cdPull').disabled, /Statements · 1 kept of 1/.test(document.querySelector('#cdStatements h3').textContent), /No Google Places key yet/.test(document.querySelector('#cdReviews').textContent), document.querySelectorAll('[data-review] .txt span').length]"), [true, true, true, true, 3]);
+    // Choosing the excerpt by clicking sentences: the first click starts it, the second ends it.
+    assert.deepEqual(await ev(`cdPick('${id}', 0); cdPick('${id}', 1); [CD.pick['${id}'], /Use the highlighted sentences/.test(document.querySelector('[data-review]').textContent)]`), [[0, 1], true]);
+    await ev(`cdSaveExcerpt('${id}'); new Promise(r=>setTimeout(r,600))`);
+    assert.equal(JSON.parse(readFileSync(files[0], "utf-8")).reviews[0].excerpt, "I was nervous walking in on day one. The coaches knew my name by the second session.");
+    // A refused review keeps what was typed.
+    assert.deepEqual(await ev("document.querySelector('#cdAuthor').value='X'; document.querySelector('#cdText').value='Too short'; cdAddReview().then(()=>[document.querySelector('#cdText').value, /20 to 5,000 characters/.test(document.querySelector('#cdAddMsg').textContent)])"), ["Too short", true]);
+    await open("create", "!!document.querySelector('#bCard-review')");
+    assert.deepEqual(await ev("[/\\(1 ready\\)/.test(document.querySelector('#bCard-review').parentElement.textContent), 'cards' in briefFromDraft()]"), [true, false]);
+    assert.deepEqual(await ev("bCardSet('review', 1); bCardSet('timeline', 99); briefFromDraft().cards"), { review: 1, timeline: 6 });
+  } finally { for (const f of files) rmSync(f, { force: true }); }
 });

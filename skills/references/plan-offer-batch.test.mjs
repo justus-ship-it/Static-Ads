@@ -1004,3 +1004,42 @@ test("B14 the mix (Phase 4, 2026-11-10): a batch's photos are shared between the
     await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "no-portraits" }, deps, log: () => {} }), /no approved studio-portrait scenes yet/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("B15 cards in a batch (Phase 5, 2026-11-11): the gym's usable reviews and kept statements and timelines become ads with no photograph and no image call — each at 4:5 with its own 9:16, per location, its kind as its format — after the photo ads; a batch may be cards alone; a kind with too few ready is refused by name; the publish list carries a card's own Stories file", async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const { addReview, addStatement, addTimeline } = await import("./cards.mjs");
+    const { keptAds } = await import("./meta-publish.mjs");
+    addReview(dir, { author: "Mei Ling T.", rating: 5, text: "I was nervous walking in on day one. The coaches knew my name by the second session. I have not missed a week since." });
+    addReview(dir, { author: "Low Rating", rating: 3, text: "It was fine. The room was a little warm for me on most days." });
+    addStatement(dir, "Getting older is not what slows you down. Losing **strength** and **balance** does.");
+    addTimeline(dir, { duration: "12 week", title: "Your twelve weeks, planned.", steps: [{ when: "Week 1", head: "Start where you are", line: "A coach sets your starting weights." }, { when: "Week 6", head: "It is a habit now", line: "Three sessions a week, the same faces." }, { when: "Week 12", head: "Stronger than day one" }] });
+    const calls = [], logs = [], deps = { ...fakes(calls), browser };
+    const brief = { ...BRIEF, batch_id: "with-cards", real: [], generated: 1, max_calls: 2, locations: ["BISHAN", "ANG MO KIO"], cards: { review: 1, statement: 1, timeline: 1 } };
+    assert.deepEqual(validateBrief({ ...brief, cards: { poster: 1, review: 9 } }).filter((e) => /cards/.test(e)), ['cards: "poster" is not one of review, statement, timeline', "cards.review must be 0 to 6"]);
+    const r = await runBatch({ brandDir: dir, brief, deps, log: (m) => logs.push(m) });
+    const cards = r.batch.ads.filter((a) => a.card), photoAds = r.batch.ads.filter((a) => !a.card);
+    assert.deepEqual([calls.length, r.batch.cards, cards.length, r.batch.failed.length], [1, { review: 1, statement: 1, timeline: 1 }, 3 * 2, 0], logs.join(" | "));
+    assert.deepEqual(cards.map((a) => [a.format, a.candidate, a.location, a.photos.length]), [["review", "k01", "BISHAN", 0], ["review", "k01", "ANG MO KIO", 0], ["statement", "k02", "BISHAN", 0], ["statement", "k02", "ANG MO KIO", 0], ["timeline", "k03", "BISHAN", 0], ["timeline", "k03", "ANG MO KIO", 0]]);
+    assert.ok(Math.min(...cards.map((a) => Number(a.folder.split("-")[0]))) > Math.max(...photoAds.map((a) => Number(a.folder.split("-")[0]))), "numbered on from the photo ads");
+    for (const a of cards) {
+      assert.match(a.file, /^\d+-k0\d-(bishan|ang-mo-kio)-(review|statement|timeline)-[a-z-]+\/4x5\/k0\d-(bishan|ang-mo-kio)_4x5_v1\.png$/);
+      assert.deepEqual(((b) => [b.readUInt32BE(16), b.readUInt32BE(20)])(readFileSync(join(r.out, a.file))), [1080, 1350]);
+      assert.equal(a.story_file, a.file.replace("/4x5/", "/9x16/").replace("_4x5_", "_9x16_"));
+      assert.deepEqual(((b) => [b.readUInt32BE(16), b.readUInt32BE(20)])(readFileSync(join(r.out, a.story_file))), [1080, 1920]);
+      assert.deepEqual([a.words.offer, a.words.location, a.treatment], [brief.offer, a.location, `card-${a.format}`]);
+    }
+    assert.equal(cards[0].card.source_id.startsWith("r-"), true);
+    // The publish list: a card with its own Stories file, no stories.json needed.
+    const kept = keptAds(r.out).filter((k) => /-k0\d-/.test(k.folder));
+    assert.ok(kept.length === 6 && kept.every((k) => k.story && /\/9x16\//.test(k.story) && ["review", "statement", "timeline"].includes(k.format)));
+    // Cards alone: no photograph, no call.
+    calls.length = 0;
+    const only = await runBatch({ brandDir: dir, brief: { ...brief, batch_id: "cards-only", generated: 0, max_calls: 0, cards: { review: 1 } }, deps, log: () => {} });
+    assert.deepEqual([calls.length, only.batch.ads.length, only.batch.ads.every((a) => a.card && a.format === "review"), only.batch.ads[0].folder.startsWith("101-")], [0, 2, true, true]);
+    // Too few ready: refused by name (the 3-star review is never an ad; no timeline is kept for a 6 week offer).
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "too-many", cards: { review: 2 } }, deps, log: () => {} }), /2 review cards asked for, 1 ready: paste or pull 5-star Google reviews on Library → Cards/);
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "wrong-length", offer: "6 Week Total Body Reset", cards: { timeline: 1 } }, deps, log: () => {} }), /1 timeline card asked for, 0 ready: draft some for a 6 week offer/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

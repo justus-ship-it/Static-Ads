@@ -415,7 +415,7 @@ export function keptAds(batchDir) {
   const storyOf = new Map((stories?.ads || []).filter((s) => existsSync(join(batchDir, s.file))).map((s) => [s.folder, s.file]));
   const excludedPhotos = new Set(Object.entries(review.photos || {}).filter(([, v]) => v === "exclude").map(([k]) => k));
   return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)))
-    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || null, ...(a.format ? { format: a.format } : {}) }));
+    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}) }));
 }
 
 /** POST a creative; a feature Meta refuses by name is dropped and the post retried; the opt-out as a whole refused → made without it, said so. */

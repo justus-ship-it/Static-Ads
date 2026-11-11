@@ -43,6 +43,8 @@ import { fitLayouts, imageSize, checkTiled, splitMarks, ownerKept } from "./chec
 import { QUALITY_VERSION } from "./check-quality.mjs";
 import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from "./assign-variants.mjs";
 import { catalogueFor, imageModelFor, mixOf, FEED_RATIOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
+import { cardsProblems, cardCount, pickCards } from "./cards.mjs";
+import { renderCard, loadCards } from "./render-cards.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
@@ -97,7 +99,9 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
   const g = brief.generated ?? 0, real = brief.real || [];
   if (!Number.isInteger(g) || g < 0 || g > 12) errs.push("generated must be a whole number from 0 to 12");
   if (!Array.isArray(real)) errs.push("real must be a list of photo paths");
-  else if (g + real.length < 1) errs.push("the batch has no photos: set generated, list real photos, or both");
+  else if (g + real.length + cardCount(brief.cards) < 1) errs.push("the batch has no photos: set generated, list real photos, or both");
+  // Cards (Phase 5): text-led ads with no photograph — how many of each kind. No image call.
+  errs.push(...cardsProblems(brief.cards));
   if (brandDir && Array.isArray(real)) for (const p of real) if (!existsSync(join(brandDir, "brand-assets", p)) && !existsSync(resolve(p))) errs.push(`real photo not found: ${p}`);
   if (brief.reference && brandDir && !existsSync(join(brandDir, "brand-assets", brief.reference)) && !existsSync(resolve(brief.reference))) errs.push(`reference photo not found: ${brief.reference}`);
   const looks = brief.looks_per_photo ?? 2;
@@ -389,6 +393,30 @@ export function madeShape(out) {
   return null;
 }
 
+/**
+ * A batch's cards, rendered: the gym's usable reviews and kept statements and timelines (cards.mjs → pickCards), each on
+ * its own colour, once per location at 4:5 and again at 9:16. A card whose feed render fails is a failure of the batch,
+ * named; one whose 9:16 does not fit keeps its feed ad and says why it has no Stories version. No image call.
+ */
+export async function renderBatchCards(browser, { brandDir, brief, profile, seed, audience = null, log = console.log }) {
+  const picked = pickCards(brandDir, { cards: brief.cards, offer: brief.offer, profile, seed });
+  const palettes = Object.keys(loadCards().palettes), start = [...String(seed)].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+  const out = [];
+  for (const [i, k] of picked.entries()) {
+    const palette = palettes[(start + i) % palettes.length], renders = [], fails = [];
+    for (const loc of brief.locations) {
+      const words = { kind: k.kind, content: k.content, location: loc, audience, offer: brief.offer, free: brief.free === true, palette };
+      const feed = await renderCard(browser, { ...words, ratio: "4x5" });
+      if (!feed.ok) { fails.push(...feed.failures.map((f) => `${loc}: ${f}`)); continue; }
+      const story = await renderCard(browser, { ...words, ratio: "9x16" });
+      renders.push({ feed: feed.png, story: story.ok ? story.png : null, story_failure: story.ok ? null : story.failures.join("; ") });
+    }
+    if (fails.length) { log(`⚑ ${k.id} (${k.kind} ${k.source_id}): ${fails.join("; ")}`); out.push({ ...k, palette, failed: fails }); }
+    else { log(`· ${k.id}: ${k.kind} card from ${k.source_id} on ${palette}${renders.some((r) => !r.story) ? " (no Stories version: " + renders.find((r) => !r.story).story_failure + ")" : ""}`); out.push({ ...k, palette, renders }); }
+  }
+  return out;
+}
+
 /** A batch's photos per format: the brief's own mix (counts), else all of its one format, else the gym's default shares
  *  (Ad defaults → mix, or its one format) turned into photos by `allocateMix`. No generated photos: {}. */
 export function batchMix(brief, profile = null) {
@@ -617,7 +645,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: a.own_layout_failed ? null : v.treatment, scene_id: v.scene_id, format: v.format || "workout", notes: [...(a.notes || []), ...(a.own_layout_failed ? [`not used in its own layout: ${a.own_layout_failed.join("; ")}`] : [])], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
     }
     photos.sort((a, b) => a.id.localeCompare(b.id));
-    if (!photos.length) throw new Error("no photos passed: nothing to render");
+    if (!photos.length && !cardCount(brief.cards)) throw new Error("no photos passed: nothing to render"); // a batch of cards alone has none to pass
 
     // ── 3 fit ──
     prog.set({ stage: "fit", calls });
@@ -635,16 +663,24 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     // ── 4 looks ──
     prog.set({ stage: "looks" });
     const browser = deps.browser || await launchBrowser();
-    let results;
+    let results, cardRenders = [];
     try {
-      const stats = await measurePhotos(browser, photos.map((p) => p.file), { ratio, catalogue });
-      const planned = assignVariants({ visuals: photos.map((p) => ({ id: p.id })), perVisual: looks, text: { location: brief.locations[0], audience }, seed, exclude, photoStats: stats, allowed, prefer: Object.fromEntries(photos.filter((p) => p.primary).map((p) => [p.id, p.primary])), catalogue, ratio });
-      for (const n of planned.notes) log(`  note: ${n}`);
+      if (!photos.length) results = []; // cards alone: no photograph to look at or set words on
+      else {
+        const stats = await measurePhotos(browser, photos.map((p) => p.file), { ratio, catalogue });
+        const planned = assignVariants({ visuals: photos.map((p) => ({ id: p.id })), perVisual: looks, text: { location: brief.locations[0], audience }, seed, exclude, photoStats: stats, allowed, prefer: Object.fromEntries(photos.filter((p) => p.primary).map((p) => [p.id, p.primary])), catalogue, ratio });
+        for (const n of planned.notes) log(`  note: ${n}`);
 
-      // ── 5 render ──
-      prog.set({ stage: "render" });
-      const fileOf = Object.fromEntries(photos.map((p) => [p.id, p.file]));
-      results = await renderPlan(browser, planned, { texts, imageFor: (id) => fileOf[id], facesFor: (id) => faces[id], focusFor: (id, la) => focus[id]?.[la] || null, catalogue });
+        // ── 5 render ──
+        prog.set({ stage: "render" });
+        const fileOf = Object.fromEntries(photos.map((p) => [p.id, p.file]));
+        results = await renderPlan(browser, planned, { texts, imageFor: (id) => fileOf[id], facesFor: (id) => faces[id], focusFor: (id, la) => focus[id]?.[la] || null, catalogue });
+      }
+      // ── 5b cards ── text-led ads: the gym's reviews, statements and timelines set on a plain card, for the feed and for Stories.
+      if (cardCount(brief.cards)) {
+        if (ratio !== "4x5") throw new Error("cards are made at 4:5 with a 9:16 for Stories: this batch was made as a square before, so it takes none");
+        cardRenders = await renderBatchCards(browser, { brandDir, brief, profile, seed, audience, log });
+      }
     } finally { if (!deps.browser) await browser.close(); }
 
     // ── 6 gallery ──
@@ -666,10 +702,24 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       };
     });
     const failed = results.filter((r) => r.failed).map((r) => ({ candidate: r.id, photo: r.visual, failures: r.failed }));
+    // The cards join the batch's ads after its photo ads, numbered on: each carries its kind as its format, what it was
+    // made from, and its own Stories file (a card's 9:16 is set with it, at no cost).
+    let cardNo = 101 + ads.length;
+    for (const c of cardRenders) {
+      if (c.failed) { failed.push({ candidate: c.id, photo: null, card: c.kind, failures: c.failed }); continue; }
+      for (const [li, loc] of brief.locations.entries()) {
+        const r = c.renders[li], folder = `${cardNo++}-${c.id}-${slug(loc)}-${c.kind}-${c.palette.replace(/^k-/, "")}`, name = `${c.id}-${slug(loc)}`;
+        const file = join(folder, "4x5", `${name}_4x5_v1.png`), story = r.story ? join(folder, "9x16", `${name}_9x16_v1.png`) : null;
+        mkdirSync(dirname(join(out, file)), { recursive: true }); writeFileSync(join(out, file), r.feed);
+        if (story) { mkdirSync(dirname(join(out, story)), { recursive: true }); writeFileSync(join(out, story), r.story); }
+        ads.push({ folder, file, candidate: c.id, location: loc, location_index: li, photos: [], photo_files: [], treatment: `card-${c.kind}`, style: "card", palette: c.palette, ratio, format: c.kind,
+          card: { kind: c.kind, source_id: c.source_id }, ...(story ? { story_file: story } : { story_failure: r.story_failure }), crop: [], words: { location: loc, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
+      }
+    }
     // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
     // record of the calls that made its photos (the panel showed "0 image calls" after one).
     const batch = {
-      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, format, mix: Object.fromEntries(Object.keys(SCENE_FORMATS).map((f) => [f, photos.filter((p) => p.format === f).length]).filter(([, n]) => n > 0)), image_calls: spent, image_calls_this_run: calls,
+      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, ...(cardRenders.length ? { cards: Object.fromEntries(["review", "statement", "timeline"].map((k) => [k, cardRenders.filter((c) => c.kind === k && !c.failed).length]).filter(([, n]) => n > 0)) } : {}), format, mix: Object.fromEntries(Object.keys(SCENE_FORMATS).map((f) => [f, photos.filter((p) => p.format === f).length]).filter(([, n]) => n > 0)), image_calls: spent, image_calls_this_run: calls,
       photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.format ? { format: p.format } : {}), ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
       ads, failed,
     };

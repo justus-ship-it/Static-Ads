@@ -297,11 +297,11 @@ let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'
 // The rail: the daily path first (Create, Review, Exports), the library next, the client's setup last.
 const NAV = [
   ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'], ['results','Results','▤'],
-  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'], ['leadforms','Lead forms','▤'],
+  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'], ['cards','Cards','▭'], ['leadforms','Lead forms','▤'],
   ['sec','Profile'], ['overview','Overview','◎'], ['import','Import from Meta','⇣'], ['metafacts','From the ad account','◆'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', leadforms:'Lead forms', import:'Import from Meta', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
+const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', cards:'Cards', leadforms:'Lead forms', import:'Import from Meta', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -418,6 +418,7 @@ function render(){
   if (STATE.tab==='copy') return viewCopyRefs(v, seq);
   if (STATE.tab==='metafacts') return viewMetaFacts(v, seq);
   if (STATE.tab==='scenes') return viewScenes(v, seq);
+  if (STATE.tab==='cards') return viewCards(v, seq);
   if (STATE.tab==='photos') return viewPhotos(v, seq);
   if (STATE.tab==='references') return viewReferences(v, seq);
   if (STATE.tab==='leadforms') return viewLeadForms(v, seq);
@@ -1166,6 +1167,7 @@ function freshDraft(){
   const locs = (cd.locations||[]).filter(Boolean), real = (cd.real_photos||[]).filter(p=>clean.includes(p));
   return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 10, real: cd.real_photos?.length ? real : clean.slice(0,2),
     looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true,
+    cards: { review:0, statement:0, timeline:0 },
     look: cd.look || 'reference', mix: (()=>{ const m = allocMix(B.setup.mix || profileMix(cd), cd.generated ?? 10); delete m.workout; return m; })(),
     age_min: (B.setup.photo_ages||[25,60])[0], age_max: (B.setup.photo_ages||[25,60])[1] };
 }
@@ -1200,7 +1202,8 @@ function briefFromDraft(){
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
-    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m); return !generated || (live.length===1 && live[0]==='workout') ? {} : live.length===1 ? { format: live[0] } : { mix: m }; })(),
+    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(),
+    ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m); return !generated || (live.length===1 && live[0]==='workout') ? {} : live.length===1 ? { format: live[0] } : { mix: m }; })(),
     ...(d.spread && generated>0 && !direction ? { spread: true } : {}) };
 }
 function autoId(){
@@ -1233,6 +1236,7 @@ function paintBatch(v){
           <div><label for="bGen" style="margin-top:0">New photos</label><div class="stepper"><button type="button" onclick="bStep('generated',-1)">−</button><input id="bGen" type="number" min="0" max="12" value="${esc(d.generated)}" oninput="bSet('generated',this.value)"><button type="button" onclick="bStep('generated',1)">+</button></div></div>
           <div><label for="bAgeMin" style="margin-top:0">Ages in the photos</label><div class="row" style="gap:6px;align-items:center"><input id="bAgeMin" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_min)}" oninput="bSet('age_min',this.value)"><span>to</span><input id="bAgeMax" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_max)}" oninput="bSet('age_max',this.value)"></div><div class="hint" style="margin-top:2px">Most near ${esc(Math.round(((Number(d.age_min)||25)+(Number(d.age_max)||60))/2))}, fewer toward the ends</div></div>
           ${Object.keys(FORMAT_NAMES).filter(f=>f!=='workout').map(f=>`<div><label for="bMix-${f}" style="margin-top:0">Of which ${esc(FORMAT_PLURAL[f])}</label><div class="stepper"><button type="button" onclick="bMixStep('${f}',-1)">−</button><input id="bMix-${f}" type="number" min="0" max="12" value="${esc(d.mix?.[f]||0)}" oninput="bMixSet('${f}',this.value)"><button type="button" onclick="bMixStep('${f}',1)">+</button></div><div class="hint" id="bMixRest" style="margin-top:2px"></div></div>`).join('')}
+          <div><label style="margin-top:0">Cards <span class="hint" style="font-weight:400">· no photo, no image call</span></label><div class="row" style="gap:10px">${Object.entries(CARD_NAMES).map(([k,l])=>`<label style="margin:0;font-weight:500;color:var(--text);display:flex;align-items:center;gap:5px"><input id="bCard-${k}" type="number" min="0" max="${B.setup.max_cards||6}" style="width:56px" value="${esc(d.cards?.[k]||0)}" oninput="bCardSet('${k}',this.value)"> ${esc(l)} <span class="hint" style="font-weight:400">(${B.setup.cards_ready?.[k]??0} ready)</span></label>`).join('')}<a href="#" onclick="go('cards');return false" style="align-self:center">manage</a></div></div>
           <div><label for="bLook" style="margin-top:0">Look</label><select id="bLook" onchange="bSet('look',this.value)"><option value="reference" ${d.look!=='formula'?'selected':''}>Reference set</option><option value="formula" ${d.look==='formula'?'selected':''}>Formula (callout top, offer low)</option></select></div>
           <div><label style="margin-top:0">Shape</label><div class="hint" id="bShape" style="margin-top:6px" title="Every feed ad is portrait 4:5; its Stories and Reels version is 9:16, made from the ad's own photo">4:5 feed · 9:16 Stories</div></div>
           <div><label for="bLooks" style="margin-top:0">Looks per photo</label><div class="stepper"><button type="button" onclick="bStep('looks_per_photo',-1)">−</button><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"><button type="button" onclick="bStep('looks_per_photo',1)">+</button></div></div>
@@ -1295,6 +1299,8 @@ function paintAud(){
   box.innerHTML = audiences().map(a=>`<span class="chip ${d.audience===a?'sel':''}" onclick="bAudPick('${a}')">${a}</span>`).join('') + `<span class="chip ${d.audience===''?'sel':''}" onclick="bAudPick('')">none</span>`;
 }
 function bAudPick(a){ B.draft.audience = a; const i=$('#bAud'); if (i) i.value = a; B.touched=true; paintAud(); scheduleCheck(); schedulePreview(); }
+/** Create → how many cards of a kind the batch has (a Google review, a statement, a timeline). */
+function bCardSet(k, v){ (B.draft.cards ||= {})[k] = Math.max(0, Math.min(B.setup.max_cards||6, Math.round(Number(v)||0))); B.touched = true; scheduleCheck(); }
 /** Create → how many of the new photos are of a kind; the rest are workout photos. */
 function bMixSet(f, v){ const g = Number(B.draft.generated)||0; (B.draft.mix ||= {})[f] = Math.max(0, Math.min(g, Math.round(Number(v)||0))); B.touched = true; paintMix(); scheduleCheck(); }
 function bMixStep(f, dir){ bMixSet(f, (Number(B.draft.mix?.[f])||0) + dir); }
@@ -1651,7 +1657,7 @@ function paintStage(){
   } else {
     box.innerHTML = `${nav}${badge}<figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt=""><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
       <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>`;
-    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span>${it.format?`<span>${esc(FORMAT_NAMES[it.format]||it.format)}</span>`:''}<span>${esc(layoutName(it.treatment))} · ${esc(nice(it.style))} · ${esc(nice(it.palette))}</span><span>photo${it.photos.length===1?'':'s'} ${esc(it.photos.join(' + '))}</span>${it.by_photo?`<span class="note">excluded with photo ${esc(it.by_photo)}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">${esc(it.notes)}</span>`:''}`;
+    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span>${it.format?`<span>${esc(kindName(it.format))}</span>`:''}<span>${esc(layoutName(it.treatment))} · ${esc(nice(it.style))} · ${esc(nice(it.palette))}</span>${it.photos.length?`<span>photo${it.photos.length===1?'':'s'} ${esc(it.photos.join(' + '))}</span>`:''}${it.by_photo?`<span class="note">excluded with photo ${esc(it.by_photo)}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">${esc(it.notes)}</span>`:''}`;
   }
   paintButtons(it);
   // The neighbours load ahead, so moving is instant.
@@ -2468,6 +2474,8 @@ async function pbEstimate(callout){ const a = PB.data.plan.adsets.find(x=>x.call
 
 // ── Scene library ────────────────────────────────────────────────────────────
 const FORMAT_NAMES = { workout: 'Workout', 'studio-portrait': 'Studio portrait' };
+const CARD_NAMES = { review: 'Google review', statement: 'Statement', timeline: 'Timeline' };
+const kindName = f => FORMAT_NAMES[f] || (CARD_NAMES[f] ? CARD_NAMES[f] + ' card' : f);
 const FORMAT_PLURAL = { workout: 'workout photos', 'studio-portrait': 'studio portraits' };
 /** Whole photos per kind from shares, the largest remainders first (the planner's own rule, allocateMix). */
 function allocMix(shares, count){
@@ -2481,6 +2489,113 @@ function allocMix(shares, count){
 /** The gym's mix as the profile holds it: its mix, else all of its one kind, else all workout. */
 const profileMix = cd => cd?.mix && Object.keys(cd.mix).length ? cd.mix : cd?.format && FORMAT_NAMES[cd.format] ? { [cd.format]: 100 } : { workout: 100 };
 const TAGS = s => [s.format&&s.format!=='workout'?FORMAT_NAMES[s.format]||s.format:null, s.backdrop, s.stance, s.expression, s.eye_contact===true?'looks at the camera':null, s.setting, s.people!=null?`${s.people} ${s.people===1?'person':'people'}`:null, s.exercise, s.age, s.equipment, s.muscles, s.pose].filter(Boolean).join(' · ');
+// ── Cards (Phase 5): Google reviews word for word, and the statements and timelines the owner has kept ──
+const CD = { gym:null, data:null, msg:'', pick:{} };
+async function cdLoad(){ CD.data = await api(`/api/client/${STATE.sel}/cards`); CD.gym = STATE.sel; }
+async function viewCards(v, seq=VIEW_SEQ){
+  v.innerHTML = '<h1>Cards</h1><p class="sub">Loading…</p>';
+  if (CD.gym !== STATE.sel || !CD.data){ CD.pick = {}; CD.msg = ''; try { await cdLoad(); } catch(e){ v.innerHTML = `<h1>Cards</h1><div class="msg err">${esc(e.message)}</div>`; return; } }
+  if (seq !== VIEW_SEQ) return;
+  paintCards(v);
+}
+const cdBold = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+function paintCards(v = $('#view')){
+  const D = CD.data, L = D.limits, stars = n => '★'.repeat(n) + '☆'.repeat(5-n);
+  const st = (x) => x.status==='kept' ? '<span class="pill" style="background:#e7f6ec;color:#17603a">kept</span>' : x.status==='retired' ? `<span class="pill">retired${x.reason?': '+esc(x.reason):''}</span>` : '<span class="pill navy">draft · yours to keep</span>';
+  const acts = (kind, x) => `<div class="row" style="gap:6px;margin-top:6px">${x.status!=='kept'?`<button class="sm ok" onclick="cdDecide('${kind}','${x.id}','kept')">Keep</button>`:`<button class="sm" onclick="cdDecide('${kind}','${x.id}','draft')">Put back</button>`}<button class="sm" onclick="cdEdit('${kind}','${x.id}')">Edit…</button><button class="sm" onclick="cdPreview('${kind}','${x.id}')">Preview</button>${x.status!=='retired'?`<button class="sm danger" onclick="cdRetire('${kind}','${x.id}')">Retire…</button>`:''}</div>`;
+  v.innerHTML = `<h1>Cards</h1><p class="sub">Ads with no photograph: a real Google review, a statement or a timeline set on a plain card, at 4:5 and 9:16, with no image call. A review is used word for word; a statement or a timeline is used only once you have kept it. No logo, no price, no drawn button.</p>
+  ${CD.msg?`<div class="msg" id="cdMsg">${esc(CD.msg)}</div>`:''}
+  <div class="card" id="cdReviews"><div class="row"><h3 style="margin:0">Google reviews · ${D.reviews.filter(r=>r.usable).length} ready of ${D.reviews.length}</h3><div class="spacer"></div>
+      <button class="sm" id="cdPull" onclick="cdPullGoogle()" ${D.has_key?'':'disabled title="Add GOOGLE_PLACES_KEY to .env first"'}>Pull from Google…</button></div>
+    <p class="hint" style="margin-top:8px">${D.has_key ? `Google returns five reviews a place at most${D.place?` · ${esc(D.place.name||'')}${D.place.rating?` (${D.place.rating}★ from ${D.place.ratings} ratings)`:''}`:''}.` : 'No Google Places key yet (GOOGLE_PLACES_KEY in .env): paste reviews below meanwhile.'} Only 5-star reviews go on an ad. What shows is whole sentences of the review, in order, nothing changed.</p>
+    <div class="grid" style="grid-template-columns:1fr 110px"><div><label for="cdAuthor">Reviewer's name, as Google shows it</label><input id="cdAuthor" maxlength="80"></div><div><label for="cdStars">Stars</label><select id="cdStars"><option>5</option><option>4</option><option>3</option><option>2</option><option>1</option></select></div></div>
+    <label for="cdText">The review, word for word</label><textarea id="cdText" rows="3" placeholder="Paste the whole review exactly as it reads on Google"></textarea>
+    <label for="cdUrl">Link to the review (optional)</label><input id="cdUrl" placeholder="https://…">
+    <div class="row" style="margin-top:8px"><button class="primary sm" id="cdAdd" onclick="cdAddReview()">Add the review</button><span class="hint" id="cdAddMsg" style="margin:0"></span></div>
+    ${D.reviews.map(r=>{ const pick = CD.pick[r.id], cur = pick ? r.sentences.slice(pick[0], pick[1]+1).join(' ') : r.excerpt;
+      return `<div class="scene" data-review="${r.id}"><div class="dot ${r.usable?'':'opt'}"></div><div class="body">
+        <div><span style="color:#F5A300;letter-spacing:1px">${stars(r.rating)}</span> <b>${esc(r.author)}</b> <span class="pill">${r.source==='google'?'from Google':'pasted'}</span>${r.usable?' <span class="pill" style="background:#e7f6ec;color:#17603a">ready</span>':''}${r.retired?' <span class="pill">retired</span>':''}</div>
+        <div class="txt" style="line-height:1.7">${r.sentences.map((sn,i)=>{ const on = cur.includes(sn) && r.sentences.slice(0).join(' ').includes(cur) && (pick ? i>=pick[0]&&i<=pick[1] : cdInExcerpt(r, i)); return `<span onclick="cdPick('${r.id}',${i})" title="Click to choose where the excerpt starts and ends" style="cursor:pointer;padding:1px 3px;border-radius:4px;${on?'background:#fff2c9':'color:var(--dim)'}">${esc(sn)}</span>`; }).join(' ')}</div>
+        ${r.problems.length?`<div class="tags" style="color:var(--warn)">Not on an ad yet: ${esc(r.problems.join('; '))}</div>`:''}
+        <div class="row" style="gap:6px;margin-top:6px">${pick?`<button class="sm ok" onclick="cdSaveExcerpt('${r.id}')">Use the highlighted sentences</button>`:''}<button class="sm" onclick="cdPreview('review','${r.id}')">Preview</button>${r.retired?`<button class="sm" onclick="cdReviewRetire('${r.id}',false)">Restore</button>`:`<button class="sm danger" onclick="cdReviewRetire('${r.id}',true)">Retire…</button>`}</div>
+      </div></div>`; }).join('') || '<div class="hint" style="margin-top:8px">No reviews yet.</div>'}
+  </div>
+  <div class="card" id="cdStatements"><div class="row"><h3 style="margin:0">Statements · ${D.statements.filter(x=>x.status==='kept').length} kept of ${D.statements.filter(x=>x.status!=='retired').length}</h3><div class="spacer"></div><button class="sm" onclick="cdDraft('statement')">Draft some…</button><button class="sm" onclick="cdOwn('statement')">Write your own…</button></div>
+    <p class="hint" style="margin-top:8px">One or two short sentences, ${L.statement[0]} to ${L.statement[1]} characters. Mark the words to set bold with **two asterisks**. A draft is never used until you keep it.</p>
+    ${D.statements.map(x=>`<div class="scene"><div class="dot ${x.status==='kept'?'':'opt'}"></div><div class="body"><div>${st(x)}${x.drafted_for?` <span class="hint" style="margin:0">drafted for ${esc(x.drafted_for)}</span>`:''}</div><div class="txt" style="font-size:15px">${cdBold(x.text)}</div>${acts('statement', x)}</div></div>`).join('') || '<div class="hint">None yet.</div>'}
+  </div>
+  <div class="card" id="cdTimelines"><div class="row"><h3 style="margin:0">Timelines · ${D.timelines.filter(x=>x.status==='kept').length} kept of ${D.timelines.filter(x=>x.status!=='retired').length}</h3><div class="spacer"></div><button class="sm" onclick="cdDraft('timeline')">Draft some…</button><button class="sm" onclick="cdOwn('timeline')">Write your own…</button></div>
+    <p class="hint" style="margin-top:8px">A title and three to five steps through the programme, counted from its start (Week 1, Week 6), never a calendar date. A timeline is for one length of offer: a 6 week timeline goes on a 6 Week offer.</p>
+    ${D.timelines.map(x=>`<div class="scene"><div class="dot ${x.status==='kept'?'':'opt'}"></div><div class="body"><div>${st(x)} <span class="pill">${esc(x.duration)}</span></div><div class="txt"><b>${esc(x.title)}</b>${x.steps.map(p=>`<div style="margin-top:3px"><span style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.06em">${esc(p.when)}</span> · <b>${esc(p.head)}</b>${p.line?` <span style="color:var(--dim)">${esc(p.line)}</span>`:''}</div>`).join('')}</div>${acts('timeline', x)}</div></div>`).join('') || '<div class="hint">None yet.</div>'}
+  </div><div id="cdModal"></div>`;
+}
+/** Is sentence i part of the saved excerpt? (The excerpt is a run of whole sentences.) */
+function cdInExcerpt(r, i){ for (let a=0;a<r.sentences.length;a++) for (let b=a;b<r.sentences.length;b++) if (r.sentences.slice(a,b+1).join(' ')===r.excerpt) return i>=a && i<=b; return false; }
+/** Choose the excerpt: the first click sets where it starts, the next where it ends. */
+function cdPick(id, i){ const p = CD.pick[id]; CD.pick[id] = !p || p[0]!==p[1] ? [i,i] : [Math.min(p[0],i), Math.max(p[0],i)]; paintCards(); }
+async function cdCall(path, opts, done){ try { CD.data = await api(`/api/client/${STATE.sel}/cards${path}`, opts); CD.msg = done ? done(CD.data) : ''; B.setup = null; } catch(e){ CD.msg = e.message; } paintCards(); }
+async function cdAddReview(){
+  const body = { author: $('#cdAuthor').value, rating: Number($('#cdStars').value), text: $('#cdText').value, url: $('#cdUrl').value.trim() || null };
+  try { CD.data = await api(`/api/client/${STATE.sel}/cards/review`, { method:'POST', body }); CD.msg = 'Review added, word for word.'; B.setup = null; paintCards(); }
+  catch(e){ const m = $('#cdAddMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; } // what was typed stays
+}
+function cdSaveExcerpt(id){ const r = CD.data.reviews.find(x=>x.id===id), p = CD.pick[id]; if (!r||!p) return; delete CD.pick[id]; cdCall(`/review/${id}`, { method:'PUT', body:{ excerpt: r.sentences.slice(p[0], p[1]+1).join(' ') } }, ()=>'Excerpt saved.'); }
+function cdReviewRetire(id, retire){ let reason = null; if (retire){ reason = prompt('Retire this review: why? (kept as the reason; the review is never deleted)'); if (reason === null) return; } cdCall(`/review/${id}`, { method:'PUT', body:{ retired: retire, reason } }, ()=> retire ? 'Retired.' : 'Restored.'); }
+function cdDecide(kind, id, status){ cdCall(`/words/${kind}/${id}`, { method:'PUT', body:{ status } }, ()=> status==='kept' ? 'Kept: it can go on an ad now.' : 'Put back as a draft.'); }
+function cdRetire(kind, id){ const reason = prompt(`Retire this ${kind}: why? (kept as the reason; never deleted)`); if (reason === null) return; cdCall(`/words/${kind}/${id}`, { method:'PUT', body:{ status:'retired', reason } }, ()=>'Retired.'); }
+const cdTimelineText = t => [t.title, ...t.steps.map(p=>[p.when, p.head, p.line||''].join(' | '))].join('\n');
+function cdParseTimeline(text){ const lines = text.split('\n').map(l=>l.trim()).filter(Boolean); return { title: lines[0]||'', steps: lines.slice(1).map(l=>{ const [when, head, ...rest] = l.split('|').map(x=>x.trim()); return { when: when||'', head: head||'', line: rest.join(' | ') }; }) }; }
+function cdModal(title, hint, value, rows, onSave, extra=''){
+  $('#cdModal').innerHTML = `<div class="modal" onclick="if(event.target===this)cdClose()"><div class="card"><h2>${esc(title)}</h2><p class="hint">${hint}</p>${extra}<textarea id="cdBox" rows="${rows}">${esc(value)}</textarea><div id="cdErr"></div><div class="row" style="margin-top:12px"><button onclick="cdClose()">Cancel</button><div class="spacer"></div><button class="primary" id="cdSave">Save</button></div></div></div>`;
+  $('#cdSave').onclick = async () => { try { await onSave($('#cdBox').value); cdClose(); paintCards(); } catch(e){ $('#cdErr').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; } }; // a refused save keeps what was typed
+}
+function cdClose(){ const m = $('#cdModal'); if (m) m.innerHTML = ''; }
+const TL_HINT = 'The first line is the title. Then one step a line: <b>when | heading | line</b> (the line is optional). Three to five steps.';
+function cdEdit(kind, id){
+  const x = (kind==='statement' ? CD.data.statements : CD.data.timelines).find(r=>r.id===id); if (!x) return;
+  if (kind==='statement') cdModal('Edit the statement', 'Mark the words to set bold with **two asterisks**. It is checked again by the same rules.', x.text, 4, async v => { CD.data = await api(`/api/client/${STATE.sel}/cards/words/statement/${id}`, { method:'PUT', body:{ text: v } }); CD.msg = 'Saved.'; });
+  else cdModal(`Edit the timeline (${x.duration})`, TL_HINT, cdTimelineText(x), 7, async v => { CD.data = await api(`/api/client/${STATE.sel}/cards/words/timeline/${id}`, { method:'PUT', body:{ timeline: cdParseTimeline(v) } }); CD.msg = 'Saved.'; });
+}
+function cdOwn(kind){
+  if (kind==='statement') cdModal('Your own statement', 'One or two short sentences. Mark the words to set bold with **two asterisks**. Yours is kept at once.', '', 4, async v => { CD.data = await api(`/api/client/${STATE.sel}/cards/words`, { method:'POST', body:{ kind, text: v } }); CD.msg = 'Added and kept.'; B.setup = null; });
+  else cdModal('Your own timeline', TL_HINT + ' Yours is kept at once.', 'Your six weeks, planned.\nWeek 1 | Start where you are | A coach sets your starting weights.\nWeek 3 | | \nWeek 6 | | ', 7, async v => { const d = $('#cdDur').value.trim().toLowerCase(); CD.data = await api(`/api/client/${STATE.sel}/cards/words`, { method:'POST', body:{ kind, timeline: { ...cdParseTimeline(v), duration: d } } }); CD.msg = 'Added and kept.'; B.setup = null; }, '<label for="cdDur">The offer length it is for</label><input id="cdDur" value="6 week" style="max-width:160px">');
+}
+function cdDraft(kind){
+  const w = B.setup?.wordings, list = Array.isArray(w) ? w : (w?.wordings || []), last = list.slice(-1)[0], offer0 = (typeof last === 'string' ? last : last?.offer || last?.text) || '';
+  $('#cdModal').innerHTML = `<div class="modal" onclick="if(event.target===this)cdClose()"><div class="card"><h2>Draft ${kind==='statement'?'statements':'timelines'}</h2>
+    <p class="hint">One text call, no image call. They arrive as drafts: nothing goes on an ad until you keep it. The rules are the copy's: no price, no free trial, no before-and-after, no weight-loss number.</p>
+    <label for="cdOffer">The offer, exactly as it reads${kind==='timeline'?' (it must name its length: 6 Week …, 42 Day …)':''}</label><input id="cdOffer" value="${esc(offer0)}">
+    <label for="cdAud">Who it is for (optional)</label><input id="cdAud" placeholder="e.g. women over 40 who have not trained in years">
+    <label for="cdN">How many</label><input id="cdN" type="number" min="1" max="10" value="6" style="max-width:100px">
+    <div id="cdErr"></div><div class="row" style="margin-top:12px"><button onclick="cdClose()">Cancel</button><div class="spacer"></div><button class="primary" id="cdGo">Draft them</button></div></div></div>`;
+  $('#cdGo').onclick = async () => { const b = $('#cdGo'); b.disabled = true; b.textContent = 'Drafting…';
+    try { const r = await api(`/api/client/${STATE.sel}/cards/draft`, { method:'POST', body:{ kind, offer: $('#cdOffer').value.trim(), audience: $('#cdAud').value.trim() || null, count: parseInt($('#cdN').value, 10) } }); CD.data = r; CD.msg = `${r.drafted} drafted for you to keep${r.dropped.length?`; ${r.dropped.length} dropped by the rules`:''}.`; cdClose(); paintCards(); }
+    catch(e){ b.disabled = false; b.textContent = 'Draft them'; $('#cdErr').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; } };
+}
+async function cdPreview(kind, id){
+  const pick = kind==='review' ? CD.pick[id] : null, r = pick ? CD.data.reviews.find(x=>x.id===id) : null;
+  $('#cdModal').innerHTML = `<div class="modal" onclick="if(event.target===this)cdClose()"><div class="card" style="max-width:760px"><h2>Preview</h2><div id="cdPrev" class="hint">Setting the card…</div><div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="cdClose()">Close</button></div></div></div>`;
+  try {
+    const shots = await Promise.all(['4x5','9x16'].map(ratio => api(`/api/client/${STATE.sel}/cards/preview`, { method:'POST', body:{ kind, id, ratio, ...(r ? { excerpt: r.sentences.slice(pick[0], pick[1]+1).join(' ') } : {}) } })));
+    const box = $('#cdPrev'); if (box) box.innerHTML = `<div class="row" style="gap:12px;align-items:flex-start">${shots.map((x,i)=>`<figure style="margin:0;flex:${i?'0 0 34%':'1'}"><img src="${x.image}" alt="" style="width:100%;border-radius:8px;display:block"><figcaption class="hint" style="margin-top:4px">${i?'9:16 · Stories':'4:5 · Feed'} · ${x.ok?'fits':'<span style="color:var(--err)">'+esc(x.failures.join('; '))+'</span>'}</figcaption></figure>`).join('')}</div><p class="hint" style="margin-top:8px">The area, the offer and the colour here are stand-ins: a batch sets its own.</p>`;
+  } catch(e){ const box = $('#cdPrev'); if (box) box.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+}
+async function cdPullGoogle(){
+  const D = CD.data;
+  try {
+    let placeId = D.place?.id || null;
+    if (!placeId){
+      const q = prompt('Find the gym on Google: its name and address', D.search || ''); if (q === null) return;
+      const found = (await api(`/api/client/${STATE.sel}/cards/google/find`, { method:'POST', body:{ query: q } })).places || [];
+      if (!found.length){ CD.msg = 'Google found no such place.'; return paintCards(); }
+      if (!confirm(`Pull the reviews of:\n\n${found[0].name}\n${found[0].address}\n\nGoogle returns five at most.`)) return;
+      placeId = found[0].id;
+    }
+    const r = await api(`/api/client/${STATE.sel}/cards/google/pull`, { method:'POST', body:{ place_id: placeId } });
+    CD.data = r; CD.msg = `${r.pull.found} review${r.pull.found===1?'':'s'} from Google: ${r.pull.added.length} added, ${r.pull.already} already here${r.pull.skipped.length?`, ${r.pull.skipped.length} skipped`:''}.`; B.setup = null;
+  } catch(e){ CD.msg = e.message; }
+  paintCards();
+}
 async function viewScenes(v, seq=VIEW_SEQ){
   v.innerHTML = '<h1>Scene library</h1><p class="sub">Loading…</p>';
   if (B.gym !== STATE.sel || !B.scenes){ B.gym = STATE.sel; await loadSetup(); }
