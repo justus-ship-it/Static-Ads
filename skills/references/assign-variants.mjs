@@ -158,8 +158,9 @@ export function lumFit(stat, layout, palette, { target = 3 } = {}) {
     for (const it of g.stack) {
       if (it.block === "divider" || !palette.blocks[it.block] || (g.band?.blocks || []).includes(it.block)) continue;
       const fill = lumOf(palette.blocks[it.block].fill);
+      const tint = fill < 0.18 ? lumOf(palette.scrim_light || "#FFFFFF") : scrim; // dark type is helped by a light haze, as the renderer does
       natural = Math.min(natural, fifth(cells.map((L) => contrastOf(fill, L))));
-      helped = Math.min(helped, fifth(cells.map((L) => Math.max(contrastOf(fill, L), contrastOf(fill, L * (1 - GENTLE_SCRIM) + scrim * GENTLE_SCRIM)))));
+      helped = Math.min(helped, fifth(cells.map((L) => Math.max(contrastOf(fill, L), contrastOf(fill, L * (1 - GENTLE_SCRIM) + tint * GENTLE_SCRIM)))));
     }
   });
   return natural === Infinity ? null : { contrast: +natural.toFixed(2), with_scrim: +helped.toFixed(2), weak: natural < WEAK_NATURAL || helped < target };

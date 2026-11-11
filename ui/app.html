@@ -624,7 +624,7 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     <p class="hint" style="margin:6px 0 12px">Create starts every batch from this mix and lets you change the counts. Results suggests a change when one kind earns leads clearly cheaper. Each kind has its own scenes on Library → Scenes.</p>
     <div class="grid">${num('generated','New photos per batch',0,12)}${num('looks_per_photo','Looks per photo',1,6)}${num('attempts','Tries per photo',1,5)}${num('max_calls','Most image calls',0,40,'new photos × tries')}</div>
     <label style="display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text);margin-top:12px"><input type="checkbox" style="width:auto;margin:0" ${D.spread!==false?'checked':''} onchange="setP('creative_defaults.spread',this.checked)"> Spread across exercises, ages, settings and equipment</label>
-    <label>Real photos in every batch</label>
+    <label>Real photos in every batch <span class="hint" style="font-weight:400">· none unless you tick one: a ticked photo of the room becomes an ad with the words set on it. The room reference is separate and needs no tick.</span></label>
     <div class="thumbs">${photos.length ? photos.map(ph=>`<label><input type="checkbox" ${(D.real_photos||[]).includes(ph.path)?'checked':''} onchange="cdPhoto('${esc(ph.path)}',this.checked)"><img src="${esc(ph.url)}" alt=""><span style="font-size:11px">${esc(ph.path.split('/').pop())}</span></label>`).join('') : '<span class="hint">No cleaned photos yet.</span>'}</div>
   </div>
   <div class="card"><h3>Look and shape</h3>
@@ -1165,7 +1165,7 @@ async function syncRun(){
 function freshDraft(){
   const cd = B.setup.creative_defaults || {}, clean = B.setup.photos.map(p=>p.path);
   const locs = (cd.locations||[]).filter(Boolean), real = (cd.real_photos||[]).filter(p=>clean.includes(p));
-  return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 10, real: cd.real_photos?.length ? real : clean.slice(0,2),
+  return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 10, real: cd.real_photos?.length ? real : [], // no photo of the empty room becomes an ad unless the owner ticks one (2026-11-11: they were added to every batch by themselves)
     looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true,
     cards: { review:0, statement:0, timeline:0 },
     look: cd.look || 'reference', mix: (()=>{ const m = allocMix(B.setup.mix || profileMix(cd), cd.generated ?? 10); delete m.workout; return m; })(),

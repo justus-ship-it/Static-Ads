@@ -165,3 +165,24 @@ test("F5 pairings matched to the backdrop: a pairing's weakest line against the 
   }
   assert.deepEqual(new Set(plan.candidates.filter((c) => c.visual === "g01").map((c) => c.treatment)).size, 3, "three looks of one photo, three layouts");
 });
+
+test("F6 no band where a soft scrim will do (2026-11-11, the black bars on Jurong West's first batches): a line only a little short of the contrast target takes a light scrim, not a band — the formula's chain has no stroke, so the stroke's lower floor does not apply; dark type on a dark backdrop takes a LIGHT haze (a dark one cannot help it); and a look whose dark type sits on a dark photo is still passed over when another fits", async () => {
+  // Cream type on a mid grey: about 2.5:1 as it is, 3:1 with a touch of the palette's dark scrim.
+  const GREY = svg(1080, 1350, `<rect width="100%" height="100%" fill="#9a9a9a"/>`);
+  let r = await renderComposite(browser, { image: GREY, faces: [[]], ...WORDS, treatment: "f1-callout-left", style: "fs1-heavy-italic", palette: "f-cream", ratio: "4x5", catalogue: FORMULA });
+  assert.equal(r.ok, true, JSON.stringify(r.failures));
+  const steps = (rr) => Object.fromEntries(rr.report.blocks.map((b) => [b.block, b.steps.join("+") || "clean"]));
+  assert.ok(r.report.blocks.every((b) => b.contrast.before > 2.2 && b.contrast.before < 3), JSON.stringify(r.report.blocks.map((b) => b.contrast)));
+  assert.deepEqual(steps(r), { location: "scrim", duration: "scrim", offer_name: "scrim" }, "a scrim, never a band");
+  assert.ok(r.report.groups.every((g) => g.scrim.alpha > 0 && g.scrim.alpha < 0.3) && r.report.blocks.every((b) => b.contrast.after >= 3), JSON.stringify(r.report.groups.map((g) => g.scrim)));
+  // White callout, black lower block, on a dark photo: the callout is fine as it is; the black lines get a light haze.
+  r = await renderComposite(browser, { image: DARK, faces: [[]], ...WORDS, treatment: "f1-callout-left", style: "fs1-heavy-italic", palette: "f-white-black", ratio: "4x5", catalogue: FORMULA });
+  assert.equal(r.ok, true, JSON.stringify(r.failures));
+  assert.deepEqual(steps(r), { location: "clean", duration: "scrim", offer_name: "scrim" }, "dark type on a dark backdrop: a scrim, not a white bar");
+  assert.ok(r.report.blocks.filter((b) => b.block !== "location").every((b) => b.contrast.before < 1.6 && b.contrast.after >= 3), "a dark scrim would have left it at 1:1; the light one brings it to the target");
+  // The picker still avoids such a look: black type on a dark photo is a clash for that photo, a light haze or not.
+  const dark = { cells: Array.from({ length: 32 }, () => ({ lum: 0.03, hue: 0, sat: 0 })) }, T = FORMULA.treatments.treatments, P = FORMULA.palettes.palettes;
+  const fit = lumFit(dark, layoutFor(T["f1-callout-left"], "4x5", FORMULA.treatments), P["f-white-black"]);
+  assert.deepEqual([fit.weak, fit.contrast < 1.6, fit.with_scrim >= 3], [true, true, true], JSON.stringify(fit));
+  assert.equal(lumFit(dark, layoutFor(T["f1-callout-left"], "4x5", FORMULA.treatments), P["f-cream"]).weak, false, "light type on that photo is the look to take");
+});

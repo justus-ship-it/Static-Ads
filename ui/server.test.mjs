@@ -300,8 +300,9 @@ test("U7 the New Batch tab: typing updates the preview, a bad word shows its err
   await until(`document.querySelectorAll('#bPrev img').length===4 && [...document.querySelectorAll('#bPrev img')].every(i=>i.complete&&i.naturalWidth>0)`, "four preview images");
   assert.ok(await ev(`[...document.querySelectorAll('#bPrev figcaption')].every(f=>/fits/.test(f.textContent))`));
   assert.equal(await ev(`document.activeElement.id`), "bAud", "typing never loses focus");
-  // 10 new photos by default (the real batches' size) + 2 real, 2 looks, 1 location.
-  await until(`/= <b>24 ads<\\/b>/.test(document.querySelector('#bSummary').innerHTML) && !document.querySelector('#bRun').disabled`, "the summary and an enabled Run");
+  // 10 new photos by default (the real batches' size), 2 looks, 1 location — and no photo of the empty room unless one is ticked (2026-11-11).
+  await until(`/= <b>20 ads<\\/b>/.test(document.querySelector('#bSummary').innerHTML) && !document.querySelector('#bRun').disabled`, "the summary and an enabled Run");
+  assert.deepEqual(await ev(`[B.draft.real, briefFromDraft().real]`), [[], []], "no premises photo is ticked by itself: an ad of the empty room is the owner's choice");
   // An em dash: an inline error from the server's rules, and Run is disabled.
   await type("#bOffer", "12 Week — Reset");
   await until(`/em\\/en dash/.test(document.querySelector('#bErrors').textContent) && document.querySelector('#bRun').disabled`, "the dash error and a disabled Run");

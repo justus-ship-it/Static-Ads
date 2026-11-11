@@ -336,8 +336,11 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     // 7. Contrast guard, sampled from the actual photo pixels under each line.
     //    Each line is judged on the colour that actually carries its letters: the fill for filled
     //    text, the outline for heavy-outlined and hollow text, and the band for banded text.
-    const scrimRGB = hexRGB(S.palette.scrim);
-    const sampleRatio = (rect, judgeL, alpha) => {
+    const scrimDark = hexRGB(S.palette.scrim);
+    // A family may tint a group's scrim to its type (contrast.scrim_by_type): light type gets the palette's dark scrim, dark
+    // type a light one — a dark scrim cannot help dark letters, and they used to fall straight to a band (2026-11-11).
+    const scrimLight = hexRGB(S.palette.scrim_light || "#FFFFFF");
+    const sampleRatio = (rect, judgeL, alpha, scrimRGB = scrimDark) => {
       // Per-pixel contrast, then the value that 85% of the pixels under the line meet or beat.
       // This handles light and dark text alike, and a bright patch under half a word still counts.
       const x0 = Math.max(0, Math.floor(rect.left)), x1 = Math.min(W, Math.ceil(rect.right));
@@ -358,7 +361,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       rs.sort((a, c) => a - c);
       return pct(rs, 100 - C.sample_percentile);
     };
-    const worstFor = (b, judgeL, alpha) => sampleRatio(b.rect, judgeL, alpha);
+    const worstFor = (b, judgeL, alpha) => sampleRatio(b.rect, judgeL, alpha, b.scrimRGB || scrimDark);
     const worst = (b, alpha) => Math.max(...b.judgeLs.map((jl) => worstFor(b, jl, alpha)));
 
     for (const b of blocks) {
@@ -371,7 +374,9 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       b.judgeHex = b.judgeHexes[0];
       b.judgeL = b.judgeLs[0];
       b.strokeable = (e === "fill" || e === "plain") && !b.spec.layout_band; // a contrast stroke only makes sense on plain filled text
-      b.floor = b.strokeable ? C.stroke_min : C.target;
+      // The scrim is solved for every line short of its floor. A line a contrast stroke can finish needs less of it — but only
+      // where the family's chain has a stroke: without one, a line between the two figures got no scrim and took a band.
+      b.floor = b.strokeable && C.chain.includes("stroke") ? C.stroke_min : C.target;
       b.before = e === "band" || b.spec.layout_band ? null : worst(b, 0);
       // On a layout band a line may be set in either of its own palette colours, fill or outline —
       // whichever reads on the band. (Blue-white's white pill takes its blue; a dark pill its white.)
@@ -387,6 +392,11 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 
     for (const g of groups) {
       const gb = g.blocks;
+      if (C.scrim_by_type) {
+        const needy = gb.filter((b) => b.before != null && b.before < C.target);
+        g.scrimRGB = needy.length && needy.every((b) => b.judgeL < 0.18) ? scrimLight : scrimDark;
+        for (const b of gb) b.scrimRGB = g.scrimRGB;
+      }
       // A layout band carries all its lines in one colour: the palette's pill if every line reads
       // on it, otherwise the candidate whose weakest line reads best.
       const onBand = gb.filter((b) => b.spec.layout_band);
@@ -452,7 +462,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     // sits on the full-strength part and the contrast sampled above is exactly what renders.
     function drawScrim(g, A) {
       const dir = g.G.scrim.direction;
-      const [r, gr, bl] = scrimRGB;
+      const [r, gr, bl] = g.scrimRGB || scrimDark;
       const c = (a) => `rgba(${r},${gr},${bl},${a})`;
       const el = document.createElement("div");
       el.className = "scrim";
@@ -617,13 +627,14 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
           edge = lumHex(colour) > 0.18 ? "#000000" : "#FFFFFF";
           const E = Math.max(2, Math.round(d.rect.h / 2));
           const Lc = lumHex(colour), Le = lumHex(edge);
+          const sc = g.scrimRGB || scrimDark; // the divider sits on its own group's scrim
           const both = (alpha) => {
             const rs = [];
             for (let yy = Math.max(0, Math.floor(rect.top - E)); yy < Math.min(H, Math.ceil(rect.bottom + E)); yy += 1) {
               for (let xx = Math.max(0, Math.floor(rect.left - E)); xx < Math.min(W, Math.ceil(rect.right + E)); xx += 2) {
                 const i = (yy * W + xx) * 4;
                 let r = px[i], gg = px[i + 1], bl = px[i + 2];
-                if (alpha) { r = r * (1 - alpha) + scrimRGB[0] * alpha; gg = gg * (1 - alpha) + scrimRGB[1] * alpha; bl = bl * (1 - alpha) + scrimRGB[2] * alpha; }
+                if (alpha) { r = r * (1 - alpha) + sc[0] * alpha; gg = gg * (1 - alpha) + sc[1] * alpha; bl = bl * (1 - alpha) + sc[2] * alpha; }
                 const Lp = lumRGB(r, gg, bl);
                 rs.push(Math.max(ratio(Lc, Lp), ratio(Le, Lp)));
               }
