@@ -2432,7 +2432,7 @@ test("U44 take Meta's figure: a budget or name changed in Ads Manager becomes th
   } finally { for (const [f, v] of Object.entries(keep)) { if (v == null) rmSync(join(out, f), { force: true }); else writeFileSync(join(out, f), v); } }
 });
 
-test("U45 what wins (the data loop, 2026-11-09): an Ads Manager export uploaded from Results joins the history as rows of origin export with its rankings and frequency; the results answer carries What wins — the scope (the ads running now, every ad), the median, the attribute tables with a confidence word, the suggestions by rule; the creative-reading run is refused with a bad cap or without a history; the page shows the card, the scope switch, the upload, and names an export's rows", async () => {
+test("U45 what wins (the data loop, 2026-11-09): an Ads Manager export uploaded from Results joins the history as rows of origin export with its rankings and frequency; the results answer carries What wins — the scope (the ads running now, every ad), the median, the attribute tables with a confidence word, the suggestions by rule; the creative-reading run is refused with a bad cap or without a history; the page shows the card, the scope switch, the upload, and names an export's rows; What wins for one campaign alone (?campaign=, the card's campaign list, back to every campaign)", async () => {
   const g = join(brands, GYM);
   await linkTestGym();
   rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "creative-reads.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true });
@@ -2495,6 +2495,32 @@ test("U45 what wins (the data loop, 2026-11-09): an Ads Manager export uploaded 
     await ev("rsReadCreatives(); true");
     assert.ok(await ev("!!document.querySelector('#rsMax') && document.querySelector('#gModal').textContent.includes('one call per picture')"));
     await ev("document.querySelector('#gModal').innerHTML=''; true");
+    // One campaign's ads alone (2026-11-11): a second campaign in the account, paused; the filter on the answer and on the card.
+    const H = JSON.parse(readFileSync(join(g, "account-history.json"), "utf-8"));
+    const oldAd = (id, spend, leads) => ({ id, name: `Old ${id}`, adset_id: "s-old", campaign_id: "c-old", campaign: "Old offer 2024", status: "PAUSED", effective_status: "PAUSED", words: "paused", media: "image", created: "2024-03-01", all_time: { spend, leads, cost_per_lead: Math.round((spend / leads) * 100) / 100, impressions: 5000 }, last_30d: {} });
+    H.campaigns.push({ id: "c-old", name: "Old offer 2024" }); H.adsets.push({ id: "s-old", campaign_id: "c-old", name: "Old set" }); H.ads.push(oldAd("o1", 600, 10), oldAd("o2", 800, 10));
+    writeFileSync(join(g, "account-history.json"), JSON.stringify(H));
+    const exportId = (await (await call(`/api/client/${GYM}/results`)).json()).campaigns.find((c) => c.origin === "export").campaign_id;
+    let F = (await (await call(`/api/client/${GYM}/results`)).json()).wins;
+    assert.deepEqual([F.campaign, F.campaigns[0].id, F.campaigns[0].running, F.campaigns.find((c) => c.id === "c-old").leads, F.ads, F.median], [null, exportId, 2, 20, 1, 14.52], "no campaign asked for: the running campaign listed first, the figures the account's");
+    F = (await (await call(`/api/client/${GYM}/results?campaign=c-old`)).json()).wins;
+    assert.deepEqual([F.campaign, F.scope, F.ads, F.leads, F.median, F.active, F.every], [{ id: "c-old", name: "Old offer 2024" }, "all", 2, 20, 70, 0, 2], "its own ads and its own median; none running, so all of them");
+    F = (await (await call(`/api/client/${GYM}/results?campaign=${encodeURIComponent(exportId)}&scope=all`)).json()).wins;
+    assert.deepEqual([F.campaign.id, F.scope, F.ads, F.every, F.leads], [exportId, "all", 2, 3, 88], "the export's campaign: its two stills, the paused one with the scope on every ad");
+    assert.equal((await (await call(`/api/client/${GYM}/results?campaign=nope`)).json()).wins.campaign, null, "an id the gym does not have is ignored");
+    await ev("RS.scope = 'active'; rsReload(); true");
+    const t4 = Date.now(); while (Date.now() - t4 < 10000 && !(await ev("!!document.querySelector('#rsWinCampaign') && RS.data.wins.scope==='active'"))) await new Promise((x) => setTimeout(x, 100));
+    const opts = await ev("[...document.querySelectorAll('#rsWinCampaign option')].map(o=>o.textContent)");
+    assert.match(opts[0], /^every campaign \(\d+\)$/); assert.ok(opts.includes("Old offer 2024 · 2 ads · 20 leads at SGD 70"), opts.join(" | ")); assert.ok(opts.some((o) => /· 3 ads · 90 leads at SGD 15.25 · running$/.test(o)), "the campaigns with their ads, leads and cost per lead; the running one marked: " + opts.join(" | "));
+    assert.ok(!(await ev("!!document.querySelector('#rsWinOne')")));
+    await ev("rsWinCampaign('c-old'); true");
+    const t5 = Date.now(); while (Date.now() - t5 < 10000 && !(await ev("RS.data.wins.campaign && RS.data.wins.campaign.id==='c-old' && !!document.querySelector('#rsWinOne')"))) await new Promise((x) => setTimeout(x, 100));
+    text = await ev("document.querySelector('#wins').textContent");
+    assert.match(text, /20 leads over 2 ads · median SGD 70 a lead/); assert.match(text, /Only Old offer 2024\. Its ads are read against one another: the median and every figure below are this campaign's own, and since none of its ads is running now these are all its ads\./); assert.match(text, /every ad of this campaign \(2\)/);
+    assert.equal(await ev("document.querySelector('#rsWinCampaign').value"), "c-old");
+    await ev("document.querySelector('#rsWinOne a').click(); true");
+    const t6 = Date.now(); while (Date.now() - t6 < 10000 && !(await ev("!RS.data.wins.campaign && !document.querySelector('#rsWinOne')"))) await new Promise((x) => setTimeout(x, 100));
+    assert.match(await ev("document.querySelector('#wins').textContent"), /86 leads over 1 ad · median SGD 14.52 a lead/, "back to every campaign");
   } finally { rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true }); }
 });
 

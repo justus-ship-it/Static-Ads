@@ -132,17 +132,34 @@ export function gymRowsSplit(gymDir) {
 }
 export const gymRowsRead = (gymDir) => gymRowsSplit(gymDir).rows;
 
-/** Everything the Results page shows under What wins. The scope falls back to every ad when nothing is active. */
-export function whatWins(gymDir, { currency = "SGD", scope = "active", track = "stills", now = new Date() } = {}) {
+/** The campaigns a set of rows belongs to, for the filter: each with its ads, how many are running, its leads, spend and
+ *  cost per lead — the running ones first, then the most leads. A row without a campaign is in none. */
+export function campaignList(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    if (!r.campaign_id) continue;
+    const c = by.get(r.campaign_id) || by.set(r.campaign_id, { id: r.campaign_id, name: r.campaign || r.batch || r.campaign_id, origin: r.origin || (r.source === "app" ? "app" : "account"), ads: 0, running: 0, leads: 0, spend: 0 }).get(r.campaign_id);
+    c.ads++; if (isActive(r)) c.running++; c.leads += r.leads || 0; c.spend = round2(c.spend + (r.spend || 0));
+  }
+  return [...by.values()].map((c) => ({ ...c, cost_per_lead: c.leads ? round2(c.spend / c.leads) : null })).sort((a, b) => (b.running > 0) - (a.running > 0) || b.leads - a.leads || b.spend - a.spend || String(a.name).localeCompare(String(b.name)));
+}
+
+/** Everything the Results page shows under What wins. The scope falls back to every ad when nothing is active.
+ *  `campaign` (an id from `campaigns`) keeps one campaign's ads: the scope's counts, the median and every table are then
+ *  that campaign's own, so its ads are read against one another (one offer, one audience, one stretch of time). An id
+ *  the gym does not have is ignored. "Never tried in this account" still looks at the whole account. */
+export function whatWins(gymDir, { currency = "SGD", scope = "active", track = "stills", campaign = null, now = new Date() } = {}) {
   const { total: pictures } = readsFor(gymDir);
-  const every = gymRowsRead(gymDir);
+  const account = gymRowsRead(gymDir), campaigns = campaignList(account);
+  const chosen = (campaign && campaigns.find((c) => c.id === String(campaign))) || null;
+  const every = chosen ? account.filter((r) => r.campaign_id === chosen.id) : account;
   let scoped = inScope(every, scope, { now });
   if (!scoped.length && scope === "active") { scope = "recent"; scoped = inScope(every, scope, { now }); }
   if (!scoped.length && scope === "recent") { scope = "all"; scoped = every; }
   const rows = inTrack(scoped, track);
   const median = medianCpl(rows), tables = attributeTables(rows, { median }).filter((t) => track === "all" || t.key !== "media");
-  return { scope, track, tracks: trackSums(scoped), active: every.filter(isActive).length, recent: inScope(every, "recent", { now }).length, every: every.length, median, currency, ads: rows.length, read: rows.filter((r) => r.read).length, pictures, leads: rows.reduce((t, r) => t + (r.leads || 0), 0), spend: round2(rows.reduce((t, r) => t + (r.spend || 0), 0)),
-    tables, fatigue: fatigueRows(rows).map((r) => ({ ad_id: r.ad_id, name: adName(r), frequency: r.frequency, leads: r.leads, cost_per_lead: r.cost_per_lead, kind: kindOf(r) })), suggestions: suggestions(rows, tables, { median, currency, everyRows: inTrack(every, track) }), floors: { early: LEADS_EARLY, solid: LEADS_SOLID, tired: FREQ_TIRED } };
+  return { scope, track, campaign: chosen ? { id: chosen.id, name: chosen.name } : null, campaigns, tracks: trackSums(scoped), active: every.filter(isActive).length, recent: inScope(every, "recent", { now }).length, every: every.length, median, currency, ads: rows.length, read: rows.filter((r) => r.read).length, pictures, leads: rows.reduce((t, r) => t + (r.leads || 0), 0), spend: round2(rows.reduce((t, r) => t + (r.spend || 0), 0)),
+    tables, fatigue: fatigueRows(rows).map((r) => ({ ad_id: r.ad_id, name: adName(r), frequency: r.frequency, leads: r.leads, cost_per_lead: r.cost_per_lead, kind: kindOf(r) })), suggestions: suggestions(rows, tables, { median, currency, everyRows: inTrack(account, track) }), floors: { early: LEADS_EARLY, solid: LEADS_SOLID, tired: FREQ_TIRED } };
 }
 
 // ── across every gym ─────────────────────────────────────────────────────────

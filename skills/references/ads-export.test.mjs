@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCsv, parseExport, adNameParts, adsetNameFacts, similarity, matchCreatives, listCreatives, parseCopyText, rtfToText, importExport, MATCH_FLOOR } from "./ads-export.mjs";
 import { readCreatives, readsFor, ratioOf, READS_FILE, FORMATS, pictures, unreadCount } from "./read-creatives.mjs";
-import { attributeTables, suggestions, medianCpl, joinReads, confidence, whatWins, LEADS_EARLY, LEADS_SOLID, FREQ_TIRED, inScope, inTrack, trackSums, RECENT_DAYS, leftOutWhy, poolTables, acrossSuggestions, nextWave, whatWinsAcross, refreshAll, readAll } from "./what-wins.mjs";
+import { attributeTables, suggestions, medianCpl, joinReads, confidence, whatWins, campaignList, LEADS_EARLY, LEADS_SOLID, FREQ_TIRED, inScope, inTrack, trackSums, RECENT_DAYS, leftOutWhy, poolTables, acrossSuggestions, nextWave, whatWinsAcross, refreshAll, readAll } from "./what-wins.mjs";
 import { readHistory, historyRows, pullAccountHistory, readCopyRefs, fetchPictures, PICTURES_DIR } from "./meta-results.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 
@@ -131,7 +131,7 @@ test("X2 the creatives read once: a fake vision model answers for each picture i
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
-test("X3 what wins, by rule: the median over ads with enough leads, each attribute's values with leads, cost per lead, share, the ratio to the median and a confidence word (early / enough / solid), unread ads counted apart; the suggestions — keep, tiring, consider pausing, what matters most, never tried, not read yet, too thin — and the active scope with its fallback", async () => {
+test("X3 what wins, by rule: the median over ads with enough leads, each attribute's values with leads, cost per lead, share, the ratio to the median and a confidence word (early / enough / solid), unread ads counted apart; the suggestions — keep, tiring, consider pausing, what matters most, never tried, not read yet, too thin — and the active scope with its fallback; one campaign's ads alone (the filter): the campaigns listed with their ads, running ads, leads and cost per lead, the running first; a chosen campaign's median, counts and tables are its own, its scope falls back by itself, and an id the gym does not have is ignored", async () => {
   const R = (over) => ({ source: "account", ad_id: "x", ad_name: "x", status: "active", media: "image", offer: "Offer A", spend: 0, impressions: 0, leads: 0, cost_per_lead: null, frequency: 1, ...over });
   const read = (over) => ({ format: "workout", subject: "woman", backdrop: "gym-floor", pose: "mid-exercise", expression: "effort", eye_contact: false, text_density: "light", logo: true, ratio: "1:1", ...over });
   const rows = [
@@ -174,6 +174,20 @@ test("X3 what wins, by rule: the median over ads with enough leads, each attribu
     assert.deepEqual([w.scope, w.track, w.tracks.stills.leads, w.tracks.video.ads, w.active, w.every, w.ads, w.median, w.leads, w.read, w.suggestions[0].kind, w.tables.some((t) => t.key === "media")], ["all", "stills", 6, 0, 0, 1, 1, 16.67, 6, 0, "thin", false]);
     assert.deepEqual([whatWins(g, { track: "video" }).ads, whatWins(g, { track: "all" }).tables.some((t) => t.key === "media")], [0, true]);
     assert.equal(whatWins(g, { scope: "all" }).scope, "all");
+    // One campaign's ads alone (2026-11-11). Two campaigns: an old one, paused, and the one running now.
+    const ad = (id, campaign_id, campaign, words, media, spend, leads) => ({ id, name: `Ad ${id}`, adset_id: `s-${campaign_id}`, campaign_id, campaign, status: words === "live" ? "ACTIVE" : "PAUSED", effective_status: words === "live" ? "ACTIVE" : "PAUSED", words, media, created: "2020-01-01", all_time: { spend, leads, cost_per_lead: leads ? Math.round((spend / leads) * 100) / 100 : null, impressions: 1000 }, last_30d: {} });
+    writeFileSync(join(g, "account-history.json"), JSON.stringify({ pulled: null, account: null, campaigns: [{ id: "old", name: "Old offer" }, { id: "now", name: "Running offer" }], adsets: [{ id: "s-old", campaign_id: "old", name: "S" }, { id: "s-now", campaign_id: "now", name: "S" }],
+      ads: [ad("1", "old", "Old offer", "paused", "image", 600, 10), ad("2", "old", "Old offer", "paused", "image", 800, 10), ad("3", "old", "Old offer", "paused", "video", 100, 4), ad("4", "now", "Running offer", "live", "image", 90, 9), ad("5", "now", "Running offer", "live", "image", 200, 10), ad("6", "now", "Running offer", "paused", "image", 50, 0)] }));
+    const every = whatWins(g, { currency: "SGD" });
+    assert.deepEqual(every.campaigns.map((c) => [c.id, c.name, c.origin, c.ads, c.running, c.leads, c.spend, c.cost_per_lead]), [["now", "Running offer", "account", 3, 2, 19, 340, 17.89], ["old", "Old offer", "account", 3, 0, 24, 1500, 62.5]], "the running campaign first, though the old one has more leads");
+    assert.deepEqual([every.campaign, every.scope, every.ads, every.median, every.active, every.every], [null, "active", 2, 15, 2, 6]);
+    const now = whatWins(g, { currency: "SGD", campaign: "now" }), old = whatWins(g, { currency: "SGD", campaign: "old" });
+    assert.deepEqual([now.campaign, now.scope, now.ads, now.leads, now.median, now.active, now.recent, now.every], [{ id: "now", name: "Running offer" }, "active", 2, 19, 15, 2, 2, 3]);
+    assert.deepEqual([old.campaign.name, old.scope, old.ads, old.leads, old.median, old.active, old.every, old.tracks.video.leads], ["Old offer", "all", 2, 20, 70, 0, 3, 4], "none of its ads is running, so its scope falls back to all of them; the median is its own (60 and 80), not the account's");
+    assert.deepEqual([whatWins(g, { campaign: "old", track: "video" }).ads, whatWins(g, { campaign: "old", scope: "all", track: "all" }).ads, whatWins(g, { campaign: "now", scope: "all" }).ads], [1, 3, 3]);
+    const unknown = whatWins(g, { currency: "SGD", campaign: "nope" });
+    assert.deepEqual([unknown.campaign, unknown.ads, unknown.campaigns.length], [null, 2, 2], "an id the gym does not have is ignored");
+    assert.deepEqual(campaignList([{ campaign_id: null, leads: 5 }, { campaign_id: "a", campaign: "A", source: "app", status: "paused", leads: 2, spend: 30 }, { campaign_id: "b", batch: "b-1", source: "account", origin: "export", status: "active", leads: 1, spend: 9.5 }]).map((c) => [c.id, c.name, c.origin, c.running, c.cost_per_lead]), [["b", "b-1", "export", 1, 9.5], ["a", "A", "app", 0, 15]], "a row without a campaign is in none");
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 

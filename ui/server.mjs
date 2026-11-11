@@ -1422,7 +1422,9 @@ const server = createServer(async (req, res) => {
       const hrows = h ? historyRows(brandDir(gym)) : [];
       const currency = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).locale?.currency || "SGD";
       const wq = new URL(req.url, "http://x").searchParams, scope = WIN_SCOPES.includes(wq.get("scope")) ? wq.get("scope") : "active", track = WIN_TRACKS.includes(wq.get("track")) ? wq.get("track") : "stills";
-      let wins = null; try { wins = whatWins(brandDir(gym), { currency, scope, track }); } catch (e) { wins = { error: e.message }; }
+      // One campaign's ads alone (2026-11-11): an id the gym does not have is ignored by whatWins itself.
+      const campaign = (wq.get("campaign") || "").slice(0, 200) || null;
+      let wins = null; try { wins = whatWins(brandDir(gym), { currency, scope, track, campaign }); } catch (e) { wins = { error: e.message }; }
       // The mix (Phase 4): the gym's shares between the kinds of photograph, what each kind has done, and one suggested step — the owner's to take.
       let mix = null; try { mix = mixSuggestion(brandDir(gym), { formats: Object.keys(SCENE_FORMATS), current: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), currency }); } catch (e) { mix = { error: e.message }; }
       return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, exports: h.exports || [] } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length, wins, mix });
