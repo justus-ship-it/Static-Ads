@@ -258,7 +258,7 @@ test("M4 one of everything (meta-publish): the payloads are built from the profi
   ] });
   const ids = await client().regulationIdentities("111");
   assert.deepEqual(ids, [{ category: "SINGAPORE_UNIVERSAL", beneficiary: "4260400000000001", payer: "4260400000000001", adsets: 2, example: "0715 Thomson | Fit Fathers" }, { category: "TAIWAN_UNIVERSAL", beneficiary: "5", payer: "6", adsets: 1, example: "old" }]);
-  // The Publish screen's own lookup: one identity is taken into the profile; several are the owner's to choose
+  // The Publish Ads screen's own lookup: one identity is taken into the profile; several are the owner's to choose
   // from; none is said with what to do; a profile that has one is left alone; a gym outside Singapore needs none.
   const { findSingaporeIdentity } = await import("./meta-publish.mjs");
   const fresh = () => ({ locale: { country: "SG" }, meta_assets: { ad_account_id: "act_111" } });

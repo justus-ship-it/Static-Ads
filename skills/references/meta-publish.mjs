@@ -232,7 +232,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   // An empty Instagram id in the settings is a choice (none); an absent one takes the profile's.
   const page_id = m.page_id || null, instagram_user_id = dest.instagram_user_id != null ? (dest.instagram_user_id || null) : (m.instagram_user_id || null), lead_form_id = dest.lead_form_id || m.lead_form_id || null;
   for (const [k, v] of [["ad account", account], ["Page", page_id], ["lead form", lead_form_id]]) if (!v) problems.push(`no ${k} chosen (Meta link page)`);
-  if (reg && !hasIdentity(profile, reg)) problems.push(`no verified ${reg.name} advertiser identity yet: the Publish screen reads it from the ad account's own ad sets (the beneficiary and payer every ${reg.name} ad must name)`);
+  if (reg && !hasIdentity(profile, reg)) problems.push(`no verified ${reg.name} advertiser identity yet: the Publish Ads screen reads it from the ad account's own ad sets (the beneficiary and payer every ${reg.name} ad must name)`);
   if (!/^https?:\/\/\S+\.\S+$/.test(profile.website || "")) problems.push("a lead ad must link to an external website and the profile has none (Identity & locations)");
   if (!instagram_user_id) warnings.push("no Instagram account chosen: Meta will run the ads under a Page-backed Instagram identity (Meta link page)");
   const abbr = profile.gym_abbr || "GYM", currency = profile.locale?.currency || "SGD";
@@ -268,7 +268,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
     // Meta (2026-09-18): a campaign whose ad sets carry their own budgets must say whether they may share it; never (their house style).
     ...(level === "campaign" ? { daily_budget: Math.round(daily * budgetUnits(currency)), bid_strategy: strategy } : { is_adset_budget_sharing_enabled: false }),
   };
-  if (!kept.length) problems.push("no ads kept: keep at least one on the Review screen");
+  if (!kept.length) problems.push("no ads kept: keep at least one on the Pick Ads screen");
   // One ad set per location callout, in the order the callouts appear.
   const tg = profile.targeting_defaults || {}, dem = tg.demographics || {}, pins = tg.geo?.radius_pins || [];
   const callouts = [...new Set(kept.map((a) => String(a.location || a.words?.location || "ALL").toUpperCase()))];
@@ -318,10 +318,10 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   });
   const withDesc = (keptHead.length ? keptHead : keptCopy).filter((c) => c.description).length;
   if (withDesc > 1) warnings.push(`${withDesc} kept ${keptHead.length ? "headlines" : "copies"} have a description; Meta takes one description per placement rule, so each ad carries only the first of its options' descriptions`);
-  if (keptCopy.length && !keptHead.length && !keptCopy.some((c) => c.headline)) warnings.push("no headline kept: draft and keep headlines on the Publish screen; until then every ad carries a placeholder headline that says so");
+  if (keptCopy.length && !keptHead.length && !keptCopy.some((c) => c.headline)) warnings.push("no headline kept: draft and keep headlines on the Publish Ads screen; until then every ad carries a placeholder headline that says so");
   if (keptHead.length > maxHeadlines) warnings.push(`${keptHead.length} headlines kept, ${maxHeadlines} per ad: they rotate across the ads so every one runs`);
   const noStory = kept.filter((a) => !a.story);
-  if (noStory.length) warnings.push(`${noStory.length} of ${kept.length} ads have no Stories version: on Stories and Reels Meta will show the feed image (Make Stories versions on the Review screen first)`);
+  if (noStory.length) warnings.push(`${noStory.length} of ${kept.length} ads have no Stories version: on Stories and Reels Meta will show the feed image (Make Stories versions on the Pick Ads screen first)`);
   const ads = kept.map((a, i) => {
     const callout = String(a.location || a.words?.location || "ALL").toUpperCase();
     const name = `${date} ${titleCase(callout)} | ${offer} | Image: ${a.folder}`;
@@ -363,7 +363,7 @@ export async function findIdentity(profile, client) {
 }
 /**
  * A callout with no pin gets one from the account (2026-10-07; the owner's rule: the most used). F45 Xinyi's
- * first Publish screen said "信義區: no usable pin" while the account's 106 ad sets pin on three Meta places.
+ * first Publish Ads screen said "信義區: no usable pin" while the account's 106 ad sets pin on three Meta places.
  * The pin the account's ad sets have used most — from the From the ad account reading when there is one
  * (no call), else read from the ad sets — is written into the profile for every callout without one, at the
  * radius it ran with; an account that has never pinned anywhere takes the gym's own location point at the
@@ -660,7 +660,7 @@ if (isMain) {
       console.log(`plan: ${plan.campaign.name} · ${plan.counts.adsets} ad set(s) · ${plan.counts.ads} ad(s), ${plan.counts.with_story} with a Stories version · ${plan.copy.kept ? `${plan.copy.kept} copies kept, ${plan.copy.per_ad} per ad${plan.copy.rotating ? " (rotating)" : ""}` : "placeholder words"} · ${plan.budget.per_day_total} ${plan.currency}/day in all · every object ${AD_STATUS}${first ? ` · this run: the first ${first} ad(s)` : ""}`);
       for (const w of plan.warnings) console.log(`  warning: ${w}`);
       for (const x of plan.problems) console.log(`  problem: ${x}`);
-      if (!plan.ready) throw new Error("the plan has problems — fix them on the Publish screen first");
+      if (!plan.ready) throw new Error("the plan has problems — fix them on the Publish Ads screen first");
       if (v["dry-run"]) { console.log(JSON.stringify({ campaign: plan.campaign, adsets: plan.adsets.map((s) => ({ callout: s.callout, payload: s.payload })), ads: plan.ads.slice(0, first || 3).map((a) => ({ folder: a.folder, creative: a.creative, payload: a.payload })) }, null, 2)); process.exit(0); }
       const config = metaConfig({ gym: v.gym });
       if (!config.token) throw new Error(`no ${config.names.META_ACCESS_TOKEN} in .env`);

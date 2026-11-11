@@ -12,7 +12,7 @@
  *     from an offer file), the photos shared between the kinds the results favour, a card of each kind that is
  *     ready and has never run, and a LEAN — the scene tags this gym's own leads say the photos should favour.
  * No model writes a conclusion: every line is a rule over numbers on disk. Nothing here writes to Meta, and the
- * suggested brief is only ever a starting point on Create — the owner changes any of it and confirms the run.
+ * suggested brief is only ever a starting point on Generate Creatives — the owner changes any of it and confirms the run.
  */
 
 import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statSync } from "fs";
@@ -144,28 +144,28 @@ export function suggestBrief(gymDir, { rows = gymRowsRead(gymDir), every = rows,
   const aud = sceneAudience(audience, last?.brief.scene_audience), lean = [];
   for (const l of wanted) {
     const pool = scenePool(scenes.filter((s) => formatOf(s) === l.format), aud, photos[l.format] || 0);
-    if (!pool.some((s) => shows(s, l.tag, l.value))) { left.push({ ...l, text: `${leanName(l)}: no approved scene shows it yet. Draft some on Library → Scenes and the next batch can lean on it. (${l.why})` }); continue; }
+    if (!pool.some((s) => shows(s, l.tag, l.value))) { left.push({ ...l, text: `${leanName(l)}: no approved scene shows it yet. Draft some on Draft Scenes and the next batch can lean on it. (${l.why})` }); continue; }
     if (lean.length < MAX_LEANS) { lean.push({ tag: l.tag, value: l.value, format: l.format, why: l.why.slice(0, 300) }); reasons.push({ field: "lean", source: l.source, text: `Lean on ${leanName(l)} — ${l.why}` }); }
   }
   if (generated && !lean.length && !left.length) reasons.push({ field: "lean", text: "Nothing in the results is clear enough yet to lean the photos one way: the batch spreads across the approved scenes." });
 
   // Scenes to draft first (2026-11-11): the lean only steers among scenes already approved, so a kind in the mix with
-  // no approved scene would be refused on Create, and the best ads' kind is repeated only if scenes of it exist. One
+  // no approved scene would be refused on Generate Creatives, and the best ads' kind is repeated only if scenes of it exist. One
   // job per kind of photograph: drafted from the gym's own results where it has any (the drafter is told what each
   // kind of shot cost and the best pictures), else by the library's gaps. Text calls only; the owner's click.
   const raw = readJson(join(gymDir, "scenes.json"))?.scenes || [], waiting = raw.filter((s) => isDraft(s) && !isRetired(s)), toDraft = [];
   for (const f of formats) {
-    const name = f.replace("-", " "), n = photos[f], approved = scenePool(scenes.filter((s) => formatOf(s) === f), aud, n).length;
+    const name = f.replace("-", " "), n = photos[f], count = `${n} ${f === "workout" ? `workout photo${n === 1 ? "" : "s"}` : `${name}${n === 1 ? "" : "s"}`}`, approved = scenePool(scenes.filter((s) => formatOf(s) === f), aud, n).length;
     const drafts = waiting.filter((s) => formatOf(s) === f && (aud === "any" ? !s.audience || s.audience === "any" : !s.audience || s.audience === aud || s.audience === "any")).length;
     const guide = sceneGuideFrom(every, f, { currency, scenes: raw, now }), best = guide?.winners?.[0] || null, leftHere = left.filter((l) => l.format === f);
     const why = [];
-    if (!approved) why.push(`${n} ${name}${n === 1 ? " is" : "s are"} in the mix, but no ${name} scene is approved for ${aud === "any" ? "a mixed audience" : aud}: Create refuses the batch until one is.`);
+    if (!approved) why.push(`${count} ${n === 1 ? "is" : "are"} in the mix, but no ${name} scene is approved for ${aud === "any" ? "a mixed audience" : aud}: Generate Creatives refuses the batch until one is.`);
     if (best) why.push(`New versions of what earns this gym's leads: its best ${name} picture has ${best.leads} leads at ${money(best.cost_per_lead, currency)}${best.scene_id ? ` (scene ${best.scene_id})` : best.saw ? ` (${best.saw})` : ""}.`);
     else if (guide?.lines?.length && !approved) why.push(`The drafter is told what this gym's ${name} ads have done (${guide.leads} leads over ${guide.ads} ad${guide.ads === 1 ? "" : "s"}).`);
     if (leftHere.length) why.push(`No approved scene shows ${leftHere.map((l) => leanName(l)).join(", ")}, which the results favour.`);
     if (!why.length) continue;
     toDraft.push({ format: f, audience: aud, count: 6, from_results: !!(guide?.lines?.length || guide?.winners?.length), needed: !approved, approved, drafts_waiting: drafts, why: why.join(" ") });
-    if (!approved) left.push({ kind: "no_scenes", format: f, text: `${n} ${name}${n === 1 ? "" : "s"} in the mix, but no ${name} scene is approved for ${aud === "any" ? "a mixed audience" : aud}${drafts ? ` (${drafts} draft${drafts === 1 ? "" : "s"} await your approval on Library → Scenes)` : ""}. Create refuses the batch until one is: draft some first, or take them out of the mix on Create.` });
+    if (!approved) left.push({ kind: "no_scenes", format: f, text: `${count} in the mix, but no ${name} scene is approved for ${aud === "any" ? "a mixed audience" : aud}${drafts ? ` (${drafts} draft${drafts === 1 ? "" : "s"} await your approval on Draft Scenes)` : ""}. Generate Creatives refuses the batch until one is: draft some first, or take them out of the mix on Generate Creatives.` });
   }
 
   // A card of each kind that is ready and has never run here: it costs no image call to test.
@@ -218,7 +218,7 @@ export function reviewText(r) {
   L.push("", "The mix:"); for (const x of r.mix.reasons) L.push(`- ${x}`);
   L.push("", "The next batch:"); for (const x of r.reasons) L.push(`- ${x.text}`); for (const x of r.left) L.push(`- Not yet: ${x.text}`);
   if (r.scenes?.length) { L.push("", "Scenes to draft first (text calls only, drafts for your approval):"); for (const x of r.scenes) L.push(`- ${x.count} ${x.format.replace("-", " ")} scenes for ${x.audience === "any" ? "a mixed audience" : x.audience}${x.from_results ? ", from the results" : ""}: ${x.why}`); }
-  if (r.scenes_waiting) L.push(`- ${r.scenes_waiting} scene draft${r.scenes_waiting === 1 ? "" : "s"} await your approval on Library → Scenes.`);
+  if (r.scenes_waiting) L.push(`- ${r.scenes_waiting} scene draft${r.scenes_waiting === 1 ? "" : "s"} await your approval on Draft Scenes.`);
   return L.join("\n");
 }
 

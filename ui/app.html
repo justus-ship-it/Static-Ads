@@ -55,6 +55,19 @@
   .rail .tab:hover{background:var(--surface-2);color:var(--text)}
   .rail .tab.sel{background:var(--accent-soft);color:var(--navy);font-weight:600}
   .rail .tab .ic{width:18px;text-align:center;color:var(--faint)} .rail .tab.sel .ic{color:var(--navy)}
+  .rail .tab .ic.num{width:18px;height:18px;line-height:18px;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:11px;font-weight:700;color:var(--dim)} .rail .tab.sel .ic.num{background:var(--navy);border-color:var(--navy);color:#fff}
+  .cyc{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:16px}
+  .cycsteps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+  .cycstep{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);min-width:0;height:auto}
+  .cycstep .hd{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--text);white-space:nowrap}
+  .cycstep .n{width:18px;height:18px;line-height:18px;text-align:center;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:11px;font-weight:700;color:var(--dim);flex:none}
+  .cycstep .tx{font-size:12px;color:var(--dim);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .cycstep.st-todo{border-color:#e6cf95;background:var(--warn-soft)} .cycstep.st-todo .tx{color:var(--warn)} .cycstep.st-todo .n{background:var(--warn);border-color:var(--warn);color:#fff}
+  .cycstep.st-going .tx{color:var(--link)}
+  .cycstep.here{border-color:var(--navy);box-shadow:inset 0 0 0 1px var(--navy)} .cycstep.here .n{background:var(--navy);border-color:var(--navy);color:#fff}
+  .cycnext{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:13.5px}
+  .cycnext .k{color:var(--faint);font-size:11px;letter-spacing:.8px;text-transform:uppercase;font-weight:700} .cycnext .t{flex:1;min-width:0}
+  @media (max-width:1100px){ .cycsteps{grid-template-columns:repeat(2,minmax(0,1fr))} }
   .rail .badge{margin-left:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 7px;font-size:11px;color:var(--dim);font-weight:600}
   .rail .foot{margin-top:auto;padding:12px;font-size:11px;color:var(--faint);line-height:1.5}
   .main{padding:24px 28px 40px;max-width:1360px;width:100%;min-width:0}
@@ -255,7 +268,7 @@
 <body>
 <div class="app">
   <header class="top">
-    <a class="logo" href="#" onclick="go('batch');return false" title="Strategym">
+    <a class="logo" href="#" onclick="go('results');return false" title="Strategym">
       <!-- The Strategym mark and wordmark, from the vertical logo file, set side by side. -->
       <svg width="30" height="30" viewBox="454 0 563 563" xmlns="http://www.w3.org/2000/svg" fill="#041131"><path d="M848.566 428.873L776.907 357.214C761.934 342.241 757.651 320.74 765.761 301.151C773.871 281.562 792.087 269.376 813.298 269.376H1017.09V298.489H813.298C803.94 298.489 796.246 303.646 792.669 312.255C789.093 320.864 790.923 329.973 797.494 336.585L869.153 408.244L848.566 428.831V428.873Z"/><path d="M657.959 298.531H454.17V269.418H657.959C667.317 269.418 675.011 264.261 678.588 255.652C682.165 247.001 680.335 237.935 673.763 231.322L602.104 159.663L622.691 139.076L694.35 210.735C709.323 225.707 713.606 247.209 705.496 266.798C697.386 286.387 679.17 298.572 657.959 298.572V298.531Z"/><path d="M752.328 562.916H723.215V359.127C723.215 349.769 718.058 342.075 709.449 338.498C700.84 334.922 691.732 336.751 685.119 343.323L613.46 414.982L592.873 394.395L664.532 322.736C679.504 307.763 701.006 303.48 720.595 311.59C740.184 319.7 752.369 337.916 752.369 359.127V562.916H752.328Z"/><path d="M774.993 255.361C768.339 255.361 761.56 254.03 754.988 251.326C735.4 243.216 723.214 225 723.214 203.789V0H752.327V203.789C752.327 213.147 757.484 220.841 766.093 224.418C774.702 227.995 783.81 226.165 790.423 219.594L862.082 147.935L882.669 168.521L811.01 240.18C801.028 250.162 788.219 255.361 774.951 255.361H774.993Z"/></svg>
       <svg height="13" viewBox="0 668 1500 134" xmlns="http://www.w3.org/2000/svg" fill="#041131"><path d="M60.0082 801.181C50.3115 801.181 42.053 800.852 35.2119 800.194C28.3914 799.536 22.6597 798.343 18.0579 796.595C13.4561 794.867 9.8199 792.543 7.1903 789.664C4.56071 786.784 2.69121 783.123 1.62294 778.702C0.554667 774.259 0 768.994 0 762.886V759.472L21.7352 758.937V763.441C21.7352 767.287 22.2078 770.434 23.1733 772.881C24.1389 775.349 25.9878 777.221 28.7406 778.537C31.4935 779.853 35.3557 780.758 40.3273 781.231C45.2989 781.704 51.7291 781.951 59.6384 781.951C66.5822 781.951 72.2112 781.684 76.5253 781.149C80.8395 780.614 84.1676 779.689 86.489 778.373C88.831 777.056 90.4129 775.308 91.2552 773.149C92.0975 770.989 92.5084 768.357 92.5084 765.23C92.5084 762.104 92.0564 759.513 91.1525 757.415C90.2485 755.317 88.4612 753.425 85.77 751.759C83.0788 750.073 79.0933 748.612 73.8341 747.358C68.5544 746.103 61.6722 744.931 53.1877 743.861C42.5255 742.545 33.7944 740.962 26.9533 739.09C20.1328 737.239 14.8325 734.894 11.0525 732.077C7.27245 729.259 4.68394 725.722 3.24588 721.464C1.80782 717.207 1.08881 711.962 1.08881 705.731C1.08881 699.499 1.95163 693.679 3.69784 689.01C5.42352 684.341 8.29966 680.475 12.3262 677.41C16.3323 674.346 21.7763 672.104 28.679 670.664C35.5612 669.225 44.1484 668.505 54.4614 668.505C63.5622 668.505 71.3072 668.916 77.7168 669.759C84.1265 670.603 89.4473 671.919 93.6999 673.708C97.9524 675.497 101.281 677.842 103.664 680.721C106.067 683.601 107.731 687.015 108.697 690.964C109.662 694.913 110.135 699.478 110.135 704.62V707.849L88.5845 708.384V704.25C88.5845 701.144 88.0503 698.471 86.9615 696.249C85.8932 694.028 84.0854 692.301 81.5791 691.025C79.0727 689.771 75.5803 688.845 71.1634 688.228C66.726 687.632 61.1586 687.323 54.4614 687.323C48.1134 687.323 42.9364 687.694 38.9303 688.393C34.9243 689.113 31.8017 690.141 29.5829 691.457C27.3642 692.774 25.8029 694.46 24.9195 696.496C24.0156 698.532 23.5636 700.939 23.5636 703.695C23.5636 706.821 23.954 709.412 24.7346 711.51C25.5153 713.608 27.1588 715.376 29.6651 716.816C32.1714 718.256 35.8898 719.552 40.7998 720.683C45.7097 721.814 52.3454 722.863 60.7272 723.829C71.8619 725.269 80.9422 727.017 87.9476 729.053C94.9531 731.09 100.397 733.66 104.3 736.787C108.183 739.913 110.874 743.656 112.374 748.016C113.874 752.397 114.613 757.518 114.613 763.4C114.613 768.912 114.141 773.745 113.175 777.879C112.21 782.013 110.505 785.55 108.06 788.491C105.595 791.432 102.308 793.859 98.1784 795.772C94.0491 797.685 88.831 799.063 82.5446 799.906C76.2583 800.749 68.7393 801.161 60.0082 801.161V801.181Z"/><path d="M283.401 670.993V691.128C278.861 691.004 274.69 690.943 270.931 690.943H234.014V783.74C234.014 786.496 234.034 789.067 234.096 791.473C234.157 793.859 234.199 796.265 234.199 798.651H211.744C211.847 796.265 211.909 793.859 211.909 791.473V690.943H181.566C179.039 690.943 176.224 690.984 173.122 691.045C169.999 691.107 166.466 691.128 162.521 691.128V670.993H283.401Z"/><path d="M449.211 783.637C446.211 778.681 443.294 773.847 440.418 769.179C437.295 763.77 434.337 758.69 431.522 753.877C430.557 752.232 429.591 750.627 428.605 749.064C432.735 748.139 436.289 746.905 439.247 745.342C445.061 742.277 449.19 737.938 451.635 732.302C454.1 726.667 455.312 719.716 455.312 711.448V710.728C455.312 700.774 453.854 692.896 450.916 687.076C447.978 681.276 443.315 677.142 436.905 674.674C430.495 672.227 422.031 670.993 411.492 670.993H344.314C344.438 674.345 344.499 677.903 344.499 681.688V791.555C344.499 794.023 344.438 796.389 344.314 798.651H366.584C366.584 796.265 366.563 793.859 366.502 791.473C366.44 789.067 366.419 786.496 366.419 783.74V752.807H405.781L419.751 776.542C422.031 780.264 424.209 784.007 426.304 787.771C428.4 791.555 430.475 795.175 432.509 798.651H458.373C455.25 793.633 452.21 788.614 449.211 783.637ZM366.419 690.058H409.52C415.149 690.058 419.628 690.716 422.997 692.033C426.345 693.349 428.77 695.508 430.269 698.491C431.769 701.493 432.509 705.627 432.509 710.913V711.263C432.509 716.672 431.769 720.97 430.269 724.22C428.77 727.449 426.304 729.814 422.894 731.315C419.484 732.817 414.964 733.557 409.335 733.557H366.419V690.058Z"/><path d="M633.591 782.65C631.126 776.069 628.414 768.726 625.415 760.623C622.415 752.54 619.334 744.169 616.17 735.552C612.986 726.914 609.904 718.482 606.925 710.275C603.926 702.069 601.194 694.542 598.749 687.714C596.284 680.885 594.332 675.312 592.915 670.993H558.237C556.675 675.312 554.642 680.885 552.135 687.714C549.608 694.542 546.794 702.069 543.692 710.275C540.569 718.482 537.364 726.914 534.077 735.552C530.79 744.169 527.606 752.54 524.566 760.623C521.505 768.726 518.69 776.069 516.122 782.65C513.534 789.252 511.479 794.579 509.918 798.651H533.461L543.076 771.503H605.939L615.184 798.651H639.795C638.111 794.579 636.036 789.252 633.591 782.65ZM549.691 752.807L555.176 737.341C557.949 729.546 560.599 721.854 563.188 714.224C565.756 706.614 568.18 699.519 570.46 692.917C570.645 692.382 570.83 691.827 570.994 691.313H578.924C579.089 691.806 579.274 692.321 579.438 692.835C581.595 699.375 583.958 706.409 586.525 713.957C589.093 721.525 591.641 729.197 594.168 736.992L599.55 752.807H549.691Z"/><path d="M795.145 670.993V691.128C790.605 691.004 786.434 690.943 782.675 690.943H745.758V783.74C745.758 786.496 745.778 789.067 745.84 791.473C745.902 793.859 745.943 796.265 745.943 798.651H723.488C723.612 796.265 723.673 793.859 723.673 791.473V690.943H693.31C690.803 690.943 687.989 690.984 684.866 691.045C681.744 691.107 678.231 691.128 674.266 691.128V670.993H795.145Z"/><path d="M952.449 779.421V798.651H854.004C854.127 796.389 854.189 794.023 854.189 791.555V681.688C854.189 677.903 854.127 674.345 854.004 670.993H948.854V690.223C945.732 690.223 941.849 690.202 937.165 690.14C932.501 690.079 927.468 690.058 922.086 690.058H876.109V724.22H941.479V742.915C939.445 742.915 936.939 742.894 933.939 742.833C930.94 742.771 927.674 742.73 924.161 742.73H876.109V779.606H930.344C934.658 779.606 938.706 779.565 942.465 779.503C946.245 779.441 949.573 779.421 952.449 779.421Z"/><path d="M1129.82 732.488C1129.82 734.524 1129.78 736.498 1129.74 738.411C1129.68 740.344 1129.64 742.195 1129.64 743.985V749.208C1129.64 757.476 1129.02 764.613 1127.75 770.598C1126.49 776.603 1124.52 781.581 1121.83 785.529C1119.14 789.499 1115.5 792.604 1110.96 794.887C1106.4 797.17 1100.82 798.774 1094.16 799.741C1087.52 800.687 1079.72 801.181 1070.72 801.181C1059.48 801.181 1049.99 800.152 1042.27 798.116C1034.54 796.08 1028.34 792.604 1023.67 787.689C1018.99 782.773 1015.62 776.274 1013.52 768.171C1011.43 760.088 1010.38 749.928 1010.38 737.691V731.953C1010.38 719.716 1011.43 709.535 1013.52 701.37C1015.62 693.226 1018.99 686.727 1023.67 681.873C1028.34 677.019 1034.5 673.564 1042.16 671.528C1049.83 669.492 1059.23 668.463 1070.37 668.463C1081.5 668.463 1091.06 669.224 1098.66 670.726C1106.26 672.227 1112.34 674.654 1116.88 678.006C1121.44 681.359 1124.71 685.883 1126.68 691.58C1128.65 697.277 1129.58 704.373 1129.45 712.888L1108.09 713.237C1108.09 708.445 1107.57 704.435 1106.57 701.206C1105.54 697.956 1103.69 695.447 1101 693.637C1098.31 691.848 1094.55 690.531 1089.76 689.688C1084.98 688.845 1078.75 688.434 1071.09 688.434C1063.43 688.434 1057.28 689.153 1052.31 690.593C1047.34 692.033 1043.44 694.419 1040.56 697.771C1037.68 701.144 1035.67 705.751 1034.54 711.633C1033.39 717.494 1032.84 724.94 1032.84 733.927V735.717C1032.84 744.951 1033.39 752.561 1034.54 758.566C1035.67 764.551 1037.68 769.241 1040.56 772.593C1043.44 775.945 1047.38 778.29 1052.41 779.606C1057.43 780.922 1063.71 781.581 1071.27 781.581C1077.5 781.581 1082.8 781.313 1087.15 780.758C1091.53 780.223 1095.1 779.339 1097.86 778.064C1100.61 776.809 1102.77 775.02 1104.31 772.675C1105.87 770.331 1106.96 767.348 1107.55 763.688C1108.15 760.068 1108.4 755.666 1108.27 750.463H1062.83V732.488H1129.82Z"/><path d="M1303.79 670.993C1299.72 677.101 1295.34 683.847 1290.68 691.21C1286.02 698.593 1281.19 706.203 1276.22 714.06C1271.25 721.916 1266.4 729.649 1261.67 737.259C1257.48 744.005 1253.52 750.381 1249.74 756.427V786.434C1249.74 790.63 1249.78 794.702 1249.9 798.651H1227.63C1227.75 794.825 1227.82 790.774 1227.82 786.516V756.468C1224.08 750.422 1220.17 744.087 1216.04 737.424C1211.32 729.814 1206.47 722.06 1201.5 714.142C1196.53 706.224 1191.68 698.593 1186.95 691.21C1182.21 683.847 1177.87 677.101 1173.93 670.993H1199.79L1223.32 709.658C1224.88 712.291 1226.46 714.944 1228.08 717.659C1229.71 720.353 1231.29 723.047 1232.85 725.742C1234.39 728.436 1235.95 731.11 1237.51 733.742C1238.19 734.873 1238.85 736.025 1239.51 737.156C1240.12 736.066 1240.74 734.997 1241.37 733.927C1242.87 731.397 1244.37 728.827 1245.87 726.194C1247.35 723.562 1248.89 720.95 1250.43 718.379C1252 715.787 1253.56 713.196 1255.12 710.543L1279.01 670.993H1303.79Z"/><path d="M1499.82 787.339C1499.82 791.288 1499.88 795.072 1500 798.651H1477.55C1477.67 793.859 1477.73 788.594 1477.73 782.835V740.221C1477.73 736.621 1477.73 732.631 1477.81 728.251C1477.87 723.891 1477.94 719.386 1478 714.779C1478.06 710.152 1478.12 705.689 1478.18 701.37C1478.24 697.627 1478.26 694.069 1478.33 690.778H1475.22C1475.02 691.395 1474.79 692.012 1474.59 692.65C1472.96 697.401 1471.26 702.357 1469.47 707.581C1467.66 712.805 1465.88 718.152 1464.07 723.685C1462.28 729.197 1460.37 734.77 1458.34 740.406L1437.86 798.651H1415.93L1394.57 740.57C1392.54 735.058 1390.52 729.526 1388.55 723.952C1386.58 718.379 1384.69 712.97 1382.88 707.766C1381.09 702.542 1379.35 697.606 1377.68 692.917C1377.42 692.197 1377.17 691.477 1376.92 690.778H1373.86C1373.86 693.411 1373.9 696.249 1373.9 699.313C1373.9 703.2 1373.94 707.293 1374.01 711.53C1374.07 715.787 1374.11 720.168 1374.17 724.672C1374.23 729.156 1374.27 733.619 1374.27 738.061V765.662C1374.27 771.235 1374.29 776.932 1374.35 782.753C1374.42 788.553 1374.46 793.859 1374.46 798.651H1352.54C1352.66 794.455 1352.72 790.589 1352.72 787.051V681.77C1352.72 678.068 1352.66 674.469 1352.54 670.993H1392.23L1411.99 727.449C1414.02 733.454 1416.04 739.439 1418.01 745.424C1419.98 751.43 1421.87 757.209 1423.66 762.782C1425.06 767.122 1426.37 771.174 1427.58 774.978C1428.84 771.174 1430.17 767.122 1431.57 762.782C1433.36 757.209 1435.27 751.388 1437.32 745.342C1439.35 739.295 1441.39 733.269 1443.42 727.264L1463 670.993H1500C1499.88 674.345 1499.82 677.821 1499.82 681.42V787.339Z"/></svg>
@@ -264,7 +277,7 @@
     <div class="switch"><div class="wrap"><span class="dot"></span><select id="clientSel" onchange="selectClient(this.value)"></select></div><button class="sm" onclick="newClient()">+ New client</button></div>
   </header>
   <nav class="rail" id="rail"></nav>
-  <main class="main" id="main"><div id="view"></div></main>
+  <main class="main" id="main"><div id="cycle"></div><div id="view"></div></main>
 </div>
 <div id="gModal"></div><div id="lfModal"></div>
 
@@ -299,16 +312,19 @@ const api = async (path, opts={}) => {
 };
 const esc = s => String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-let STATE = { clients:[], sel:null, offer:null, tab:'batch', batch:null, rmode:'ads', status:null, enums:null, profile:null, offerDoc:null, run:null };
+let STATE = { clients:[], sel:null, offer:null, tab:'results', batch:null, rmode:'ads', status:null, enums:null, profile:null, offerDoc:null, run:null };
 
-// The rail: the daily path first (Create, Review, Exports), the library next, the client's setup last.
+// The rail (2026-11-11): the cycle first, in the owner's order — Review Data → Draft Scenes → Generate Creatives → Pick Ads →
+// Publish Ads, and round again — each numbered; the library next, the client's setup last. The screens' ids are what they
+// were (results, scenes, batch, review, exports), so every old address still opens its screen.
 const NAV = [
-  ['sec','Work'], ['batch','Create','＋'], ['review','Review','◫'], ['exports','Publish','⤓'], ['results','Results','▤'],
-  ['sec','Library'], ['scenes','Scenes','▦'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'], ['cards','Cards','▭'], ['leadforms','Lead forms','▤'],
+  ['sec','The cycle'], ['results','Review Data','1'], ['scenes','Draft Scenes','2'], ['batch','Generate Creatives','3'], ['review','Pick Ads','4'], ['exports','Publish Ads','5'],
+  ['sec','Library'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'], ['cards','Cards','▭'], ['leadforms','Lead forms','▤'],
   ['sec','Profile'], ['overview','Overview','◎'], ['import','Import from Meta','⇣'], ['metafacts','From the ad account','◆'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'],
 ];
-const TITLES = { batch:'Create', generating:'Create', review:'Review', exports:'Publish', publish:'Publish', results:'Results', copy:'Copy', cards:'Cards', leadforms:'Lead forms', import:'Import from Meta', scenes:'Scene library', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
+const CYCLE_TABS = ['results','scenes','batch','generating','review','exports','publish'];
+const TITLES = { batch:'Generate Creatives', generating:'Generate Creatives', review:'Pick Ads', exports:'Publish Ads', publish:'Publish Ads', results:'Review Data', copy:'Copy', cards:'Cards', leadforms:'Lead forms', import:'Import from Meta', scenes:'Draft Scenes', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -334,7 +350,9 @@ async function applyHash(){
     if (STATE.clients.find(c=>c.gym===r.gym)) await selectClient(r.gym, false, false);
     else { const cur = STATE.clients.find(c=>c.gym===STATE.sel); toast(`No gym called "${r.gym}" here — showing ${cur?.display_name || STATE.sel || 'the first gym'}`, 'warn'); setHash(true); }
   }
-  const tab = TITLES[r.tab] ? r.tab : 'batch', batch = ['review','generating','publish'].includes(tab) ? r.batch : null;
+  // An address by a step's name opens that step ("create" had only ever worked because an unknown screen fell back to Create).
+  const named = { create:'batch', generate:'batch', pick:'review', data:'results' }[r.tab] || r.tab;
+  const tab = TITLES[named] ? named : 'results', batch = ['review','generating','publish'].includes(tab) ? r.batch : null;
   // Another gym in the address on the same screen is a new screen: without this the page kept showing the first gym's
   // form (its locations, its photos, its look) while every save and check went to the second (found 2026-11-10).
   if (STATE.sel===was && tab===STATE.tab && batch===STATE.batch && r.rmode===STATE.rmode) return;
@@ -346,7 +364,7 @@ function go(tab){ STATE.tab = tab; STATE.batch = null; setHash(); render(); }
 function openReview(id, mode='ads'){ STATE.tab = 'review'; STATE.batch = id; STATE.rmode = mode; setHash(); render(); }
 function openGenerating(id){ STATE.tab = 'generating'; STATE.batch = id; setHash(); render(); }
 function openPublish(id){ STATE.tab = 'publish'; STATE.batch = id; setHash(); render(); }
-/** Change a campaign's words: the Create screen, opened on that batch. */
+/** Change a campaign's words: the Generate Creatives screen, opened on that batch. */
 function openWords(id){ B.pendingWords = id; go('batch'); }
 function paintCrumb(extra){
   const client = STATE.clients.find(c=>c.gym===STATE.sel);
@@ -390,6 +408,40 @@ async function loadOffer(slug){
   if (STATE.tab==='offer') viewOfferDetails($('#offerDetails')); else render();
 }
 
+/** The rail. A cycle step's badge is what is waiting there (from the cycle's status): scenes to draft or approve, batches with ads not looked at, batches ready to publish. */
+function paintRail(){
+  const bad = STATE.status.checks.filter(c=>!c.ok && !c.optional).length, cc = CY.gym===STATE.sel && CY.data ? CY.data.counts : {};
+  const counts = { scenes: cc.scenes || null, review: cc.pick || null, exports: cc.publish || null, overview: STATE.view?.completeness?.to_do || null };
+  const railTab = STATE.tab==='generating' ? 'batch' : STATE.tab==='publish' ? 'exports' : STATE.tab;
+  $('#rail').innerHTML = NAV.map(([k,l,ic])=> k==='sec' ? `<div class="sec">${l}</div>`
+    : `<button class="tab ${railTab===k?'sel':''}" onclick="go('${k}')"><span class="ic ${/^\d$/.test(ic)?'num':''}">${ic}</span>${l}${counts[k]!=null?`<span class="badge">${counts[k]}</span>`:''}</button>`).join('')
+    + `<div class="foot">${bad ? `<span style="color:var(--err)">${bad} setup item${bad===1?'':'s'} blocking</span>` : `<span style="color:var(--ok)">setup complete</span>`}<br>Node ${esc(STATE.status.node)}</div>`;
+}
+// ── The cycle's strip ────────────────────────────────────────────────────────
+// Across the top of the five steps' screens: where this gym stands on each step and the one thing to do next, from what
+// is on file (GET …/cycle: no Meta call, no model call). It only nudges: every step opens whatever the strip says.
+const CY = { gym:null, data:null, error:null, seq:0 };
+async function loadCycle(){
+  const gym = STATE.sel; if (!gym || !CYCLE_TABS.includes(STATE.tab)) return;
+  const seq = ++CY.seq;
+  try { const d = await api(`/api/client/${gym}/cycle`); if (seq !== CY.seq || gym !== STATE.sel) return; CY.gym = gym; CY.data = d; CY.error = null; }
+  catch(e){ if (seq !== CY.seq || gym !== STATE.sel) return; CY.gym = gym; CY.data = null; CY.error = e.message; }
+  paintCycle(); paintRail(); paintSceneAsks();
+}
+function paintCycle(){
+  const box = $('#cycle'); if (!box) return;
+  // Not on the library or the profile; not on the one-ad picking screen, which fills the window by itself.
+  if (!STATE.sel || !CYCLE_TABS.includes(STATE.tab) || (STATE.tab==='review' && STATE.batch)){ box.innerHTML = ''; return; }
+  const D = CY.gym===STATE.sel ? CY.data : null;
+  if (!D){ box.innerHTML = CY.gym===STATE.sel && CY.error ? `<div class="cyc"><div class="hint" style="margin:0">Where this gym stands could not be read: ${esc(CY.error)}</div></div>` : ''; return; }
+  const here = STATE.tab==='generating' ? 'batch' : STATE.tab==='publish' ? 'exports' : STATE.tab, n = D.next;
+  const there = n && n.tab===STATE.tab && (n.batch||null)===(STATE.batch||null);
+  box.innerHTML = `<div class="cyc" id="cyc"><div class="cycsteps">${D.steps.map(s=>`<button class="cycstep st-${s.state} ${s.tab===here?'here':''}" onclick="go('${s.tab}')" title="${esc(s.name)}"><span class="hd"><span class="n">${s.n}</span>${esc(s.name)}</span><span class="tx">${esc(s.text)}</span></button>`).join('')}</div>
+    ${n?`<div class="cycnext" id="cycNext"><span class="k">Next</span><span class="t">${esc(n.text)}</span>${there||n.idle?'':`<button class="sm primary" onclick="cyGo()">${esc(n.name)} →</button>`}</div>`:''}</div>`;
+}
+/** The strip's Next button: the step's screen, on its batch when it names one. */
+function cyGo(){ const n = CY.data?.next; if (!n) return; if (n.batch && n.tab==='review') return openReview(n.batch); if (n.batch && n.tab==='publish') return openPublish(n.batch); if (n.batch && n.tab==='generating') return openGenerating(n.batch); go(n.tab); }
+
 function render(){
   const seq = ++VIEW_SEQ;
   clearTimeout(G.timer);
@@ -397,12 +449,9 @@ function render(){
   const sel = $('#clientSel');
   sel.innerHTML = STATE.clients.length ? STATE.clients.map(c=>`<option value="${esc(c.gym)}" ${c.gym===STATE.sel?'selected':''}>${esc(c.display_name||c.gym)}</option>`).join('') : '<option>No clients yet</option>';
   const bad = STATE.status.checks.filter(c=>!c.ok && !c.optional).length;
-  const counts = { scenes: B.scenes?.status?.total ?? null, review: (B.setup?.batches||[]).filter(b=>b.review?.unreviewed).length || null, overview: STATE.view?.completeness?.to_do || null };
-  const railTab = STATE.tab==='generating' ? 'batch' : STATE.tab;
-  $('#rail').innerHTML = NAV.map(([k,l,ic])=> k==='sec' ? `<div class="sec">${l}</div>`
-    : `<button class="tab ${railTab===k?'sel':''}" onclick="go('${k}')"><span class="ic">${ic}</span>${l}${counts[k]!=null?`<span class="badge">${counts[k]}</span>`:''}</button>`).join('')
-    + `<div class="foot">${bad ? `<span style="color:var(--err)">${bad} setup item${bad===1?'':'s'} blocking</span>` : `<span style="color:var(--ok)">setup complete</span>`}<br>Node ${esc(STATE.status.node)}</div>`;
+  paintRail();
   paintCrumb();
+  paintCycle(); loadCycle();
 
   const v = $('#view');
   if (STATE.tab==='setup') return viewSetup(v);
@@ -457,7 +506,7 @@ function viewSetup(v){
 
 // ── Profile ──────────────────────────────────────────────────────────────────
 // A gym's profile is filled in once and remembered. Overview says what each section still needs;
-// every batch reads the profile, and the Create screen opens with its defaults.
+// every batch reads the profile, and the Generate Creatives screen opens with its defaults.
 const ST_LABEL = { done:'done', partial:'partly done', missing:'not started' };
 async function refreshProfile(){ const d = await api('/api/client/'+STATE.sel); STATE.view = d; if (!DIRTY.profile) STATE.profile = d.profile; return d; }
 async function viewOverview(v, seq=VIEW_SEQ){
@@ -577,9 +626,9 @@ async function viewBrand(v, seq=VIEW_SEQ){
 }
 
 // Offer wording: the words that go on the ads, kept once. The owner adds, edits and deletes them;
-// a batch run with a new wording adds it. The Create screen offers them as chips.
+// a batch run with a new wording adds it. The Generate Creatives screen offers them as chips.
 async function viewOffer(v, seq=VIEW_SEQ){
-  v.innerHTML = `<h1>Offer wording</h1><p class="sub">The exact words for the offer on the ads. They are always yours: pick one on Create, or type a new one there. A wording you run a batch with is added here.</p>
+  v.innerHTML = `<h1>Offer wording</h1><p class="sub">The exact words for the offer on the ads. They are always yours: pick one on Generate Creatives, or type a new one there. A wording you run a batch with is added here.</p>
     <div class="card" id="wCard"><div class="hint">Loading…</div></div>
     <div id="offerDetails"></div>`;
   const r = await api(`/api/client/${STATE.sel}/wordings`).catch(e=>({error:e.message}));
@@ -605,7 +654,7 @@ async function wAdd(){ const t = $('#wNew').value; if (await wCall(()=>api(`/api
 async function wSave(id){ const t = $('#wEdit').value; await wCall(()=>api(`/api/client/${STATE.sel}/wordings/${id}`, {method:'PUT', body:{text:t}})); }
 async function wDelete(id){ const w = W.list.find(x=>x.id===id); if (!confirm(`Delete the wording "${w?.text}"? Batches already made keep their words.`)) return; await wCall(()=>api(`/api/client/${STATE.sel}/wordings/${id}`, {method:'DELETE'})); }
 
-// Ad defaults: what the Create screen opens with for this gym. The offer is never among them.
+// Ad defaults: what the Generate Creatives screen opens with for this gym. The offer is never among them.
 async function viewDefaults(v, seq=VIEW_SEQ){
   const p = STATE.profile; if (!p){ v.innerHTML = '<div class="empty">No gym-profile.json for this client.</div>'; return; }
   if (B.gym !== STATE.sel || !B.setup){ v.innerHTML = '<h1>Ad defaults</h1><p class="sub">Loading…</p>'; B.gym = STATE.sel; await loadSetup(); if (seq !== VIEW_SEQ) return; }
@@ -616,11 +665,11 @@ async function viewDefaults(v, seq=VIEW_SEQ){
   const hasBrand = Object.keys(STATE.view?.brand_palettes||{}).length > 0;
   const num = (k,lbl,min,max,ph='') => `<div><label>${lbl}</label><input type="number" min="${min}" max="${max}" value="${esc(cd[k]??'')}" placeholder="${esc(ph||String(D[k]??''))}" oninput="setP('creative_defaults.${k}',this.value===''?null:Number(this.value))"></div>`;
   v.innerHTML = `
-  <h1>Ad defaults</h1><p class="sub">What the Create screen opens with for this gym, so a new batch is a few edits and one button. Everything stays changeable per batch. The offer is never filled in for you.</p>
+  <h1>Ad defaults</h1><p class="sub">What the Generate Creatives screen opens with for this gym, so a new batch is a few edits and one button. Everything stays changeable per batch. The offer is never filled in for you.</p>
   <div class="card"><h3>Words</h3>
     <label style="margin-top:0">Location callouts <span class="n">· up to 4; one version of every ad per location</span></label>
     <div class="chips">${locs.map((l,i)=>`<span class="locchip"><input value="${esc(l)}" oninput="cdList('locations',${i},this.value)"><button type="button" title="Remove" onclick="cdDel('locations',${i})">✕</button></span>`).join('')}${locs.length<4?`<span class="chip add" onclick="cdAdd('locations')">+ location</span>`:''}</div>
-    <label>Audience callouts <span class="n">· offered as chips on Create</span></label>
+    <label>Audience callouts <span class="n">· offered as chips on Generate Creatives</span></label>
     <div class="chips">${auds.map((a,i)=>`<span class="locchip"><input value="${esc(a)}" style="width:170px" oninput="cdList('audiences',${i},this.value)"><button type="button" title="Remove" onclick="cdDel('audiences',${i})">✕</button></span>`).join('')}<span class="chip add" onclick="cdAdd('audiences')">+ audience</span></div>
   </div>
   <div class="card"><h3>Photos</h3>
@@ -628,14 +677,14 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     ${(()=>{ const mx = profileMix(D), others = Object.keys(FORMAT_NAMES).filter(f=>f!=='workout'), w = 100 - others.reduce((a,f)=>a+(mx[f]||0),0);
       return others.map(f=>`<div class="row" style="gap:8px;align-items:center;margin-top:6px"><input type="number" id="cdMix-${f}" min="0" max="100" step="10" style="width:76px" value="${mx[f]||0}" oninput="cdMix('${f}',this.value)"><span>% ${esc(FORMAT_PLURAL[f])} <span class="hint" style="font-weight:400">· one person or a pair at ease on a plain backdrop or in front of the blurred gym</span></span></div>`).join('')
         + `<div class="hint" id="cdMixRest" style="margin-top:6px">The rest, ${w}%, are workout photos: people training in the gym, caught mid-movement.</div>`; })()}
-    <p class="hint" style="margin:6px 0 12px">Create starts every batch from this mix and lets you change the counts. Results suggests a change when one kind earns leads clearly cheaper. Each kind has its own scenes on Library → Scenes.</p>
+    <p class="hint" style="margin:6px 0 12px">Create starts every batch from this mix and lets you change the counts. Results suggests a change when one kind earns leads clearly cheaper. Each kind has its own scenes on Draft Scenes.</p>
     <div class="grid">${num('generated','New photos per batch',0,12)}${num('looks_per_photo','Looks per photo',1,6)}${num('attempts','Tries per photo',1,5)}${num('max_calls','Most image calls',0,40,'new photos × tries')}</div>
     <label style="display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text);margin-top:12px"><input type="checkbox" style="width:auto;margin:0" ${D.spread!==false?'checked':''} onchange="setP('creative_defaults.spread',this.checked)"> Spread across exercises, ages, settings and equipment</label>
     <label>Real photos in every batch <span class="hint" style="font-weight:400">· none unless you tick one: a ticked photo of the room becomes an ad with the words set on it. The room reference is separate and needs no tick.</span></label>
     <div class="thumbs">${photos.length ? photos.map(ph=>`<label><input type="checkbox" ${(D.real_photos||[]).includes(ph.path)?'checked':''} onchange="cdPhoto('${esc(ph.path)}',this.checked)"><img src="${esc(ph.url)}" alt=""><span style="font-size:11px">${esc(ph.path.split('/').pop())}</span></label>`).join('') : '<span class="hint">No cleaned photos yet.</span>'}</div>
   </div>
   <div class="card"><h3>Look and shape</h3>
-    <p class="hint">How this gym's ads are set, by default. A batch can choose otherwise on Create. No look adds a logo or the gym's brand colours unless you ask for them below.</p>
+    <p class="hint">How this gym's ads are set, by default. A batch can choose otherwise on Generate Creatives. No look adds a logo or the gym's brand colours unless you ask for them below.</p>
     <label>Look</label>
     ${[['reference','The reference set','loud outlined type over the photo; eight layouts, nine type styles, ten pairings'],['formula','The formula','the area across the top, the duration and the offer low in the frame; plain type, a soft shadow, no outline; the words move clear of faces']].map(([m,l,d])=>`<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:6px"><input type="radio" name="cdLook" style="width:auto;margin:0" ${(D.look||'reference')===m?'checked':''} onchange="setP('creative_defaults.look','${m}')"> ${l} <span class="hint" style="font-weight:400">· ${d}</span></label>`).join('')}
     <p class="hint" id="cdShape" style="margin-top:10px"><b>Shape:</b> every feed ad is portrait 4:5 and its Stories and Reels version 9:16, made from the ad's own photo. The square (1:1) is no longer made; a batch made as a square before keeps its shape.</p>
@@ -1000,7 +1049,7 @@ function paintTargeting(v){
     </div>`;
   };
   v.innerHTML = `
-  <h1>Targeting & budget</h1><p class="sub">Defaults for publishing to Meta. Every one of them can be changed on the Publish screen before anything is created. Not used by the creative pipeline.</p>
+  <h1>Targeting & budget</h1><p class="sub">Defaults for publishing to Meta. Every one of them can be changed on the Publish Ads screen before anything is created. Not used by the creative pipeline.</p>
   <div class="card">
     <h3>Budget</h3>
     <div class="grid">
@@ -1030,11 +1079,11 @@ function paintTargeting(v){
       ${audiences.length?`<div class="grid">${audiences.map(a=>{ const key = Object.keys(cg).find(k=>k.trim().toUpperCase()===a.toUpperCase()); const cur = key?cg[key]:guessGender(a); const pk = Object.keys(cp).find(k=>k.trim().toUpperCase()===a.toUpperCase()); const pcur = pk?cp[pk]:''; return `<div><label class="n">${esc(a)}</label><select onchange="setGender('${esc(a)}',this.value)">${[['men','men'],['women','women'],['all','everyone']].map(([k,l])=>`<option value="${k}" ${k===cur?'selected':''}>${l}${!key&&k===guessGender(a)?' (from the words)':''}</option>`).join('')}</select>
         <select style="margin-top:6px" onchange="setCalloutPreset('${esc(a)}',this.value)"><option value="" ${pcur===''?'selected':''}>The gym's default (above)</option><option value="shared" ${pcur==='shared'?'selected':''}>The shared default for this gender</option><option value="suggest" ${pcur==='suggest'?'selected':''}>This account's best, each time</option><option value="broad" ${pcur==='broad'?'selected':''}>Broad</option>${(D.library?.entries||[]).filter(e=>e.approved_on&&!e.retired).length?`<optgroup label="Shared library">${D.library.entries.filter(e=>e.approved_on&&!e.retired).map(e=>`<option value="${esc(e.preset_id)}" ${e.preset_id===pcur?'selected':''}>${esc(e.name)} · ${esc(e.audience)}</option>`).join('')}</optgroup>`:''}<optgroup label="This account's presets">${presets.map(x=>`<option value="${esc(x.id)}" ${x.id===pcur?'selected':''}>${esc(x.name)}${x.stats&&x.stats.cost_per_lead!=null?` · ${money(x.stats.cost_per_lead)}/lead`:''}</option>`).join('')}</optgroup></select></div>`; }).join('')}</div>`:'<div class="hint">Add audience callouts on Ad defaults first.</div>'}
     </div>
-    <div class="msg ok" style="margin-top:12px">Advantage+ audience is never switched on: Meta may not widen an ad set past what it says here. Every ad set's targeting can still be changed on the Publish screen.</div>
+    <div class="msg ok" style="margin-top:12px">Advantage+ audience is never switched on: Meta may not widen an ad set past what it says here. Every ad set's targeting can still be changed on the Publish Ads screen.</div>
   </div>
   <div class="card">
     <div class="row"><h3 style="margin:0">Shared defaults · all gyms</h3><div class="spacer"></div><span class="hint" style="margin:0">${(D.library?.approved||0)} approved · ${(D.library?.drafts||0)} to approve</span></div>
-    <p class="hint">Detailed targeting curated across every gym's results (the owner's to approve): fitness ads target much the same people. An approved <b>default</b> is what every ad set gets unless this gym or the campaign says otherwise; an <b>option</b> is offered on the Publish screen, never the default. Interests are Meta's own, by id, so they carry to any country.</p>
+    <p class="hint">Detailed targeting curated across every gym's results (the owner's to approve): fitness ads target much the same people. An approved <b>default</b> is what every ad set gets unless this gym or the campaign says otherwise; an <b>option</b> is offered on the Publish Ads screen, never the default. Interests are Meta's own, by id, so they carry to any country.</p>
     <div class="grid" style="margin-top:8px"><div><label>Detailed targeting by default, for this gym</label><select onchange="setP('targeting_defaults.detailed_targeting.default',this.value)"><option value="shared" ${(T.detailed_targeting?.default||'shared')==='shared'?'selected':''}>The shared default for the callout's gender</option><option value="account" ${T.detailed_targeting?.default==='account'?'selected':''}>This account's best preset for the callout</option><option value="broad" ${T.detailed_targeting?.default==='broad'?'selected':''}>Broad · no detailed targeting</option></select></div></div>
     ${(D.library?.entries||[]).filter(e=>!e.retired).map(e=>`<div class="wrow" style="align-items:flex-start;margin-top:10px"><div style="flex:1"><b>${esc(e.name)}</b> <span class="pill ${e.approved_on?'on':'warn'}">${e.approved_on?'approved '+esc(e.approved_on.slice(0,10)):'draft · to approve'}</span> <span class="hint" style="margin:0">· ${esc(e.audience)} · ${esc(e.role)}</span><div class="hint" style="margin:4px 0">${(e.summary||[]).map(l=>esc(l)).join('<br>')}</div><div class="hint" style="margin:0">${esc(e.note||'')}</div>${(e.evidence||[]).length?`<div class="hint" style="margin:4px 0 0">Evidence: ${e.evidence.map(v=>`${esc(v.gym)} — ${esc(v.preset)}: ${v.leads} leads at ${esc(v.currency||'')} ${v.cost_per_lead}`).join(' · ')}</div>`:''}</div><div class="row" style="gap:6px">${e.approved_on?'':`<button class="sm primary" onclick="tlAct('${e.id}','approve')">Approve</button>`}<button class="sm" onclick="tlRetire('${e.id}')">Retire…</button></div></div>`).join('')}
     ${(D.library?.entries||[]).filter(e=>e.retired).length?`<div class="hint" style="margin-top:8px">Retired: ${D.library.entries.filter(e=>e.retired).map(e=>`${esc(e.name)} (${esc(e.retired.reason)}) <a href="#" onclick="tlAct('${e.id}','restore');return false">restore</a>`).join(' · ')}</div>`:''}
@@ -1130,20 +1179,31 @@ async function loadSetup(){
 }
 async function viewBatch(v, seq=VIEW_SEQ){
   if (B.gym !== STATE.sel){ Object.assign(B, { gym:STATE.sel, draft:null, mode:'new', view:null, savedId:null, touched:false, loc:0, setup:null, scenes:null }); }
-  v.innerHTML = '<h1>Create</h1><p class="sub">Loading…</p>';
+  v.innerHTML = '<h1>Generate Creatives</h1><p class="sub">Loading…</p>';
   await loadSetup();
   if (seq !== VIEW_SEQ) return; // a newer render took over while loading
   if (B.pendingWords){ const id = B.pendingWords; B.pendingWords = null; return bWords(id); }
   if (B.pendingSuggest){ const R = B.pendingSuggest; B.pendingSuggest = null; if (R.gym === STATE.sel) applySuggestion(R); }
+  const opened = !B.draft;
   if (!B.draft) B.draft = freshDraft();
   paintBatch(v);
   scheduleCheck(0); schedulePreview(0);
   syncRun();
+  if (opened) suggestByDefault(seq, B.draft);
   if ((B.setup?.scenes?.drafts||0) > 0 && !B.scenes) { try { B.scenes = await api(`/api/client/${STATE.sel}/scenes`); } catch{} }
   paintGapDrafts();
 }
+/** Step 3 follows step 1 (2026-11-11): a new brief opens with the account review's suggestion on a banner. While the form is
+ *  still as it opened, only the lean is applied (it steers among approved scenes and changes no count). The offer, locations
+ *  and audience stay the owner's to type, the photos per kind stay the gym's Ad defaults (a mix is saved by the owner's click
+ *  alone) and no card is added: "Use this suggestion" takes all of it in one click, "Start blank instead" none of it. */
+async function suggestByDefault(seq, draft){
+  let R; try { R = await api(`/api/client/${STATE.sel}/account-review`); } catch { return; }
+  if (seq !== VIEW_SEQ || STATE.tab !== 'batch' || B.draft !== draft || B.touched || B.mode !== 'new' || R.gym !== STATE.sel || !reviewSuggests(R)) return;
+  applySuggestion(R, { whole:false }); paintBatch($('#view')); scheduleCheck(0); schedulePreview(0); paintGapDrafts();
+}
 
-/** Scene drafts awaiting approval, on the Create screen (2026-10-15): approve or reject them where "Draft scenes for them" left them, without a trip to Scenes. */
+/** Scene drafts awaiting approval, on the Generate Creatives screen (2026-10-15): approve or reject them where "Draft scenes for them" left them, without a trip to Scenes. */
 function paintGapDrafts(){
   const box = $('#bGapDrafts'); if (!box) return;
   const drafts = B.scenes?.drafts || [];
@@ -1161,7 +1221,7 @@ function paintGapDrafts(){
 }
 
 /** A run this page believes is still going is checked with the panel (2026-10-10): over, or unknown to the panel since a
- *  restart, and the Create screen's buttons come back. Before, a stream cut by a sleep or a blip left them grey for good. */
+ *  restart, and the Generate Creatives screen's buttons come back. Before, a stream cut by a sleep or a blip left them grey for good. */
 async function syncRun(){
   const r = STATE.run; if (!r?.id || r.done) return;
   let s; try { s = await api(`/api/run/${r.id}`); } catch(e){ s = { gone:true, error:e.message }; }
@@ -1179,17 +1239,29 @@ function freshDraft(){
     look: cd.look || 'reference', mix: (()=>{ const m = allocMix(B.setup.mix || profileMix(cd), cd.generated ?? 10); delete m.workout; return m; })(),
     age_min: (B.setup.photo_ages||[25,60])[0], age_max: (B.setup.photo_ages||[25,60])[1] };
 }
+/** Whether the review has something to open a brief with: a last batch's words, a lean, a card to test, or a step in the mix. */
+/** Whether the review has something for a new brief: a lean, a card to test, a step in the mix — or results to read beside the owner's last words. */
+const reviewSuggests = (R) => !!(R?.brief && ((R.brief.lean||[]).length || R.brief.cards || R.mix?.changed || (R.brief_from && R.brief.offer && (R.data?.ads||0) > 0)));
 /** The account review's next batch on the Create form (Phase 6): the owner's last words, the photos per kind, a card of each ready kind, the lean. Everything else is the gym's Ad defaults. */
-function applySuggestion(R){
+function applySuggestion(R, { whole = true } = {}){
   const s = R.brief || {}, d = freshDraft();
-  d.offer = s.offer || ''; if ((s.locations||[]).length) d.locations = s.locations.slice(0, B.setup.maxLocations||4); d.audience = s.audience ?? '';
-  if (Number.isInteger(s.generated)) d.generated = s.generated;
-  d.mix = Object.fromEntries(Object.entries(s.mix||{}).filter(([f])=>f!=='workout'));
-  d.cards = { review:0, statement:0, timeline:0, ...(s.cards||{}) };
-  d.lean = (s.lean||[]).map(l=>({ ...l }));
-  d.suggested = { built:R.built, reasons:R.reasons||[], left:R.left||[] };
-  Object.assign(B, { mode:'new', view:null, draft:d, savedId:null, touched:true, loc:0 });
+  // A suggestion must be able to run: a kind with no approved scene for this audience is held back (Generate Creatives would refuse the batch) and said on the banner.
+  const needs = new Set((R.scenes||[]).filter(j=>j.needed).map(j=>j.format));
+  const kinds = Object.entries(s.mix||{}).filter(([f])=>f!=='workout');
+  if (whole){
+    d.offer = s.offer || ''; if ((s.locations||[]).length) d.locations = s.locations.slice(0, B.setup.maxLocations||4); d.audience = s.audience ?? '';
+    if (Number.isInteger(s.generated)) d.generated = s.generated;
+    d.mix = Object.fromEntries(kinds.filter(([f])=>!needs.has(f)));
+    d.cards = { review:0, statement:0, timeline:0, ...(s.cards||{}) };
+  }
+  // The lean, for the kinds this brief has photos of.
+  const others = Object.values(d.mix||{}).reduce((a,n)=>a+(n||0),0), has = (f) => f==='workout' ? d.generated - others > 0 : (d.mix?.[f]||0) > 0;
+  d.lean = (s.lean||[]).filter(l=>!l.format || (has(l.format) && !needs.has(l.format))).map(l=>({ ...l }));
+  d.suggested = { whole, built:R.built, brief:s, reasons:R.reasons||[], left:(R.left||[]).filter(x=>!whole || x.kind!=='no_scenes'), held: whole ? kinds.filter(([f,n])=>needs.has(f) && n>0).map(([f,n])=>({ format:f, photos:n })) : [], review: whole ? null : R };
+  Object.assign(B, { mode:'new', view:null, draft:d, savedId:null, touched:whole, loc:0 });
 }
+/** The banner's one click: the whole suggestion on the form — the last batch's own words, the photos per kind, the cards, the lean. */
+function bSuggestUse(){ const R = B.draft?.suggested?.review; if (!R) return; applySuggestion(R); paintBatch($('#view')); scheduleCheck(0); schedulePreview(0); paintGapDrafts(); }
 function bLeanDrop(i){ B.draft.lean.splice(i,1); B.touched = true; paintLean(); scheduleCheck(); }
 function bSuggestClear(){ bNew(); }
 function paintLean(){
@@ -1244,10 +1316,15 @@ function paintBatch(v){
   const d = B.draft, re = B.mode==='rerender';
   const photos = B.setup.photos;
   v.innerHTML = `
-  <div class="row" style="margin-bottom:4px"><h1 style="margin:0">${re?`Change the words of ${esc(B.view.brief.batch_id)}`:'Create'}</h1><div class="spacer"></div>${re?`<button onclick="bNew()">Start a new campaign instead</button>`:''}</div>
+  <div class="row" style="margin-bottom:4px"><h1 style="margin:0">${re?`Change the words of ${esc(B.view.brief.batch_id)}`:'Generate Creatives'}</h1><div class="spacer"></div>${re?`<button onclick="bNew()">Start a new campaign instead</button>`:''}</div>
   <p class="sub">${re?'Same photos and looks; only the words change. Re-rendering is free.':'Everything the batch needs, on one screen. Every word on the ads is exactly what you type. Nothing spends until you confirm.'}</p>
   ${!re && STATE.view?.completeness && !STATE.view.completeness.ready_to_create ? `<div class="msg warn">This gym's profile still needs: ${STATE.view.completeness.sections.filter(s=>s.for!=='publishing'&&s.status!=='done').map(s=>esc(s.label)).join(', ')}. <a href="#" onclick="go('overview');return false">Open the overview →</a></div>` : ''}
-  ${!re && d.suggested ? `<div class="msg ok" id="bSuggest" style="color:var(--text)"><div class="row"><b>Pre-filled from the account review${d.suggested.built?` of ${esc(d.suggested.built.slice(0,10))}`:''}</b><div class="spacer"></div><a href="#" onclick="bSuggestClear();return false">Start blank instead</a></div><ul style="margin:6px 0 0 18px;line-height:1.5">${d.suggested.reasons.map(x=>`<li>${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}${d.suggested.left.map(x=>`<li>Not yet — ${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}</ul><div class="hint" style="margin-top:6px">Every word is yours to change. Nothing is generated until you confirm the run.</div></div>` : ''}
+  ${!re && d.suggested ? (() => { const S = d.suggested, b = S.brief || {}, words = (x) => esc(x.text.replace(/studio-portrait/g,'studio portrait'));
+    const mixLine = b.mix ? Object.entries(b.mix).map(([f,k])=>`${k} ${esc(FORMAT_PLURAL[f]||f)}`).join(', ') : `${b.generated} workout photos`;
+    return `<div class="msg ok" id="bSuggest" style="color:var(--text)"><div class="row"><b>${S.whole?'Pre-filled from':'Suggested by'} the account review${S.built?` of ${esc(S.built.slice(0,10))}`:''}</b><div class="spacer"></div>${S.whole?'':`<button class="sm primary" id="bSuggestUse" onclick="bSuggestUse()">Use this suggestion</button>`}<a href="#" onclick="bSuggestClear();return false">Start blank instead</a></div>
+    ${S.whole?'':`<div class="rvbrief" style="margin-top:8px"><div><span class="k">Offer</span> ${b.offer?`${esc(b.offer)} <span class="hint">· your last batch's words</span>`:'<i>for you to type</i>'}</div><div><span class="k">Where</span> ${esc((b.locations||[]).join(', ')||'—')}${b.audience?` · ${esc(b.audience)}`:''}</div><div><span class="k">Photos</span> ${mixLine}</div>${b.cards?`<div><span class="k">Cards</span> ${Object.entries(b.cards).map(([k,c])=>`${c} ${esc(CARD_NAMES[k]||k)}`).join(', ')}</div>`:''}</div>
+      <div class="hint" style="margin-top:6px">On this form so far: ${(d.lean||[]).length?'the lean (below Photos)':'nothing'}. The offer is yours to type, the photos are this gym's Ad defaults and no card is added until you take the suggestion.</div>`}
+    <ul style="margin:6px 0 0 18px;line-height:1.5">${S.reasons.map(x=>`<li>${words(x)}</li>`).join('')}${(S.held||[]).map(h=>`<li id="bSuggestHeld">Left out for now — ${h.photos} ${esc((h.photos===1?FORMAT_NAMES[h.format]:FORMAT_PLURAL[h.format])||h.format).toLowerCase()}: no scene of that kind is approved yet. <a href="#" onclick="go('scenes');return false">Draft Scenes →</a></li>`).join('')}${S.left.map(x=>`<li>Not yet — ${words(x)}</li>`).join('')}</ul><div class="hint" style="margin-top:6px">Every word is yours to change. Nothing is generated until you confirm the run.</div></div>`; })() : ''}
   <div class="nb">
     <div class="card">
       <h3>Brief</h3>
@@ -1502,7 +1579,7 @@ async function bConfirm(){
 }
 /**
  * Run a stopped or unfinished batch again with its own brief (2026-10-07: a stopped card offered only Open and Discard,
- * and "run it again from Create" would have made a new batch). The same confirmation as Create's: the words as they
+ * and "run it again from Generate Creatives" would have made a new batch). The same confirmation as Create's: the words as they
  * are on disk, the cap, the batch's drafted scenes; finished photos are reused and the calls already used count.
  */
 async function bRunAgain(id){
@@ -1574,11 +1651,11 @@ const R = { gym:null, id:null, data:null, mode:'ads', loc:'all', show:'all', lis
 const rkey = it => it.folder || it.id;
 
 async function viewReviewList(v, seq=VIEW_SEQ){
-  v.innerHTML = '<h1>Review</h1><p class="sub">Loading…</p>';
+  v.innerHTML = '<h1>Pick Ads</h1><p class="sub">Loading…</p>';
   B.gym = STATE.sel; await loadSetup();
   if (seq !== VIEW_SEQ) return;
   const bs = B.setup.batches.filter(b=>b.ads || b.running);
-  v.innerHTML = `<h1>Review</h1><p class="sub">Go through each campaign's ads and keep the ones to run. Picks save as you go; nothing is downloaded or moved by hand.</p>
+  v.innerHTML = `<h1>Pick Ads</h1><p class="sub">Go through each campaign's ads and keep the ones to run. Picks save as you go; nothing is downloaded or moved by hand.</p>
   ${bs.length ? `<div class="camps">${bs.map(b=>{ const r=b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
       <div class="d">${esc(b.id)}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:''}</div>
@@ -1871,11 +1948,11 @@ function genCard(id, x){
 }
 
 async function viewExports(v, seq=VIEW_SEQ){
-  v.innerHTML = '<h1>Publish</h1><p class="sub">Loading…</p>';
+  v.innerHTML = '<h1>Publish Ads</h1><p class="sub">Loading…</p>';
   if (B.gym !== STATE.sel || !B.setup){ B.gym = STATE.sel; await loadSetup(); }
   if (seq !== VIEW_SEQ) return;
   const bs = (B.setup?.batches||[]).filter(b=>b.ads);
-  v.innerHTML = `<h1>Publish</h1><p class="sub">Every campaign with ads: its kept ads go to the gym's Facebook ad account as a campaign, one ad set per location callout and one ad per kept ad — every object paused, nothing switched on here.</p>
+  v.innerHTML = `<h1>Publish Ads</h1><p class="sub">Every campaign with ads: its kept ads go to the gym's Facebook ad account as a campaign, one ad set per location callout and one ad per kept ad — every object paused, nothing switched on here.</p>
   ${bs.length ? bs.map(b=>{ const r=b.review||{}; return `<div class="card"><div class="row" style="gap:14px">
       ${b.thumb?`<img src="${esc(b.thumb)}" alt="" style="width:64px;height:64px;border-radius:8px;object-fit:cover">`:''}
       <div style="flex:1"><b>${esc(b.words.offer)}</b> · ${esc(b.words.locations.join(' / '))}${b.words.audience?` · ${esc(b.words.audience)}`:''}
@@ -1931,7 +2008,7 @@ function paintMetaFacts(v){
     ${pin ? box('pin', `<span>pin ${esc(pin.name||'the gym')} ${pin.kind==='place'?'<span class="pill navy">Meta place</span>':'<span class="pill">point</span>'} · radius <input type="number" min="1" max="80" step="0.5" value="${esc(k.radius_km)}" style="width:70px" onclick="event.stopPropagation()" oninput="MF.pick.radius_km=Number(this.value)"> km</span>`, ad?.radius_km?.length?` <span class="hint" style="margin:0">they run ${ad.radius_km.slice(0,3).map(x=>`${x.km} km (${x.adsets})`).join(', ')}</span>`:'') : '<p class="hint" style="margin:0">No pin: the Page has no map point and the ad sets name no place.</p>'}
     ${ad?.ages?.length ? box('ages', `<span>ages <input type="number" min="13" max="65" value="${esc(k.age_min)}" style="width:60px" onclick="event.stopPropagation()" oninput="MF.pick.age_min=Number(this.value)"> to <input type="number" min="13" max="65" value="${esc(k.age_max)}" style="width:60px" onclick="event.stopPropagation()" oninput="MF.pick.age_max=Number(this.value)"></span>`, ` <span class="hint" style="margin:0">they run ${ad.ages.slice(0,3).map(x=>`${x.min}-${x.max} (${x.adsets})`).join(', ')} · ${ad.genders.men} men's, ${ad.genders.women} women's, ${ad.genders.all} for all · now ${esc(pf.ages.min)}-${esc(pf.ages.max)}</span>`) : ''}
     ${ad?.daily_budget ? box('budget', `<span>daily budget ${esc(cur)} <input type="number" min="1" value="${esc(k.amount)}" style="width:90px" onclick="event.stopPropagation()" oninput="MF.pick.amount=Number(this.value)"> an ad set</span>`, ` <span class="hint" style="margin:0">their ad sets: median ${esc(cur)} ${ad.daily_budget.median}, from ${ad.daily_budget.min} to ${ad.daily_budget.max} · now ${esc(pf.budget.currency||'')} ${esc(pf.budget.amount??'')}</span>`) : ''}</div>`;
-  const offers = `<div class="card"><h3>Offers their ad sets named</h3><p class="hint" style="margin-top:4px">Ticked ones become offer wordings (chips on Create). None is ticked to begin with: the words on an ad are yours to choose. Edit them on Offer wording afterwards.</p>
+  const offers = `<div class="card"><h3>Offers their ad sets named</h3><p class="hint" style="margin-top:4px">Ticked ones become offer wordings (chips on Generate Creatives). None is ticked to begin with: the words on an ad are yours to choose. Edit them on Offer wording afterwards.</p>
     ${r.offers.length ? r.offers.map(o => `<label class="wrow" style="cursor:pointer"><input type="checkbox" style="width:auto" ${k.offers[o.text]?'checked':''} ${o.problems.length?'disabled':''} onchange="MF.pick.offers[${JSON.stringify(o.text)}]=this.checked;paintMetaFacts($('#view'))"><span>${esc(o.text)}</span> <span class="hint" style="margin:0">${o.adsets} ad set${o.adsets===1?'':'s'}${d.wordings.includes(o.text)?' · <span class="pill on">a wording already</span>':''}${o.problems.length?` · ${esc(o.problems.join('; '))}`:''}</span></label>`).join('') : '<p class="hint" style="margin:0">None found in the ad set names.</p>'}</div>`;
   const callouts = r.callouts.length ? `<div class="card"><h3>Location callout</h3><p class="hint" style="margin-top:4px">The place the ads call out, from the Page's address; it goes on Ad defaults and on the pin.</p>
     ${r.callouts.map(c => `<label class="wrow" style="cursor:pointer"><input type="checkbox" style="width:auto" ${k.callouts[c]?'checked':''} onchange="MF.pick.callouts[${JSON.stringify(c)}]=this.checked;paintMetaFacts($('#view'))"><span>${esc(c)}</span>${pf.callouts.map(x=>x.toUpperCase()).includes(c.toUpperCase())?' <span class="pill on">on Ad defaults</span>':''}</label>`).join('')}</div>` : '';
@@ -1971,7 +2048,7 @@ function paintCopyRefs(v){
   const lang = (e) => e.language || (/[\u3400-\u9fff]/.test(e.text||'') ? 'zh' : 'en');
   const f = CR.filter, entries = (L.entries||[]).filter(e => f==='retired' ? !!e.retired : f==='zh' ? !e.retired && lang(e)==='zh' : !e.retired && (f==='all' || e.kind===f));
   const chip = (id, label) => `<span class="chip ${f===id?'sel':''}" onclick="CR.filter='${id}';paintCopyRefs($('#view'))">${label}</span>`;
-  v.innerHTML = `<h1>Copy</h1><p class="sub">The copy library is shared by every gym: skeletons of copies and headlines that worked, with the gym, offer, area, audience, button and duration as placeholders. Every draft on a Publish screen follows one of these, never a gym's own past ads. Below it, this gym's references with their results. Nothing here goes to Meta.</p>
+  v.innerHTML = `<h1>Copy</h1><p class="sub">The copy library is shared by every gym: skeletons of copies and headlines that worked, with the gym, offer, area, audience, button and duration as placeholders. Every draft on a Publish Ads screen follows one of these, never a gym's own past ads. Below it, this gym's references with their results. Nothing here goes to Meta.</p>
   ${D.error?`<div class="msg err">${esc(D.error)}</div>`:''}${L.error?`<div class="msg err">${esc(L.error)}</div>`:''}${CR.msg?`<div class="msg ${/failed|could not|not saved|not sent/i.test(CR.msg)?'err':'ok'}">${esc(CR.msg)}</div>`:''}
   ${libResultsCard(L, lang)}
   <div class="card" id="libCard"><div class="row" style="gap:10px"><h3 style="margin:0">Copy library · ${L.counts.copy} ${L.counts.copy===1?'copy':'copies'} · ${L.counts.headline} ${L.counts.headline===1?'headline':'headlines'}${L.counts.retired?` <span class="hint">(${L.counts.retired} retired)</span>`:''}</h3><div class="spacer"></div><button class="sm" onclick="libAdd()">Write a skeleton…</button></div>
@@ -2081,10 +2158,12 @@ async function libRestore(id){ try { CR.lib = await api(`/api/library/copy/${enc
 
 // ── Results ─────────────────────────────────────────────────────────────────
 // Three levels, one at a time, as Ads Manager shows them: campaigns → the ad sets of one campaign → the ads of one ad set.
-const RS = { gym:null, data:null, level:'campaigns', campaign:null, adset:null, sort:{ campaigns:'cost_per_lead', adsets:'cost_per_lead', ads:'cost_per_lead' }, source:'all', busy:false, error:null, hsel:new Set(), msg:null };
+const RS = { gym:null, data:null, view:'review', level:'campaigns', campaign:null, adset:null, sort:{ campaigns:'cost_per_lead', adsets:'cost_per_lead', ads:'cost_per_lead' }, source:'all', busy:false, error:null, hsel:new Set(), msg:null };
 function openResults(){ go('results'); }
+/** Review Data's two tabs (2026-11-11): the review (the account review, What wins, the mix, across every gym) and every result as tables. */
+function rsView(v){ RS.view = v==='tables' ? 'tables' : 'review'; if (STATE.tab==='results' && RS.data) paintResults($('#view')); }
 async function viewResults(v, seq=VIEW_SEQ){
-  if (RS.gym !== STATE.sel || !RS.data){ v.innerHTML = '<h1>Results</h1><p class="sub">Loading…</p>'; RS.gym = STATE.sel; RS.data = null; RS.level = 'campaigns'; RS.campaign = null; RS.adset = null; RS.winCampaign = null; try { RS.data = await api(`/api/client/${STATE.sel}/results`); } catch(e){ RS.error = e.message; RS.data = { rows:[], batches:[], adsets:[], campaigns:[], history:null }; } if (seq !== VIEW_SEQ) return; RS.across = null; RS.acrossError = null; RS.review = null; RS.reviewError = null; rsLoadAcross(); rsLoadReview(); }
+  if (RS.gym !== STATE.sel || !RS.data){ v.innerHTML = '<h1>Review Data</h1><p class="sub">Loading…</p>'; RS.gym = STATE.sel; RS.data = null; RS.view = 'review'; RS.level = 'campaigns'; RS.campaign = null; RS.adset = null; RS.winCampaign = null; try { RS.data = await api(`/api/client/${STATE.sel}/results`); } catch(e){ RS.error = e.message; RS.data = { rows:[], batches:[], adsets:[], campaigns:[], history:null }; } if (seq !== VIEW_SEQ) return; RS.across = null; RS.acrossError = null; RS.review = null; RS.reviewError = null; rsLoadAcross(); rsLoadReview(); }
   paintResults(v);
 }
 const RCOLS = {
@@ -2117,26 +2196,25 @@ function paintResults(v){
   };
   const clickable = RS.level!=='ads' && RS.level!=='texts';
   const onRow = (r) => RS.level==='campaigns' ? `onclick="rsOpenCampaign('${esc(r.campaign_id)}')"` : RS.level==='adsets' ? `onclick="rsOpenAdset('${esc(r.adset_id)}')"` : '';
-  v.innerHTML = `<h1>Results</h1><p class="sub">Every campaign in this gym's ad account, the ones this app made and the ones before it, with Meta's numbers from the last pull. Click a campaign for its ad sets, an ad set for its ads. Every parameter, as a spreadsheet: <a href="/api/client/${esc(STATE.sel)}/results.csv">download results.csv</a>.</p>
+  const tables = RS.view==='tables';
+  v.innerHTML = `<h1>Review Data</h1><p class="sub">${tables ? `Every campaign in this gym's ad account, the ones this app made and the ones before it, with Meta's numbers from the last pull. Click a campaign for its ad sets, an ad set for its ads. Every parameter, as a spreadsheet: <a href="/api/client/${esc(STATE.sel)}/results.csv">download results.csv</a>.` : "Step 1 of the cycle: what the gym's ads did, what that says, and the next batch it suggests. Everything here is by rule over Meta's numbers; nothing changes until you act."}</p>
+  <div class="chips" id="rsTabs" style="margin-bottom:12px"><span class="chip ${tables?'':'sel'}" onclick="rsView('review')">The review</span><span class="chip ${tables?'sel':''}" onclick="rsView('tables')">All results · ${(D.campaigns||[]).length} campaign${(D.campaigns||[]).length===1?'':'s'}</span></div>
   ${RS.error?`<div class="msg err">${esc(RS.error)}</div>`:''}
-  <div class="row" style="margin-bottom:10px"><div style="font-size:13.5px">${crumb}</div><div class="spacer"></div>
+  <div class="row" style="margin-bottom:10px;${tables?'':'display:none'}"><div style="font-size:13.5px">${crumb}</div><div class="spacer"></div>
     <select onchange="RS.source=this.value;paintResults($('#view'))"><option value="all" ${RS.source==='all'?'selected':''}>both sources</option><option value="app" ${RS.source==='app'?'selected':''}>this app</option><option value="account" ${RS.source==='account'?'selected':''}>the account before</option></select>
     <button class="${H?'sm':'primary'}" onclick="rsPullHistory()" ${RS.busy?'disabled':''}>${RS.busy?'Working…':H?'Pull the account again':"Pull the account's history from Meta"}</button></div>
   ${RS.msg?`<div class="msg ${/failed|could not|not set/i.test(RS.msg)?'err':'ok'}">${esc(RS.msg)}</div>`:''}
-  ${reviewCard()}
-  ${winsCard(D)}
-  ${mixCard(D)}
-  ${acrossCard()}
-  <div class="card"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?(H.pulled?` · account pulled ${esc(H.pulled.slice(0,10))}`:' · from an Ads Manager export'):''}</span>${RS.level==='adsets'&&camp&&(D.texts||[]).some(t=>t.campaign_id===camp.campaign_id)?`<button class="sm" onclick="rsGo('texts')">Which copy wins</button>`:''}<div class="spacer"></div>
+  ${tables ? '' : reviewCard() + winsCard(D) + mixCard(D) + acrossCard()}
+  <div class="card" id="rsTables" style="${tables?'':'display:none'}"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?(H.pulled?` · account pulled ${esc(H.pulled.slice(0,10))}`:' · from an Ads Manager export'):''}</span>${RS.level==='adsets'&&camp&&(D.texts||[]).some(t=>t.campaign_id===camp.campaign_id)?`<button class="sm" onclick="rsGo('texts')">Which copy wins</button>`:''}<div class="spacer"></div>
       ${RS.level==='ads'?`<button class="sm" onclick="rsPickTop(10)">Pick the top 10 by leads</button><button class="sm primary" onclick="rsImport()" ${RS.hsel.size&&!RS.busy?'':'disabled'}>Bring ${RS.hsel.size||''} into the library</button>`:`<span class="hint">${clickable?'click a row to open it · ':''}click a column to sort</span>`}</div>
     ${RS.level==='ads'?"<p class=\"hint\">Ads from the account before this app can be brought into the library: the picture joins Reference images (a video's poster frame counts), the primary text and headline join the copy references with their results. Rows from outside the gym's country are greyed and left out of the top picks.</p>":''}
     ${rows.length?`<div style="overflow:auto;margin-top:8px"><table class="tbl"><thead><tr>${cols.map(([c,l])=>`<th style="${c==='pick'||c==='thumbnail'?'':'cursor:pointer;'}white-space:nowrap" onclick="if('${c}'!=='pick'&&'${c}'!=='thumbnail'){RS.sort['${RS.level}']='${c}';paintResults($('#view'))}">${l}${k===c?' ▾':''}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr class="${r.abroad?'dim':''} ${r.superseded?'dim':''}" ${clickable?`style="cursor:pointer" ${onRow(r)}`:''}>${cols.map(([c])=>cell(r,c)).join('')}</tr>`).join('')}</tbody></table></div>`:`<div class="empty">${RS.level==='campaigns'?(H?'No campaigns for this source.':"Nothing on Meta yet from this app. Pull the account's history to see what ran before, or publish a campaign."):'Nothing here.'}</div>`}
     ${rows.some(r=>r.abroad||r.superseded)?`<div class="hint" style="margin-top:8px">Greyed rows: ${rows.some(r=>r.abroad)?"targeting reaches outside the gym's country, so the leads say nothing about people near the gym":""}${rows.some(r=>r.abroad)&&rows.some(r=>r.superseded)?"; ":""}${rows.some(r=>r.superseded)?"an ad remade since (its old version, still paused on Meta)":""}.</div>`:''}
-    ${RS.level==='campaigns'&&(D.batches||[]).length?`<div class="hint" style="margin-top:10px">This app's campaigns: ${D.batches.map(b=>`<a href="#" onclick="openPublish('${esc(b.id)}');return false">${esc(b.id)}</a> (${b.results?'pull results again on its Publish screen':'not pulled yet — pull on its Publish screen'})`).join(' · ')}</div>`:''}
+    ${RS.level==='campaigns'&&(D.batches||[]).length?`<div class="hint" style="margin-top:10px">This app's campaigns: ${D.batches.map(b=>`<a href="#" onclick="openPublish('${esc(b.id)}');return false">${esc(b.id)}</a> (${b.results?'pull results again on its Publish Ads screen':'not pulled yet — pull on its Publish Ads screen'})`).join(' · ')}</div>`:''}
   </div>`;
 }
 /** The account review (Phase 6, 2026-11-11): one read-only action — the account read again, its new pictures read — and one card:
- *  the numbers, what to keep and pause, which copy wins, where Meta differs, and the next batch pre-filled on Create with its reasons. */
+ *  the numbers, what to keep and pause, which copy wins, where Meta differs, and the next batch pre-filled on Generate Creatives with its reasons. */
 async function rsLoadReview(){ const gym = STATE.sel; try { const r = await api(`/api/client/${gym}/account-review`); if (gym !== STATE.sel) return; RS.review = r; RS.reviewError = null; } catch(e){ RS.review = null; RS.reviewError = e.message; } if (STATE.tab==='results' && RS.data) paintResults($('#view')); }
 const LEAN_WORD = (l) => (l.tag==='people' ? `${l.value===2?'a pair':l.value===1?'one person':l.value+' people'}` : l.tag==='eye_contact' ? (l.value?'looking into the camera':'looking away') : `${String(l.value).replace(/-/g,' ')} ${l.tag}`) + (l.format ? ` · ${(FORMAT_PLURAL[l.format]||l.format)}` : '');
 function reviewCard(){
@@ -2171,7 +2249,7 @@ function reviewCard(){
         <ul class="hint" style="margin:8px 0 8px 18px;line-height:1.5">${R.reasons.map(x=>`<li>${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}${R.left.map(x=>`<li>Not yet — ${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}</ul>
         ${(R.scenes||[]).length || R.scenes_waiting ? `<div class="rvsec" id="rsScenes"><h4>Scenes to draft first</h4>
           ${(R.scenes||[]).map((s,i)=>`<div style="margin:0 0 8px"><div class="hint" style="margin:0 0 4px;line-height:1.5">${s.needed?'<b>Needed.</b> ':''}${esc(s.why.replace(/studio-portrait/g,'studio portrait'))}${s.drafts_waiting?` ${s.drafts_waiting} draft${s.drafts_waiting===1?'':'s'} of this kind already await your approval.`:''}</div><button class="sm" onclick="rsDraftScenes(${i})" ${STATE.run&&!STATE.run.done?'disabled':''}>Draft ${esc(FORMAT_NAMES[s.format]||s.format).toLowerCase()} scenes${s.from_results?' from the results':''}…</button></div>`).join('')}
-          ${R.scenes_waiting?`<div class="hint" style="margin:0"><a href="#/${esc(STATE.sel)}/scenes">${R.scenes_waiting} scene draft${R.scenes_waiting===1?'':'s'} await your approval on Library → Scenes</a>. A batch only uses approved scenes.</div>`:''}</div>` : ''}
+          ${R.scenes_waiting?`<div class="hint" style="margin:0"><a href="#/${esc(STATE.sel)}/scenes">${R.scenes_waiting} scene draft${R.scenes_waiting===1?'':'s'} await your approval on Draft Scenes</a>. A batch only uses approved scenes.</div>`:''}</div>` : ''}
         <button class="primary" id="rsNextBatch" onclick="rsStartNext()">Start the next batch from this →</button>
         <div class="hint" style="margin-top:6px">Opens Create with these filled in. Every word is yours to change, and nothing is generated until you confirm the run there.</div>
       </div>
@@ -2187,21 +2265,23 @@ function rsReviewAccount(){
 }
 function rsReviewGo(){ const max = parseInt($('#rsRevMax').value, 10); if (!(max >= 0)) return; $('#gModal').innerHTML = ''; run({ kind:'account-review', gym: STATE.sel, max }, async () => { RS.data = null; if (STATE.tab==='results') await viewResults($('#view')); }); }
 /** Scenes drafted from the results (2026-11-11): the confirmation for one of the review's drafting jobs, then the scenes-refresh run. Text calls only; drafts for approval. */
-function rsDraftScenes(i){
-  const s = (RS.review?.scenes||[])[i]; if (!s) return;
+function rsDraftScenes(i){ draftJob((RS.review?.scenes||[])[i]); }
+let DJ = null;
+function draftJob(s){
+  if (!s) return; DJ = s;
   const kind = (FORMAT_NAMES[s.format]||s.format).toLowerCase();
   $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Draft ${esc(kind)} scenes${s.from_results?' from the results':''}</h3>
     <p class="hint">${esc(s.why.replace(/studio-portrait/g,'studio portrait'))}</p>
-    <p class="hint">${s.from_results ? "The drafter is told what this gym's own ads of this kind have done — what each kind of shot cost per lead and its best pictures — and writes about two thirds of the scenes as new versions of what earns leads, the rest to keep testing." : "This gym's ads of this kind have no lead on record yet, so the drafter goes by what the library has fewest of."} One or two text calls; no image calls. They arrive as drafts on Library → Scenes, and a batch only uses the ones you approve.</p>
+    <p class="hint">${s.from_results ? "The drafter is told what this gym's own ads of this kind have done — what each kind of shot cost per lead and its best pictures — and writes about two thirds of the scenes as new versions of what earns leads, the rest to keep testing." : "This gym's ads of this kind have no lead on record yet, so the drafter goes by what the library has fewest of."} One or two text calls; no image calls. They arrive as drafts on Draft Scenes, and a batch only uses the ones you approve.</p>
     <div class="grid"><div><label for="rsDsAud">Audience</label><select id="rsDsAud">${['men','women','any'].map(a=>`<option value="${a}" ${a===s.audience?'selected':''}>${a}</option>`).join('')}</select></div>
       <div><label for="rsDsN">How many</label><input id="rsDsN" type="number" min="1" max="12" value="${s.count}"></div></div>
-    <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="rsDsGo" onclick="rsDraftScenesGo(${i})">Draft them</button></div></div></div>`;
+    <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="rsDsGo" onclick="draftJobGo()">Draft them</button></div></div></div>`;
 }
-function rsDraftScenesGo(i){
-  const s = (RS.review?.scenes||[])[i]; if (!s) return;
+function draftJobGo(){
+  const s = DJ; if (!s) return;
   const count = parseInt($('#rsDsN').value, 10), audience = $('#rsDsAud').value; if (!(count >= 1 && count <= 12)) return;
   $('#gModal').innerHTML = '';
-  run({ kind:'scenes-refresh', gym: STATE.sel, audience, count, ...(s.format!=='workout'?{format:s.format}:{}), ...(s.from_results?{from_results:true}:{}) }, async (code) => { await rsLoadReview(); const w = RS.review?.scenes_waiting || 0; if (code===0) toast(`${w} scene draft${w===1?'':'s'} await your approval on Library → Scenes`, 'ok'); });
+  run({ kind:'scenes-refresh', gym: STATE.sel, audience, count, ...(s.format!=='workout'?{format:s.format}:{}), ...(s.from_results?{from_results:true}:{}) }, async (code) => { if (STATE.tab==='results') await rsLoadReview(); if (STATE.tab==='scenes') { try { await reloadScenes(); } catch{} } await loadCycle(); const w = CY.data?.scenes_waiting ?? RS.review?.scenes_waiting ?? 0; if (code===0) toast(`${w} scene draft${w===1?'':'s'} await your approval on Draft Scenes`, 'ok'); });
 }
 /** Create, opened on the review's suggestion: the owner's own last words, the suggested photos and cards, the lean — each changeable there. */
 function rsStartNext(){ if (!RS.review) return; B.pendingSuggest = RS.review; go('batch'); }
@@ -2315,10 +2395,10 @@ function rsReadCreatives(){
     <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" onclick="rsReadGo()">Read</button></div></div></div>`;
 }
 function rsReadGo(){ const max = parseInt($('#rsMax').value, 10); if (!(max >= 1)) return; $('#gModal').innerHTML = ''; run({ kind:'creatives-read', gym: STATE.sel, max }, async () => { await rsReload(); }); }
-function rsGo(level){ RS.level = level; if (level==='campaigns'){ RS.campaign = null; RS.adset = null; } if (level==='adsets') RS.adset = null; paintResults($('#view')); }
+function rsGo(level){ RS.view = 'tables'; RS.level = level; if (level==='campaigns'){ RS.campaign = null; RS.adset = null; } if (level==='adsets') RS.adset = null; paintResults($('#view')); }
 function rsBack(){ rsGo(RS.level==='ads' || RS.level==='texts' ? 'adsets' : 'campaigns'); }
-function rsOpenCampaign(id){ RS.campaign = id; RS.adset = null; RS.level = 'adsets'; paintResults($('#view')); window.scrollTo(0,0); }
-function rsOpenAdset(id){ RS.adset = id; RS.level = 'ads'; const set = (RS.data.adsets||[]).find(s=>s.adset_id===id); if (set && !RS.campaign) RS.campaign = set.campaign_id || null; paintResults($('#view')); window.scrollTo(0,0); }
+function rsOpenCampaign(id){ RS.view = 'tables'; RS.campaign = id; RS.adset = null; RS.level = 'adsets'; paintResults($('#view')); window.scrollTo(0,0); }
+function rsOpenAdset(id){ RS.view = 'tables'; RS.adset = id; RS.level = 'ads'; const set = (RS.data.adsets||[]).find(s=>s.adset_id===id); if (set && !RS.campaign) RS.campaign = set.campaign_id || null; paintResults($('#view')); window.scrollTo(0,0); }
 async function rsPullHistory(){ RS.busy = true; RS.msg = null; paintResults($('#view')); try { const r = await api(`/api/client/${STATE.sel}/history/pull`, { method:'POST', body:{} }); RS.data.history = r; if (r.adsets_rows) RS.data.adsets = r.adsets_rows; if (r.campaign_rows) RS.data.campaigns = r.campaign_rows; RS.msg = `Pulled ${r.campaigns} campaigns, ${r.adsets} ad sets, ${r.ads} ads from the account.`; } catch(e){ RS.msg = 'The pull failed: ' + e.message; } RS.busy = false; paintResults($('#view')); }
 function rsPickTop(n){ const rows = rsRows().filter(r=>r.source==='account'&&r.importable&&r.leads>0&&!r.abroad).sort((a,b)=>b.leads-a.leads).slice(0,n); RS.hsel = new Set(rows.map(r=>r.ad_id)); paintResults($('#view')); }
 async function rsImport(){ RS.busy = true; RS.msg = null; paintResults($('#view')); try { const r = await api(`/api/client/${STATE.sel}/history/import`, { method:'POST', body:{ ads:[...RS.hsel] } }); if (RS.data.history) RS.data.history.rows = r.rows; RS.data.copy_refs = r.copy_refs; RS.hsel.clear(); RS.msg = `Brought in ${r.images} image${r.images===1?'':'s'} (${r.images_kept} already there) and ${r.copy} copy reference${r.copy===1?'':'s'} (${r.copy_kept} updated).${r.skipped.length?' Skipped: '+r.skipped.join('; '):''} Images: Library → Reference images.`; } catch(e){ RS.msg = 'The import failed: ' + e.message; } RS.busy = false; paintResults($('#view')); }
@@ -2327,10 +2407,10 @@ async function rsImport(){ RS.busy = true; RS.msg = null; paintResults($('#view'
 const PB = { gym:null, id:null, data:null, settings:{}, busy:false, error:null, link:null, estimates:{}, saveT:null };
 async function viewPublish(v, seq=VIEW_SEQ){
   if (PB.id !== STATE.batch || PB.gym !== STATE.sel || !PB.data){
-    v.innerHTML = `<h1>Publish</h1><p class="sub">Loading ${esc(STATE.batch)}…</p>`;
+    v.innerHTML = `<h1>Publish Ads</h1><p class="sub">Loading ${esc(STATE.batch)}…</p>`;
     PB.gym = STATE.sel; PB.id = STATE.batch; PB.data = null; PB.error = null; PB.link = null; PB.estimates = {};
     try { PB.data = await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/publish`); PB.settings = PB.data.settings || {}; const ra = PB.data.published?.campaign?.id ? await api(`/api/client/${STATE.sel}/batch/${STATE.batch}/results`).catch(()=>({})) : {}; PB.results = ra.results || null; PB.texts = ra.texts || []; }
-    catch(e){ if (seq !== VIEW_SEQ) return; v.innerHTML = `<h1>Publish</h1><div class="msg err">${esc(e.message)}</div><p><button onclick="go('exports')">Back</button></p>`; return; }
+    catch(e){ if (seq !== VIEW_SEQ) return; v.innerHTML = `<h1>Publish Ads</h1><div class="msg err">${esc(e.message)}</div><p><button onclick="go('exports')">Back</button></p>`; return; }
     if (seq !== VIEW_SEQ) return;
   }
   paintPublish(v);
@@ -2518,7 +2598,8 @@ function publishedCard(rec, P){
       <span>Ad sets</span><div>${sets.length?sets.map(x=>`${esc(x.name)} · ${esc(x.id)}`).join('<br>'):'not yet'}</div>
       <span>Ads</span><div>${made} made${X && Object.values(X.ads||{}).length ? ` · on Meta now: ${Object.entries(Object.values(X.ads).reduce((m,a)=>(m[a.words]=(m[a.words]||0)+1,m),{})).map(([w,n])=>`${n} ${esc(w)}`).join(', ')}` : ', all paused as made'}${rec.superseded?.length?` · ${rec.superseded.length} remade (the old ones stay paused)`:''}${stale.length?` · <span style="color:var(--warn)">${stale.length} on Meta but no longer kept here (paused; pause or delete them in Ads Manager)</span>`:''}</div>
       ${rec.error?`<span>Stopped</span><div style="color:var(--err)">${esc(rec.error.step)} ${esc(rec.error.what||'')}: ${esc(rec.error.message)}</div>`:''}
-      <span>Last run</span><div>${rec.runs?.length?esc((rec.runs.at(-1).finished||rec.runs.at(-1).started).slice(0,16).replace('T',' ')):'—'}</div></div>${numbers}</div>`;
+      <span>Last run</span><div>${rec.runs?.length?esc((rec.runs.at(-1).finished||rec.runs.at(-1).started).slice(0,16).replace('T',' ')):'—'}</div></div>${numbers}
+    ${rec.done?`<div class="hint" id="pbBack" style="margin-top:10px">The cycle goes round: once these ads have run a few days, read what they did on <a href="#" onclick="go('results');return false">Review Data →</a> and the next batch starts from there.</div>`:''}</div>`;
 }
 /** Before you create (2026-10-11): what is usually a mistake, in words, with where to fix it; none of it stops the create. */
 function readinessBlock(R, P){
@@ -2702,13 +2783,25 @@ async function cdPullGoogle(){
   paintCards();
 }
 async function viewScenes(v, seq=VIEW_SEQ){
-  v.innerHTML = '<h1>Scene library</h1><p class="sub">Loading…</p>';
+  v.innerHTML = '<h1>Draft Scenes</h1><p class="sub">Loading…</p>';
   if (B.gym !== STATE.sel || !B.scenes){ B.gym = STATE.sel; await loadSetup(); }
   if (seq !== VIEW_SEQ) return;
-  v.innerHTML = `<h1>Scene library</h1><p class="sub">The scenes the batches photograph. The agent drafts new ones on request; nothing is generated from a draft until you approve it. Rejecting asks why, and retires the scene rather than deleting it.</p>
+  v.innerHTML = `<h1>Draft Scenes</h1><p class="sub">Step 2 of the cycle: the scenes the next batch photographs. The agent drafts new ones on request — from the account's results, the library's gaps, your words or a reference image; nothing is generated from a draft until you approve it. Rejecting asks why, and retires the scene rather than deleting it.</p>
+    <div id="scAsks"></div>
     <div class="card" id="bSceneCard"></div><div id="runbox"></div><div id="bModal"></div>`;
-  paintScenes(); renderRunBox();
+  paintSceneAsks(); paintScenes(); renderRunBox();
 }
+/** What the data asks of the scenes (2026-11-11), from the cycle's status: the review's drafting jobs — a kind in the mix with no
+ *  approved scene, new versions of the gym's best pictures — each with its reason and its button. The drafts themselves are below. */
+function paintSceneAsks(){
+  const box = $('#scAsks'); if (!box) return;
+  const D = CY.gym===STATE.sel ? CY.data : null; if (!D){ box.innerHTML = ''; return; }
+  const jobs = D.jobs || [], busy = STATE.run && !STATE.run.done;
+  box.innerHTML = `<div class="card" id="scAsksCard"><h3 style="margin:0 0 6px">What the data asks for</h3>
+    ${jobs.length ? jobs.map((s,i)=>`<div style="margin:8px 0 0"><div class="hint" style="margin:0 0 4px;line-height:1.5">${s.needed?'<b>Needed.</b> ':''}${esc(s.why.replace(/studio-portrait/g,'studio portrait'))}${s.drafts_waiting?` ${s.drafts_waiting} draft${s.drafts_waiting===1?'':'s'} of this kind already await your approval below.`:''}</div><button class="sm ${s.needed?'primary':''}" onclick="scDraft(${i})" ${busy?'disabled':''}>Draft ${esc(FORMAT_NAMES[s.format]||s.format).toLowerCase()} scenes${s.from_results?' from the results':''}…</button></div>`).join('')
+      : `<p class="hint" style="margin:0">Nothing: every kind of photograph in the next batch has approved scenes, and the results name no picture to make new versions of yet. Refresh scenes… below still drafts by the library's gaps, your words or a reference image.</p>`}</div>`;
+}
+function scDraft(i){ draftJob((CY.data?.jobs||[])[i]); }
 /** Status, a Refresh button, and every draft awaiting approval with Approve / Reject. */
 function paintScenes(){
   const box = $('#bSceneCard'); if (!box) return;
@@ -2753,7 +2846,7 @@ async function bCopyScenes(){
   const m=$('#bSceneMsg'); if (m) m.innerHTML = msg;
   scheduleCheck(0);
 }
-async function reloadScenes(){ B.scenes = await api(`/api/client/${STATE.sel}/scenes`); B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); paintScenes(); paintGapDrafts(); paintRefs(); paintDerived(); paintList(); }
+async function reloadScenes(){ B.scenes = await api(`/api/client/${STATE.sel}/scenes`); B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); paintScenes(); paintGapDrafts(); paintRefs(); paintDerived(); paintList(); loadCycle(); }
 async function bApprove(ids){
   try { const r = await api(`/api/client/${STATE.sel}/scenes/approve`, {method:'POST', body:{ids}}); await reloadScenes(); const m=$('#bSceneMsg'); if (m) m.textContent = `approved: ${r.approved.join(', ')}`; scheduleCheck(0); }
   catch(e){ const m=$('#bSceneMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
@@ -3117,7 +3210,7 @@ async function viewLeadForms(v, seq=VIEW_SEQ){
 function paintLeadForms(v){
   const D = LF.data, t = D.record?.template, made = new Set((D.record?.created||[]).map(x=>x.id));
   const row = f => `<tr><td><b>${esc(f.name)}</b>${f.id===t?.source?.id?' <span class="pill on">template</span>':''}${f.id===D.default_form_id?' <span class="pill navy">default</span>':''}${made.has(f.id)?' <span class="pill">made here</span>':''}</td><td>${esc((f.created_time||'').slice(0,10))}</td><td>${f.question_count??''}</td><td>${f.leads_count??''}</td><td>${esc((f.status||'').toLowerCase())}</td><td class="row" style="gap:6px;justify-content:flex-end">${f.id===t?.source?.id?'':`<button class="sm" onclick="lfTemplate('${esc(f.id)}')">Use as template</button>`}${f.id===D.default_form_id?'':`<button class="sm" onclick="lfDefault('${esc(f.id)}','${esc(f.name)}')">Make default</button>`}</td></tr>`;
-  v.innerHTML = `<h1>Lead forms</h1><p class="sub">The instant forms on ${esc(D.page_name||'the gym\'s Page')}. Pick one as the <b>template</b>: a new form for a new offer is that form with the offer and the district swapped, and nothing else rewritten — Meta does not let a form be edited once made, only archived, so the version number stays in the name. The <b>default</b> form is the one every campaign made here points to unless its Publish screen picks another.</p>
+  v.innerHTML = `<h1>Lead forms</h1><p class="sub">The instant forms on ${esc(D.page_name||'the gym\'s Page')}. Pick one as the <b>template</b>: a new form for a new offer is that form with the offer and the district swapped, and nothing else rewritten — Meta does not let a form be edited once made, only archived, so the version number stays in the name. The <b>default</b> form is the one every campaign made here points to unless its Publish Ads screen picks another.</p>
   ${D.reason?`<div class="msg warn">${esc(D.reason)}</div>`:''}
   <div class="card"><div class="row"><h3 style="margin:0">Forms on the Page · ${(D.forms||[]).length}</h3><div class="spacer"></div><button class="sm" onclick="viewLeadForms($('#view'))">Reload</button><button class="sm primary" onclick="lfNew()" ${t?'':'disabled'} title="${t?'':'choose a template first'}">New form from the template…</button></div>
     ${(D.forms||[]).length?`<table class="tbl" style="margin-top:10px"><thead><tr><th>Form</th><th>Created</th><th>Questions</th><th>Leads</th><th>Status</th><th></th></tr></thead><tbody>${D.forms.map(row).join('')}</tbody></table>`:'<p class="hint">No forms yet on this Page.</p>'}</div>

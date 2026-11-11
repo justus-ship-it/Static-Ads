@@ -118,13 +118,13 @@ export const isDraft = (s) => s?.draft === true && !isRetired(s);
 export const today = () => new Date().toISOString().slice(0, 10);
 
 /** A gym's library before its first scene: written by the first refresh, approved by the owner's first approval. */
-export const newLibrary = () => ({ schema_version: 1, approved: false, note: "Scenes for generated photos, drafted by the agent and approved by the owner (Library → Scenes). Each describes the people and what they are doing, never words to show; the layout decides where they sit.", scenes: [] });
+export const newLibrary = () => ({ schema_version: 1, approved: false, note: "Scenes for generated photos, drafted by the agent and approved by the owner (Draft Scenes). Each describes the people and what they are doing, never words to show; the layout decides where they sit.", scenes: [] });
 /**
  * The library file as written: every scene, drafts and retired ones included. `create` — a gym with no
  * library yet reads as an empty one (the first refresh writes it); without it a missing library is refused.
  */
 export function readLibrary(path, { create = false } = {}) {
-  if (!existsSync(path)) { if (create) return newLibrary(); throw new Error(`no scene library yet (${path}): draft the first scenes on Library → Scenes and approve them`); }
+  if (!existsSync(path)) { if (create) return newLibrary(); throw new Error(`no scene library yet (${path}): draft the first scenes on Draft Scenes and approve them`); }
   const lib = JSON.parse(readFileSync(path, "utf-8"));
   if (!Array.isArray(lib.scenes)) lib.scenes = [];
   return lib;
@@ -143,7 +143,7 @@ export function loadScenes(path, { allowDraft = false } = {}) {
   const lib = readLibrary(path);
   const bad = lib.scenes.flatMap((s, i) => sceneProblems(s).map((e) => `${s.id || i}: ${e}`));
   if (bad.length) throw new Error(`scene library problems:\n${bad.join("\n")}`);
-  if (lib.approved !== true && !allowDraft) throw new Error(`the scene library ${path} is not approved yet — nothing is generated from it until the owner approves a scene on Library → Scenes`);
+  if (lib.approved !== true && !allowDraft) throw new Error(`the scene library ${path} is not approved yet — nothing is generated from it until the owner approves a scene on Draft Scenes`);
   const ids = lib.scenes.map((x) => x.id).filter(Boolean);
   if (new Set(ids).size !== ids.length) throw new Error("scene library: two scenes share an id");
   return lib.scenes.filter((x) => !isRetired(x) && (allowDraft || x.draft !== true));

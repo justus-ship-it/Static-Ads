@@ -125,7 +125,7 @@ export function pictures(gymDir) {
   return out;
 }
 export const readReads = (gymDir) => { const j = readJson(join(gymDir, READS_FILE)); return { schema: 1, model: CHECK_MODEL, reads: {}, ...(j || {}), reads: j?.reads && typeof j.reads === "object" ? j.reads : {} }; };
-// A picture's content hash, remembered while the file is unchanged (its size and time): the panel's Results page asks for
+// A picture's content hash, remembered while the file is unchanged (its size and time): the panel's Review Data page asks for
 // every gym's pictures several times a look, and hashing a few hundred images each time took seconds (2026-11-11).
 const HASHES = new Map();
 const hashOf = (p) => {

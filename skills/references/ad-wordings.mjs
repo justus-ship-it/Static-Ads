@@ -1,6 +1,6 @@
 /**
  * ad-wordings.mjs — the offer wordings a gym's ads have used, kept with its profile and offered as
- * chips on the Create screen.
+ * chips on the Generate Creatives screen.
  *
  * The words on an ad are always the owner's: typed, or picked from the ones they typed before. The
  * owner adds, edits and deletes them; the only wording the software records on its own is one the

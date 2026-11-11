@@ -958,7 +958,7 @@ test("B13 a batch is made in one format (Phase 3, 2026-11-10): a studio-portrait
     assert.deepEqual([d.batch.format, d.batch.photos.every((p) => /^m-p-/.test(p.scene_id))], ["studio-portrait", true]);
     // A format with no approved scenes: refused, with the way out.
     writeFileSync(libPath, JSON.stringify({ approved: true, scenes: [...workout, P("m-p-draft", { draft: true })] }));
-    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "none-yet" }, deps, log: () => {} }), /no approved studio-portrait scenes yet: draft some on Library → Scenes \(Refresh scenes…, format: studio-portrait\) and approve them/);
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "none-yet" }, deps, log: () => {} }), /no approved studio-portrait scenes yet: draft some on Draft Scenes \(Refresh scenes…, format: studio-portrait\) and approve them/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

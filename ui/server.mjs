@@ -48,6 +48,7 @@ import { importExport } from "../skills/references/ads-export.mjs";
 import { readReviews, reviewView, addReview, editReview, findPlace, pullGoogleReviews, placesKey, readWords, addStatement, addTimeline, decideWords, draftCardWords, cardsAvailable, cardCount, durationOf, CARD_KINDS, MAX_CARDS, MIN_STARS, EXCERPT_LIMIT, STATEMENT_LIMIT } from "../skills/references/cards.mjs";
 import { renderCard, loadCards } from "../skills/references/render-cards.mjs";
 import { buildReview, reviewText } from "../skills/references/account-review.mjs";
+import { cycleFrom } from "../skills/references/cycle.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -664,7 +665,7 @@ function listBatches(gym) {
       selected: existsSync(join(out, "selections.json")),
       stories: (() => { const s = readJsonFile(join(out, "stories.json")); return s ? s.ads.length : 0; })(),
       directed: !!brief.direction,
-      published: (() => { const r = readJsonFile(join(out, "publish.json")), x = readJsonFile(join(out, "results.json")); return r?.campaign?.id ? { ads: Object.keys(r.ads || {}).length, done: !!r.done, status: x?.campaign?.words || "paused", leads: x?.campaign?.all_time?.leads ?? null, spend: x?.campaign?.all_time?.spend ?? null, cost_per_lead: x?.campaign?.all_time?.cost_per_lead ?? null, pulled: x?.pulled || null } : null; })(),
+      published: (() => { const r = readJsonFile(join(out, "publish.json")), x = readJsonFile(join(out, "results.json")); return r?.campaign?.id ? { ads: Object.keys(r.ads || {}).length, done: !!r.done, at: r.runs?.[r.runs.length - 1]?.started || r.started || null, status: x?.campaign?.words || "paused", leads: x?.campaign?.all_time?.leads ?? null, spend: x?.campaign?.all_time?.spend ?? null, cost_per_lead: x?.campaign?.all_time?.cost_per_lead ?? null, pulled: x?.pulled || null } : null; })(),
       review: batch ? (() => { const c = reviewState(gym, id).counts; return { kept: c.kept, excluded: c.excluded, unreviewed: c.unreviewed }; })() : null,
       running: activeRun(gym, id),
       // A run the owner stopped before the batch was made: said on its card, with what it had spent.
@@ -678,7 +679,7 @@ function listBatches(gym) {
 
 /** The brief's problems (Step 6 rules, plus the scene library) and what it would make. */
 /**
- * The Create screen's Spread switch arrives as `spread: true`; it becomes the brief's `must_show` here, cut to
+ * The Generate Creatives screen's Spread switch arrives as `spread: true`; it becomes the brief's `must_show` here, cut to
  * what the gym's approved scenes can show for the batch's audience (`spreadFor`), with what was left out said.
  * A library that cannot load yet gives no spread (the check says why the batch cannot run).
  */
@@ -734,15 +735,15 @@ function checkBrief(gym, raw) {
   const mix = mixFor(gym, brief), format = mixName(mix) || "workout", directedBrief = !!(brief?.direction && (brief.direction.words || brief.direction.reference));
   const audienceFor = sceneAudience(brief?.audience, brief?.scene_audience);
   if (g > 0 && !brief?.scenes) {
-    if (!scenes.exists) errors.push("no scene library yet: generated photos need approved scenes. Draft the first ones on Library → Scenes, or set generated photos to 0 and use real photos only");
-    else if (!scenes.approved) errors.push("no approved scenes yet: approve some on Library → Scenes (nothing is generated from a draft)");
+    if (!scenes.exists) errors.push("no scene library yet: generated photos need approved scenes. Draft the first ones on Draft Scenes, or set generated photos to 0 and use real photos only");
+    else if (!scenes.approved) errors.push("no approved scenes yet: approve some on Draft Scenes (nothing is generated from a draft)");
     else if (audienceFor !== "any" && !(scenes.counts[audienceFor] || scenes.counts.any)) errors.push(`the scene library has no scenes for a "${audienceFor}" audience`);
     else if (!directedBrief) {
       // Every kind of photograph in the batch needs its own approved scenes, for this audience.
       for (const f of Object.keys(mix)) {
         const of = scenes.formats?.[f], name = f.replace("-", " ");
-        if (!of?.total) errors.push(`no approved ${name} scenes yet: draft some on Library → Scenes (Refresh scenes…, format: ${name}) and approve them`);
-        else if (audienceFor !== "any" && !(of.counts[audienceFor] || of.counts.any)) errors.push(`no approved ${name} scenes for a "${audienceFor}" audience yet: draft some on Library → Scenes`);
+        if (!of?.total) errors.push(`no approved ${name} scenes yet: draft some on Draft Scenes (Refresh scenes…, format: ${name}) and approve them`);
+        else if (audienceFor !== "any" && !(of.counts[audienceFor] || of.counts.any)) errors.push(`no approved ${name} scenes for a "${audienceFor}" audience yet: draft some on Draft Scenes`);
       }
     }
   }
@@ -922,7 +923,7 @@ async function renderPreview(gym, { offer, location, audience, photos, look = nu
   const looks = [];
   // A gym whose ads use its brand colours sees them in the preview: the offer-band look takes the brand palette.
   const profile = readJsonFile(join(brandDir(gym), "gym-profile.json"));
-  // The look family and the feed shape: the Create screen's own choice, else the gym's (Ad defaults).
+  // The look family and the feed shape: the Generate Creatives screen's own choice, else the gym's (Ad defaults).
   const family = PREVIEW_FAMILIES.includes(look) ? look : (profile?.creative_defaults?.look || "reference");
   const shape = FEED_RATIOS.includes(ratio) ? ratio : FEED_RATIOS[0];
   let catalogue = null;
@@ -985,9 +986,9 @@ async function fillPinPoints(profile, { geocode = geocodePostal } = {}) {
 }
 // The identity lookup is one Meta call; an account with none or several is not asked again for a minute.
 const identityMemo = new Map();
-/** A gym whose targeting presets were never imported (2026-10-07): the Publish screen's Detailed targeting list
+/** A gym whose targeting presets were never imported (2026-10-07): the Publish Ads screen's Detailed targeting list
  *  showed nothing but Broad for F45 Xinyi while its account had run 31 distinct targetings. Imported once from the
- *  account when the Publish screen opens (a few read-only calls); a failure is not tried again for a minute. */
+ *  account when the Publish Ads screen opens (a few read-only calls); a failure is not tried again for a minute. */
 const importMemo = new Map();
 async function presetsAutoImport(gym) {
   const dir = brandDir(gym), profile = readJsonFile(join(dir, "gym-profile.json")) || {};
@@ -1429,6 +1430,15 @@ const server = createServer(async (req, res) => {
       let mix = null; try { mix = mixSuggestion(brandDir(gym), { formats: Object.keys(SCENE_FORMATS), current: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), currency }); } catch (e) { mix = { error: e.message }; }
       return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, exports: h.exports || [] } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length, wins, mix });
     }
+    // /api/client/{gym}/cycle — where this gym stands on the five steps (Review Data → Draft Scenes → Generate Creatives →
+    // Pick Ads → Publish Ads) and the one thing to do next, from what is on disk: no Meta call, no model call. It only nudges.
+    const cy = p.match(/^\/api\/client\/([^/]+)\/cycle$/);
+    if (cy && req.method === "GET") {
+      const gym = cy[1];
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      try { return json(res, 200, cycleFrom({ review: buildReview(brandDir(gym), { brandsDir: BRANDS }), batches: listBatches(gym) })); }
+      catch (e) { return json(res, 500, { error: scrubTokens(e.message) }); }
+    }
     // /api/client/{gym}/account-review — the review, built from what is on disk (no Meta call, no model call): the numbers,
     // what to keep and pause, which copy wins, the drift, the mix, and the suggested next brief with its reasons.
     const ar = p.match(/^\/api\/client\/([^/]+)\/account-review$/);
@@ -1680,7 +1690,7 @@ const server = createServer(async (req, res) => {
       } catch (e) { return json(res, e.duplicate ? 409 : 400, { error: e.message }); }
     }
     // /api/client/{gym}/mix { mix } — the gym's default mix of formats, in shares that sum to 100 (Ad defaults, or the
-    // Results page's "Use this mix"). The owner's click; a suggestion is never saved by itself.
+    // Review Data page's "Use this mix"). The owner's click; a suggestion is never saved by itself.
     const mxm = p.match(/^\/api\/client\/([^/]+)\/mix$/);
     if (mxm && req.method === "POST") {
       const gym = mxm[1];
@@ -2057,7 +2067,7 @@ const server = createServer(async (req, res) => {
         // The kind of photograph the drafts are (Phase 3): workout scenes, or studio portraits.
         if (body.format != null && !SCENE_FORMATS[body.format]) return json(res, 400, { error: `format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}` });
         if (body.cover != null && body.format && body.format !== "workout") return json(res, 400, { error: "cover is about exercises and equipment: it applies to workout scenes only" });
-        // What the drafts must cover (2026-10-15, the Create screen's "Draft scenes for them"): tag:value pairs from the Spread's left-out list, checked against the vocabulary.
+        // What the drafts must cover (2026-10-15, the Generate Creatives screen's "Draft scenes for them"): tag:value pairs from the Spread's left-out list, checked against the vocabulary.
         if (body.cover != null) {
           const bad = !Array.isArray(body.cover) || !body.cover.length || body.cover.length > 8 || body.cover.some((c) => { const [tag, value] = String(c).split(":"); return !tag || !value || (tag !== "exercise" && !SCENE_TAGS[tag]) || (tag === "exercise" ? !/^[a-z][a-z-]{1,30}$/.test(value) : !SCENE_TAGS[tag].includes(value)); });
           if (bad) return json(res, 400, { error: `cover must list 1 to 8 tag:value pairs from the scene vocabulary (exercise, ${Object.keys(SCENE_TAGS).join(", ")})` });
@@ -2173,7 +2183,7 @@ const server = createServer(async (req, res) => {
           catch (e) { return json(res, 400, { error: e.message }); }
           if (!plan.ready) return json(res, 409, { error: `the plan has problems: ${plan.problems.join("; ")}` });
           const agreed = c.ads === plan.counts.ads && c.adsets === plan.counts.adsets && c.per_day === plan.budget.per_day_total;
-          if (!agreed) return json(res, 409, { error: "the plan differs from what was confirmed (ads, ad sets or the day's budget) — read the Publish screen again and confirm" });
+          if (!agreed) return json(res, 409, { error: "the plan differs from what was confirmed (ads, ad sets or the day's budget) — read the Publish Ads screen again and confirm" });
           if (c.first != null && !(Number.isInteger(c.first) && c.first >= 1 && c.first <= plan.counts.ads)) return json(res, 400, { error: `"first" is a whole number of ads, 1 to ${plan.counts.ads}` });
           body.confirm = { first: c.first ?? null };
         } else if (spec.spends) {

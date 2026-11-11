@@ -248,7 +248,7 @@ if (isMain) {
     if (v.results) {
       // Every skeleton that has run on Meta, across every gym, the most leads first (2026-10-15).
       const rows = resultsAcross(LIBRARY_DIR, v["brands-dir"] ? resolve(v["brands-dir"]) : join(REPO_ROOT, "brands"));
-      if (!rows.length) console.log("no skeleton has results yet: pull results on a Publish screen first");
+      if (!rows.length) console.log("no skeleton has results yet: pull results on a Publish Ads screen first");
       for (const r of rows) console.log(`${r.kind.padEnd(8)} ${String(r.results.leads).padStart(4)} leads  ${Object.entries(r.results.by_currency).map(([c, x]) => `${c} ${x.leads ? Math.round((x.spend / x.leads) * 100) / 100 : "—"}/lead`).join(" ")}  ctr ${r.ctr ?? "—"}%  ${r.results.campaigns} campaign(s) in ${r.gyms.join(", ")}  [${r.angle || "-"}, ${r.language}]  ${r.id}  ${r.text.slice(0, 60).replace(/\n/g, " ")}`);
     } else if (v.list) {
       const es = liveEntries(LIBRARY_DIR, v.kind || null);

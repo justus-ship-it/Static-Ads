@@ -144,7 +144,7 @@ export function campaignList(rows) {
   return [...by.values()].map((c) => ({ ...c, cost_per_lead: c.leads ? round2(c.spend / c.leads) : null })).sort((a, b) => (b.running > 0) - (a.running > 0) || b.leads - a.leads || b.spend - a.spend || String(a.name).localeCompare(String(b.name)));
 }
 
-/** Everything the Results page shows under What wins. The scope falls back to every ad when nothing is active.
+/** Everything the Review Data page shows under What wins. The scope falls back to every ad when nothing is active.
  *  `campaign` (an id from `campaigns`) keeps one campaign's ads: the scope's counts, the median and every table are then
  *  that campaign's own, so its ads are read against one another (one offer, one audience, one stretch of time). An id
  *  the gym does not have is ignored. "Never tried in this account" still looks at the whole account. */

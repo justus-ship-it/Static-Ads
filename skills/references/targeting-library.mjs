@@ -13,7 +13,7 @@
  * A new library starts with the curated drafts (`seedDrafts`); nothing is applied until the owner approves an
  * entry. `defaultFor(library, gender)` is the approved default for a callout's gender: the variant for that
  * gender when there is one, else the one for everyone. An `option` entry is never a default: it is offered on
- * the Publish screen like the account's own presets.
+ * the Publish Ads screen like the account's own presets.
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
@@ -54,7 +54,7 @@ export function curatedDrafts(now = new Date().toISOString()) {
     d({ name: "Fitness core · women", audience: "women", role: "default", note: "Sculpt Society's exact women's set: the core with Beauty and health and beauty. The default for a women's callout.",
       evidence: [{ gym: "sculpt-society", preset: "Fitness · Beauty, Health and wellness", leads: 1096, cost_per_lead: 26.62, currency: "SGD" }, { gym: "bfit", preset: "Broad · Beauty, Health and wellness", leads: 9, cost_per_lead: 21.38, currency: "SGD" }],
       spec: { flexible_spec: [{ interests: [...BEAUTY, ...FITNESS_CORE] }] } }),
-    d({ name: "Affluent × fitness", audience: "all", role: "option", note: "For a premium-priced gym: F45 Xinyi's luxury and finance interests AND the fitness core. Their targetings with this shape cost NT$ 216–262 a lead; the two without the fitness layer cost 380 and 833. Offered on the Publish screen, never the default.",
+    d({ name: "Affluent × fitness", audience: "all", role: "option", note: "For a premium-priced gym: F45 Xinyi's luxury and finance interests AND the fitness core. Their targetings with this shape cost NT$ 216–262 a lead; the two without the fitness layer cost 380 and 833. Offered on the Publish Ads screen, never the default.",
       evidence: [{ gym: "f45-xinyi", preset: "luxury watches / luxury travel + Health and wellness / Physical fitness", leads: 13, cost_per_lead: 215.69, currency: "TWD" }, { gym: "f45-xinyi", preset: "Finance / luxury watches + bodybuilding and fitness / healthy habits", leads: 50, cost_per_lead: 250.7, currency: "TWD" }, { gym: "f45-xinyi", preset: "Banking & Finance / Finance + Health and wellness / Physical fitness", leads: 366, cost_per_lead: 261.78, currency: "TWD" }],
       spec: { flexible_spec: [{ interests: AFFLUENT }, { interests: FITNESS_CORE }] } }),
   ];

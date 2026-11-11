@@ -532,7 +532,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   } else {
     scenes = loadScenes(libraryPath, { allowDraft: dryRun }).filter((s) => (mix[formatOf(s)] || 0) > 0);
     quota = mix;
-    if (!(renderOnly && existsSync(join(out, "visuals.json")))) for (const f of Object.keys(mix)) if (!scenes.some((s) => formatOf(s) === f)) throw new Error(`no approved ${f} scenes yet: draft some on Library → Scenes (Refresh scenes…, format: ${f}) and approve them — nothing is generated from a draft`);
+    if (!(renderOnly && existsSync(join(out, "visuals.json")))) for (const f of Object.keys(mix)) if (!scenes.some((s) => formatOf(s) === f)) throw new Error(`no approved ${f} scenes yet: draft some on Draft Scenes (Refresh scenes…, format: ${f}) and approve them — nothing is generated from a draft`);
   }
   const plannedPath = join(out, "visuals.json");
   let visuals;

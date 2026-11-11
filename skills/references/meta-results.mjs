@@ -109,7 +109,7 @@ function byText(rows, key) {
 
 /** Where Meta differs from what the app last sent (2026-10-11): an archived campaign or ad set, a name or budget changed in
  *  Ads Manager, ads gone or added by hand. The app's record is what it sent; the next create sends it again unless the
- *  setting here is changed to match. Read-only; in words, for the Publish screen's On Facebook card and the CLI. */
+ *  setting here is changed to match. Read-only; in words, for the Publish Ads screen's On Facebook card and the CLI. */
 export function driftFrom({ record, campaign, adsets, ads, currency = "SGD" }) {
   const items = [], rec = record || {};
   const say = (kind, text, extra = {}) => items.push({ kind, text, fixable: false, ...extra });

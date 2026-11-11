@@ -338,12 +338,12 @@ test("R8 a gym with no library: the first refresh writes it with the drafts, una
   try {
     writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(PROFILE));
     const p = join(dir, "scenes.json");
-    assert.throws(() => loadScenes(p), /no scene library yet .*draft the first scenes on Library → Scenes/);
+    assert.throws(() => loadScenes(p), /no scene library yet .*draft the first scenes on Draft Scenes/);
     const r = await draftScenes({ brandDir: dir, audience: "women", count: 2, ask: async () => ({ scenes: [draft("w-step-up"), draft("w-goblet", { exercise: "goblet-squat", scene: "A woman at the bottom of a goblet squat, kettlebell tight to her chest, eyes forward." })] }), catalogue: CAT, date: "2026-09-26", log: () => {} });
     assert.equal(r.drafts.length, 2); assert.equal(r.text_calls, 1);
     const lib = readLibrary(p);
     assert.deepEqual([lib.approved, lib.scenes.map((s) => [s.id, s.draft])], [false, [["w-step-up", true], ["w-goblet", true]]], "written, every scene a draft, the library not approved");
-    assert.throws(() => loadScenes(p), /not approved yet .*approves a scene on Library → Scenes/);
+    assert.throws(() => loadScenes(p), /not approved yet .*approves a scene on Draft Scenes/);
     const a = approveScenes(p, ["w-step-up"], { date: "2026-09-26" });
     assert.deepEqual(a.approved, ["w-step-up"]);
     const after = readLibrary(p);

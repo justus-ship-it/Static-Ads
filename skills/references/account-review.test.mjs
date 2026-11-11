@@ -104,7 +104,7 @@ test("AR3 the suggested brief: the offer, locations and audience are the owner's
     assert.deepEqual(s.brief.lean.map((l) => [l.format, l.tag, l.value]), [["studio-portrait", "backdrop", "dark-wall"]]);
     assert.ok(s.brief.lean[0].why.length <= 300);
     // No approved scene shows a group: said, with what to do — never sent to the planner.
-    assert.equal(s.left.length, 1); assert.match(s.left[0].text, /group setting \(workout\): no approved scene shows it yet\. Draft some on Library → Scenes/);
+    assert.equal(s.left.length, 1); assert.match(s.left[0].text, /group setting \(workout\): no approved scene shows it yet\. Draft some on Draft Scenes/);
     assert.match(s.reasons.find((x) => x.field === "offer").text, /your last batch's own words \(2026-11-01-six-week\)/);
     assert.match(s.reasons.filter((x) => x.field === "offer")[1].text, /Running now: Toned Tummy \(100 leads at SGD 15\.00\), Body Reset \(20 leads at SGD 23\.00\)/);
     assert.match(s.reasons.find((x) => x.field === "mix").text, /^8 workout, 2 studio portrait — the suggested mix\./);
@@ -236,10 +236,10 @@ test("AR5 scenes drafted from the results (2026-11-11): the guide the drafter is
     const s = suggestBrief(dir, { rows, every: rows, currency: "SGD", profile, now: NOW });
     assert.deepEqual(s.brief.mix, { workout: 8, "studio-portrait": 2 });
     const none = s.left.find((l) => l.kind === "no_scenes");
-    assert.match(none.text, /^2 studio portraits in the mix, but no studio portrait scene is approved for women \(1 draft await your approval on Library → Scenes\)\. Create refuses the batch until one is: draft some first, or take them out of the mix on Create\.$/);
+    assert.match(none.text, /^2 studio portraits in the mix, but no studio portrait scene is approved for women \(1 draft await your approval on Draft Scenes\)\. Generate Creatives refuses the batch until one is: draft some first, or take them out of the mix on Generate Creatives\.$/);
     assert.deepEqual(s.scenes.map((x) => [x.format, x.audience, x.count, x.from_results, x.needed, x.approved, x.drafts_waiting]), [["workout", "women", 6, true, false, 2, 0], ["studio-portrait", "women", 6, true, true, 0, 1]]);
     assert.match(s.scenes[0].why, /^New versions of what earns this gym's leads: its best workout picture has 198 leads at SGD 17\.68 \(scene w-group-swing\)\.$/);
-    assert.match(s.scenes[1].why, /^2 studio portraits are in the mix, but no studio portrait scene is approved for women: Create refuses the batch until one is\. The drafter is told what this gym's studio portrait ads have done \(10 leads over 1 ad\)\.$/);
+    assert.match(s.scenes[1].why, /^2 studio portraits are in the mix, but no studio portrait scene is approved for women: Generate Creatives refuses the batch until one is\. The drafter is told what this gym's studio portrait ads have done \(10 leads over 1 ad\)\.$/);
     assert.equal(s.scenes_waiting, 1);
     // Nothing to say for a kind with approved scenes and no results; and the report carries the list.
     const quiet = suggestBrief(dir, { rows: [], every: [], currency: "SGD", profile: { ...profile, creative_defaults: { ...profile.creative_defaults, mix: { workout: 100 } } }, now: NOW });
@@ -248,6 +248,6 @@ test("AR5 scenes drafted from the results (2026-11-11): the guide the drafter is
     assert.deepEqual(bare.map((x) => [x.format, x.from_results, x.needed]), [["studio-portrait", false, true]], "no results for the kind: drafted by what the library has fewest of");
     const review = buildReview(dir, { now: NOW });
     assert.ok(Array.isArray(review.scenes) && review.scenes_waiting === 1);
-    assert.match(reviewText({ ...review, scenes: s.scenes }), /Scenes to draft first \(text calls only, drafts for your approval\):\n- 6 workout scenes for women, from the results: New versions[^\n]+\n- 6 studio portrait scenes for women, from the results: [^\n]+\n- 1 scene draft await your approval on Library → Scenes\./);
+    assert.match(reviewText({ ...review, scenes: s.scenes }), /Scenes to draft first \(text calls only, drafts for your approval\):\n- 6 workout scenes for women, from the results: New versions[^\n]+\n- 6 studio portrait scenes for women, from the results: [^\n]+\n- 1 scene draft await your approval on Draft Scenes\./);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

@@ -180,7 +180,7 @@ test("U3 the panel refuses exactly what Step 6 refuses, and saves the words exac
   // Generated photos need an approved scene library.
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: false, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
   const draft = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2 } } })).json();
-  assert.ok(draft.errors.some((e) => /no approved scenes yet: approve some on Library → Scenes/.test(e)), draft.errors.join("; "));
+  assert.ok(draft.errors.some((e) => /no approved scenes yet: approve some on Draft Scenes/.test(e)), draft.errors.join("; "));
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
   // The Spread switch: cut to what the library shows. m1 carries no tags, so nothing can be asked for; with tags, only what they show.
   let sp = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2, spread: true } } })).json();
@@ -445,7 +445,7 @@ test("U9 scenes through the panel: drafts listed; approve and reject write exact
     assert.ok(first.lines.some((l) => /network blocked|GEMINI_KEY/.test(l)) && !first.lines.some((l) => /no scene library/.test(l)), "it reached the model: " + first.lines.join("\n"));
     assert.ok(!existsSync(libFile), "a failed first refresh leaves no empty library behind");
     const check = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u9-first", generated: 1, max_calls: 2 } } })).json();
-    assert.ok(check.errors.some((e) => /no scene library yet: .*Draft the first ones on Library → Scenes/.test(e)), check.errors.join("; "));
+    assert.ok(check.errors.some((e) => /no scene library yet: .*Draft the first ones on Draft Scenes/.test(e)), check.errors.join("; "));
   } finally { writeFileSync(libFile, saved); }
 });
 
@@ -763,7 +763,7 @@ test("U12 profiles: GET says how finished a profile is; a save with a token or a
   assert.deepEqual(r.creative_defaults.locations, ["BISHAN", "ANG MO KIO"]);
   assert.equal(r.completeness.sections.find((s) => s.id === "defaults").status, "done");
   const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
-  assert.deepEqual(setup.creative_defaults.audiences, ["GUYS OF BISHAN", "MEN WANTED"], "the Create screen gets the defaults");
+  assert.deepEqual(setup.creative_defaults.audiences, ["GUYS OF BISHAN", "MEN WANTED"], "the Generate Creatives screen gets the defaults");
   assert.ok(setup.wordings.length >= 1, "and the wordings");
   // A new gym: a name and a folder; written in the panel's clients folder, never elsewhere.
   assert.equal((await call("/api/clients", { method: "POST", body: { gym: "Bad Name", display_name: "x" } })).status, 400);
@@ -776,7 +776,7 @@ test("U12 profiles: GET says how finished a profile is; a save with a token or a
   assert.ok(clients.find((c) => c.gym === "second-gym").to_do > 0, "a new gym has sections to fill");
 });
 
-// ── U13 the profile pages and the Create screen's defaults ───────────────────
+// ── U13 the profile pages and the Generate Creatives screen's defaults ───────────────────
 
 test("U13 the page: Create opens with the profile's defaults (never the offer); wording chips fill the offer; the Overview shows what each section needs; a new gym is made from the top bar; switching gyms switches the defaults", async () => {
   const { cdp, sessionId } = browser;
@@ -1291,7 +1291,7 @@ test("U19 the targeting library in the panel: presets imported from the account'
 });
 
 
-/** The test gym linked to Meta with pins, ages, a budget and two presets — what the Publish screen needs. */
+/** The test gym linked to Meta with pins, ages, a budget and two presets — what the Publish Ads screen needs. */
 async function linkTestGym() {
   const g = join(brands, GYM);
   const cur = JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8"));
@@ -1303,7 +1303,7 @@ async function linkTestGym() {
   writeFileSync(join(g, "targeting-presets.json"), JSON.stringify({ schema: 1, presets: [{ id: "broad", name: "Broad", spec: {}, summary: ["Broad — no detailed targeting"], stats: null }, { id: "a97f701a193c", name: "Fitness", spec: { flexible_spec: [{ interests: [{ id: "6003277229371", name: "Physical fitness" }] }] }, summary: ["Physical fitness (interests)"], stats: { adsets: 2, leads: 40, cost_per_lead: 12.5, genders: { men: 0, women: 2, all: 0 } } }] }));
 }
 
-test("U20 the Publish screen: the plan for a batch's kept ads from the API (nothing created), the owner's settings saved per batch and the plan rebuilt from them, bad settings refused; the page shows the campaign, one ad set card per callout with its pin, ages, gender, preset and budget, the ads with their Stories versions, the words and the destination; a change saves and repaints; Review links to it", async () => {
+test("U20 the Publish Ads screen: the plan for a batch's kept ads from the API (nothing created), the owner's settings saved per batch and the plan rebuilt from them, bad settings refused; the page shows the campaign, one ad set card per callout with its pin, ages, gender, preset and budget, the ads with their Stories versions, the words and the destination; a change saves and repaints; Review links to it", async () => {
   const { cdp, sessionId } = browser;
   const ev = async (expression) => {
     const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
@@ -1352,7 +1352,7 @@ test("U20 the Publish screen: the plan for a batch's kept ads from the API (noth
   assert.equal((await call(`/api/client/${GYM}/batch/no-such/publish`)).status, 404);
   // The page.
   await open(`${panel.url}/?u20#/${GYM}/publish/${BRIEF.batch_id}`);
-  await until("PB.data && /Create on Facebook/.test(document.querySelector('#view')?.textContent||'')", "the Publish screen");
+  await until("PB.data && /Create on Facebook/.test(document.querySelector('#view')?.textContent||'')", "the Publish Ads screen");
   let text = await ev("document.querySelector('#view').textContent");
   assert.match(text, /Publish Test campaign/); assert.match(text, /Ad sets · one per location callout/); assert.match(text, /Copy/); assert.match(text, /Destination and identity/); assert.match(text, /Text options per ad/);
   assert.equal(await ev("document.querySelectorAll('#view img').length"), r.plan.ads.length, "every kept ad shown");
@@ -1371,7 +1371,7 @@ test("U20 the Publish screen: the plan for a batch's kept ads from the API (noth
   await until("location.hash==='#/" + GYM + "/publish/" + BRIEF.batch_id + "'", "the Publish route");
 });
 
-test("U21 creating on Facebook from the panel: refused without the Meta link, without a confirmation, or with one that no longer matches the plan; with them the publish run is built from the gym and batch alone (plus 'first'), creates the plan against the Graph — every object paused — and records it; the Publish screen shows what is on Facebook and offers to continue", async () => {
+test("U21 creating on Facebook from the panel: refused without the Meta link, without a confirmation, or with one that no longer matches the plan; with them the publish run is built from the gym and batch alone (plus 'first'), creates the plan against the Graph — every object paused — and records it; the Publish Ads screen shows what is on Facebook and offers to continue", async () => {
   const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
   await linkTestGym();
   rmSync(join(out, "publish.json"), { force: true }); rmSync(join(out, "publish-settings.json"), { force: true });
@@ -1422,7 +1422,7 @@ test("U21 creating on Facebook from the panel: refused without the Meta link, wi
   } finally { await panel.stop(); panel = main; graph.server.close(); }
 });
 
-test("U22 results: a batch on Meta can be pulled from the panel (statuses and numbers into results.json, the gym's CSV rebuilt), its rows tie each ad to what it was; a batch not on Meta says so; the gym's table and CSV list every published ad; the Results page shows the campaigns and the sortable table; the campaign cards say what is on Facebook", async () => {
+test("U22 results: a batch on Meta can be pulled from the panel (statuses and numbers into results.json, the gym's CSV rebuilt), its rows tie each ad to what it was; a batch not on Meta says so; the gym's table and CSV list every published ad; the Review Data page shows the campaigns and the sortable table; the campaign cards say what is on Facebook", async () => {
   const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
   await linkTestGym();
   rmSync(join(out, "publish.json"), { force: true }); rmSync(join(out, "results.json"), { force: true }); rmSync(join(g, "results.csv"), { force: true });
@@ -1456,11 +1456,15 @@ test("U22 results: a batch on Meta can be pulled from the panel (statuses and nu
     const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
     const card = setup.batches.find((b) => b.id === BRIEF.batch_id).published;
     assert.deepEqual([card.ads, card.done, card.status, card.leads, card.cost_per_lead], [1, false, "paused", 2, 6.25]);
-    // The Results page.
+    // The Review Data page.
     const { cdp, sessionId } = browser;
     const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
     const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u22#/${GYM}/results` }, sessionId); await loaded;
     const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!RS.data && RS.level==='campaigns' && document.querySelectorAll('table.tbl tbody tr').length===1"))) await new Promise((x) => setTimeout(x, 120));
+    // Review Data opens on the review; every result as tables is its second tab (2026-11-11).
+    assert.deepEqual(await ev("[document.querySelector('h1').textContent, [...document.querySelectorAll('#rsTabs .chip')].map(c=>c.textContent.replace(/ ·.*/,'')), document.querySelector('#rsTabs .chip.sel').textContent, document.querySelector('#rsTables').style.display]"), ["Review Data", ["The review", "All results"], "The review", "none"]);
+    await ev("rsView('tables'); true");
+    assert.deepEqual(await ev("[document.querySelector('#rsTabs .chip.sel').textContent, document.querySelector('#rsTables').style.display, !!document.querySelector('#rsReview')]"), ["All results · 1 campaign", "", false]);
     let text = await ev("document.querySelector('#view').textContent");
     assert.match(text, /Campaigns · 1/); assert.match(text, /Test campaign/); assert.match(text, /2 leads at SGD 6.25/); assert.match(text, /download results.csv/);
     assert.ok(await ev("[...document.querySelectorAll('table.tbl th')].some(th=>/Per lead/.test(th.textContent))"));
@@ -1482,7 +1486,7 @@ test("U22 results: a batch on Meta can be pulled from the panel (statuses and nu
   } finally { await panel.stop(); panel = main; graph.server.close(); }
 });
 
-test("U23 the account's history in the panel: pulled from Meta into the gym folder (their ads, not the app's), listed on Results with Meta's numbers, and chosen ads brought into the library — images into References (a video's poster frame too), words into the copy references; refused without the link or with bad ids; the CSV carries both sources", async () => {
+test("U23 the account's history in the panel: pulled from Meta into the gym folder (their ads, not the app's), listed on Review Data with Meta's numbers, and chosen ads brought into the library — images into References (a video's poster frame too), words into the copy references; refused without the link or with bad ids; the CSV carries both sources", async () => {
   const g = join(brands, GYM);
   await linkTestGym();
   rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "copy-references.json"), { force: true });
@@ -1532,7 +1536,7 @@ test("U23 the account's history in the panel: pulled from Meta into the gym fold
   } finally { await panel.stop(); panel = main; graph.server.close(); }
 });
 
-test("U24 copy in the panel: the gym's copy references (list, add, note, retire) and a campaign's copy (the owner's own checked by the rules and kept at once; keep / exclude / edit; the number of text options saved per batch); the plan carries the kept copies as text options; the Publish screen's Copy card and the Library's Copy page show them", async () => {
+test("U24 copy in the panel: the gym's copy references (list, add, note, retire) and a campaign's copy (the owner's own checked by the rules and kept at once; keep / exclude / edit; the number of text options saved per batch); the plan carries the kept copies as text options; the Publish Ads screen's Copy card and the Library's Copy page show them", async () => {
   const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
   await linkTestGym();
   rmSync(join(out, "copy.json"), { force: true }); rmSync(join(g, "copy-references.json"), { force: true }); rmSync(join(out, "publish-settings.json"), { force: true });
@@ -1582,7 +1586,7 @@ test("U24 copy in the panel: the gym's copy references (list, add, note, retire)
   const { cdp, sessionId } = browser;
   const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
   const open = async (url, ready, what) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url }, sessionId); await loaded; const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); if (!(await ev(ready))) throw new Error("timed out waiting for " + what); };
-  await open(`${panel.url}/?u24#/${GYM}/publish/${BRIEF.batch_id}`, "!!PB.data && /Copy/.test(document.querySelector('#view')?.textContent||'') && document.querySelector('#cpN')", "the Publish screen");
+  await open(`${panel.url}/?u24#/${GYM}/publish/${BRIEF.batch_id}`, "!!PB.data && /Copy/.test(document.querySelector('#view')?.textContent||'') && document.querySelector('#cpN')", "the Publish Ads screen");
   let text = await ev("document.querySelector('#view').textContent");
   assert.match(text, /1 kept/); assert.match(text, /Edited headline/); assert.match(text, /Excluded · 1/); assert.equal(await ev("document.querySelector('#cpN').value"), "2");
   assert.ok(await ev("[...document.querySelectorAll('#view button')].some(b=>/Draft 10 copies/.test(b.textContent)) && [...document.querySelectorAll('#view button')].some(b=>/Draft 10 headlines/.test(b.textContent)) && !!document.querySelector('#cpNH') && !!document.querySelector('#cpCta')"), "Copy and Headlines sections, each with its draft button and its per-ad number");
@@ -1610,7 +1614,7 @@ test("U24 copy in the panel: the gym's copy references (list, add, note, retire)
   assert.match(await ev("document.querySelector('#view').textContent"), /References · 1/);
 });
 
-test("U25 the kept ads as a zip for Ads Manager: every kept ad's images by ad set, the list and the instructions; refused for a batch that is not finished or a bad name; the Publish screen's button", async () => {
+test("U25 the kept ads as a zip for Ads Manager: every kept ad's images by ad set, the list and the instructions; refused for a batch that is not finished or a bad name; the Publish Ads screen's button", async () => {
   const res = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/images.zip`);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("content-type"), "application/zip");
@@ -1900,7 +1904,7 @@ test("U31 the Generating screen's Stop: shown while a run is going (one from bef
   } finally { try { process.kill(fake.pid, "SIGKILL"); } catch {} }
 });
 
-test("U32 filled in for the owner: saving a profile places a pin that has a postal code and no point (the gym's own location first, then the map), and says what could not be placed; the Publish screen reads the Singapore identity from the ad account's own ad sets — one is saved, several are offered and only one of them can be chosen, none is said with what to do", async () => {
+test("U32 filled in for the owner: saving a profile places a pin that has a postal code and no point (the gym's own location first, then the map), and says what could not be placed; the Publish Ads screen reads the Singapore identity from the ad account's own ad sets — one is saved, several are offered and only one of them can be chosen, none is said with what to do", async () => {
   const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8");
   let adsets = [];
   const sg = (ben, name) => ({ id: name, name, regional_regulated_categories: ["SINGAPORE_UNIVERSAL"], regional_regulation_identities: { singapore_universal_beneficiary: ben, singapore_universal_payer: ben } });
@@ -1922,7 +1926,7 @@ test("U32 filled in for the owner: saving a profile places a pin that has a post
     const saved = JSON.parse(readFileSync(pf, "utf-8")).targeting_defaults.geo.radius_pins;
     assert.deepEqual(saved.map((p) => [p.lat ?? null, p.lng ?? null]), [[1.3073, 103.9066], [1.352482302799053, 103.8357469735082], [null, null], [null, null], [1.35, 103.85]]);
     assert.deepEqual(j.profile.targeting_defaults.geo.radius_pins[0].lat, 1.3073, "the page gets the placed pin back");
-    // The identity: missing from the profile, read from the account's ad sets when the Publish screen opens.
+    // The identity: missing from the profile, read from the account's ad sets when the Publish Ads screen opens.
     const strip = () => { const p = JSON.parse(readFileSync(pf, "utf-8")); p.meta_assets = { ...p.meta_assets, ad_account_id: "act_222000000002" }; delete p.meta_assets.singapore_beneficiary_id; delete p.meta_assets.singapore_payer_id; writeFileSync(pf, JSON.stringify(p)); };
     const publish = async (opts) => (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, opts)).json();
     const idProblem = (v) => v.plan.problems.some((x) => /no verified Singapore advertiser identity yet/.test(x));
@@ -2267,7 +2271,7 @@ test("U40 lead forms through the panel: the Page's forms listed in full; one set
     assert.deepEqual([p2.meta_assets.lead_form_id, p2.meta_assets.labels.form], ["400100000009", specName]);
     r = await (await call(`/api/client/${GYM}/lead-forms`)).json();
     assert.equal(r.default_form_id, "400100000009");
-    // A gym whose targeting was never imported: the Publish screen imports it from the account the first time (2026-10-07).
+    // A gym whose targeting was never imported: the Publish Ads screen imports it from the account the first time (2026-10-07).
     rmSync(join(g, "targeting-presets.json"), { force: true });
     const pub = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
     assert.equal(pub.presets_import?.imported, true, JSON.stringify(pub.presets_import));
@@ -2280,7 +2284,7 @@ test("U40 lead forms through the panel: the Page's forms listed in full; one set
 
 // ── U41 the shared targeting library (2026-10-07) ───────────────────────────
 
-test("U41 the shared targeting library through the panel: read once, the curated drafts are there unapproved and nothing applies; approving one makes it the default on the Publish screen for a gym whose default mode is shared, listed under Shared defaults with the account's own below; a campaign may pick a library preset; retire needs a reason; the gym's targeting view carries the library; an entry of the owner's needs Meta ids", async () => {
+test("U41 the shared targeting library through the panel: read once, the curated drafts are there unapproved and nothing applies; approving one makes it the default on the Publish Ads screen for a gym whose default mode is shared, listed under Shared defaults with the account's own below; a campaign may pick a library preset; retire needs a reason; the gym's targeting view carries the library; an entry of the owner's needs Meta ids", async () => {
   const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
   assert.ok(existsSync(join(out, "batch.json")), "U5 made the batch");
   let lib = await (await call("/api/library/targeting")).json();
@@ -2348,9 +2352,9 @@ test("U42 the portfolio and the import through the panel: without keys the portf
   assert.equal(bad.status, 409, JSON.stringify(badBody)); assert.match(badBody.error, /read the ad account first/);
 });
 
-// ── U43 the Create screen says why (2026-10-10) ────────────────────────────
+// ── U43 the Generate Creatives screen says why (2026-10-10) ────────────────────────────
 
-test("U43 the Create screen says why Generate is grey, shows the brief's problems from the start, checks a run's state with the panel instead of guessing (GET /api/run/{id}; a run the panel does not know is over), and a gym the page has not seen is loaded from the panel rather than swapped for another", async () => {
+test("U43 the Generate Creatives screen says why Generate is grey, shows the brief's problems from the start, checks a run's state with the panel instead of guessing (GET /api/run/{id}; a run the panel does not know is over), and a gym the page has not seen is loaded from the panel rather than swapped for another", async () => {
   const logBefore = panel.log().length; // earlier tests provoke blocked fetches on purpose; only this test's lines count
   // The run-state route: an unknown id is gone; a free dry-run plan reports its state, then done.
   const gone = await call("/api/run/batch-plan-nope"); assert.equal(gone.status, 404); assert.equal((await gone.json()).gone, true);
@@ -2375,7 +2379,7 @@ test("U43 the Create screen says why Generate is grey, shows the brief's problem
   const loaded = cdp.once("Page.loadEventFired", sessionId);
   await cdp.send("Page.navigate", { url: `${panel.url}/#/${GYM}/batch` }, sessionId);
   await loaded;
-  await until(`typeof STATE!=='undefined' && STATE.sel==='${GYM}' && !!document.querySelector('#bOffer')`, "the Create screen");
+  await until(`typeof STATE!=='undefined' && STATE.sel==='${GYM}' && !!document.querySelector('#bOffer')`, "the Generate Creatives screen");
   // 1. A fresh form: the buttons are grey and the line says what to do; the empty offer is not listed as a problem.
   await until(`/Type the offer( and a location)? to start/.test(${text("#bWhy")}) && document.querySelector('#bRun').disabled`, "the why line on a fresh form (with or without a default location, as earlier tests leave the profile)");
   assert.equal(await ev(text("#bErrors")), "", "an empty offer or location row on an untouched form is where every batch begins, not a problem");
@@ -2398,7 +2402,7 @@ test("U43 the Create screen says why Generate is grey, shows the brief's problem
   try {
     assert.ok(!(await ev(`STATE.clients.some(c=>c.gym==='newgym')`)), "unknown to the page so far");
     await ev(`location.hash='#/newgym/batch'; true`);
-    await until(`STATE.sel==='newgym' && B.gym==='newgym' && !!document.querySelector('#bOffer')`, "the new gym's Create screen, with the new gym's own form (not the first gym's left on screen)");
+    await until(`STATE.sel==='newgym' && B.gym==='newgym' && !!document.querySelector('#bOffer')`, "the new gym's Generate Creatives screen, with the new gym's own form (not the first gym's left on screen)");
     await ev(`location.hash='#/nowhere/batch'; true`);
     await until(`/No gym called "nowhere" here/.test(${text("#toast")}) && location.hash==='#/newgym/batch' && STATE.sel==='newgym'`, "the unknown name said, the address put back");
     await ev(`location.hash='#/${GYM}/batch'; true`);
@@ -2508,7 +2512,8 @@ test("U45 what wins (the data loop, 2026-11-09): an Ads Manager export uploaded 
     F = (await (await call(`/api/client/${GYM}/results?campaign=${encodeURIComponent(exportId)}&scope=all`)).json()).wins;
     assert.deepEqual([F.campaign.id, F.scope, F.ads, F.every, F.leads], [exportId, "all", 2, 3, 88], "the export's campaign: its two stills, the paused one with the scope on every ad");
     assert.equal((await (await call(`/api/client/${GYM}/results?campaign=nope`)).json()).wins.campaign, null, "an id the gym does not have is ignored");
-    await ev("RS.scope = 'active'; rsReload(); true");
+    assert.equal(await ev("RS.view"), "tables", "opening a campaign is the tables tab");
+    await ev("RS.scope = 'active'; rsView('review'); rsReload(); true");
     const t4 = Date.now(); while (Date.now() - t4 < 10000 && !(await ev("!!document.querySelector('#rsWinCampaign') && RS.data.wins.scope==='active'"))) await new Promise((x) => setTimeout(x, 100));
     const opts = await ev("[...document.querySelectorAll('#rsWinCampaign option')].map(o=>o.textContent)");
     assert.match(opts[0], /^every campaign \(\d+\)$/); assert.ok(opts.includes("Old offer 2024 · 2 ads · 20 leads at SGD 70"), opts.join(" | ")); assert.ok(opts.some((o) => /· 3 ads · 90 leads at SGD 15.25 · running$/.test(o)), "the campaigns with their ads, leads and cost per lead; the running one marked: " + opts.join(" | "));
@@ -2524,7 +2529,7 @@ test("U45 what wins (the data loop, 2026-11-09): an Ads Manager export uploaded 
   } finally { rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true }); }
 });
 
-test("U46 across every gym (2026-11-10): /api/wins pools every gym folder — each gym with its ads, leads, own median, unread pictures and when its account was read — in a scope (running now or the last 12 months by default), with what holds for one gym's next batch; the portfolio runs are checked before they start (a cap, the Meta link); the Results page shows the card under the gym's own What wins with the gyms table, the scope, the refresh and the reading dialogs", async () => {
+test("U46 across every gym (2026-11-10): /api/wins pools every gym folder — each gym with its ads, leads, own median, unread pictures and when its account was read — in a scope (running now or the last 12 months by default), with what holds for one gym's next batch; the portfolio runs are checked before they start (a cap, the Meta link); the Review Data page shows the card under the gym's own What wins with the gyms table, the scope, the refresh and the reading dialogs", async () => {
   const g = join(brands, GYM);
   await linkTestGym();
   rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "creative-reads.json"), { force: true });
@@ -2631,7 +2636,7 @@ test("U48 the look, and 4:5 as the only feed shape (2026-11-10): a gym's Ad defa
     } finally { rmSync(sqDir, { recursive: true, force: true }); }
     c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, look: "loud" } } })).json();
     assert.ok(c.errors.some((e) => /look "loud" is not one of reference, formula/.test(e)));
-    // The preview: the gym's look and shape by default, the Create screen's own when it sends them.
+    // The preview: the gym's look and shape by default, the Generate Creatives screen's own when it sends them.
     let pv = await (await call("/api/preview", { method: "POST", body: { gym: GYM, offer: WORDS.offer, location: "ANG MO KIO", audience: null } })).json();
     assert.deepEqual([pv.errors, pv.looks.map((l) => l.id)], [[], ["f1", "f2", "f3"]]);
     for (const l of pv.looks) { assert.ok(l.ok, `${l.id}: ${l.failures}`); const png = Buffer.from(await (await fetch(panel.url + l.url)).arrayBuffer()); assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1080, 1350], `${l.id} at 4:5`); }
@@ -2665,7 +2670,7 @@ test("U49 the kind of photograph (Phase 3, 2026-11-10): a gym's Ad defaults take
     assert.ok(c.errors.some((e) => /format "poster" is not one of workout, studio-portrait/.test(e)), JSON.stringify(c.errors));
     // No portrait scenes yet: said, with where to draft them.
     c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, format: "studio-portrait" } } })).json();
-    assert.deepEqual(c.errors, ["no approved studio portrait scenes yet: draft some on Library → Scenes (Refresh scenes…, format: studio portrait) and approve them"]);
+    assert.deepEqual(c.errors, ["no approved studio portrait scenes yet: draft some on Draft Scenes (Refresh scenes…, format: studio portrait) and approve them"]);
     // With approved portrait scenes the brief stands; the Spread switch is off for it, in words.
     const lib = JSON.parse(scenesBefore);
     writeFileSync(sp, JSON.stringify({ ...lib, scenes: [...lib.scenes, P("a-p-pink"), P("a-p-wall", { backdrop: "dark-wall", scene: "A person in their forties leaning one shoulder on a raw grey concrete wall, drinking from a clear water bottle, relaxed, in soft side light (a-p-wall)." })] }));
@@ -2724,7 +2729,7 @@ test("U50 the mix (Phase 4, 2026-11-10): a gym's default mix is shares that sum 
     const raw = { batch_id: "mix-check", ...WORDS, free: false, generated: 4, real: [], looks_per_photo: 2, max_calls: 4, attempts: 1, scenes: null };
     let c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: raw } })).json();
     assert.deepEqual([c.brief.mix, c.summary.format, c.summary.mix], [{ workout: 2, "studio-portrait": 2 }, "mixed", { workout: 2, "studio-portrait": 2 }]);
-    assert.deepEqual(c.errors, ["no approved studio portrait scenes yet: draft some on Library → Scenes (Refresh scenes…, format: studio portrait) and approve them"]);
+    assert.deepEqual(c.errors, ["no approved studio portrait scenes yet: draft some on Draft Scenes (Refresh scenes…, format: studio portrait) and approve them"]);
     const lib = JSON.parse(scenesBefore);
     writeFileSync(sp, JSON.stringify({ ...lib, scenes: [...lib.scenes, P("a-p-pink"), P("a-p-wall", { backdrop: "dark-wall", scene: "A person in their forties leaning one shoulder on a raw grey concrete wall, drinking from a clear water bottle, relaxed, in soft side light (a-p-wall)." })] }));
     c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, spread: true } } })).json();
@@ -2876,7 +2881,7 @@ test("U52 the account review (Phase 6, 2026-11-11): the review is built from wha
     assert.deepEqual(c.errors.filter((e) => /lean/.test(e)).length, 2, JSON.stringify(c.errors));
     c = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...raw, lean, direction: { words: "older men lifting with a coach, bright" } } } })).json();
     assert.equal("lean" in c.brief, false, "a directed batch's words decide the pictures");
-    // The page: the card on Results, then Create pre-filled.
+    // The page: the card on Review Data, then Create pre-filled.
     const { cdp, sessionId } = browser;
     const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
     const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
@@ -2917,7 +2922,7 @@ test("U53 scenes drafted from the results (2026-11-11): the review says when the
     // The review: two portraits in the mix, none approved — said, with the job to draft them.
     const R = await (await call(`/api/client/${GYM}/account-review`)).json();
     assert.deepEqual(R.brief.mix, { workout: 8, "studio-portrait": 2 });
-    assert.ok(R.left.some((x) => x.kind === "no_scenes" && /^2 studio portraits in the mix, but no studio portrait scene is approved for men\. Create refuses the batch until one is/.test(x.text)), JSON.stringify(R.left));
+    assert.ok(R.left.some((x) => x.kind === "no_scenes" && /^2 studio portraits in the mix, but no studio portrait scene is approved for men\. Generate Creatives refuses the batch until one is/.test(x.text)), JSON.stringify(R.left));
     assert.deepEqual(R.scenes.map((x) => [x.format, x.audience, x.count, x.from_results, x.needed]), [["studio-portrait", "men", 6, false, true]], "no results for the kind on file: by what the library has fewest of");
     assert.equal(R.scenes_waiting, 0); assert.match(R.text, /Scenes to draft first \(text calls only, drafts for your approval\):\n- 6 studio portrait scenes for men: 2 studio portraits are in the mix/);
     // The run: from_results is checked, and is a direction of its own.
@@ -2946,7 +2951,7 @@ test("U53 scenes drafted from the results (2026-11-11): the review says when the
     // A job from the results reads so on its button and its confirmation (as a gym with results would have).
     await ev("RS.review.scenes = [{ format: 'workout', audience: 'men', count: 6, from_results: true, needed: false, approved: 2, drafts_waiting: 1, why: 'New versions of what earns this gym\\'s leads: its best workout picture has 198 leads at SGD 17.81 (scene m-squat-u53).' }]; RS.review.scenes_waiting = 1; paintResults(document.querySelector('#view')); true");
     const again = await ev("document.querySelector('#rsScenes').innerText");
-    assert.match(again, /Draft workout scenes from the results…/); assert.match(again, /1 draft of this kind already await your approval/); assert.match(again, /1 scene draft await your approval on Library → Scenes/);
+    assert.match(again, /Draft workout scenes from the results…/); assert.match(again, /1 draft of this kind already await your approval/); assert.match(again, /1 scene draft await your approval on Draft Scenes/);
     await ev("rsDraftScenes(0); true");
     assert.match(await ev("document.querySelector('#gModal').innerText"), /The drafter is told what this gym's own ads of this kind have done .* about two thirds of the scenes as new versions of what earns leads, the rest to keep testing/);
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
@@ -2959,5 +2964,93 @@ test("U53 scenes drafted from the results (2026-11-11): the review says when the
   } finally {
     for (const [p, body] of keep) { if (body) writeFileSync(p, body); else rmSync(p, { force: true }); }
     rmSync(bdir, { recursive: true, force: true }); rmSync(join(g, "account-history.json"), { force: true });
+  }
+});
+
+test("U54 the cycle (2026-11-11): the panel opens on Review Data; the rail lists the five steps in the owner's order, numbered, with what is waiting on each, and Scenes is no longer under Library; GET …/cycle says where the gym stands and the one thing to do next, from what is on file; the strip shows it on every step's screen (never on the library) and its button opens the step; Draft Scenes says what the data asks for; a new brief shows the review's suggestion without filling in the offer, takes it whole on one click, holds back a kind with no approved scene, and starts blank on request; an address by a step's old name still opens it", async () => {
+  const g = join(brands, GYM);
+  await linkTestGym();
+  const keep = ["gym-profile.json", "scenes.json"].map((n) => [join(g, n), existsSync(join(g, n)) ? readFileSync(join(g, n)) : null]);
+  rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "creative-reads.json"), { force: true });
+  const bdir = join(g, "batches", "2099-01-03-cycle-check");
+  const scene = (id, over = {}) => ({ id, audience: "men", pose: "upright", people: 1, exercise: "back-squat", age: "prime", setting: "solo", equipment: "barbell", muscles: "legs", scene: `A man in his thirties mid-set of a barbell back squat in a rack, chest up (${id}).`, ...over });
+  const HEADER = `"Reporting starts","Reporting ends","Ad name","Ad delivery","Attribution setting",Results,"Result indicator","Cost per results","Ad set budget","Ad set budget type","Amount spent (SGD)",Impressions,Reach`;
+  const row = (ad, results, spend) => `2026-04-13,2026-11-08,"${ad}",active,"7-day click or 1-day view",${results},actions:leadgen.other,${(spend / results).toFixed(4)},100,Daily,${spend},${results * 900 + 500},${results * 300 + 200}`;
+  try {
+    mkdirSync(bdir, { recursive: true });
+    writeFileSync(join(bdir, "brief.json"), JSON.stringify({ batch_id: "2099-01-03-cycle-check", offer: "6 Week Cycle Check", locations: ["BISHAN"], audience: "MEN", generated: 10 }));
+    const profile = JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8")); profile.creative_defaults = { ...profile.creative_defaults, generated: 10, mix: { workout: 80, "studio-portrait": 20 } }; delete profile.creative_defaults.format;
+    writeFileSync(join(g, "gym-profile.json"), JSON.stringify(profile));
+    writeFileSync(join(g, "scenes.json"), JSON.stringify({ approved: true, approved_on: "2026-11-01", scenes: [scene("m-squat-u54"), scene("m-press-u54", { exercise: "shoulder-press", equipment: "dumbbells", muscles: "shoulders", scene: "A man in his twenties seated, pressing dumbbells overhead with effort on his face (u54)." })] }));
+    let r = await fetch(`${panel.url}/api/client/${GYM}/history/export/cycle.csv`, { method: "PUT", headers: { "content-type": "text/csv", "x-panel-token": panel.token }, body: [HEADER, row("0413 Body Reset | Image 1: Lady One", 30, 450), row("0413 Body Reset | Image 2: Lady Two", 10, 250)].join("\n") + "\n" });
+    assert.equal(r.status, 200);
+    // Where the gym stands, from what is on file.
+    assert.equal((await call("/api/client/nosuchgym/cycle")).status, 400);
+    const C = await (await call(`/api/client/${GYM}/cycle`)).json();
+    assert.deepEqual(C.steps.map((s) => [s.n, s.name, s.tab]), [[1, "Review Data", "results"], [2, "Draft Scenes", "scenes"], [3, "Generate Creatives", "batch"], [4, "Pick Ads", "review"], [5, "Publish Ads", "exports"]]);
+    assert.match(C.steps[0].text, /^40 leads at SGD 17\.50 running · read \d+ \w{3}$/);
+    assert.deepEqual([C.steps[1].state, C.steps[1].text, C.counts.scenes, C.jobs.map((j) => [j.format, j.needed])], ["todo", "1 kind needs scenes", 1, [["studio-portrait", true]]]);
+    assert.ok(C.next && C.next.text && C.steps.some((s) => s.name === C.next.name) && typeof C.next.tab === "string", JSON.stringify(C.next));
+    for (const s of C.steps) assert.ok(["ok", "todo", "going"].includes(s.state) && s.text, JSON.stringify(s));
+    // The page: no screen in the address opens Review Data.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u54` }, sessionId); await loaded;
+    await until(`STATE.sel && !!document.querySelector('#clientSel option')`);
+    await ev(`selectClient(${JSON.stringify(GYM)}); true`);
+    await until(`STATE.sel === ${JSON.stringify(GYM)} && CY.gym === STATE.sel && !!CY.data && RS.gym === STATE.sel && RS.review && RS.review.gym === STATE.sel && !!document.querySelector('#cyc') && !!document.querySelector('#rsNextBatch')`);
+    assert.deepEqual(await ev("[STATE.tab, /\\/results$/.test(location.hash), document.querySelector('h1').textContent]"), ["results", true, "Review Data"]);
+    // The rail: the cycle first, in order, numbered; Scenes is a step, not a library page; what is waiting is counted.
+    const rail = await ev("[...document.querySelectorAll('#rail > *')].map(e => e.classList.contains('sec') ? '# ' + e.textContent : (e.querySelector('.ic')?.textContent||'') + '|' + [...e.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim() + '|' + (e.querySelector('.badge')?.textContent||''))");
+    assert.deepEqual(rail.slice(0, 7).map((x) => x.replace(/\|\d*$/, "")), ["# The cycle", "1|Review Data", "2|Draft Scenes", "3|Generate Creatives", "4|Pick Ads", "5|Publish Ads", "# Library"]);
+    assert.equal(rail[2], "2|Draft Scenes|1", "one kind needs scenes: " + JSON.stringify(await ev("[CY.gym, CY.data.counts, CY.data.jobs, CY.data.scenes_waiting]")));
+    assert.ok(!rail.slice(7).some((x) => /Scenes/.test(x)), rail.join(" / "));
+    assert.equal(await ev("document.querySelector('#rail .tab.sel').textContent.replace(/\\d+$/,'')"), "1Review Data");
+    // The strip: five steps, this one marked, the scenes waiting, and the one thing to do next.
+    const strip = await ev("({ steps: [...document.querySelectorAll('#cyc .cycstep')].map(b => [b.querySelector('.hd').textContent, b.querySelector('.tx').textContent, b.classList.contains('st-todo'), b.classList.contains('here')]), next: document.querySelector('#cycNext .t').textContent, button: document.querySelector('#cycNext button')?.textContent || null })");
+    const now = await (await call(`/api/client/${GYM}/cycle`)).json();
+    assert.deepEqual(strip.steps.map((s) => s[0]), ["1Review Data", "2Draft Scenes", "3Generate Creatives", "4Pick Ads", "5Publish Ads"]);
+    assert.deepEqual([strip.steps[0][3], strip.steps[1].slice(1), strip.next], [true, ["1 kind needs scenes", true, false], now.next.text]);
+    const there = now.next.tab === "results" && !now.next.batch;
+    assert.equal(strip.button, there || now.next.idle ? null : `${now.next.name} →`, "the button names the step; none when this is the screen");
+    // A step's box opens its screen; Draft Scenes says what the data asks for.
+    await ev("document.querySelectorAll('#cyc .cycstep')[1].click(); true");
+    await until("STATE.tab === 'scenes' && !!document.querySelector('#scAsksCard button') && document.querySelector('#cyc .cycstep.here .hd').textContent === '2Draft Scenes'");
+    assert.equal(await ev("document.querySelector('h1').textContent"), "Draft Scenes");
+    const asks = await ev("document.querySelector('#scAsksCard').innerText");
+    assert.match(asks, /What the data asks for/i); assert.match(asks, /Needed\. 2 studio portraits are in the mix, but no studio portrait scene is approved for men/); assert.match(asks, /Draft studio portrait scenes…/);
+    await ev("scDraft(0); true");
+    assert.deepEqual(await ev("[document.querySelector('#rsDsAud').value, !!document.querySelector('#rsDsGo')]"), ["men", true]);
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // The strip is the cycle's: not on a library page.
+    await ev("go('copy'); true");
+    await until("STATE.tab === 'copy' && document.querySelector('#cycle').innerHTML === ''");
+    // A new brief: the review's suggestion on a banner, the offer left alone, the gym's own photos per kind.
+    await ev("go('batch'); true");
+    await until("STATE.tab === 'batch' && !!document.querySelector('#bSuggestUse')");
+    assert.deepEqual(await ev("[document.querySelector('h1').textContent, document.querySelector('#bOffer').value, B.draft.offer, B.touched, B.draft.mix['studio-portrait'], B.draft.cards.statement + B.draft.cards.review + B.draft.cards.timeline]"), ["Generate Creatives", "", "", false, 2, 0], "never the offer; the gym's Ad defaults for the photos; no card added");
+    let banner = await ev("document.querySelector('#bSuggest').innerText");
+    assert.match(banner, /Suggested by the account review of \d{4}-\d\d-\d\d/); assert.match(banner, /6 Week Cycle Check · your last batch's words/); assert.match(banner, /BISHAN · MEN/); assert.match(banner, /The offer is yours to type/); assert.match(banner, /Running now: Body Reset \(40 leads at SGD 17\.50\)/);
+    // One click takes all of it: the last batch's own words, and a kind with no approved scene held back, in words.
+    await ev("document.querySelector('#bSuggestUse').click(); true");
+    await until("document.querySelector('#bOffer').value === '6 Week Cycle Check'");
+    assert.deepEqual(await ev("[B.draft.locations, B.draft.audience, B.draft.mix['studio-portrait'] || 0, B.touched, !!document.querySelector('#bSuggestUse'), !!document.querySelector('#bSuggestHeld')]"), [["BISHAN"], "MEN", 0, true, false, true]);
+    banner = await ev("document.querySelector('#bSuggest').innerText");
+    assert.match(banner, /Pre-filled from the account review/); assert.match(banner, /Left out for now — 2 studio portraits: no scene of that kind is approved yet\. Draft Scenes →/);
+    await ev("bSuggestClear(); true");
+    assert.deepEqual(await ev("[!!document.querySelector('#bSuggest'), document.querySelector('#bOffer').value, B.draft.mix['studio-portrait']]"), [false, "", 2], "blank: the Ad defaults again");
+    // Leaving and coming back keeps the form as it was left: the suggestion is offered once per opening of a gym.
+    await ev("go('scenes'); true"); await until("STATE.tab === 'scenes'"); await ev("go('batch'); true"); await until("STATE.tab === 'batch' && !!document.querySelector('#bOffer')");
+    await new Promise((x) => setTimeout(x, 600));
+    assert.equal(await ev("!!document.querySelector('#bSuggest')"), false);
+    // An address by the step's old name.
+    await ev(`location.hash = '#/${GYM}/create'; true`);
+    await until("STATE.tab === 'batch'");
+    await ev(`location.hash = '#/${GYM}/nosuchscreen'; true`);
+    await until("STATE.tab === 'results'");
+  } finally {
+    for (const [p, body] of keep) { if (body) writeFileSync(p, body); else rmSync(p, { force: true }); }
+    rmSync(bdir, { recursive: true, force: true }); rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true });
   }
 });

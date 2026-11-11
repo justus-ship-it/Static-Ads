@@ -13,7 +13,7 @@
  *     website   read-website.mjs on the Page's website (its own process; Chrome and model calls)
  *     instagram read-instagram.mjs on the Page's Instagram account (its own process; Meta and model calls)
  *   A step that fails is recorded with its reason and the run goes on; nothing is written to the profile here
- *   except the identity (exactly one, as the Publish screen would).
+ *   except the identity (exactly one, as the Publish Ads screen would).
  *
  *   importProposal(gymDir)                — what the import screen shows: each section's summary, pre-ticked
  *                                            except the offer names and the photos (the owner's choices)

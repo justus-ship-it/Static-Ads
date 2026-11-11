@@ -271,12 +271,12 @@ function validate(profile, offer, resolved, gymDir) {
 
 // ── Gym profiles (schema 3) ──────────────────────────────────────────────────
 // A gym's profile is filled in once and remembered: identity and premises, brand and photography,
-// the defaults the Create screen opens with, the Meta ids for publishing later. Schema 3 only adds
+// the defaults the Generate Creatives screen opens with, the Meta ids for publishing later. Schema 3 only adds
 // to 1 and 2 (creative_defaults, meta_assets.business_id / lead_form_id), so older profiles still load.
 
 export const PROFILE_SCHEMA = 3;
 const MAX_LOCATION_CALLOUTS = 4; // plan-offer-batch MAX_LOCATIONS: one version of every ad per location
-/** What the Create screen opens with when a profile says nothing. The offer is never among them. */
+/** What the Generate Creatives screen opens with when a profile says nothing. The offer is never among them. */
 export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 10, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true, palettes: "reference", image_model: "pro", look: "reference", ratio: "4x5", format: "workout" };
 /** The feed ad's shape: square, or 4:5 (taller in the feed; what F45 Jurong West's running ads use). Stories are always 9:16. */
 // The feed ad's shape. One only since 2026-11-10 (the owner's rule): every feed ad is 4:5 and its Stories version 9:16;
@@ -472,7 +472,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
     if (!Array.isArray(creative[k])) { errors.push(`creative.${k} must be a list`); continue; }
     for (const id of creative[k]) if (!known[id]) errors.push(`creative.${k} names "${id}", which is not in the catalogue`);
   }
-  // The Create screen's defaults: the same rules the batch applies to the words and counts.
+  // The Generate Creatives screen's defaults: the same rules the batch applies to the words and counts.
   const cd = profile.creative_defaults;
   if (cd != null) {
     if (!isObj(cd)) errors.push("creative_defaults must be an object");
