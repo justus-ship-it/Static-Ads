@@ -3314,3 +3314,97 @@ test("U57 the lead form, a part of its own in Publish Ads (2026-11-11): between 
     assert.deepEqual(await ev("[formNamesOffer('v9 - 11月 6 Week Strength Kickstart', '6 Week Strength Kickstart'), formNamesOffer('Strength Kickstart leads', '6 Week Strength Kickstart'), formNamesOffer('Kickstart: strength in a week or six, men', '6 Week Strength Kickstart'), formNamesOffer('12 Week Total Body Reset', '6 Week Strength Kickstart'), formNamesOffer('', 'x')]"), [true, true, true, false, null]);
   } finally { if (saved) writeFileSync(sfile, saved); else rmSync(sfile, { force: true }); }
 });
+
+test("U58 setting up a gym, step by step (2026-11-11): the Profile screens carry the same strip, the same indicator and the same one button as the cycle — five steps from what the profile still needs, item by item; the bar saves what was changed, points at the field of the next missing thing, sends to the screen that holds it, offers the import to a gym just linked, then leads to the next step and, with every step done, into the cycle; the pixel and the portfolio are optional; a cycle screen says when the setup is not finished; the library has neither; waiting shows here too", async () => {
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+  const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+  // The server says each thing a section needs, done or not, and whether the gym was ever imported from Meta.
+  const V = await (await call(`/api/client/${GYM}`)).json();
+  assert.deepEqual(V.completeness.sections.map((s) => s.id), ["identity", "brand", "photos", "scenes", "offers", "defaults", "targeting", "meta"]);
+  for (const s of V.completeness.sections) { assert.ok(s.items.length && s.items.every((i) => typeof i.what === "string" && typeof i.ok === "boolean"), s.id); assert.deepEqual(s.items.filter((i) => !i.ok).map((i) => i.what), s.missing, `${s.id}: the items say what the section's missing list says`); }
+  assert.equal(typeof V.setup.imported, "boolean");
+  const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u58#/${GYM}/overview` }, sessionId); await loaded;
+  await until(`!!STATE.status && STATE.sel === ${JSON.stringify(GYM)} && STATE.tab === 'overview' && !!document.querySelector('#setupStrip') && !!document.querySelector('#stpDo')`);
+  // The Overview: the setup's strip (not the cycle's), five steps in order, and the indicator's parts are the steps.
+  const names = ["Connect to Meta", "Who the gym is", "Brand and photos", "Offer and ad defaults", "Targeting and budget"];
+  assert.deepEqual(await ev("[...document.querySelectorAll('#setupStrip .cycstep .hd')].map(e => e.textContent.replace(/^[✓\\d]/, ''))"), names);
+  assert.deepEqual(await ev("[...document.querySelectorAll('#stpParts .stpp .nm')].map(e => e.textContent)"), names);
+  assert.match(await ev("document.querySelector('#setupStrip .cychd').textContent"), /^Setting up .+ · \d of 5 done/);
+  assert.deepEqual(await ev("[!!document.querySelector('#cyc'), !!document.querySelector('#cycNext'), SETUP_TABS.includes('overview'), SETUP_TABS.includes('photos'), SETUP_TABS.includes('copy')]"), [false, false, true, false, false]);
+  // A gym as it could be, to read the rules against: `with` swaps the profile's state for one evaluation and puts everything back.
+  const sec = "(id, page, items) => ({ id, label: id, page, status: '', missing: items.filter(x => !x[1]).map(x => x[0]), items: items.map(([what, ok]) => ({ what, ok })) })";
+  const state = (o = {}) => `(()=>{ const sec = ${sec}, o = ${JSON.stringify(o)}, ok = (k, d = true) => (k in o ? o[k] : d); return { sections: [
+    sec('identity', 'identity', [['display name', true], ['abbreviation', true], ['website', ok('website')], ["a location's name", true], ['its postal code', ok('postal')]]),
+    sec('brand', 'brand', [['a primary colour', ok('colour')], ['what photos must show', true], ['what photos must never show', true], ['who is in the photos', true]]),
+    sec('photos', 'photos', [['a cleaned photo of the premises, or a room reference', ok('photo')]]), sec('scenes', 'scenes', [['an approved scene library', true]]),
+    sec('offers', 'offer', [['at least one offer wording', ok('wording')]]), sec('defaults', 'defaults', [['at least one location callout', ok('callout')]]),
+    sec('targeting', 'targeting', [['a radius pin', ok('pin')], ['an age range', true], ['a budget', true]]),
+    sec('meta', 'meta', [['ad account id', ok('account')], ['Facebook page id', true], ['business portfolio id', ok('portfolio')], ['pixel id', ok('pixel')], ['lead form id', true]]) ] }; })()`;
+  const withState = (o, tab, body, extra = "") => ev(`(()=>{ const keep = [STATE.view, STATE.tab, DIRTY.profile]; STATE.view = { ...STATE.view, completeness: ${state(o)}, setup: { imported: ${!!o.imported} } }; STATE.tab = ${JSON.stringify(tab)}; ${extra} try { ${body} } finally { [STATE.view, STATE.tab, DIRTY.profile] = keep; } })()`);
+  const bar = "(S => { const i = S.parts.findIndex(p => !p.done), a = i >= 0 ? S.parts[i] : S.after; return [S.parts.map(p => p.opt ? 'opt' : p.done ? 'done' : 'todo'), i, a.label || null, a.text]; })(partsSetup())";
+  // Every step done: the Overview hands over to the cycle. The pixel and the portfolio are never waited for.
+  let r = await withState({ pixel: false, portfolio: false }, "overview", `return ${bar};`);
+  assert.deepEqual(r.slice(0, 3), [["done", "done", "done", "done", "done"], -1, "Start the cycle: Review Data →"]); assert.match(r[3], /^The gym is set up\./);
+  r = await withState({ pixel: false, portfolio: false }, "meta", `return ${bar};`);
+  assert.deepEqual(r.slice(0, 3), [["done", "done", "opt", "opt", "done"], -1, "Start the cycle: Review Data →"], "optional and not set: shown, never the thing to do");
+  // The Overview names the first step with something missing, and its button goes to the screen that holds it.
+  r = await withState({ website: false, callout: false }, "overview", `return ${bar};`);
+  assert.deepEqual(r.slice(0, 3), [["done", "todo", "done", "todo", "done"], 1, "Who the gym is →"]); assert.equal(r[3], "Who the gym is still needs website.");
+  assert.deepEqual(await withState({ callout: false }, "overview", "const M = setupModel(); return [M[3].missing[0].page, M[3].home, M.map(s => s.done)];"), ["defaults", "offer", [true, true, true, false, true]]);
+  // On the screen that holds the missing thing: what it is, how to give it, and a button that takes the eye to its field.
+  await ev("go('identity'); true");
+  await until("STATE.tab === 'identity' && !!document.querySelector('#pName') && !!document.querySelector('#setupStrip .cycstep.here')");
+  assert.equal(await ev("document.querySelector('#setupStrip .cycstep.here .hd').textContent.replace(/^[✓\\d]/, '')"), "Who the gym is");
+  r = await withState({ website: false, postal: false }, "identity", `return ${bar};`);
+  assert.deepEqual(r.slice(0, 3), [["done", "done", "todo", "done", "todo"], 2, "Show me where"]);
+  assert.equal(r[3], "Still needed: website. The gym's own website address: a lead ad links to it. Then press Save changes.");
+  assert.equal(await withState({ website: false }, "identity", "const p = partsSetup().parts[2]; p.go(); return document.activeElement === document.querySelector(SETUP_FIELD.website);"), true, "the cursor is in the website box");
+  // Something typed and not saved: saving it is the one thing to do, whatever else is missing.
+  r = await withState({ website: false }, "identity", `return ${bar};`, "DIRTY.profile = true;");
+  assert.deepEqual([r[2], r[3]], ["Save changes", "You have changes on this page that are not saved yet. Save them before going on."]);
+  r = await withState({}, "identity", `return ${bar};`, "DIRTY.profile = true;");
+  assert.deepEqual([r[1], r[2]], [-1, "Save changes"], "even with the step complete");
+  // Typing in a field really does it: the bar turns to Save changes at the first keystroke. (Nothing is saved here.)
+  await ev("(()=>{ const el = document.querySelector(SETUP_FIELD.website); el.value = el.value + ' '; el.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");
+  await until("document.querySelector('#stpGo')?.textContent === 'Save changes'");
+  await ev("DIRTY.profile = false; refreshProfile().then(() => { render(); return true; })");
+  await until("document.querySelector('#stpGo')?.textContent !== 'Save changes'");
+  // The missing thing is on another screen of the same step: the button goes there.
+  r = await withState({ callout: false }, "offer", `return ${bar};`);
+  assert.deepEqual([r[0], r[2]], [["done", "todo"], "Ad defaults →"]); assert.match(r[3], /^This step still needs at least one location callout\. .* It is on Ad defaults\.$/);
+  r = await withState({ photo: false }, "brand", `return ${bar};`);
+  assert.deepEqual([r[0], r[2]], [["done", "done", "done", "done", "todo"], "Photos & brand assets →"]);
+  // Photos & assets is a library page: it carries the setup only while the gym's photos are still to do.
+  assert.deepEqual([await withState({ photo: false }, "photos", "return onSetup();"), await withState({}, "photos", "return onSetup();"), await withState({ photo: false }, "copy", "return onSetup();")], [true, false, false]);
+  // The step done: on to the next one that is not; a gym just linked is offered the import first — only while what an import fills is missing.
+  r = await withState({ callout: false }, "identity", `return ${bar};`);
+  assert.deepEqual([r[1], r[2]], [-1, "Offer and ad defaults →"]); assert.equal(r[3], "Next in the setup: Offer and ad defaults — it still needs at least one location callout.");
+  const linked = "STATE.profile = { ...STATE.profile, meta_assets: { ...(STATE.profile.meta_assets || {}), ad_account_id: '123456789' } };";
+  const p0 = await ev("JSON.stringify(STATE.profile)");
+  assert.deepEqual([(await withState({ postal: false }, "meta", `return ${bar};`, linked))[2], (await withState({ postal: false }, "import", `return ${bar};`, linked))[2], (await withState({ postal: false, imported: true }, "meta", `return ${bar};`, linked))[2], (await withState({ colour: false }, "meta", `return ${bar};`, linked))[2]], ["Import from Meta →", "Read from Meta…", "Who the gym is →", "Brand and photos →"]);
+  await ev(`STATE.profile = JSON.parse(${JSON.stringify(p0)}); true`);
+  // On Meta link the bar offers Check the link only when the page itself has it (Meta's keys set up on this machine): never more than the screen.
+  await ev("go('meta'); true");
+  await until("STATE.tab === 'meta' && !!document.querySelector('#setupStrip') && !/Loading…/.test(document.querySelector('#view').textContent)");
+  const hasCheck = await ev(`!!document.querySelector('[onclick^="metaCheck"]')`);
+  r = await withState({ account: false }, "meta", `return ${bar};`);
+  assert.deepEqual(r.slice(1, 3), [0, hasCheck ? "Check the link" : null]); assert.match(r[3], hasCheck ? /Press Check the link to load the lists/ : /Meta's keys are not set up on this machine yet/);
+  // A cycle screen says when the setup is not finished, with the way there; never for the link or the targeting alone.
+  await ev("go('scenes'); true");
+  await until("STATE.tab === 'scenes' && !!document.querySelector('#cyc') && !!document.querySelector('#stpDo')");
+  assert.equal(await withState({ wording: false }, "scenes", "paintStepper(); const t = document.querySelector('#stpSetup')?.textContent || null; return t;"), "This gym's setup is not finished — Offer and ad defaults still needs at least one offer wording. Set up the gym →");
+  assert.equal(await withState({ account: false, pin: false }, "scenes", "paintStepper(); return document.querySelector('#stpSetup')?.textContent || null;"), null);
+  await ev("paintStepper(); true");
+  // Waiting shows on a Profile screen as it does in the cycle.
+  await ev("go('targeting'); true");
+  await until("STATE.tab === 'targeting' && !!document.querySelector('#setupStrip') && !!document.querySelector('#stpDo')");
+  const id = await ev(`waitStart('POST', '/api/client/${GYM}/targeting/import')`);
+  await ev(`WAIT.items.get(${id}).at -= 6000; paintWait(); true`);
+  assert.deepEqual(await ev("[document.querySelector('#stpDo').classList.contains('working'), document.querySelector('#stpDo .t').textContent, document.querySelector('#waitchip').hidden]"), [true, "Reading the account's ad sets and audiences from Meta. · 6 s", false]);
+  await ev(`waitEnd(${id}); true`);
+  assert.equal(await ev("document.querySelector('#stpDo').classList.contains('working')"), false);
+  // A library page has neither the strip nor the indicator.
+  await ev("go('copy'); true");
+  await until("STATE.tab === 'copy' && document.querySelector('#cycle').innerHTML === '' && document.querySelector('#stepper').innerHTML === ''");
+});

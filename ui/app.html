@@ -79,6 +79,7 @@
   .stpparts i{color:var(--faint);font-style:normal}
   .stpp{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 5px;border-radius:14px;border:1px solid var(--line);color:var(--faint);background:var(--surface);white-space:nowrap}
   .stpp .n{width:18px;height:18px;line-height:18px;text-align:center;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:11px;font-weight:700;color:var(--faint);flex:none}
+  .stpp.opt{border-style:dashed}
   .stpp.done{color:var(--ok);border-color:#bfe3cd;background:var(--ok-soft)} .stpp.done .n{background:var(--ok);border-color:var(--ok);color:#fff}
   .stpp.now{color:var(--navy);border-color:var(--navy);font-weight:600;box-shadow:inset 0 0 0 1px var(--navy)} .stpp.now .n{background:var(--navy);border-color:var(--navy);color:#fff}
   .stpdo{display:flex;align-items:center;gap:12px;margin-top:10px;padding:10px 12px;border-radius:8px;background:var(--accent-soft);font-size:13.5px;line-height:1.45}
@@ -90,6 +91,8 @@
   .main.full .stpp:not(.now){padding:4px 5px} .main.full .stpp:not(.now) .nm{display:none}
   .main.full .stpdo{flex:1;min-width:0;margin-top:0;padding:6px 10px} .main.full .stpdo .k{display:none} .main.full .stpdo .t{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:13px;line-height:1.35}
   .main.full .stpdo button{padding:7px 14px;font-size:13.5px} .main.full .stpelse{display:none}
+  .cychd{font-size:11px;letter-spacing:.8px;text-transform:uppercase;font-weight:700;color:var(--faint);margin:0 2px 8px}
+  .cycstep.st-wait .tx{color:var(--faint)}
   .cycnext{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:13.5px}
   .cycnext .k{color:var(--faint);font-size:11px;letter-spacing:.8px;text-transform:uppercase;font-weight:700} .cycnext .t{flex:1;min-width:0}
   @media (max-width:1100px){ .cycsteps{grid-template-columns:repeat(2,minmax(0,1fr))} }
@@ -343,7 +346,7 @@ let TOKEN = document.querySelector('meta[name="panel-token"]').content;
 const WAIT = { items:new Map(), seq:0, tick:null, was:null };
 /** What a request is, in plain words: [method, path, sentence | (body) => sentence]. The first match wins; `null` never shows. */
 const WAITS = [
-  [/POST/, /\/batch\/check$|\/api\/preview$/, null], [/PUT/, /\/picks$/, null], [/GET/, /\/cycle$|\/progress$|\/api\/run\/|\/api\/status$|\/api\/token$|\/api\/enums$|\/api\/clients$|\/batch-setup$/, null],
+  [/POST/, /\/batch\/check$|\/api\/preview$/, null], [/PUT/, /\/picks$/, null], [/GET/, /\/cycle$|\/progress$|\/api\/run\/|\/api\/status$|\/api\/token$|\/api\/enums$|\/api\/clients$|\/batch-setup$|\/api\/client\/[^/]+$/, null],
   [/POST/, /\/copy\/draft$/, (b) => `The agent is drafting ${/"kind":"headline"/.test(b||'') ? 'headlines' : 'copies'} from the copy library, then judging each one for clarity. This takes about a minute.`],
   [/POST/, /\/copy\/layout$/, 'The agent is adding line breaks to the copies.'],
   [/POST/, /\/copy\/recommended$/, 'Keeping the recommended ones.'],
@@ -409,7 +412,8 @@ function paintWait(){
 
 async function panelFetch(path, init = {}) {
   const waiting = waitStart(init.method, path, init.body);
-  try { return await panelFetch0(path, init); } finally { waitEnd(waiting); }
+  try { return await panelFetch0(path, init); }
+  finally { waitEnd(waiting); if (init.method && init.method !== 'GET' && typeof loadSetupState === 'function') { clearTimeout(SETUP_T); SETUP_T = setTimeout(loadSetupState, 600); } } // anything saved on a Profile screen: its setup is read again
 }
 async function panelFetch0(path, init = {}) {
   const send = () => fetch(path, { ...init, headers: { ...(init.headers || {}), 'x-panel-token': TOKEN } });
@@ -548,9 +552,18 @@ async function loadCycle(){
   catch(e){ if (seq !== CY.seq || gym !== STATE.sel) return; CY.gym = gym; CY.data = null; CY.error = e.message; }
   paintCycle(); paintRail(); paintSceneAsks(); paintStepper();
 }
+/** The profile's completeness, read again for the setup's strip and indicator (a wording added, a photo cleaned, a scene approved change it without a save of the profile). */
+let SETUP_SEQ = 0, SETUP_T = null;
+async function loadSetupState(){
+  if (!STATE.sel || !(SETUP_TABS.includes(STATE.tab) || STATE.tab === 'photos')) return;
+  const gym = STATE.sel, seq = ++SETUP_SEQ;
+  try { const d = await api('/api/client/'+gym); if (seq !== SETUP_SEQ || gym !== STATE.sel) return; STATE.view = d; if (!DIRTY.profile) STATE.profile = d.profile; } catch { return; }
+  paintCycle(); paintStepper(); paintRail();
+}
 function paintCycle(){
   const box = $('#cycle'); if (!box) return;
-  // Not on the library or the profile; not on the one-ad picking screen, which fills the window by itself.
+  if (onSetup()) return paintSetupStrip(box);
+  // Not on the library; not on the one-ad picking screen, which fills the window by itself.
   if (!STATE.sel || !CYCLE_TABS.includes(STATE.tab) || (STATE.tab==='review' && STATE.batch)){ box.innerHTML = ''; return; }
   const D = CY.gym===STATE.sel ? CY.data : null;
   if (!D){ box.innerHTML = CY.gym===STATE.sel && CY.error ? `<div class="cyc"><div class="hint" style="margin:0">Where this gym stands could not be read: ${esc(CY.error)}</div></div>` : ''; return; }
@@ -570,7 +583,7 @@ function render(){
   const bad = STATE.status.checks.filter(c=>!c.ok && !c.optional).length;
   paintRail();
   paintCrumb();
-  paintCycle(); paintStepper(); loadCycle();
+  paintCycle(); paintStepper(); loadCycle(); loadSetupState();
 
   const v = $('#view');
   if (STATE.tab==='setup') return viewSetup(v);
@@ -786,7 +799,7 @@ async function viewDefaults(v, seq=VIEW_SEQ){
   v.innerHTML = `
   <h1>Ad defaults</h1><p class="sub">What the Generate Creatives screen opens with for this gym, so a new batch is a few edits and one button. Everything stays changeable per batch. The offer is never filled in for you.</p>
   <div class="card"><h3>Words</h3>
-    <label style="margin-top:0">Location callouts <span class="n">· up to 4; one version of every ad per location</span></label>
+    <label style="margin-top:0" id="cdLocLabel">Location callouts <span class="n">· up to 4; one version of every ad per location</span></label>
     <div class="chips">${locs.map((l,i)=>`<span class="locchip"><input value="${esc(l)}" oninput="cdList('locations',${i},this.value)"><button type="button" title="Remove" onclick="cdDel('locations',${i})">✕</button></span>`).join('')}${locs.length<4?`<span class="chip add" onclick="cdAdd('locations')">+ location</span>`:''}</div>
     <label>Audience callouts <span class="n">· offered as chips on Generate Creatives</span></label>
     <div class="chips">${auds.map((a,i)=>`<span class="locchip"><input value="${esc(a)}" style="width:170px" oninput="cdList('audiences',${i},this.value)"><button type="button" title="Remove" onclick="cdDel('audiences',${i})">✕</button></span>`).join('')}<span class="chip add" onclick="cdAdd('audiences')">+ audience</span></div>
@@ -1184,7 +1197,7 @@ function paintTargeting(v){
     </div>
   </div>
   <div class="card">
-    <div class="row"><h3 style="margin:0">Pins · one ad set per location callout</h3><div class="spacer"></div><button class="sm" onclick="addPin()">Add a pin</button></div>
+    <div class="row"><h3 style="margin:0" id="pinsHead">Pins · one ad set per location callout</h3><div class="spacer"></div><button class="sm" onclick="addPin()">Add a pin</button></div>
     <p class="hint">Each location callout on the ads gets its own ad set, targeted round the pin that names it. A pin is a named Meta place (as their own ad sets use) or a point on the map.</p>
     ${pins.length?pins.map(pinCard).join(''):'<div class="empty">No pins yet. Add one and find it by postal code.</div>'}
   </div>
@@ -3553,7 +3566,7 @@ const setPin = (i,k,val)=>{
 };
 
 let DIRTY = {};
-function dirty(which){ DIRTY[which]=true; const b=$('#saveBtn_'+which); if(b){b.disabled=false;b.textContent='Save changes';} }
+function dirty(which){ const was = DIRTY[which]; DIRTY[which]=true; const b=$('#saveBtn_'+which); if(b){b.disabled=false;b.textContent='Save changes';} if (!was) { try { paintStepper(); } catch{} } }
 function saveBar(which){
   return `<div class="row" style="position:sticky;bottom:0;background:var(--bg);padding:12px 0;border-top:1px solid var(--line)">
     <button class="primary" id="saveBtn_${which}" ${DIRTY[which]?'':'disabled'} onclick="save('${which}')">${DIRTY[which]?'Save changes':'Saved'}</button>
@@ -3791,17 +3804,96 @@ function partsPublish(){
     part(PUB_PARTS[5], live > 0, { text:'Everything was made paused. Look it over in Ads Manager and switch the campaign on there when you are ready: this app never switches an ad on. Then press Pull results from Meta below and this ticks.', ...(url ? { label:'Open Ads Manager ↗', go:()=>window.open(url, '_blank', 'noopener') } : {}) }),
   ], after: { text:`${plur(live,'ad')} ${live===1?'is':'are'} live. Come back in a few days to read what they did: the cycle starts again there.`, label:'Review Data →', go:()=>go('results') } };
 }
+// ── Setting up a gym: the same strip, the same indicator, the same one button (2026-11-11) ──
+// The owner: "implement the step UI and the one big button for the profile of each gym as well … so that each step is clear
+// and leads cleanly to another for any user". A gym's profile is five steps in order; each is one or more Profile screens.
+// A step's parts are what the profile still needs there (the server's own completeness, item by item) — done by what is saved,
+// never by a click on the indicator. The bar says the one thing to do on this screen: save what was changed, fill in the
+// next missing thing (the button takes the eye to its field), go to the screen that holds it, or go on to the next step —
+// and, with every step done, into the cycle. Nothing is locked: every screen opens whatever the strip says.
+const SETUP_STEPS = [
+  { id:'connect', name:'Connect to Meta', home:'meta', tabs:['meta','import','metafacts'], sections:['meta'] },
+  { id:'identity', name:'Who the gym is', home:'identity', tabs:['identity'], sections:['identity'] },
+  { id:'brand', name:'Brand and photos', home:'brand', tabs:['brand','website','instagram','photos'], sections:['brand','photos'] },
+  { id:'offer', name:'Offer and ad defaults', home:'offer', tabs:['offer','defaults'], sections:['offers','defaults'] },
+  { id:'targeting', name:'Targeting and budget', home:'targeting', tabs:['targeting'], sections:['targeting'] },
+];
+const SETUP_TABS = ['overview', ...SETUP_STEPS.flatMap(s=>s.tabs).filter(t=>t!=='photos')];
+/** Where each thing the profile needs is typed, on its own screen: the bar's button takes the eye there. */
+const SETUP_FIELD = {
+  'display name':'#pName', 'abbreviation':`input[oninput*="'gym_abbr'"]`, 'website':`input[oninput*="setP('website'"]`,
+  "a location's name":'input[oninput*="locations.0.label"]', 'its postal code':'input[oninput*="locations.0.postal_code"]',
+  'a primary colour':'input[oninput*="brand_lock.colors.primary.hex"]', 'what photos must show':'textarea[oninput*="photography.must"],textarea[onchange*="photography.must"]',
+  'what photos must never show':'textarea[oninput*="photography.never"],textarea[onchange*="photography.never"]', 'who is in the photos':'[oninput*="brand_lock.photography.people"]',
+  'at least one offer wording':'#wNew', 'an age range':'[oninput*="demographics.age_min"]', 'a budget':'[oninput*="campaign_defaults.budget.amount"]',
+  'a cleaned photo of the premises, or a room reference':'#aDrop', 'at least one location callout':'#cdLocLabel', 'a radius pin':'#pinsHead',
+};
+/** How to give each thing, in plain words. */
+const SETUP_HOW = {
+  'display name':"Type the gym's name as people know it.", 'abbreviation':'Two to four capital letters for the gym: they go in every campaign and ad set name.', 'website':"The gym's own website address: a lead ad links to it.",
+  "a location's name":'Name the location (the area people know it by).', 'its postal code':"The location's postal code: the map point and the radius are worked out from it.",
+  'a primary colour':"The brand's main colour, as a hex code (or read it from the website).", 'what photos must show':'What every generated photo must show: the real premises, its colours, its equipment. One per line.',
+  'what photos must never show':'What a photo must never show: other brands, mirrors, anything the gym does not have. One per line.', 'who is in the photos':'Who the people in the photos are: ages, backgrounds, builds.',
+  'a cleaned photo of the premises, or a room reference':"Add photos of the gym's floor, then Survey and Clean them, so generated photos match the real room.",
+  'at least one offer wording':'Type an offer exactly as it should read on the ads, then press Add.', 'at least one location callout':'Add the area names the ads call out, one ad set each.',
+  'a radius pin':'Add a pin: where the ads are shown around, and how far.', 'an age range':'The youngest and oldest age the ads are shown to.', 'a budget':'How much an ad set may spend a day.',
+  'ad account id':"Pick the gym's ad account from the list.", 'Facebook page id':"Pick the gym's Facebook Page from the list.", 'business portfolio id':'Pick the business portfolio from the list.', 'pixel id':"Pick the gym's pixel from the list.", 'lead form id':"Pick the form the gym's lead ads use by default.",
+};
+/** Kept on the profile when the gym has them, never waited for: a lead ad with an instant form needs neither (four of six gyms run without one or the other). */
+const SETUP_OPTIONAL = new Set(['business portfolio id', 'pixel id']);
+const cap = (s) => s ? s[0].toUpperCase() + s.slice(1) : s;
+/** The five steps with what each still needs, from the profile's completeness as the server last gave it; null before it has. */
+function setupModel(){
+  const c = STATE.view?.completeness; if (!c || !(c.sections||[]).every(s=>Array.isArray(s.items))) return null;
+  const sec = Object.fromEntries(c.sections.map(s=>[s.id, s]));
+  return SETUP_STEPS.map((st, i)=>{ const items = st.sections.flatMap(id=>(sec[id]?.items||[]).map(it=>({ ...it, page:sec[id].page, optional:SETUP_OPTIONAL.has(it.what) }))), missing = items.filter(x=>!x.ok && !x.optional); return { ...st, n:i+1, items, missing, done:!missing.length }; });
+}
+const setupStepOf = (tab) => SETUP_STEPS.findIndex(s=>s.tabs.includes(tab));
+/** Whether this screen shows the gym's setup: the Profile screens, and Photos & assets while the gym's photos are still to do. */
+function onSetup(){ if (!STATE.sel) return false; if (SETUP_TABS.includes(STATE.tab)) return true; if (STATE.tab !== 'photos') return false; const M = setupModel(); return !!M && !M[2].done; }
+function setupGo(step){ const M = setupModel(), s = M?.[step]; if (!s) return; go(s.missing[0]?.page || s.home); }
+/** The strip on the Profile screens: the five steps, the one this screen belongs to, and what each still needs. */
+function paintSetupStrip(box){
+  const M = setupModel(); if (!M){ box.innerHTML = ''; return; }
+  const here = setupStepOf(STATE.tab), next = M.findIndex(s=>!s.done), done = M.filter(s=>s.done).length;
+  box.innerHTML = `<div class="cyc" id="setupStrip"><div class="cychd">Setting up ${esc(STATE.profile?.display_name || 'this gym')} · ${done} of ${M.length} done${done===M.length?' · the gym is ready for the cycle':''}</div>
+    <div class="cycsteps">${M.map((s,i)=>`<button class="cycstep ${s.done?'st-ok':i===next?'st-todo':'st-wait'} ${i===here?'here':''}" onclick="setupGo(${i})" title="${esc(s.name)}"><span class="hd"><span class="n">${s.done?'✓':s.n}</span>${esc(s.name)}</span><span class="tx">${s.done?'Done':esc(`Needs ${s.missing.map(x=>x.what).join(', ')}`)}</span></button>`).join('')}</div></div>`;
+}
+/** The parts and the one thing to do, on a Profile screen. */
+function partsSetup(){
+  const M = setupModel(); if (!M) return null;
+  const tab = STATE.tab, k = setupStepOf(tab), nextStep = M.findIndex(s=>!s.done), allDone = nextStep < 0;
+  const onward = allDone ? { text:'The gym is set up. Everything from here is the cycle: read the data, draft scenes, generate, pick, publish.', label:'Start the cycle: Review Data →', go:()=>go('results') }
+    : { text:`Next in the setup: ${M[nextStep].name} — it still needs ${M[nextStep].missing.map(x=>x.what).join(', ')}.`, label:`${M[nextStep].name} →`, go:()=>setupGo(nextStep) };
+  if (tab === 'overview' || k < 0) return { parts: M.map(s=>part(s.name, s.done, { text:`${s.name} still needs ${s.missing.map(x=>x.what).join(', ')}.`, label:`${s.name} →`, go:()=>setupGo(s.n-1) })), after: onward };
+  const st = M[k], which = DIRTY.offer ? 'offer' : DIRTY.profile ? 'profile' : null;
+  const unsaved = which && $('#saveBtn_'+which) ? { text:'You have changes on this page that are not saved yet. Save them before going on.', label:'Save changes', go:()=>save(which) } : null;
+  const parts = st.items.map(it=>it.optional && !it.ok ? { name:cap(it.what), done:true, opt:true } : part(cap(it.what), it.ok, unsaved || (it.page !== tab
+    ? { text:`This step still needs ${it.what}. ${SETUP_HOW[it.what]||''} It is on ${TITLES[it.page]||it.page}.`.replace(/\s+/g,' '), label:`${TITLES[it.page]||it.page} →`, go:()=>go(it.page) }
+    : tab === 'meta'
+      ? ($('[onclick^="metaCheck"]')
+        ? { text:`Still needed: ${it.what}. ${SETUP_HOW[it.what]||''} Press Check the link to load the lists if they are not showing.`.replace(/\s+/g,' '), label:'Check the link', go:()=>metaCheck() }
+        : { text:`Still needed: ${it.what}. Meta's keys are not set up on this machine yet (the steps are on this page), so there is no list to pick from: the id can be typed below, then Save changes.` })
+      : { text:`Still needed: ${it.what}. ${SETUP_HOW[it.what]||''}${which===null && tab!=='offer' && tab!=='photos' ? ' Then press Save changes.' : ''}`.replace(/\s+/g,' '), ...(SETUP_FIELD[it.what] && $(SETUP_FIELD[it.what]) ? { label:'Show me where', go:()=>{ const el = $(SETUP_FIELD[it.what]); stpScroll(el.closest('.card') && /^(LABEL|H3)$/.test(el.tagName) ? (el.tagName === 'H3' ? el.closest('.card') : el.parentElement) : el); const box = /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? el : el.parentElement?.querySelector('input,textarea'); try { box?.focus({ preventScroll:true }); } catch{} } } : {}) })));
+  // Every part of this step is in: what was changed is saved first; a gym just linked is read from Meta in one go; then on to the next step.
+  const imp = st.id === 'connect' && !STATE.view?.setup?.imported && STATE.profile?.meta_assets?.ad_account_id && (!M[1].done || !M[3].done || !M[4].done)
+    ? (tab === 'import' ? { text:"Read the gym's Page and ad account in one go: its address, its targeting, the offers and forms it has run. Read-only: nothing on Meta changes. Then tick what is right and add it.", label:'Read from Meta…', go:()=>impStart() }
+      : { text:"The link is set. Now bring the gym's facts in from Meta in one go: its address, targeting, offers and forms.", label:'Import from Meta →', go:()=>go('import') }) : null;
+  return { parts, after: unsaved || imp || onward };
+}
 function stepParts(){
   const C = CY.gym === STATE.sel ? CY.data : null, t = STATE.tab;
+  if (onSetup()) return partsSetup();
   return t==='results' ? partsResults(C) : t==='scenes' ? partsScenes(C) : t==='batch' ? partsBatch(C) : t==='generating' ? partsGenerating()
     : t==='review' ? (STATE.batch ? partsReview() : partsReviewList(C)) : t==='exports' ? partsExports(C) : t==='publish' ? (STATE.batch ? partsPublish() : partsExports(C)) : null;
 }
 function paintStepper(){
   const box = $('#stepper'); if (!box) return;
-  let S = null; try { S = STATE.sel && CYCLE_TABS.includes(STATE.tab) ? stepParts() : null; } catch(e){ console.error(e); }
+  const setup = onSetup();
+  let S = null; try { S = STATE.sel && (CYCLE_TABS.includes(STATE.tab) || setup) ? stepParts() : null; } catch(e){ console.error(e); }
   const W = waitNow();
   if (!S){ STP.go = null; box.innerHTML = STATE.sel && CYCLE_TABS.includes(STATE.tab) && !(CY.gym === STATE.sel && (CY.data || CY.error)) ? '<div class="stp" id="stp"><div class="stpdo working" id="stpDo"><span class="k"><span class="spin"></span>Loading</span><span class="t">Reading where this gym stands in the cycle.</span></div></div>' : ''; return; }
-  const n = (CY.gym === STATE.sel ? CY.data?.next : null) || null, there = n && n.tab === STATE.tab && (n.batch||null) === (STATE.batch||null);
+  const n = (!setup && CY.gym === STATE.sel ? CY.data?.next : null) || null, there = n && n.tab === STATE.tab && (n.batch||null) === (STATE.batch||null);
   const i = S.idle ? -1 : S.parts.findIndex(p=>!p.done), act = S.idle ? { cycle:true, text:S.idle } : i >= 0 ? S.parts[i] : (S.after || { cycle:true, text:'' });
   let text = act.text || '', label = act.label || null, fn = act.go || null;
   // The step's last word is the cycle's: where to go from here.
@@ -3811,11 +3903,11 @@ function paintStepper(){
   if (working){ fn = null; }
   STP.go = fn;
   const else_ = !act.cycle && n && !n.idle && n.step !== STEP_OF[STATE.tab] ? n : null;
-  box.innerHTML = `<div class="stp" id="stp"><div class="stpparts" id="stpParts">${S.parts.map((p,k)=>`<span class="stpp ${p.done?'done':k===i?'now':'later'} ${working&&k===i?'busy':''}" title="${esc(`${k+1}. ${p.name}${p.done?' — done':k===i?' — now':''}`)}"><span class="n">${p.done?'✓':k+1}</span><span class="nm">${esc(p.name)}</span></span>`).join('<i>›</i>')}</div>
+  box.innerHTML = `<div class="stp" id="stp"><div class="stpparts" id="stpParts">${S.parts.map((p,k)=>`<span class="stpp ${p.opt?'opt':p.done?'done':k===i?'now':'later'} ${working&&k===i?'busy':''}" title="${esc(`${k+1}. ${p.name}${p.opt?' — optional, not set':p.done?' — done':k===i?' — now':''}`)}"><span class="n">${p.opt?'–':p.done?'✓':k+1}</span><span class="nm">${esc(p.name)}${p.opt?' · optional':''}</span></span>`).join('<i>›</i>')}</div>
     ${working
       ? `<div class="stpdo working" id="stpDo"><span class="k"><span class="spin"></span>Working${i >= 0 ? ` · ${i+1} of ${S.parts.length}` : ''}</span><span class="t" title="${esc(working.text)}">${esc(working.text)}<span class="s">${waitSecs(working.secs)}</span></span>${label ? `<button class="primary" id="stpGo" disabled>Working…</button>` : ''}</div>`
       : `<div class="stpdo" id="stpDo"><span class="k">${S.idle ? 'Nothing to do here now' : i >= 0 ? `Do this now · ${i+1} of ${S.parts.length}` : 'This step is done'}</span><span class="t" title="${esc(text)}">${esc(text)}</span>${label ? `<button class="primary" id="stpGo" onclick="stpGo()">${esc(label)}</button>` : ''}</div>`}
-    ${else_ ? `<div class="stpelse" id="stpElse">Elsewhere in the cycle — ${esc(else_.text)} <a href="#" onclick="cyGo();return false">${esc(else_.name)} →</a></div>` : ''}</div>`;
+    ${else_ ? `<div class="stpelse" id="stpElse">Elsewhere in the cycle — ${esc(else_.text)} <a href="#" onclick="cyGo();return false">${esc(else_.name)} →</a></div>` : ''}${setup ? '' : (()=>{ const M = setupModel(), k = M ? M.findIndex((s,i)=>i > 0 && i < 4 && !s.done) : -1; return k < 0 ? '' : `<div class="stpelse" id="stpSetup">This gym's setup is not finished — ${esc(M[k].name)} still needs ${esc(M[k].missing.map(x=>x.what).join(', '))}. <a href="#" onclick="setupGo(${k});return false">Set up the gym →</a></div>`; })()}</div>`;
 }
 function stpGo(){ const f = STP.go; if (f) f(); }
 // Every repaint of a step's screen repaints its indicator: the parts follow the form and the files, never a click here.

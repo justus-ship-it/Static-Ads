@@ -523,7 +523,7 @@ function listClients() {
 function profileView(gym) {
   const dir = brandDir(gym), profile = readJsonFile(join(dir, "gym-profile.json"));
   const completeness = profileCompleteness(profile, { gymDir: dir, cleanPhotos: cleanPhotos(gym).filter((x) => !x.people).length, roomReference: !!profile?.creative_defaults?.room_reference, scenes: sceneStatus(gym), wordings: readWordings(dir).length });
-  return { profile, assets: countAssets(dir), completeness, creative_defaults: { ...CREATIVE_DEFAULTS, ...(profile?.creative_defaults || {}) }, logo: logoUrl(gym, profile), brand_palettes: brandPalettes(profile), palette_modes: PALETTE_MODES };
+  return { profile, assets: countAssets(dir), completeness, setup: { imported: existsSync(join(dir, "onboarding", "import.json")) }, creative_defaults: { ...CREATIVE_DEFAULTS, ...(profile?.creative_defaults || {}) }, logo: logoUrl(gym, profile), brand_palettes: brandPalettes(profile), palette_modes: PALETTE_MODES };
 }
 function logoUrl(gym, profile) {
   const f = profile?.brand_lock?.logo?.files?.primary;

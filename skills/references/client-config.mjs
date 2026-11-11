@@ -552,7 +552,8 @@ export function profileCompleteness(profile, { gymDir = null, cleanPhotos = 0, r
   const m = p.meta_assets || {};
   const S = (id, label, page, needs, extra = {}) => {
     const missing = needs.filter(([, ok]) => !ok).map(([what]) => what);
-    return { id, label, page, status: !missing.length ? "done" : missing.length === needs.length ? "missing" : "partial", missing, ...extra };
+    // `items`: every thing this section needs, done or not, in order — what the panel's setup indicator shows as its parts.
+    return { id, label, page, status: !missing.length ? "done" : missing.length === needs.length ? "missing" : "partial", missing, items: needs.map(([what, ok]) => ({ what, ok: !!ok })), ...extra };
   };
   const sections = [
     S("identity", "Identity & locations", "identity", [["display name", !!p.display_name], ["abbreviation", /^[A-Z]{2,4}$/.test(p.gym_abbr || "")], ["website", !!p.website], ["a location's name", !!loc.label], ["its postal code", !!loc.postal_code]],
