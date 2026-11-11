@@ -183,7 +183,22 @@
   button.excl{background:var(--surface);border-color:#eab4b4;color:var(--err);font-weight:700;padding:9px 18px}
   button.excl:hover:not(:disabled){background:var(--err-soft);border-color:var(--err)}
   button.keep.on{box-shadow:0 0 0 3px #bfe6cd} button.excl.on{background:var(--err);border-color:var(--err);color:#fff}
-  .rv-stage{position:relative;overflow:hidden;background:#0b1430;border-radius:12px;height:max(360px,calc(100vh - 322px - 74px));display:flex;align-items:stretch;justify-content:center;gap:22px;padding:16px 70px 10px}
+  .rv-stage{position:relative;overflow:hidden;background:#0b1430;border-radius:12px;height:max(360px,calc(100vh - 322px - 96px));display:flex;align-items:stretch;justify-content:center;gap:22px;padding:16px 70px 10px}
+  .rv-cards{position:relative;display:flex;align-items:stretch;justify-content:center;gap:22px;min-width:0;height:100%;touch-action:pan-y;user-select:none;-webkit-user-select:none;cursor:grab;transition:transform .18s ease-out}
+  .rv-cards.drag{cursor:grabbing;transition:none}
+  .rv-ghost{position:absolute;inset:16px 70px 10px;height:auto;pointer-events:none;z-index:3;transition:transform .3s ease-in,opacity .3s ease-in}
+  .rv-stamp{position:absolute;top:26px;padding:6px 16px;border:4px solid;border-radius:10px;font-size:30px;font-weight:800;letter-spacing:2px;opacity:0;pointer-events:none;background:rgba(11,20,48,.55)}
+  .rv-stamp.keep{left:18px;color:#3ddc84;border-color:#3ddc84;transform:rotate(-12deg);opacity:var(--k,0)} .rv-stamp.excl{right:18px;color:#ff6b6b;border-color:#ff6b6b;transform:rotate(12deg);opacity:var(--x,0)}
+  .rv-ghost.fly-keep .rv-stamp.keep,.rv-ghost.fly-excl .rv-stamp.excl{opacity:1}
+  .rv-act{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:14px;padding:10px 2px 6px}
+  .rv-pick{display:flex;align-items:center;gap:12px}
+  button.rv-big{display:flex;align-items:center;justify-content:center;gap:10px;min-width:210px;height:58px;border-radius:30px;font-size:19px;font-weight:800;padding:0 22px;border-width:2px}
+  button.rv-big .ic{font-size:24px;line-height:1} button.rv-big kbd{font:700 12px ui-monospace,Menlo,monospace;border:1px solid currentColor;border-radius:5px;padding:1px 6px;opacity:.7}
+  button.rv-big.keep{background:var(--ok);border-color:var(--ok);color:#fff} button.rv-big.keep:hover:not(:disabled){background:#156c3f;border-color:#156c3f;transform:scale(1.03)}
+  button.rv-big.excl{background:var(--surface);border-color:var(--err);color:var(--err)} button.rv-big.excl:hover:not(:disabled){background:var(--err);color:#fff;transform:scale(1.03)}
+  button.rv-big:active:not(:disabled){transform:scale(.97)} button.rv-big:disabled{opacity:.4}
+  button.rv-undo{height:40px;border-radius:20px;padding:0 14px;font-size:13px;font-weight:600;color:var(--dim)} button.rv-undo:disabled{opacity:.4}
+  .rv-act .keys{text-align:right;white-space:normal;line-height:1.9} .rv-act .rv-info{padding:0;min-height:0;max-height:44px;overflow:hidden}
   .rv-stage figure{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;min-height:0}
   .rv-stage figure img{max-height:calc(100% - 22px);max-width:100%;object-fit:contain;border-radius:6px;display:block;box-shadow:0 10px 30px rgba(0,0,0,.4)}
   .rv-stage figure.ex img{opacity:.35;filter:grayscale(.6)}
@@ -199,8 +214,8 @@
   .rv-info .scene{flex:1 1 100%;order:9}
   .rv-info .scene{color:var(--text)}
   .rv-info{flex-wrap:wrap}
-  .rv-strip{display:flex;gap:6px;overflow-x:auto;padding:6px 2px 8px;scrollbar-width:thin}
-  .th{flex:none;width:66px;height:66px;border-radius:7px;border:2px solid transparent;position:relative;cursor:pointer;padding:0;background:var(--bg)}
+  .rv-strip{display:flex;gap:6px;overflow-x:auto;padding:4px 2px 6px;scrollbar-width:thin}
+  .th{flex:none;width:54px;height:54px;border-radius:7px;border:2px solid transparent;position:relative;cursor:pointer;padding:0;background:var(--bg)}
   .th img{width:100%;height:100%;object-fit:cover;border-radius:5px;display:block}
   .th.cur{border-color:var(--navy);box-shadow:0 0 0 2px var(--accent-soft)}
   .th.s-exclude img{opacity:.3;filter:grayscale(.7)}
@@ -1690,8 +1705,10 @@ async function viewReview(v, seq=VIEW_SEQ){
   catch(e){ if (seq===VIEW_SEQ) v.innerHTML = `<div class="msg err">${esc(e.message)}</div><button onclick="go('review')">← All campaigns</button>`; return; }
   if (seq !== VIEW_SEQ) return;
   // The mode changes with the list it shows, never before: a key pressed meanwhile acts on what is on screen.
+  const opening = !R.data;
   R.data = data; R.mode = STATE.rmode || 'ads';
   if (R.mode==='ads' && !data.ads.length && data.photos.length) R.mode = 'photos'; // still generating: photos first
+  if (opening && !R.cur && R.mode==='ads'){ const first = data.ads.find(a=>a.status==null); if (first) R.cur = rkey(first); R.last = null; } // where the picking left off
   paintCrumb(`${data.words.offer}${data.words.audience?` · ${data.words.audience}`:''}`);
   paintReview(v);
 }
@@ -1727,12 +1744,17 @@ function paintReview(v){
     <select id="rvShow" onchange="rvShow(this.value)" title="Which to show">
       ${[['all','Show all'],['todo','To review'],['keep','Kept'],['exclude','Excluded']].map(([k,l])=>`<option value="${k}" ${R.show===k?'selected':''}>${l}</option>`).join('')}
     </select>
-    <div class="spacer"></div>
-    <button class="excl" id="rvEx" onclick="rvDecide('exclude');this.blur()">✕ Exclude</button>
-    <button class="keep" id="rvKeep" onclick="rvDecide('keep');this.blur()">✓ Keep</button>
   </div>
   <div class="rv-stage" id="rvStage"></div>
-  <div class="rv-info" id="rvInfo"></div>
+  <div class="rv-act" id="rvAct">
+    <div class="rv-info" id="rvInfo"></div>
+    <div class="rv-pick">
+      <button class="rv-big excl" id="rvEx" onclick="rvSwipe('exclude');this.blur()" title="Exclude this one (← or X), or drag it left"><span class="ic">✕</span><span class="lb">Exclude</span><kbd>←</kbd></button>
+      <button class="rv-undo" id="rvUndo" onclick="rvUndo();this.blur()" title="Undo the last pick (U)">↩ Undo</button>
+      <button class="rv-big keep" id="rvKeep" onclick="rvSwipe('keep');this.blur()" title="Keep this one (→ or K), or drag it right"><kbd>→</kbd><span class="lb">Keep</span><span class="ic">✓</span></button>
+    </div>
+    <div class="keys" id="rvKeys">drag the ad, or <kbd>←</kbd> exclude · <kbd>→</kbd> keep<br><kbd>↑</kbd> <kbd>↓</kbd> look without picking · <kbd>U</kbd> undo</div>
+  </div>
   <div class="rv-strip" id="rvStrip"></div>
   <div class="rv-foot" id="rvFoot"></div>
   <div id="runbox"></div><div id="bModal"></div>`;
@@ -1743,13 +1765,13 @@ function paintReview(v){
 function paintFoot(busy){
   const d = R.data, box = $('#rvFoot'); if (!box) return;
   const st = d.stories;
-  box.innerHTML = !d.made ? `<span>The ads render once every photo is in. You can review the photos meanwhile.</span>${d.run?`<button class="sm" onclick="openGenerating('${esc(R.id)}')">Watch progress →</button>`:''}<span class="spacer"></span><span class="keys"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>K</kbd> keep · <kbd>X</kbd> exclude · <kbd>U</kbd> undo</span>`
+  box.innerHTML = !d.made ? `<span>The ads render once every photo is in. You can review the photos meanwhile.</span>${d.run?`<button class="sm" onclick="openGenerating('${esc(R.id)}')">Watch progress →</button>`:''}<span class="spacer"></span>`
     : `<span>${st ? `${st.ads} Stories version${st.ads===1?'':'s'} · ${st.image_calls} image call${st.image_calls===1?'':'s'}${st.left_out?` · ${st.left_out} left out`:''}` : 'No Stories versions yet'}</span>
       <button class="sm primary" onclick="rvStoriesConfirm()" ${busy?'disabled':''}>${st?'Make Stories versions again…':'Make Stories versions…'}</button>
       ${st?`<button class="sm" onclick="rvStoriesRerender()" ${busy?'disabled':''}>Re-render Stories (free)</button>`:''}
       <button class="sm" onclick="openWords('${esc(R.id)}')" ${busy?'disabled':''}>Change the words</button>
       <button class="sm ok" onclick="openPublish('${esc(R.id)}')" ${busy?'disabled':''}>Publish Ads →</button>
-      <span class="spacer"></span><span class="keys"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>K</kbd> keep · <kbd>X</kbd> exclude · <kbd>U</kbd> undo</span><span id="rvSaved">${d.saved?'Picks saved':''}</span>`;
+      <span class="spacer"></span><span id="rvSaved">${d.saved?'Picks saved':''}</span>`;
 }
 function paintCounts(){
   const c = R.data.counts, box = $('#rvCount'); if (!box) return;
@@ -1769,28 +1791,95 @@ function rvRefresh(){
 function paintStage(){
   const box = $('#rvStage'); if (!box) return;
   const it = R.list[R.i];
-  const nav = `<button class="rv-nav prev" onclick="rvMove(-1)" ${R.i<=0?'disabled':''} title="Previous (←)">‹</button><button class="rv-nav next" onclick="rvMove(1)" ${R.i>=R.list.length-1?'disabled':''} title="Next (→)">›</button>`;
+  const nav = `<button class="rv-nav prev" onclick="rvMove(-1)" ${R.i<=0?'disabled':''} title="The one before, without picking (↑)">‹</button><button class="rv-nav next" onclick="rvMove(1)" ${R.i>=R.list.length-1?'disabled':''} title="The next one, without picking (↓)">›</button>`;
   const info = $('#rvInfo');
-  if (!it){ box.innerHTML = `<div style="color:#9fb0d6;align-self:center">${R.show==='all'?'Nothing here yet.':'Nothing matches this filter.'}</div>`; info.innerHTML=''; paintButtons(null); return; }
+  if (!it){ const c = R.data.counts || {}; box.innerHTML = `<div style="color:#9fb0d6;align-self:center;text-align:center;line-height:1.7">${R.show==='todo' && R.mode==='ads' ? `<b style="color:#fff;font-size:18px">Every ad is picked.</b><br>${c.kept} kept · ${c.excluded} excluded` : R.show==='all'?'Nothing here yet.':'Nothing matches this filter.'}</div>`; info.innerHTML=''; paintButtons(null); return; }
   const st = it.status, photo = R.mode==='photos';
   const badge = `<div class="rv-badge ${st||''}">${st==='keep'?'✓ Kept':st==='exclude'?(photo?`✕ Excluded, with its ${it.ads} ad${it.ads===1?'':'s'}`:'✕ Excluded'):(photo?'Not reviewed':'Not reviewed · kept unless excluded')}</div>`;
   if (R.mode==='photos'){
-    box.innerHTML = `${nav}${badge}<figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt=""><figcaption>${it.kind==='real'?'Real photo':'Generated photo'}</figcaption></figure>`;
+    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${it.kind==='real'?'Real photo':'Generated photo'}</figcaption></figure>${STAMPS}</div>`;
     info.innerHTML = `<b>${esc(it.id)}</b>${it.scene_id?`<span>${esc(it.scene_id)}</span>`:''}<span>in ${it.ads} ad${it.ads===1?'':'s'}</span>${it.primary?`<span>made for ${esc(layoutName(it.primary))}</span>`:''}${it.scene?`<span class="scene">${esc(it.scene)}</span>`:''}${(it.notes||[]).length?`<span class="note" title="${esc(it.notes.join(' · '))}">${esc(it.notes.join(' · '))}</span>`:''}`;
   } else {
-    box.innerHTML = `${nav}${badge}<figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt=""><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
-      <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>`;
+    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
+      <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="" draggable="false">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>${STAMPS}</div>`;
     info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span>${it.format?`<span>${esc(kindName(it.format))}</span>`:''}<span>${esc(layoutName(it.treatment))} · ${esc(nice(it.style))} · ${esc(nice(it.palette))}</span>${it.photos.length?`<span>photo${it.photos.length===1?'':'s'} ${esc(it.photos.join(' + '))}</span>`:''}${it.by_photo?`<span class="note">excluded with photo ${esc(it.by_photo)}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">${esc(it.notes)}</span>`:''}`;
   }
   paintButtons(it);
   // The neighbours load ahead, so moving is instant.
   for (const k of [1,-1,2]) { const n = R.list[R.i+k]; if (n){ new Image().src = n.url; if (n.story) new Image().src = n.story; } }
 }
+const STAMPS = '<div class="rv-stamp keep">KEEP</div><div class="rv-stamp excl">EXCLUDE</div>';
 function paintButtons(it){
   const k = $('#rvKeep'), x = $('#rvEx'); if (!k) return;
   k.disabled = x.disabled = !it;
   k.classList.toggle('on', it?.status==='keep'); x.classList.toggle('on', it?.status==='exclude');
-  k.textContent = it?.status==='keep' ? '✓ Kept' : '✓ Keep'; x.textContent = it?.status==='exclude' ? '✕ Excluded' : '✕ Exclude';
+  k.querySelector('.lb').textContent = it?.status==='keep' ? 'Kept' : 'Keep'; x.querySelector('.lb').textContent = it?.status==='exclude' ? 'Excluded' : 'Exclude';
+  const u = $('#rvUndo'); if (u) u.disabled = !(R.last || it?.status);
+}
+// ── Picking like a deck of cards (2026-11-11, the owner: "bigger buttons right below the photo, swipe right/left, tinder style") ──
+// Right keeps, left excludes: drag the ad past the mark, press the big button under it, or press → / ←. The pick is saved
+// at once and the next ad is already there; the card that was picked flies off on top of it. ↑ ↓ and the side arrows look
+// without picking. Undo goes back to the last pick and clears it.
+const SWIPE_PX = 110, SW = { on:false, x0:0, dx:0, el:null, id:null };
+function swPaint(el, dx){ if (!el) return; el.style.transform = dx ? `translateX(${dx}px) rotate(${(dx/45).toFixed(2)}deg)` : ''; el.style.setProperty('--k', Math.max(0, Math.min(1, dx/SWIPE_PX)).toFixed(2)); el.style.setProperty('--x', Math.max(0, Math.min(1, -dx/SWIPE_PX)).toFixed(2)); }
+document.addEventListener('pointerdown', e=>{
+  const c = e.target.closest?.('#rvCards'); if (!c || e.button !== 0 || e.target.closest('button,a,select,input') || !R.list[R.i]) return;
+  Object.assign(SW, { on:true, x0:e.clientX, dx:0, el:c, id:e.pointerId }); try { c.setPointerCapture(e.pointerId); } catch{} c.classList.add('drag');
+});
+document.addEventListener('pointermove', e=>{ if (!SW.on || e.pointerId !== SW.id) return; SW.dx = e.clientX - SW.x0; swPaint(SW.el, SW.dx); });
+function swEnd(e){
+  if (!SW.on || e.pointerId !== SW.id) return;
+  const { el, dx } = SW; SW.on = false; el.classList.remove('drag');
+  if (e.type === 'pointerup' && Math.abs(dx) >= SWIPE_PX && document.body.contains(el)) rvSwipe(dx > 0 ? 'keep' : 'exclude'); else swPaint(el, 0);
+}
+document.addEventListener('pointerup', swEnd); document.addEventListener('pointercancel', swEnd);
+/** Keep or exclude the ad on screen, the way a swipe does: the pick is made and saved at once, and the card flies off over the next one. */
+function rvSwipe(val){
+  const it = R.list[R.i], el = $('#rvCards'); if (!it) return;
+  if (R.mode==='ads' && it.by_photo && val!=='exclude'){ swPaint(el, 0); return rvDecide(val); } // refused, in words: its photo is excluded
+  const ghost = el ? el.cloneNode(true) : null, from = el?.style.transform || '';
+  // The end of the deck: this was the last ad of the list, or the last one not picked yet.
+  const atEnd = R.mode==='ads' && (!R.list[R.i+1] || (it.status == null && R.data.counts.unreviewed === 1)), id = R.id;
+  R.last = rkey(it);
+  rvDecide(val);
+  if (atEnd) setTimeout(()=>{ if (STATE.tab==='review' && STATE.batch===id && R.id===id && !document.querySelector('.modal')) rvDeckEnd(); }, 300);
+  const stage = $('#rvStage'); if (!ghost || !stage) return;
+  ghost.removeAttribute('id'); ghost.classList.remove('drag'); ghost.classList.add('rv-ghost', val==='keep' ? 'fly-keep' : 'fly-excl'); ghost.style.transform = from;
+  stage.appendChild(ghost);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ ghost.style.transform = `translateX(${val==='keep'?'75%':'-75%'}) rotate(${val==='keep'?14:-14}deg)`; ghost.style.opacity = '0'; }));
+  setTimeout(()=>ghost.remove(), 340);
+}
+/** The end of the deck (2026-11-11, the owner: "at the last Keep it should ask whether to make the Stories versions; it just stayed on the last image").
+ *  Ads still not picked (skipped with ↑ ↓ or the filmstrip): the first of them comes up, and that is said. Every ad picked: the Stories
+ *  confirmation opens by itself — the same dialog, with its call cap; nothing runs until it is confirmed. Every kept ad already
+ *  has its Stories version: the way on to Publish Ads is offered instead. */
+function rvDeckEnd(){
+  const d = R.data; if (!d || R.mode !== 'ads' || !d.made) return;
+  const c = d.counts, left = d.ads.filter(a=>a.status == null);
+  if (left.length){
+    if (!R.list.includes(left[0])){ R.loc = 'all'; R.show = 'all'; R.cur = rkey(left[0]); R.last = null; paintReview($('#view')); }
+    else { R.last = null; R.cur = rkey(left[0]); rvRefresh(); }
+    toast(`${left.length} ad${left.length===1?' is':'s are'} not picked yet: here is the next one`);
+    return;
+  }
+  if (d.run || (STATE.run && !STATE.run.done)) return; // a run is going: nothing more to start
+  if (!c.kept){ toast('Every ad is excluded: there is nothing to make Stories versions of.', 'err'); return; }
+  const missing = d.ads.filter(a=>a.status === 'keep' && !a.story).length;
+  if (missing) return rvStoriesConfirm();
+  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
+    <h2>Every ad is picked</h2>
+    <div class="summary"><b>${c.kept} kept</b>${c.excluded?` · ${c.excluded} excluded`:''} · every kept ad has its Stories version</div>
+    <p class="hint">Next: the words beside the ads, and where they run.</p>
+    <div class="row" style="margin-top:12px"><button onclick="bClose()">Stay here</button><div class="spacer"></div><button class="primary" id="rvEndGo" onclick="bClose();openPublish(R.id)">Publish Ads →</button></div></div></div>`;
+}
+/** Undo: straight after a pick, the last pick is gone back to and cleared; after looking around (↑ ↓, the filmstrip), the pick on the ad on screen is. */
+function rvUndo(){
+  const k = R.last; R.last = null;
+  const it = k && (R.mode==='photos' ? R.data.photos : R.data.ads).find(x=>rkey(x)===k);
+  if (!it) return rvDecide(null);
+  let change;
+  if (R.mode==='photos'){ it.status = null; change = { photos:{ [it.id]:null } }; } else { it.own = null; change = { ads:{ [it.folder]:null } }; }
+  restand(); R.cur = k; rvRefresh(); savePicks(change);
 }
 function paintStrip(){
   const box = $('#rvStrip'); if (!box) return;
@@ -1802,8 +1891,8 @@ function markStrip(){
   [...box.children].forEach((el,i)=>el.classList.toggle('cur', i===R.i));
   box.children[R.i]?.scrollIntoView({ block:'nearest', inline:'center', behavior:'smooth' });
 }
-function rvMove(d){ const i = R.i + d; if (i<0 || i>=R.list.length) return; R.i = i; R.cur = rkey(R.list[i]); paintStage(); markStrip(); paintCounts(); }
-function rvGoto(i){ R.i = i; R.cur = rkey(R.list[i]); paintStage(); markStrip(); paintCounts(); }
+function rvMove(d){ const i = R.i + d; if (i<0 || i>=R.list.length) return; R.last = null; R.i = i; R.cur = rkey(R.list[i]); paintStage(); markStrip(); paintCounts(); }
+function rvGoto(i){ R.last = null; R.i = i; R.cur = rkey(R.list[i]); paintStage(); markStrip(); paintCounts(); }
 function rvMode(m){ if (m===R.mode) return; R.cur = null; R.i = 0; STATE.rmode = m; setHash(); R.mode = m; paintReview($('#view')); }
 function rvLoc(l){ R.loc = l; paintReview($('#view')); }
 function rvShow(s){ R.show = s; rvRefresh(); }
@@ -1839,7 +1928,7 @@ document.addEventListener('keydown', e=>{
   const t = e.target; if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key.length===1 ? e.key.toLowerCase() : e.key;
-  const act = { ArrowRight:()=>rvMove(1), ArrowLeft:()=>rvMove(-1), k:()=>rvDecide('keep'), ' ':()=>rvDecide('keep'), x:()=>rvDecide('exclude'), u:()=>rvDecide(null) }[k];
+  const act = { ArrowRight:()=>rvSwipe('keep'), ArrowLeft:()=>rvSwipe('exclude'), ArrowDown:()=>rvMove(1), ArrowUp:()=>rvMove(-1), k:()=>rvSwipe('keep'), ' ':()=>rvSwipe('keep'), x:()=>rvSwipe('exclude'), u:()=>rvUndo(), Backspace:()=>rvUndo() }[k];
   if (act){ e.preventDefault(); act(); }
 });
 
@@ -1848,7 +1937,7 @@ async function rvStoriesConfirm(){
   await R.save;
   const c = R.data.counts, kept = c.kept + c.unreviewed;
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
-    <h2>Make Stories versions?</h2>
+    <h2>${c.unreviewed ? '' : 'Every ad is picked. '}Make Stories versions?</h2>
     <p class="hint">Each kept ad gets a 9:16 version with the same photo, look and words, inside Meta's safe zone. One new photo per photo in a single-photo look; collage and panels ads reuse theirs; real photos cost nothing. The run stops at the call limit, whatever happens.</p>
     <div class="summary"><b>${kept} kept ad${kept===1?'':'s'}</b>${c.unreviewed?` · ${c.unreviewed} of them not reviewed yet (kept unless you exclude them)`:''}${c.excluded?` · ${c.excluded} excluded, left out`:''}</div>
     <div class="row"><label for="bStCap" style="margin:0">Up to</label><input id="bStCap" type="number" min="0" max="40" value="24" style="width:70px"><span class="hint" style="margin:0">Gemini image calls</span></div>
@@ -3531,7 +3620,7 @@ function partsReview(){
   const c = d.counts || {}, kept = (c.kept||0) + (c.unreviewed||0), busy = !!d.run || (STATE.run && !STATE.run.done);
   if (!d.made) return { parts: [ part(PICK_PARTS[0], true), part(PICK_PARTS[1], false, { text:'The ads render once every photo is in. You can look at the photos meanwhile.', ...(d.run ? { label:'Watch progress →', go:()=>openGenerating(R.id) } : {}) }), part(PICK_PARTS[2], false, null), part(PICK_PARTS[3], false, null) ] };
   return { parts: [ part(PICK_PARTS[0], true),
-    part(PICK_PARTS[1], !(c.unreviewed > 0), { text:`${plur(c.unreviewed,'ad')} not looked at yet. For each one press ✓ Keep or ✕ Exclude, top right (K or X on the keyboard; ← → to move). Picks save by themselves.`, label:'Show the ones left', go:()=>{ rvShow('todo'); const s = $('#rvShow'); if (s) s.value = 'todo'; } }),
+    part(PICK_PARTS[1], !(c.unreviewed > 0), { text:`${plur(c.unreviewed,'ad')} not picked yet. For each one: Keep (→, or drag it right) or Exclude (←, or drag it left), with the two big buttons under the ad. Picks save by themselves.`, label:'Show the ones left', go:()=>{ rvShow('todo'); const s = $('#rvShow'); if (s) s.value = 'todo'; } }),
     part(PICK_PARTS[2], !!d.stories && d.stories.ads > 0, busy
       ? { text:'A run is going. Wait for it to end.' }
       : { text:`Stories and Reels need a tall (9:16) version of each kept ad: ${plur(kept,'ad')} kept. You confirm the image calls first.`, label:'Make Stories versions…', go:()=>rvStoriesConfirm() }),

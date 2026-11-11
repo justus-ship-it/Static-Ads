@@ -602,7 +602,7 @@ test("U10 picks are saved in the batch folder as they are made — review.json, 
 
 // ── U11 the review and Generating screens (sub-step 2) ───────────────────────
 
-test("U11 the review screen: the 4:5 feed ad and its 9:16 side by side on one screen; arrows move; K/X/U keep, exclude, undo — saved as made; photos exclude their ads; Back works; the Generating screen shows each photo as it passes", async () => {
+test("U11 the review screen: the 4:5 feed ad and its 9:16 side by side on one screen; the two big buttons right below the ad, → and ← (or a drag) keep and exclude, ↑ ↓ look, U undoes — saved as made; photos exclude their ads; Back works; the Generating screen shows each photo as it passes", async () => {
   const { cdp, sessionId } = browser;
   const ev = async (expression) => {
     const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
@@ -638,9 +638,9 @@ test("U11 the review screen: the 4:5 feed ad and its 9:16 side by side on one sc
   assert.ok(geo.foot <= geo.h && geo.sh <= geo.h + 1, `everything on one screen: ${JSON.stringify(geo)}`);
   assert.ok(geo.sw <= geo.w, "no sideways scrolling");
   assert.match(await ev("document.querySelector('#rvCount').textContent"), new RegExp(`^1 of ${batch.ads.length}`));
-  // Arrows move; X excludes and moves on; the decision is on disk at once.
-  await key("ArrowRight", "ArrowRight", 39);
-  await until("R.i===1", "→");
+  // ↓ and ↑ look without picking (since 2026-11-11 → and ← pick, as a swipe does); X excludes and moves on; the decision is on disk at once.
+  await key("ArrowDown", "ArrowDown", 40);
+  await until("R.i===1", "↓");
   const f1 = await ev("R.list[1].folder");
   await key("x", "KeyX", 88);
   await until(`R.i===2 && document.querySelector('#rvStrip').children[1].classList.contains('s-exclude')`, "exclude and advance");
@@ -648,8 +648,8 @@ test("U11 the review screen: the 4:5 feed ad and its 9:16 side by side on one sc
   assert.deepEqual(sel().excluded, [f1], "selections.json on disk, no download");
   assert.match(await ev("document.querySelector('#rvCount').textContent"), / 1 excluded/);
   // Back to it and undo.
-  await key("ArrowLeft", "ArrowLeft", 37);
-  await until("R.i===1 && document.querySelector('.rv-badge').textContent.includes('Excluded')", "←");
+  await key("ArrowUp", "ArrowUp", 38);
+  await until("R.i===1 && document.querySelector('.rv-badge').textContent.includes('Excluded')", "↑");
   await key("u", "KeyU", 85);
   await until("!document.querySelector('#rvStrip').children[1].classList.contains('s-exclude')", "undo");
   const t1 = Date.now(); while (sel().excluded.length && Date.now() - t1 < 5000) await new Promise((r) => setTimeout(r, 100));
@@ -657,6 +657,62 @@ test("U11 the review screen: the 4:5 feed ad and its 9:16 side by side on one sc
   // K keeps: marked, saved, moved on.
   await key("k", "KeyK", 75);
   await until("R.i===2 && document.querySelector('#rvStrip').children[1].classList.contains('s-keep')", "keep");
+  // Picking like a deck of cards (2026-11-11): two big buttons right below the ad — Exclude on the left, Keep on the right — not in the top bar.
+  const pick = await ev(`(()=>{ const r = (q) => { const b = document.querySelector(q).getBoundingClientRect(); return [b.left, b.right, b.top, b.width, b.height]; }; const st = document.querySelector('#rvStage').getBoundingClientRect(); return { keep: r('#rvKeep'), ex: r('#rvEx'), stage: [st.left, st.right, st.bottom], inTop: !!document.querySelector('.rv-top #rvKeep, .rv-top #rvEx'), labels: [document.querySelector('#rvEx').textContent, document.querySelector('#rvKeep').textContent], strip: document.querySelector('#rvStrip').getBoundingClientRect().top }; })()`);
+  assert.ok(!pick.inTop && pick.keep[2] >= pick.stage[2] && pick.keep[2] - pick.stage[2] < 30 && pick.keep[2] + pick.keep[4] <= pick.strip + 1, `right below the ad, above the filmstrip: ${JSON.stringify(pick)}`);
+  assert.ok(pick.keep[3] >= 200 && pick.keep[4] >= 56 && pick.ex[3] >= 200 && pick.ex[4] >= 56, "big");
+  assert.ok(pick.ex[1] < pick.keep[0] && Math.abs((pick.ex[0] + pick.keep[1]) / 2 - (pick.stage[0] + pick.stage[1]) / 2) < 4, "Exclude on the left, Keep on the right, centred under the ad");
+  assert.match(pick.labels.join(" | "), /^✕Exclude← \| →Kep?t?✓$/, "each says what it does, with its key (Kept once the ad on screen is kept)");
+  // → keeps the ad on screen and the next one is there; ← excludes; the card that was picked flies off over the next.
+  const f2 = await ev("R.list[2].folder"), f3 = await ev("R.list[3].folder");
+  await key("ArrowRight", "ArrowRight", 39);
+  await until(`R.i===3 && R.list[2].status==='keep' && !!document.querySelector('#rvStage .rv-ghost.fly-keep')`, "→ keeps and moves on, with the card flying right");
+  await key("ArrowLeft", "ArrowLeft", 37);
+  await until(`R.i===4 && R.list[3].status==='exclude'`, "← excludes and moves on");
+  { const t = Date.now(); while (!sel().excluded.includes(f3) && Date.now() - t < 5000) await new Promise((r) => setTimeout(r, 100)); }
+  assert.deepEqual(sel().excluded, [f3], "saved as picked");
+  // Undo with nothing picked on screen goes back to the last pick and clears it.
+  await ev("document.querySelector('#rvUndo').click(); true");
+  await until(`R.i===3 && R.list[3].status==null && R.list[3].folder===${JSON.stringify(f3)}`, "undo goes back to the last pick");
+  { const t = Date.now(); while (sel().excluded.length && Date.now() - t < 5000) await new Promise((r) => setTimeout(r, 100)); }
+  assert.deepEqual(sel().excluded, []);
+  // Dragging the ad: a short drag springs back and picks nothing; past the mark to the right keeps, to the left excludes.
+  const at = await ev("(()=>{ const b = document.querySelector('#rvStage img').getBoundingClientRect(); return [Math.round(b.left + b.width / 2), Math.round(b.top + b.height / 2)]; })()");
+  const drag = async (dx) => { const mouse = (type, x) => cdp.send("Input.dispatchMouseEvent", { type, x, y: at[1], button: "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1 }, sessionId); await mouse("mousePressed", at[0]); for (const k of [0.25, 0.5, 0.75, 1]) await mouse("mouseMoved", Math.round(at[0] + dx * k)); const mid = await ev("[document.querySelector('#rvCards').style.transform, getComputedStyle(document.querySelector('#rvCards .rv-stamp.keep')).opacity, getComputedStyle(document.querySelector('#rvCards .rv-stamp.excl')).opacity]"); await mouse("mouseReleased", at[0] + dx); return mid; };
+  let mid = await drag(50);
+  assert.match(mid[0], /^translateX\(50px\) rotate\(/, "the ad follows the drag"); assert.ok(Number(mid[1]) > 0.3 && Number(mid[1]) < 0.6 && Number(mid[2]) === 0, `the KEEP stamp shows as it nears the mark: ${mid}`);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.deepEqual(await ev("[R.i, R.list[3].status, document.querySelector('#rvCards').style.transform]"), [3, null, ""], "a short drag picks nothing");
+  mid = await drag(170);
+  assert.equal(Number(mid[1]), 1, "past the mark the stamp is full");
+  await until(`R.i===4 && R.list[3].status==='keep'`, "dragged right: kept");
+  mid = await drag(-170);
+  assert.equal(Number(mid[2]), 1);
+  await until(`R.i===5 && R.list[4].status==='exclude' && !!document.querySelector('#rvStage .rv-ghost.fly-excl')`, "dragged left: excluded");
+  await ev("rvUndo(); true");
+  await until("R.i===4 && R.list[4].status==null", "and undone");
+  assert.equal(await ev(`R.list[2].folder`), f2);
+  // The end of the deck (2026-11-11). The last ad of the list is picked while one is still not picked: that one comes up, and it is said.
+  await ev("rvGoto(R.list.length - 1); true");
+  await key("ArrowRight", "ArrowRight", 39);
+  await until("R.i===4 && R.list[4].status==null && !document.querySelector('#toast').hidden && /^1 ad is not picked yet: here is the next one$/.test(document.querySelector('#toast').textContent)", "the one skipped comes up");
+  assert.equal(await ev("!!document.querySelector('.modal')"), false);
+  // Picking the last one not picked: the next thing is asked by itself — the Stories confirmation, or Publish when every kept ad has its 9:16.
+  const missing = await ev("R.data.ads.filter(a => a.status !== 'exclude' && !a.story).length");
+  await key("ArrowRight", "ArrowRight", 39);
+  await until("!!document.querySelector('#bModal .modal h2')", "the end of the deck asks what next");
+  const endTitle = await ev("document.querySelector('#bModal .modal h2').textContent");
+  if (missing) { assert.equal(endTitle, "Every ad is picked. Make Stories versions?"); assert.deepEqual(await ev("[!!document.querySelector('#bStGo'), !!document.querySelector('#bStCap'), STATE.run && !STATE.run.done]"), [true, true, null], "the same confirmation, with its call cap; nothing started"); }
+  else { assert.equal(endTitle, "Every ad is picked"); assert.equal(await ev("document.querySelector('#rvEndGo').textContent"), "Publish Ads →"); }
+  // A key does nothing while it is open; closed, the picking goes on. At the last ad with every ad already picked, it asks again.
+  await key("ArrowLeft", "ArrowLeft", 37);
+  assert.equal(await ev("R.data.counts.excluded"), 0, "no pick behind the dialog");
+  await ev("bClose(); true");
+  await ev("rvGoto(R.list.length - 1); true");
+  await key("k", "KeyK", 75);
+  await until("!!document.querySelector('#bModal .modal h2')", "the last Keep asks, every time");
+  await ev("bClose(); true");
+  await ev("rvGoto(2); true");
   // The location filter narrows the list to one location's ads.
   await ev("rvLoc('BISHAN'); true");
   await until("R.list.length && R.list.every(a=>a.location==='BISHAN')", "BISHAN only");
