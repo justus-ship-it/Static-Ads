@@ -73,6 +73,8 @@ export const mixName = (counts) => { const live = Object.entries(counts || {}).f
 export const ROOMS = { "studio-room": "the studio room", "gym-floor": "the gym floor" };
 /** Tags a scene may carry and need not: a workout scene's room (when it only makes sense in one) and its mood — the readings' expression, in a scene's words. */
 export const SCENE_OPTIONAL_TAGS = { room: Object.keys(ROOMS), mood: ["effort", "smile", "calm"] };
+/** A scene's optional tags as words, for its line on a page or in a list: "calm mood", "the gym floor". */
+export const optionalWords = (s) => [s?.mood ? `${s.mood} mood` : null, s?.room ? ROOMS[s.room] : null].filter(Boolean);
 export const PORTRAIT_TAGS = {
   backdrop: ["seamless-colour", "dark-wall", "gym-floor"], // a flat studio colour · a plain dark wall · the gym, softened to a blur
   stance: ["easy-posed", "holding-equipment", "stretch", "walking"],

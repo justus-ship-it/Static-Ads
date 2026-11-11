@@ -122,6 +122,7 @@
   @media (max-width:980px){ .rvgrid{grid-template-columns:1fr} }
   .rvsec h4,.rvnext h4{margin:10px 0 4px;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
   .rvsec ul{margin:0 0 0 18px;line-height:1.5;font-size:13px} .rvsec li{margin:0 0 6px}
+  .rvact{margin:3px 0 0;font-size:12.5px;font-weight:600;color:var(--dim)} .rvact.acting{color:var(--ok)} .rvact.waiting{color:var(--warn)} .rvact.yours{color:var(--navy)}
   .rvchk{display:flex;flex-direction:column;gap:1px;margin:2px 0 0;font-size:12px;color:var(--dim)} .rvchk .y{color:var(--ok)} .rvchk .n{color:var(--warn)}
   .rvnext{border-left:1px solid var(--line);padding-left:20px}
   @media (max-width:980px){ .rvnext{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:12px} }
@@ -1390,6 +1391,7 @@ function applySuggestion(R, { whole = true } = {}){
     if (Number.isInteger(s.generated)) d.generated = s.generated;
     d.mix = Object.fromEntries(kinds.filter(([f])=>!needs.has(f)));
     d.cards = { review:0, statement:0, timeline:0, ...(s.cards||{}) };
+    if (s.words_weight) d.words_weight = s.words_weight;
   }
   // The lean, for the kinds this brief has photos of.
   const others = Object.values(d.mix||{}).reduce((a,n)=>a+(n||0),0), has = (f) => f==='workout' ? d.generated - others > 0 : (d.mix?.[f]||0) > 0;
@@ -1440,7 +1442,7 @@ function briefFromDraft(){
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
-    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(),
+    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(d.words_weight && generated>0 ? { words_weight: d.words_weight } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(),
     // The photos per kind. An all-workout batch says nothing when that is the gym's own default — and says "workout" when the gym's default is a mix
     // (2026-11-11: a brief naming no kind takes the gym's mix, so the portraits set to 0 on this form came back and a gym without portrait scenes could not run a batch).
     ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m), gymMixed = Object.entries(B.setup.mix || profileMix(B.setup.creative_defaults || {})).some(([f,n])=>f!=='workout' && n>0); return !generated ? {} : live.length===1 && live[0]==='workout' ? (gymMixed ? { format:'workout' } : {}) : live.length===1 ? { format: live[0] } : { mix: m }; })(),
@@ -1485,6 +1487,7 @@ function paintBatch(v){
           ${Object.keys(FORMAT_NAMES).filter(f=>f!=='workout').map(f=>`<div><label for="bMix-${f}" style="margin-top:0">Of which ${esc(FORMAT_PLURAL[f])}</label><div class="stepper"><button type="button" onclick="bMixStep('${f}',-1)">−</button><input id="bMix-${f}" type="number" min="0" max="12" value="${esc(d.mix?.[f]||0)}" oninput="bMixSet('${f}',this.value)"><button type="button" onclick="bMixStep('${f}',1)">+</button></div><div class="hint" id="bMixRest" style="margin-top:2px"></div></div>`).join('')}
           <div><label style="margin-top:0">Cards <span class="hint" style="font-weight:400">· no photo, no image call</span></label><div class="row" style="gap:10px">${Object.entries(CARD_NAMES).map(([k,l])=>`<label style="margin:0;font-weight:500;color:var(--text);display:flex;align-items:center;gap:5px"><input id="bCard-${k}" type="number" min="0" max="${B.setup.max_cards||6}" style="width:56px" value="${esc(d.cards?.[k]||0)}" oninput="bCardSet('${k}',this.value)"> ${esc(l)} <span class="hint" style="font-weight:400">(${B.setup.cards_ready?.[k]??0} ready)</span></label>`).join('')}<a href="#" onclick="go('cards');return false" style="align-self:center">manage</a></div></div>
           <div><label for="bLook" style="margin-top:0">Look</label><select id="bLook" onchange="bSet('look',this.value)"><option value="reference" ${d.look!=='formula'?'selected':''}>Reference set</option><option value="formula" ${d.look==='formula'?'selected':''}>Formula (callout top, offer low)</option></select></div>
+          <div><label for="bWordsW" style="margin-top:0" title="Which layouts the ads get is weighted toward more room for the words, or less. The words themselves never change.">Size of the words</label><select id="bWordsW" onchange="bSet('words_weight',this.value)"><option value="" ${!d.words_weight?'selected':''}>As each layout sets them</option><option value="bolder" ${d.words_weight==='bolder'?'selected':''}>Larger where the photo allows</option><option value="quieter" ${d.words_weight==='quieter'?'selected':''}>Smaller where the photo allows</option></select></div>
           <div><label style="margin-top:0">Shape</label><div class="hint" id="bShape" style="margin-top:6px" title="Every feed ad is portrait 4:5; its Stories and Reels version is 9:16, made from the ad's own photo">4:5 feed · 9:16 Stories</div></div>
           <div><label for="bLooks" style="margin-top:0">Looks per photo</label><div class="stepper"><button type="button" onclick="bStep('looks_per_photo',-1)">−</button><input id="bLooks" type="number" min="1" max="6" value="${esc(d.looks_per_photo)}" oninput="bSet('looks_per_photo',this.value)"><button type="button" onclick="bStep('looks_per_photo',1)">+</button></div></div>
           <label style="margin-top:0;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text)"><input type="checkbox" style="width:auto;margin:0" ${d.spread?'checked':''} ${directionFromDraft()?'disabled title="Off for a directed batch: the reference or your words decide what the photos show"':''} onchange="bSet('spread',this.checked)"> Spread across exercises, settings and equipment</label>
@@ -2443,7 +2446,8 @@ function reviewCard(){
   const canPause = (x) => x.kind==='pause' && x.verdict==='confirmed' && /^\d{5,25}$/.test(x.ads?.[0]||'') && R.linked;
   const insight = (x, strip) => `<li data-key="${esc(x.key)}">${esc(strip ? x.text.replace(strip,'') : x.text)} <span class="pill ${VERDICT[x.verdict][0]}">${VERDICT[x.verdict][1]}</span>
       ${(x.checks||[]).filter(c=>c.ok!==null).length?`<div class="rvchk">${x.checks.filter(c=>c.ok!==null).map(c=>`<span class="${c.ok?'y':'n'}">${c.ok?'✓':'✕'} ${esc(c.text)}</span>`).join('')}</div>`:''}
-      ${canPause(x)?`<div style="margin:4px 0 2px"><button class="sm danger" onclick="rsPause('${esc(x.ads[0])}')" ${STATE.run&&!STATE.run.done?'disabled':''}>Pause on Meta…</button></div>`:x.kind==='pause'&&x.verdict==='confirmed'?'<div class="hint" style="margin:2px 0">Pause it in Ads Manager: this ad cannot be reached from here.</div>':''}</li>`;
+      ${x.action?`<div class="rvact ${x.action.state}">→ ${esc(x.action.text)}</div>`:''}
+      ${canPause(x)?`<div style="margin:4px 0 2px"><button class="sm danger" onclick="rsPause('${esc(x.ads[0])}')" ${STATE.run&&!STATE.run.done?'disabled':''}>Pause on Meta…</button></div>`:''}</li>`;
   const ins = (title, kinds, strip) => { const xs = (R.insights||[]).filter(x=>kinds.includes(x.kind)); return xs.length ? `<div class="rvsec" data-kind="${kinds[0]}"><h4>${title}</h4><ul>${xs.map(x=>insight(x, strip)).join('')}</ul></div>` : ''; };
   const lt = R.last_time || { tested:[], paused:[], changed:[] };
   const copy = [...R.copy.copies.map(x=>['Copy',x]), ...R.copy.headlines.map(x=>['Headline',x])];
@@ -2963,7 +2967,7 @@ function allocMix(shares, count){
 }
 /** The gym's mix as the profile holds it: its mix, else all of its one kind, else all workout. */
 const profileMix = cd => cd?.mix && Object.keys(cd.mix).length ? cd.mix : cd?.format && FORMAT_NAMES[cd.format] ? { [cd.format]: 100 } : { workout: 100 };
-const TAGS = s => [s.format&&s.format!=='workout'?FORMAT_NAMES[s.format]||s.format:null, s.backdrop, s.stance, s.expression, s.eye_contact===true?'looks at the camera':null, s.setting, s.people!=null?`${s.people} ${s.people===1?'person':'people'}`:null, s.exercise, s.age, s.equipment, s.muscles, s.pose].filter(Boolean).join(' · ');
+const TAGS = s => [s.format&&s.format!=='workout'?FORMAT_NAMES[s.format]||s.format:null, s.backdrop, s.stance, s.expression, s.eye_contact===true?'looks at the camera':null, s.setting, s.people!=null?`${s.people} ${s.people===1?'person':'people'}`:null, s.exercise, s.age, s.equipment, s.muscles, s.mood?`${s.mood} mood`:null, s.room?(s.room==='studio-room'?'the studio room':s.room==='gym-floor'?'the gym floor':s.room):null, s.pose].filter(Boolean).join(' · ');
 // ── Cards (Phase 5): Google reviews word for word, and the statements and timelines the owner has kept ──
 const CD = { gym:null, data:null, msg:'', pick:{} };
 async function cdLoad(){ CD.data = await api(`/api/client/${STATE.sel}/cards`); CD.gym = STATE.sel; }

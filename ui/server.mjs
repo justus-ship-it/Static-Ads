@@ -479,7 +479,7 @@ function listReferences(gym) {
   return readdirSync(dir).filter((f) => REFERENCE_NAME.test(f)).sort().map((name) => ({ name, url: `/files/brands/${gym}/${REFERENCES_DIR}/${name}`, read: existsSync(join(dir, `${name}.description.json`)) }));
 }
 /** The library's drafts and the scenes drafted for a batch, for the panel. */
-const sceneCard = (s) => ({ id: s.id, scene: s.scene, audience: s.audience || "any", format: formatOf(s), backdrop: s.backdrop || null, stance: s.stance || null, expression: s.expression || null, eye_contact: s.eye_contact ?? null, pose: s.pose, people: s.people, exercise: s.exercise || null, age: s.age || null, setting: s.setting || null, equipment: s.equipment || null, muscles: s.muscles || null, draft: isDraft(s), source: s.source || null, added: s.added || null, covers: s.covers || null, direction: s.direction || null, prefer_layout: s.prefer_layout || null });
+const sceneCard = (s) => ({ id: s.id, scene: s.scene, audience: s.audience || "any", format: formatOf(s), backdrop: s.backdrop || null, stance: s.stance || null, expression: s.expression || null, eye_contact: s.eye_contact ?? null, pose: s.pose, people: s.people, exercise: s.exercise || null, age: s.age || null, setting: s.setting || null, equipment: s.equipment || null, muscles: s.muscles || null, mood: s.mood || null, room: s.room || null, draft: isDraft(s), source: s.source || null, added: s.added || null, covers: s.covers || null, direction: s.direction || null, prefer_layout: s.prefer_layout || null });
 function sceneDrafts(gym) {
   const p = join(brandDir(gym), "scenes.json");
   if (!existsSync(p)) return [];

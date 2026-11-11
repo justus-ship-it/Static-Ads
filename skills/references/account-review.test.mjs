@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ownTests, shareTests, TEST_PHOTOS, MAX_TESTS, ownLeans, portfolioLeans, lastBrief, suggestBrief, buildReview, reviewText, reviewAccount, readLedger, recordReview, recordAction, lastTime, LEDGER_FILE, LEAN_MIN_LEADS, LEAN_MIN_PICTURES, REVIEW_FILE } from "./account-review.mjs";
+import { ownTests, shareTests, TEST_PHOTOS, MAX_TESTS, ownLeans, portfolioLeans, lastBrief, suggestBrief, buildReview, reviewText, reviewAccount, readLedger, recordReview, recordAction, lastTime, LEDGER_FILE, LEAN_MIN_LEADS, LEAN_MIN_PICTURES, REVIEW_FILE, actionFor } from "./account-review.mjs";
 import { importExport } from "./ads-export.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 import { validateBrief, planVisuals, leanProblems, LEAN_SHARE } from "./plan-offer-batch.mjs";
@@ -386,4 +386,38 @@ test("AR8 rooms (2026-11-11): a photo is matched to one of the gym's rooms by th
     assert.deepEqual([s.brief.lean.map((l) => [l.tag, l.value, l.format]), s.left], [[["room", "studio-room", "workout"]], []]);
     assert.ok(s.reasons.some((x) => x.field === "lean" && /^Lean on the studio room \(workout\) — studio-room earns this gym's leads cheaper \(60 over 2 pictures at SGD 10\.33, against gym-floor with 20 at SGD 25\.00\)\.$/.test(x.text)), JSON.stringify(s.reasons.map((x) => x.text)));
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("AR9 what becomes of each line (2026-11-11): every checked line of the review says whether the next batch acts on it — a lean, a test with its photos, the words' size — or that it waits on something (a room not tagged, no approved scene), or that the press is the owner's (Pause on Meta, or Ads Manager when the ad cannot be reached), or that there is nothing to do and why", () => {
+  const sug = (over = {}) => ({ brief: { mix: { workout: 8, "studio-portrait": 2 }, lean: [], ...over.brief }, left: over.left || [] });
+  const A = (x, s = sug(), o) => { const a = actionFor(x, s, o); return [a.state, a.text]; };
+  // Nothing to do, and why.
+  assert.deepEqual(A({ kind: "keep" }), ["none", "Nothing to do: leave it running."]);
+  assert.deepEqual(A({ kind: "wait" }), ["none", "Nothing to do yet: it is judged once it has had a fair chance."]);
+  assert.deepEqual(A({ kind: "fact", attribute: "ratio", best: { value: "4:5" } }), ["none", "Not acted on: nothing in the app changes this."]);
+  // A pause is the owner's press: the button when Meta can reach the ad, Ads Manager when it cannot; never before its checks.
+  assert.deepEqual(A({ kind: "pause", verdict: "confirmed", ads: ["120211112222"] }, sug(), { linked: true }), ["yours", "Yours to press: Pause on Meta, below. Nothing is paused by itself."]);
+  assert.deepEqual(A({ kind: "pause", verdict: "confirmed", ads: ["120211112222"] }, sug(), { linked: false })[1], "Yours to do in Ads Manager: this ad cannot be reached from here.");
+  assert.deepEqual(A({ kind: "pause", verdict: "confirmed", ads: ["export:ab12"] }, sug(), { linked: true })[1], "Yours to do in Ads Manager: this ad cannot be reached from here.");
+  assert.deepEqual(A({ kind: "pause", verdict: "early", ads: ["120211112222"] }, sug(), { linked: true }), ["none", "Nothing to do yet: it has not passed its checks."]);
+  // A confirmed finding the brief leans on; a lead it tests, with its photos.
+  const lean = { tag: "backdrop", value: "dark-wall", format: "studio-portrait", why: "dark-wall earns leads cheaper" };
+  const found = { kind: "matters", attribute: "backdrop", best: { value: "dark-wall" } };
+  assert.deepEqual(A(found, sug({ brief: { lean: [lean] } })), ["acting", "In the next batch: about 60% of the studio portrait photos lean on it (dark-wall backdrop (studio-portrait))."]);
+  const test3 = { tag: "setting", value: "group", format: "workout", test: true, photos: 3, why: "c11-bishan is one picture" };
+  assert.deepEqual(A({ kind: "lead", attribute: "format", best: { value: "class-group" } }, sug({ brief: { lean: [test3] } })), ["acting", "In the next batch: 3 photos test it, in new versions (group setting (workout))."]);
+  assert.match(A({ kind: "lead", attribute: "subject", best: { value: "group" } }, sug({ brief: { lean: [{ ...test3, photos: 1 }] } }))[1], /^In the next batch: 1 photo tests it, in new versions/);
+  // A tiring winner is tied to the test made for it by its name.
+  assert.deepEqual(A({ kind: "tiring", name: "c11-bishan" }, sug({ brief: { lean: [test3] } }))[0], "acting");
+  assert.deepEqual(A({ kind: "tiring", name: "c99-other" }, sug({ brief: { lean: [test3] } })), ["none", "Not in the next batch: its kind maps to nothing a scene can be asked for that is not already leaned on or tested. Draft new versions of it on Draft Scenes."]);
+  // It would be acted on, but something is missing first: said with what to do, the repeated reason left off.
+  const noRoom = { format: "workout", tag: "room", value: "studio-room", kind: "no_room", why: "studio-room earns leads cheaper", text: "the studio room (workout): no premises photo is tagged as the studio room yet. Say which photo shows it on Photos & assets (one click). (studio-room earns leads cheaper)" };
+  assert.deepEqual(A({ kind: "matters", attribute: "backdrop", best: { value: "studio-room" } }, sug({ left: [noRoom] })), ["waiting", "Not yet — the studio room (workout): no premises photo is tagged as the studio room yet. Say which photo shows it on Photos & assets (one click)."]);
+  // The words on the picture: only their size, and only when the brief says so.
+  const words = { kind: "matters", attribute: "text_density", best: { value: "heavy" } };
+  assert.deepEqual(A(words, sug({ brief: { words_weight: "bolder" } })), ["acting", "In the next batch: the words are set larger where a photo allows. The words themselves stay yours."]);
+  assert.equal(A(words)[0], "none");
+  // A kind of photograph that is in the mix is acted on through the mix; one nothing can express is said.
+  assert.deepEqual(A({ kind: "matters", attribute: "format", best: { value: "studio-portrait" } }), ["acting", "In the next batch through the mix: 8 workout, 2 studio portrait."]);
+  assert.deepEqual(A({ kind: "matters", attribute: "colours", best: { value: "warm" } }), ["none", "Not acted on: nothing a scene or a photo can be asked for expresses this yet."]);
 });

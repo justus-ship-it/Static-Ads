@@ -211,3 +211,45 @@ test("F9 a look whose letters would cover a face is swapped for one that leaves 
   assert.notEqual(c.treatment, "t1-bottom-stack");
   assert.ok(c.r.report.face_zones.length === 1, "the face was still a keep-out in the replacement");
 });
+
+test("AW the words' weight (2026-11-11): when a gym's results favour larger words on the picture, the layouts with more room for the words are preferred — by up to one use, among the layouts a photo can carry — and the other way for smaller; where the layouts give the words the same room (the formula family) it works through the styles, by what was measured on the gym's own ads; with no weight the assignment is exactly what it was; the words themselves are never part of it", async () => {
+  const { layoutWordsArea } = await import("./assign-variants.mjs");
+  const { measuredCover } = await import("./plan-offer-batch.mjs");
+  const ref = loadCatalogue(), T = ref.treatments;
+  const single = Object.keys(T.treatments).filter((la) => !/collage|panels/.test(la));
+  const area = Object.fromEntries(single.map((la) => [la, layoutWordsArea(T.treatments[la], "4x5", T)]));
+  const most = single.reduce((a, b) => (area[b] > area[a] ? b : a)), least = single.reduce((a, b) => (area[b] < area[a] ? b : a));
+  assert.ok(area[most] > area[least] + 10 && Object.values(area).every((a) => a > 5 && a < 90), JSON.stringify(area));
+  const visuals = Array.from({ length: single.length + 1 }, (_, i) => ({ id: "g" + (i + 1) }));
+  const allowed = Object.fromEntries(visuals.map((v) => [v.id, single]));
+  const run = (words) => assignVariants({ visuals, perVisual: 1, text: { location: "BISHAN", audience: "LADIES" }, seed: "aw", catalogue: ref, ratio: "4x5", allowed, ...(words === undefined ? {} : { words }) });
+  const uses = (plan, key = "treatment") => plan.candidates.reduce((m, c) => ({ ...m, [c[key]]: (m[c[key]] || 0) + 1 }), {});
+  const plain = run(), bold = run(1), quiet = run(-1);
+  assert.deepEqual(run(0).candidates, plain.candidates, "no weight: exactly as it was");
+  assert.ok(!plain.notes.some((n) => /the words' weight/.test(n)));
+  // One more photo than layouts: one layout is used twice. With a weight it is the one with the most (or the least) room for the words.
+  const twice = (plan) => Object.entries(uses(plan)).filter(([, n]) => n === 2).map(([la]) => area[la]);
+  assert.deepEqual([twice(bold), twice(quiet)], [[area[most]], [area[least]]], JSON.stringify({ area, bold: uses(bold), quiet: uses(quiet) }));
+  assert.ok(single.every((la) => uses(bold)[la] >= 1 && uses(quiet)[la] >= 1), "every layout is still used: the weight is worth one use, no more");
+  assert.match(bold.notes.find((n) => /the words' weight/.test(n)), /^the words' weight: layouts with more room for the words were preferred where a photo could carry them \(/);
+  assert.match(quiet.notes.find((n) => /the words' weight/.test(n)), /layouts with less room for the words/);
+  // A photo keeps what it can carry: the weight never overrides it.
+  const only = assignVariants({ visuals, perVisual: 1, text: {}, seed: "aw", catalogue: ref, ratio: "4x5", words: 1, allowed: Object.fromEntries(visuals.map((v) => [v.id, [least]])) });
+  assert.ok(only.candidates.every((c) => c.treatment === least));
+  // The formula family: its layouts give the words the same room, so the weight goes by the styles' measured cover.
+  const fm = loadCatalogue({ look: "formula" }), FT = fm.treatments, fl = Object.keys(FT.treatments), styles = Object.keys(fm.styles.styles);
+  assert.equal(new Set(fl.map((la) => layoutWordsArea(FT.treatments[la], "4x5", FT))).size, 1, "the same room in all three");
+  const four = Array.from({ length: styles.length + 1 }, (_, i) => ({ id: "p" + (i + 1) }));
+  const fr = (words, measured) => assignVariants({ visuals: four, perVisual: 1, text: {}, seed: "aw", catalogue: fm, ratio: "4x5", words, measured });
+  const big = styles[1], small = styles[0], measured = { layouts: {}, styles: Object.fromEntries(styles.map((st) => [st, st === big ? 0.24 : st === small ? 0.11 : 0.17])) };
+  assert.deepEqual([uses(fr(1, measured), "style")[big], uses(fr(-1, measured), "style")[small]], [2, 2], JSON.stringify([uses(fr(1, measured), "style"), uses(fr(-1, measured), "style")]));
+  assert.deepEqual(fr(1, null).candidates, fr(0, null).candidates, "nothing measured yet, and the same room in every layout: no weight to give");
+  assert.match(fr(1, measured).notes.find((n) => /the words' weight/.test(n)), /; and the styles that set them larger on this gym's own ads \(/);
+  // What was measured: the average cover per layout and per style over the gym's own batches.
+  const d = mkdtempSync(join(tmpdir(), "cover-"));
+  try {
+    for (const [id, ads] of [["b1", [{ treatment: "f1", style: "s1", text_cover: 0.2 }, { treatment: "f1", style: "s2", text_cover: 0.1 }]], ["b2", [{ treatment: "f2", style: "s1", text_cover: 0.3 }, { treatment: "f2", style: "s2" }]]]) { mkdirSync(join(d, "outputs", id), { recursive: true }); writeFileSync(join(d, "outputs", id, "batch.json"), JSON.stringify({ ads })); }
+    assert.deepEqual(measuredCover(d), { layouts: { f1: 0.15, f2: 0.3 }, styles: { s1: 0.25, s2: 0.1 } });
+    assert.deepEqual(measuredCover(join(d, "nothing")), { layouts: {}, styles: {} });
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

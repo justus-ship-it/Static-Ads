@@ -201,7 +201,19 @@ function rngFrom(seed) {
  *
  * Returns { candidates: [{ id, visual, images, treatment, style, palette, palette_fit }], pools, notes }.
  */
-export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", exclude = {}, photoStats = null, allowed = null, prefer = null, catalogue = loadCatalogue(), ratio = "1x1" }) {
+/** How much of the canvas a layout gives its words, in percent: the sum of its text regions at this shape. The template sets each
+ *  line at the largest size its region holds, so a layout with more room for the words sets them larger. */
+export function layoutWordsArea(layout, ratio, T) { return Math.round((layoutFor(layout, ratio, T).groups || []).reduce((t, g) => t + (Array.isArray(g.region) ? g.region[2] * g.region[3] : 0), 0)) / 100; }
+/**
+ * words: +1 when the gym's results favour larger words on the picture, -1 smaller, 0 (default) no weighting (2026-11-11).
+ *   It only ever weights WHICH layout and style an ad gets among those its photo can carry — one that sets the words
+ *   larger (or smaller) counts as up to one use less used — never the words themselves, and never past the even spread by
+ *   more than that. A layout is judged by its room for the words; a style only by what was MEASURED:
+ * measured: optional { layouts: { id: cover }, styles: { id: cover } } — the average share of the picture the words covered
+ *   on this gym's own past ads (batch.json → text_cover), per layout and per style. The formula family's three layouts give
+ *   the words the same room, so there the weight works through the styles, once the gym has ads to measure.
+ */
+export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", exclude = {}, photoStats = null, allowed = null, prefer = null, words = 0, measured = null, catalogue = loadCatalogue(), ratio = "1x1" }) {
   const { treatments: T, styles: S, palettes: P } = catalogue;
   const notes = [];
   if (!visuals?.length) throw new Error("the batch has no photos");
@@ -261,6 +273,10 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
     return photoStats[vi].layouts?.[layout] || photoStats[vi].overall;
   };
 
+  // Each layout's room for the words, from least (0) to most (1) among the layouts this batch may use.
+  const unit = (ids, val) => { const have = ids.filter((k) => val[k] != null), lo = Math.min(...have.map((k) => val[k])), hi = Math.max(...have.map((k) => val[k])); return Object.fromEntries(ids.map((k) => [k, val[k] != null && hi > lo ? (val[k] - lo) / (hi - lo) : 0])); };
+  const areas = Object.fromEntries(layouts.map((la) => [la, layoutWordsArea(T.treatments[la], ratio, T)]));
+  const roomFor = unit(layouts, areas), sizeOf = unit(styles, measured?.styles || {});
   // Photos with the strongest colour choose first, while every palette is still unused, so they
   // are the likeliest to get colours that suit them. The output keeps the batch's order.
   const order = visuals.map((v, i) => i).sort((a, b) => (photoStats?.[b]?.overall.strength || 0) - (photoStats?.[a]?.overall.strength || 0) || a - b);
@@ -276,6 +292,8 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
       let pick = null;
       const first = j === 0 && prefer?.[visuals[vi].id];
       const order2 = byUse(layouts, count.L, on.L).filter((la) => open(vi, la));
+      // The words' weight: a layout with more room for the words (or less) counts as up to one use less used.
+      if (words) order2.sort((a, b) => (count.L[a] - words * roomFor[a]) - (count.L[b] - words * roomFor[b]));
       if (first && order2.includes(first)) order2.sort((a, b) => (b === first) - (a === first));
       for (const layout of order2) {
         const stat = statFor(vi, layout);
@@ -285,7 +303,7 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
           const L = layoutFor(T.treatments[layout], ratio, T);
           for (const k of palettes) { const lf = lumFit(stat, L, P.palettes[k], { target: T.treatments[layout].contrast?.target ?? 3 }); if (lf) { fit[k].contrast = lf.contrast; if (lf.weak) fit[k].clash = true; fit[k].score = +(fit[k].score * Math.min(1, lf.contrast / 4.5)).toFixed(3); } }
         }
-        for (const style of byUse(styles, count.S, on.S)) {
+        for (const style of words ? byUse(styles, count.S, on.S).sort((a, b) => (count.S[a] - words * sizeOf[a]) - (count.S[b] - words * sizeOf[b])) : byUse(styles, count.S, on.S)) {
           // Least-used palettes first; within the same use, ones that suit the photo best.
           const suits = byUse(palettes, count.P, on.P).sort((a, b) => count.P[a] - count.P[b] || (fit ? fit[b].score - fit[a].score : 0));
           const clean = suits.filter((p) => !fit?.[p].clash);
@@ -327,6 +345,7 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
   const underused = palettes.filter((p) => count.P[p] > 0 && count.P[p] < even && skipped.has(p));
   if (photoStats && unusedPalettes.length) notes.push(`not used, because their colours clash with the photos under the text: ${unusedPalettes.join(", ")}`);
   if (photoStats && underused.length) notes.push(`used less than an even share (${even}), because their colours clash with most photos under the text: ${underused.map((p) => `${p} ×${count.P[p]}`).join(", ")}`);
+  if (words) notes.push(`the words' weight: layouts with ${words > 0 ? "more" : "less"} room for the words were preferred where a photo could carry them (${Object.entries(areas).sort((a, b) => words * (b[1] - a[1])).map(([la, a]) => `${la.split("-")[0]} ${a}%`).join(", ")})${Object.keys(measured?.styles || {}).length > 1 ? `; and the styles that set them ${words > 0 ? "larger" : "smaller"} on this gym's own ads (${Object.entries(measured.styles).sort((a, b) => words * (b[1] - a[1])).map(([st, c]) => `${st.split("-")[0]} ${Math.round(c * 100)}%`).join(", ")})` : ""}`);
   return { candidates, ratio, pools: { layouts, styles, palettes }, counts: count, notes, allowed };
 }
 

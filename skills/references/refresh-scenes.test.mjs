@@ -85,7 +85,7 @@ test("R2 the request carries the gym (names scrubbed), the vocabularies, the rul
   assert.match(prompt, /w-row-old \[.*\] \(retired: we have no cable row\)/, "a retired scene is sent as do-not-repeat, with its reason");
   assert.match(prompt, /w-curl \[.*\] \(draft\)/, "drafts too");
   assert.match(prompt, /Write exactly 2 scenes/);
-  assert.equal(schema.properties.scenes.items.required.length, 10);
+  assert.equal(schema.properties.scenes.items.required.length, 11, "the ten fields and the mood (2026-11-11)");
   const words = buildRefreshRequest({ audience: "any", count: 1, direction: { kind: "words", words: "older women doing walking lunges with a coach" }, scenes: [] }).prompt;
   assert.match(words, /DIRECTION from the owner: older women doing walking lunges with a coach/);
   assert.match(words, /\(none yet\)/);
@@ -430,3 +430,17 @@ test("R12 a refresh from the account's results (2026-11-11): the drafter is told
     assert.match(prompts[0], /EVERY scene here shows setting group: that is what the next batch is testing, in new versions\./);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("R13 a workout scene's mood (2026-11-11): the drafter is asked for one — effort, smile or calm, the mood the description itself shows — so that what the results say about expressions has scenes to act on; a draft keeps a mood from the vocabulary and loses any other (the scene is kept); a portrait carries none; a room on a scene is kept only when it is one of the gym's rooms", () => {
+  const base = { audience: "women", count: 2, scenes: LIB, photography: PROFILE.brand_lock.photography, brandNames: [] };
+  const { prompt, schema } = buildRefreshRequest({ ...base, direction: { kind: "gaps", cover: [], exercises: [] } });
+  assert.match(prompt, /mood — effort, smile, calm \(the expression the description gives the faces: effort = straining at the hard point of the movement; smile = smiling or laughing; calm = steady, focused, neutral\) — it must be the mood the description itself shows;/);
+  assert.ok(schema.properties.scenes.items.required.includes("mood") && schema.properties.scenes.items.properties.mood);
+  const pp = buildRefreshRequest({ ...base, format: "studio-portrait", direction: { kind: "variety", cover: [] } });
+  assert.ok(!/mood —/.test(pp.prompt) && !pp.schema.properties.scenes.items.properties.mood, "a portrait says its expression, not a mood");
+  const v = validateDrafts([draft("w-smile", { mood: "smile", exercise: "box-step" }), draft("w-odd", { mood: "ecstatic", exercise: "sled-push", scene: "A woman driving a sled down the turf, low and steady, breathing out hard." }), draft("w-floor", { mood: "calm", room: "gym-floor", exercise: "rack-pull", scene: "A woman setting her grip on a barbell in the rack, eyes down, unhurried." }), draft("w-roof", { room: "rooftop", exercise: "farmers-carry", scene: "A woman carrying two kettlebells down the turf, shoulders back, jaw set." })], { scenes: LIB, audience: "women", forbidden: [] });
+  assert.deepEqual(v.kept.map((d) => [d.id, d.mood ?? null, d.room ?? null]), [["w-smile", "smile", null], ["w-odd", null, null], ["w-floor", "calm", "gym-floor"], ["w-roof", null, null]], JSON.stringify(v.dropped));
+  const p = validateDrafts([{ id: "w-p-one", audience: "women", pose: "upright", people: 1, age: "prime", backdrop: "dark-wall", stance: "easy-posed", expression: "smile", eye_contact: true, mood: "smile", scene: "A woman in her thirties in a teal top stands relaxed with a hand on her hip and a warm smile, against a plain dark charcoal wall." }], { scenes: LIB, audience: "women", forbidden: [], format: "studio-portrait" });
+  assert.deepEqual(p.kept.map((d) => ["mood" in d, d.expression]), [[false, "smile"]]);
+});
+

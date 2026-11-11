@@ -46,7 +46,7 @@ import { parseArgs } from "util";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
 import { POSES, scrubNames, isAboutText, readShotGuide } from "./visual-prompts.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
-import { SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, MAX_PORTRAIT_PEOPLE, formatOf, MAX_SCENE_PEOPLE, AUDIENCES, sceneProblems, sceneWarnings, readLibrary, writeLibrary, isRetired, isDraft, sceneSummary, approveScenes, rejectScene, libraryStatus, today } from "./scene-library.mjs";
+import { SCENE_OPTIONAL_TAGS, SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, MAX_PORTRAIT_PEOPLE, formatOf, MAX_SCENE_PEOPLE, AUDIENCES, sceneProblems, sceneWarnings, readLibrary, writeLibrary, isRetired, isDraft, sceneSummary, approveScenes, rejectScene, libraryStatus, today } from "./scene-library.mjs";
 
 export const DRAFT_MODEL = process.env.DRAFT_MODEL || CHECK_MODEL;
 export const READER_MODEL = process.env.READER_MODEL || CHECK_MODEL;
@@ -223,8 +223,8 @@ const DRAFT_SCHEMA = {
   properties: {
     scenes: { type: "ARRAY", items: { type: "OBJECT", properties: {
       id: { type: "STRING" }, audience: { type: "STRING" }, pose: { type: "STRING" }, people: { type: "INTEGER" }, exercise: { type: "STRING" },
-      age: { type: "STRING" }, setting: { type: "STRING" }, equipment: { type: "STRING" }, muscles: { type: "STRING" }, scene: { type: "STRING" },
-    }, required: ["id", "audience", "pose", "people", "exercise", "age", "setting", "equipment", "muscles", "scene"] } },
+      age: { type: "STRING" }, setting: { type: "STRING" }, equipment: { type: "STRING" }, muscles: { type: "STRING" }, mood: { type: "STRING" }, scene: { type: "STRING" },
+    }, required: ["id", "audience", "pose", "people", "exercise", "age", "setting", "equipment", "muscles", "mood", "scene"] } },
   },
   required: ["scenes"],
 };
@@ -274,7 +274,7 @@ export function buildRefreshRequest({ audience = "any", count = 6, direction = {
     `AUDIENCE: ${audience} — every scene shows ${WHO[audience]}; set each scene's audience to "${audience}".`,
     "CANDID: when a scene has more than one person, each is at their own point of the movement, loosely spaced at different angles, with some interaction — a glance, a word, a coach's cue or hand. Nobody looks into the camera. Never ask people to move together: no side by side, in unison, in time, identical, in a row, each holding, all doing.",
     "REAL: real equipment, complete and used the way it is meant to be — bodies rest on what holds them, hands grip real handles, the load sits where it does in the real exercise.",
-    `FIELDS for each scene: id (a new lower-case slug starting with "${PREFIX[audience]}", e.g. ${PREFIX[audience]}lunge-coach); audience ("${audience}"); pose — one of ${Object.entries(POSES).map(([k, v]) => `${k} (${v})`).join("; ")}; people (1 to ${MAX_SCENE_PEOPLE}: solo = 1, coached = 2 or more, group = 3 or more); exercise (a short lower-case name, e.g. back-squat); age — ${SCENE_TAGS.age.join(", ")} (20s; 30s–40s; 50s–60s); setting — ${SCENE_TAGS.setting.join(", ")}; equipment — ${SCENE_TAGS.equipment.join(", ")}; muscles — ${SCENE_TAGS.muscles.join(", ")}; scene (the description).`,
+    `FIELDS for each scene: id (a new lower-case slug starting with "${PREFIX[audience]}", e.g. ${PREFIX[audience]}lunge-coach); audience ("${audience}"); pose — one of ${Object.entries(POSES).map(([k, v]) => `${k} (${v})`).join("; ")}; people (1 to ${MAX_SCENE_PEOPLE}: solo = 1, coached = 2 or more, group = 3 or more); exercise (a short lower-case name, e.g. back-squat); age — ${SCENE_TAGS.age.join(", ")} (20s; 30s–40s; 50s–60s); setting — ${SCENE_TAGS.setting.join(", ")}; equipment — ${SCENE_TAGS.equipment.join(", ")}; muscles — ${SCENE_TAGS.muscles.join(", ")}; mood — ${SCENE_OPTIONAL_TAGS.mood.join(", ")} (the expression the description gives the faces: effort = straining at the hard point of the movement; smile = smiling or laughing; calm = steady, focused, neutral) — it must be the mood the description itself shows; scene (the description).`,
   ];
   // The high-performing references' shot types (reference-shots.mjs): scenes that can be photographed that way.
   if (shotGuide?.recipes?.length) lines.push(`SHOT TYPES that perform best — write scenes a photographer could shoot as one of these, close and at eye level, caught mid-rep or at peak effort with a clear expression: ${shotGuide.recipes.map((r) => `${r.name} (${r.when || r.moment})`).join("; ")}. About half the scenes have two people: a coach or a training partner.`);
@@ -363,6 +363,9 @@ export function validateDrafts(drafts, { scenes = [], audience = "any", forbidde
     // A draft is of the format that was asked for, whatever the model wrote; a portrait carries no workout tags.
     if (format !== "workout") { d.format = format; for (const k of ["exercise", "equipment", "muscles", "setting"]) delete d[k]; if (d.people === 1) d.setting = "solo"; }
     else { delete d.format; for (const k of ["backdrop", "stance", "expression", "eye_contact"]) delete d[k]; }
+    // A workout scene's mood (2026-11-11): kept when it is one of the three; a portrait says its expression instead.
+    if (format !== "workout" || !SCENE_OPTIONAL_TAGS.mood.includes(d.mood)) delete d.mood;
+    if (d.room != null && !SCENE_OPTIONAL_TAGS.room.includes(d.room)) delete d.room;
     if (typeof d.exercise === "string") d.exercise = d.exercise.trim().toLowerCase().replace(/\s+/g, "-");
     if (typeof d.id === "string") d.id = d.id.trim().toLowerCase();
     if (expect) { d.pose = expect.pose; if (expect.prefer_layout) d.prefer_layout = expect.prefer_layout; }

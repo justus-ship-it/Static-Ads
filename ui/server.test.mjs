@@ -3433,7 +3433,7 @@ test("U59 the review, checked, and Pause on Meta (2026-11-11): every line of the
     assert.deepEqual([by(`pause:${ID(3)}`).kind, by(`pause:${ID(3)}`).verdict, by(`pause:${ID(5)}`).kind, by(`pause:${ID(5)}`).verdict, by(`pause:${ID(4)}`) ?? null], ["pause", "confirmed", "wait", "early", null]);
     assert.match(by(`pause:${ID(3)}`).checks[0].text, /^3,000 impressions and SGD 80\.00 spent \(a fair chance is 1,000 impressions and SGD 35\.00\)$/);
     assert.deepEqual([R.pause.length, R.wait.length, R.linked, R.last_time.paused], [1, 1, false, []]);
-    assert.match(R.text, /Consider pausing:\n- Consider pausing: Nothing for it — SGD 80\.00 spent for no lead[^\n]*\n\nNot judged yet:\n- Not judged yet: Too new — SGD 36\.00 spent for no lead, but it has not had a fair chance/);
+    assert.match(R.text, /Consider pausing:\n- Consider pausing: Nothing for it — SGD 80\.00 spent for no lead[^\n]*\n  → Yours to do in Ads Manager: this ad cannot be reached from here\.\n\nNot judged yet:\n- Not judged yet: Too new — SGD 36\.00 spent for no lead, but it has not had a fair chance[^\n]*\n  → Nothing to do yet: it is judged once it has had a fair chance\./);
     // Refused: not this gym's ad, not running, not the numbers confirmed — and, on this panel, no Meta link.
     const good = { confirm: { spend: 80, leads: 0 } };
     assert.equal((await post("999999999999", good)).status, 404);
@@ -3447,7 +3447,7 @@ test("U59 the review, checked, and Pause on Meta (2026-11-11): every line of the
     const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
     const open = async (tag) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?${tag}#/${GYM}/results` }, sessionId); await loaded; await until(`STATE.sel === ${JSON.stringify(GYM)} && RS.review && RS.review.gym === STATE.sel && !!document.querySelector('#rsReview [data-kind=pause]')`); };
     await open("u59a");
-    assert.deepEqual(await ev("[!!document.querySelector('#rsReview [data-kind=pause] button'), /Pause it in Ads Manager: this ad cannot be reached from here\\./.test(document.querySelector('#rsReview [data-kind=pause]').innerText)]"), [false, true]);
+    assert.deepEqual(await ev("[!!document.querySelector('#rsReview [data-kind=pause] button'), document.querySelector('#rsReview [data-kind=pause] .rvact').innerText, document.querySelector('#rsReview [data-kind=pause] .rvact').className]"), [false, "→ Yours to do in Ads Manager: this ad cannot be reached from here.", "rvact yours"]);
     // With the link: the button, the confirmation that names the ad, and the pause.
     panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: `http://127.0.0.1:${graph.address().port}` });
     await open("u59b");
@@ -3455,6 +3455,8 @@ test("U59 the review, checked, and Pause on Meta (2026-11-11): every line of the
     assert.match(line, /^Nothing for it — SGD 80\.00 spent for no lead/); assert.match(line, /checked/); assert.match(line, /✓ 3,000 impressions and SGD 80\.00 spent/);
     assert.match(await ev("document.querySelector('#rsReview [data-kind=wait] li').innerText"), /^Too new — SGD 36\.00 spent for no lead, but it has not had a fair chance[\s\S]*not judged yet[\s\S]*✕ 300 impressions/);
     assert.equal(await ev("document.querySelector('#rsReview [data-kind=wait] button')"), null, "nothing to press for an ad not judged yet");
+    // What becomes of each line: said on the line itself.
+    assert.deepEqual(await ev("[document.querySelector('#rsReview [data-kind=pause] .rvact').innerText, document.querySelector('#rsReview [data-kind=wait] .rvact').innerText, document.querySelector('#rsReview [data-kind=wait] .rvact').className, [...document.querySelectorAll('#rsReview li[data-key]')].every((li) => li.querySelector('.rvact')) ]"), ["→ Yours to press: Pause on Meta, below. Nothing is paused by itself.", "→ Nothing to do yet: it is judged once it has had a fair chance.", "rvact none", true]);
     assert.equal(await ev("document.querySelector('#rsReview [data-kind=pause] button').textContent"), "Pause on Meta…");
     await ev("document.querySelector('#rsReview [data-kind=pause] button').click(); true");
     assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, /Nothing for it/.test(document.querySelector('#gModal .summary').innerText), /SGD 80 spent · 0 leads/.test(document.querySelector('#gModal .summary').innerText), /this one ad/.test(document.querySelector('#gModal').innerText), document.querySelector('#rsPauseGo').textContent]"), ["Pause this ad on Meta?", true, true, true, "Yes, pause it on Meta"]);

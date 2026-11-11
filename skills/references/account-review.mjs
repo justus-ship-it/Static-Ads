@@ -24,7 +24,7 @@ import { gymTextRows } from "./meta-results.mjs";
 import { readCreatives, unreadCount } from "./read-creatives.mjs";
 import { ROOMS, SCENE_OPTIONAL_TAGS, SCENE_FORMATS, SCENE_TAGS, PORTRAIT_TAGS, allocateMix, formatOf, loadScenes, isDraft, isRetired } from "./scene-library.mjs";
 import { mixOf } from "./client-config.mjs";
-import { scenePool, shows, sceneAudience, leanName, MAX_LEANS } from "./plan-offer-batch.mjs";
+import { scenePool, shows, sceneAudience, leanName, MAX_LEANS, LEAN_SHARE } from "./plan-offer-batch.mjs";
 export { readLedger as ledgerOf };
 import { cardsAvailable } from "./cards.mjs";
 import { readWordings } from "./ad-wordings.mjs";
@@ -229,12 +229,16 @@ export function suggestBrief(gymDir, { rows = gymRowsRead(gymDir), every = rows,
     if (!approved) left.push({ kind: "no_scenes", format: f, text: `${count} in the mix, but no ${name} scene is approved for ${aud === "any" ? "a mixed audience" : aud}${drafts ? ` (${drafts} draft${drafts === 1 ? "" : "s"} await your approval on Draft Scenes)` : ""}. Generate Creatives refuses the batch until one is: draft some first, or take them out of the mix on Generate Creatives.` });
   }
 
+  // The words on the picture (2026-11-11): only a confirmed finding on the MEASURED cover of this app's own ads (two or more
+  // pictures) weights the look — larger words when heavy wins, smaller when light does. It never changes the words.
+  const td = insights.find((x) => x.kind === "matters" && x.attribute === "text_density"), wordsWeight = td?.best.value === "heavy" ? "bolder" : td?.best.value === "light" ? "quieter" : null;
+  if (wordsWeight) reasons.push({ field: "words", text: `Set the words ${wordsWeight === "bolder" ? "larger" : "smaller"} — ads whose words cover ${td.best.value === "heavy" ? "more" : "less"} of the picture earn this gym's leads cheaper (${td.best.leads} leads over ${td.best.pictures} pictures at ${money(td.best.cost_per_lead, currency)}, against ${td.worst.value} with ${td.worst.leads} at ${money(td.worst.cost_per_lead, currency)}). The layouts with ${wordsWeight === "bolder" ? "more" : "less"} room for the words are preferred; the words stay yours.` });
   // A card of each kind that is ready and has never run here: it costs no image call to test.
   const ready = cardsAvailable(gymDir, { offer: offer || null, profile }), ran = new Set(rows.map((r) => r.format).filter(Boolean)), cards = {};
   for (const k of ["review", "statement", "timeline"]) if (ready[k] > 0 && !ran.has(k)) cards[k] = 1;
   if (Object.keys(cards).length) reasons.push({ field: "cards", text: `One ${Object.keys(cards).join(", one ")} card: ready and never run here, and a card costs no image call.` });
 
-  return { brief: { offer, locations, audience, generated, ...(Object.keys(photos).length > 1 || (formats[0] && formats[0] !== "workout") ? { mix: photos } : {}), ...(Object.keys(cards).length ? { cards } : {}), ...(lean.length ? { lean } : {}) }, from: last?.id || null, reasons, left, scenes: toDraft, scenes_waiting: waiting.length };
+  return { brief: { offer, locations, audience, generated, ...(Object.keys(photos).length > 1 || (formats[0] && formats[0] !== "workout") ? { mix: photos } : {}), ...(Object.keys(cards).length ? { cards } : {}), ...(lean.length ? { lean } : {}), ...(wordsWeight ? { words_weight: wordsWeight } : {}) }, from: last?.id || null, reasons, left, scenes: toDraft, scenes_waiting: waiting.length };
 }
 
 const totals = (rows) => { const spend = round2(sum(rows, "spend")), leads = sum(rows, "leads"); return { ads: rows.length, spend, leads, cost_per_lead: leads ? round2(spend / leads) : null }; };
@@ -311,6 +315,41 @@ export function lastTime(gymDir, { rows = gymRowsRead(gymDir), insights = [], cu
   return out;
 }
 
+/**
+ * What becomes of one checked line (2026-11-11): { state, text } — so no line of the review is advice with nowhere to go.
+ *   acting — the next batch does something about it (a lean, a test, the words' size)        yours — a press that is the owner's (Pause on Meta)
+ *   waiting — it would, but something is missing first (a tagged room, an approved scene)      none — nothing to do, and why
+ */
+export function actionFor(x, suggested, { linked = false } = {}) {
+  const lean = suggested.brief.lean || [], left = suggested.left || [], kinds = Object.keys(suggested.brief.mix || { workout: 1 });
+  const share = (l) => (l.test ? `${l.photos} photo${l.photos === 1 ? " tests" : "s test"} it, in new versions` : `about ${Math.round(LEAN_SHARE * 100)}% of the ${(l.format || "workout").replace("-", " ")} photos lean on it`);
+  // A left-out line without the reason it repeats (the insight's own line already says it).
+  const bare = (l) => `${l.text.replace(` (${l.why})`, "").replace(/\.$/, "")}.`;
+  if (x.kind === "keep") return { state: "none", text: "Nothing to do: leave it running." };
+  if (x.kind === "wait") return { state: "none", text: "Nothing to do yet: it is judged once it has had a fair chance." };
+  if (x.kind === "fact") return { state: "none", text: "Not acted on: nothing in the app changes this." };
+  if (x.kind === "pause" && x.verdict && x.verdict !== "confirmed") return { state: "none", text: "Nothing to do yet: it has not passed its checks." };
+  if (x.kind === "pause") return /^\d{5,25}$/.test(x.ads?.[0] || "") && linked ? { state: "yours", text: "Yours to press: Pause on Meta, below. Nothing is paused by itself." } : { state: "yours", text: "Yours to do in Ads Manager: this ad cannot be reached from here." };
+  if (x.kind === "tiring") {
+    const l = lean.find((y) => y.test && (y.why || "").includes(x.name));
+    if (l) return { state: "acting", text: `In the next batch: ${share(l)} (${leanName(l)}).` };
+    const w = left.find((y) => y.test && (y.why || "").includes(x.name));
+    return w ? { state: "waiting", text: `Not yet — ${bare(w)}` } : { state: "none", text: "Not in the next batch: its kind maps to nothing a scene can be asked for that is not already leaned on or tested. Draft new versions of it on Draft Scenes." };
+  }
+  // A finding or a lead about the pictures: what a scene, a photo or the look can be asked for.
+  if (x.attribute === "text_density") return suggested.brief.words_weight ? { state: "acting", text: `In the next batch: the words are set ${suggested.brief.words_weight === "bolder" ? "larger" : "smaller"} where a photo allows. The words themselves stay yours.` } : { state: "none", text: "Not acted on: the size of the words is weighted only on a confirmed finding from measured ads." };
+  const wants = [];
+  for (const f of kinds) {
+    const tv = x.attribute === "format" && x.best.value === "class-group" && f === "workout" ? ["setting", "group"] : READ_TO_TAG[f]?.[x.attribute]?.(x.best.value);
+    if (tv) wants.push({ format: f, tag: tv[0], value: tv[1] });
+  }
+  const same = (l, w) => l.tag === w.tag && l.value === w.value && (!l.format || l.format === w.format);
+  for (const w of wants) { const l = lean.find((y) => same(y, w)); if (l) return { state: "acting", text: `In the next batch: ${share(l)} (${leanName(l)}).` }; }
+  for (const w of wants) { const l = left.find((y) => same(y, w)); if (l) return { state: "waiting", text: `Not yet — ${bare(l)}` }; }
+  if (x.attribute === "format" && suggested.brief.mix && kinds.includes(x.best.value)) return { state: "acting", text: `In the next batch through the mix: ${Object.entries(suggested.brief.mix).map(([f, n]) => `${n} ${f.replace("-", " ")}`).join(", ")}.` };
+  return { state: "none", text: wants.length ? "Not in the next batch: it is already leaned on or tested through another line, or the batch has no photo of that kind." : "Not acted on: nothing a scene or a photo can be asked for expresses this yet." };
+}
+
 // ── the review ───────────────────────────────────────────────────────────────
 /** Everything the review shows, from what is on disk (pure: no Meta call, no model call). */
 export function buildReview(gymDir, { brandsDir = resolve(gymDir, ".."), now = new Date() } = {}) {
@@ -339,7 +378,7 @@ export function buildReview(gymDir, { brandsDir = resolve(gymDir, ".."), now = n
     // Checked before it is said (2026-11-11): what is only a lead to test, what is not judged yet, what nothing here changes —
     // and every checked line with its verdict and the checks behind it, for the page and the ledger.
     to_test: pick("lead"), wait: pick("wait"), facts: pick("fact"),
-    insights: wins.suggestions.filter((s) => s.key).map(({ key, kind, verdict, text, ads, name, what, attribute, label, best, worst, gap, numbers, checks, fading }) => ({ key, kind, verdict, text, ...(ads ? { ads, name, what, numbers } : {}), ...(attribute ? { attribute, label, best, worst, gap } : {}), ...(fading ? { fading } : {}), checks })),
+    insights: wins.suggestions.filter((s) => s.key).map(({ key, kind, verdict, text, ads, name, what, attribute, label, best, worst, gap, numbers, checks, fading }) => ({ key, kind, verdict, text, action: actionFor({ key, kind, verdict, ads, name, attribute, best }, suggested, { linked: !!metaConfig({ gym }).token }), ...(ads ? { ads, name, what, numbers } : {}), ...(attribute ? { attribute, label, best, worst, gap } : {}), ...(fading ? { fading } : {}), checks })),
     copy: { copies: copyOf("copy"), headlines: copyOf("headline"), never_led: dead },
     drift, mix: { current: mix.current, suggested: mix.suggested, changed: mix.changed, reasons: mix.reasons, formats: mix.formats },
     last_time: lastTime(gymDir, { rows, insights: wins.suggestions.filter((s) => s.key), currency }),
@@ -358,7 +397,9 @@ export function reviewText(r) {
     for (const p of lt.paused) L.push(`- ${p.text}.`);
     for (const c of lt.changed) L.push(`- ${c.text}`);
   }
-  for (const [title, items] of [["Keep", r.keep], ["Tiring", r.tiring], ["Consider pausing", r.pause], ["Not judged yet", r.wait || []], ["What matters", r.matters], ["To test", r.to_test || []], ["For the record", r.facts || []], ["Notes", r.notes]]) if (items.length) { L.push("", `${title}:`); for (const x of items) L.push(`- ${x}`); }
+  const act = new Map((r.insights || []).map((x) => [x.text, x.action?.text]));
+  for (const [title, items] of [["Keep", r.keep], ["Tiring", r.tiring], ["Consider pausing", r.pause], ["Not judged yet", r.wait || []], ["What matters", r.matters], ["To test", r.to_test || []], ["For the record", r.facts || []]]) if (items.length) { L.push("", `${title}:`); for (const x of items) { L.push(`- ${x}`); if (act.get(x)) L.push(`  → ${act.get(x)}`); } }
+  for (const [title, items] of [["Notes", r.notes]]) if (items.length) { L.push("", `${title}:`); for (const x of items) L.push(`- ${x}`); }
   if (r.copy.copies.length || r.copy.headlines.length) { L.push("", "Which copy wins:"); for (const [k, xs] of [["copy", r.copy.copies], ["headline", r.copy.headlines]]) for (const x of xs) L.push(`- ${k}: ${x.leads} leads${x.cost_per_lead != null ? ` at ${money(x.cost_per_lead, c)}` : ""} — ${x.text.split("\n")[0].slice(0, 90)}`); }
   if (r.drift.length) { L.push("", "Meta differs from what the app sent:"); for (const d of r.drift) L.push(`- ${d.batch}: ${d.text}`); }
   L.push("", "The mix:"); for (const x of r.mix.reasons) L.push(`- ${x}`);

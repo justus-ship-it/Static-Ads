@@ -135,6 +135,7 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
     if (brief.direction != null && Object.values(brief.mix || {}).filter((n) => n > 0).length > 1) errs.push("a directed batch is one kind of photograph: its words or reference decide the pictures, so it cannot be a mix");
   }
   errs.push(...leanProblems(brief.lean));
+  if (brief.words_weight != null && !WORDS_WEIGHTS.includes(brief.words_weight)) errs.push(`words_weight must be one of ${WORDS_WEIGHTS.join(", ")} (how large the words are set: it never changes the words)`);
   // The owner's direction for the batch's photos: words, or a reference image read into words.
   if (brief.direction != null) {
     for (const e of validateDirection(brief.direction, { brandDir })) errs.push(`direction: ${e}`);
@@ -216,6 +217,8 @@ export const VARIETY_WEIGHTS = { exercise: 3, age: 3, setting: 2, equipment: 2, 
 // scene tags. A scene that shows a lean is preferred until LEAN_SHARE of its kind's photos show it; the rest keep the
 // batch's variety, so the other values go on being tested. It only ever picks among approved scenes.
 export const LEAN_SHARE = 0.6, MAX_LEANS = 6;
+/** How large the words are set on the picture, when the gym's results say it matters (2026-11-11): which layout an ad gets is weighted toward more room for the words, or less. The words themselves are always the owner's. */
+export const WORDS_WEIGHTS = ["bolder", "quieter"];
 export const LEAN_TAGS = ["exercise", ...Object.keys(SCENE_TAGS), ...Object.keys(PORTRAIT_TAGS), "eye_contact", "people", ...Object.keys(SCENE_OPTIONAL_TAGS)];
 /** What is wrong with a brief's `lean`: a list of { tag, value, format?, why? }. */
 export function leanProblems(lean) {
@@ -235,6 +238,16 @@ export function leanProblems(lean) {
   return errs;
 }
 /** A lean in words: "dark-wall backdrop (studio portraits)". */
+/** How much of the picture the words covered on this gym's own past ads, on average, per layout and per style (batch.json → text_cover): what the words' weight goes by for the styles. */
+export function measuredCover(brandDir) {
+  const acc = { layouts: {}, styles: {} }, dir = join(brandDir, "outputs");
+  if (existsSync(dir)) for (const id of readdirSync(dir)) {
+    let b = null; try { b = JSON.parse(readFileSync(join(dir, id, "batch.json"), "utf-8")); } catch { continue; }
+    for (const a of b?.ads || []) if (typeof a.text_cover === "number") for (const [k, key] of [["layouts", a.treatment], ["styles", a.style]]) { const x = (acc[k][key] ||= { n: 0, sum: 0 }); x.n++; x.sum += a.text_cover; }
+  }
+  const avg = (m) => Object.fromEntries(Object.entries(m).map(([k, x]) => [k, Math.round((x.sum / x.n) * 1000) / 1000]));
+  return { layouts: avg(acc.layouts), styles: avg(acc.styles) };
+}
 export const leanName = (l) => `${l.tag === "people" ? `${l.value} people` : l.tag === "eye_contact" ? (l.value ? "looking into the camera" : "looking away") : l.tag === "room" ? ROOMS[l.value] || l.value : l.tag === "mood" ? `a ${l.value} mood` : `${l.value} ${l.tag}`}${l.format ? ` (${l.format})` : ""}`;
 
 /** A scene's age tag for an age in years: young 20s, prime 30s–40s, older 50s–60s (SCENE_TAGS.age). */
@@ -715,7 +728,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       if (!photos.length) results = []; // cards alone: no photograph to look at or set words on
       else {
         const stats = await measurePhotos(browser, photos.map((p) => p.file), { ratio, catalogue });
-        const planned = assignVariants({ visuals: photos.map((p) => ({ id: p.id })), perVisual: looks, text: { location: brief.locations[0], audience }, seed, exclude, photoStats: stats, allowed, prefer: Object.fromEntries(photos.filter((p) => p.primary).map((p) => [p.id, p.primary])), catalogue, ratio });
+        const planned = assignVariants({ visuals: photos.map((p) => ({ id: p.id })), perVisual: looks, text: { location: brief.locations[0], audience }, seed, exclude, photoStats: stats, allowed, prefer: Object.fromEntries(photos.filter((p) => p.primary).map((p) => [p.id, p.primary])), words: brief.words_weight === "bolder" ? 1 : brief.words_weight === "quieter" ? -1 : 0, measured: brief.words_weight ? measuredCover(brandDir) : null, catalogue, ratio });
         for (const n of planned.notes) log(`  note: ${n}`);
 
         // ── 5 render ──
@@ -768,7 +781,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
     // record of the calls that made its photos (the panel showed "0 image calls" after one).
     const batch = {
-      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, ...(cardRenders.length ? { cards: Object.fromEntries(["review", "statement", "timeline"].map((k) => [k, cardRenders.filter((c) => c.kind === k && !c.failed).length]).filter(([, n]) => n > 0)) } : {}), format, mix: Object.fromEntries(Object.keys(SCENE_FORMATS).map((f) => [f, photos.filter((p) => p.format === f).length]).filter(([, n]) => n > 0)), ...(brief.lean?.length && !directed ? { lean: brief.lean } : {}), image_calls: spent, image_calls_this_run: calls,
+      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, ...(brief.words_weight ? { words_weight: brief.words_weight } : {}), ...(cardRenders.length ? { cards: Object.fromEntries(["review", "statement", "timeline"].map((k) => [k, cardRenders.filter((c) => c.kind === k && !c.failed).length]).filter(([, n]) => n > 0)) } : {}), format, mix: Object.fromEntries(Object.keys(SCENE_FORMATS).map((f) => [f, photos.filter((p) => p.format === f).length]).filter(([, n]) => n > 0)), ...(brief.lean?.length && !directed ? { lean: brief.lean } : {}), image_calls: spent, image_calls_this_run: calls,
       photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.format ? { format: p.format } : {}), ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
       ads, failed,
     };
