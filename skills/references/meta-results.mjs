@@ -211,6 +211,8 @@ export function batchRows(gymDir, batchId) {
       offer: a.words?.offer || null, location: a.words?.location || null, audience: a.words?.audience || null, callout: entry.adset || null,
       photos: a.photos.join("+"), scenes: scenes.join("+") || null, exercise: tags.map((t) => t.exercise).filter(Boolean).join("+") || null, age_tag: tags.map((t) => t.age).filter(Boolean).join("+") || null, setting: tags.map((t) => t.setting).filter(Boolean).join("+") || null, equipment: tags.map((t) => t.equipment).filter(Boolean).join("+") || null,
       format: a.format || af.format || null, // the kind of photograph, from the batch's own record (never guessed from the picture)
+      // By record (2026-11-11): the room each photo was matched to, and how much of the picture the words cover, as the batch measured it.
+      room: a.photos.map((id) => visuals[id]?.room).filter(Boolean).join("+") || null, text_cover: typeof a.text_cover === "number" ? a.text_cover : null,
       layout: a.treatment, style: a.style, palette: a.palette, has_story: !!entry.hashes?.story,
       pin: sf.pin || null, radius_km: sf.radius_km ?? null, age_min: sf.age_min ?? null, age_max: sf.age_max ?? null, gender: sf.gender || null, preset: sf.preset || null, preset_id: sf.preset_id || null, daily_budget: sf.daily ?? null, budget_level: sf.level || null,
       form_id: af.form_id || null, cta: af.cta || null, headline: af.headline || null, primary_text: af.message || null, placeholder_words: af.placeholders ?? null,

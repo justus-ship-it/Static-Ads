@@ -423,6 +423,10 @@ test("R12 a refresh from the account's results (2026-11-11): the drafter is told
     const real = await draftScenes({ brandDir: dir, audience: "women", count: 1, fromResults: true, ask: async () => ({ scenes: [draft("w-sled", { exercise: "sled-push", scene: "A woman driving a sled down the turf, low and steady, breath out." })] }), catalogue: CAT, shotGuide: null, log: () => {} });
     assert.equal(real.direction.kind, "gaps");
     await assert.rejects(draftScenes({ brandDir: dir, audience: "women", count: 1, fromResults: true, direction: { words: "older women lunging" }, ask, catalogue: CAT, log: () => {} }), /from the results is a direction of its own/);
-    await assert.rejects(draftScenes({ brandDir: dir, audience: "women", count: 1, fromResults: true, cover: [{ tag: "age", value: "older" }], ask, catalogue: CAT, log: () => {} }), /from the results is a direction of its own/);
+    // From the results, aimed: what the next batch tests is what every new scene shows (2026-11-11).
+    prompts.length = 0;
+    const aimed = await draftScenes({ brandDir: dir, audience: "women", count: 1, fromResults: true, results: guide, cover: [{ tag: "setting", value: "group" }], ask: async (i, t) => { prompts.push(t); return { scenes: [draft("w-group-lunge", { people: 3, setting: "group", exercise: "walking-lunge", scene: "Three women lunging down the turf at their own pace, one calling the count over her shoulder." })] }; }, catalogue: CAT, shotGuide: null, log: () => {} });
+    assert.deepEqual([aimed.direction.kind, aimed.direction.must, aimed.drafts[0].covers, aimed.drafts[0].direction.results], ["results", [{ tag: "setting", value: "group" }], ["setting:group"], true]);
+    assert.match(prompts[0], /EVERY scene here shows setting group: that is what the next batch is testing, in new versions\./);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

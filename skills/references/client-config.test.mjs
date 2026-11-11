@@ -75,7 +75,7 @@ test("P2 completeness is worked out from the profile and what is on disk: each s
     const empty = profileCompleteness(PROFILE_STARTER("new-gym"), { gymDir: d });
     assert.equal(empty.ready_to_create, false);
     const by = (c) => Object.fromEntries(c.sections.map((s) => [s.id, s.status]));
-    assert.deepEqual(by(empty), { identity: "partial", brand: "partial", photos: "missing", scenes: "missing", offers: "missing", defaults: "missing", targeting: "partial", meta: "missing" });
+    assert.deepEqual(by(empty), { identity: "partial", brand: "partial", photos: "missing", rooms: "missing", scenes: "missing", offers: "missing", defaults: "missing", targeting: "partial", meta: "missing" });
     assert.deepEqual(empty.sections.find((s) => s.id === "identity").missing, ["display name", "website", "a location's name", "its postal code"]);
     const p = complete();
     p.brand_lock.colors.primary.hex = "#0A0A0A";

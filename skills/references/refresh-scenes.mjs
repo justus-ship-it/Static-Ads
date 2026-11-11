@@ -252,11 +252,11 @@ export const RESULTS_SHARE = "two thirds";
  * direction. `guide` is what-wins.mjs → sceneGuide. The values are the picture readings' words, not the scene
  * vocabulary: the drafter writes scenes in the vocabulary that show the same thing.
  */
-export function resultsLines(guide, format = "workout") {
+export function resultsLines(guide, format = "workout", must = []) {
   const out = [];
   if (guide?.lines?.length) out.push(`WHAT THIS GYM'S OWN ADVERTS OF THIS KIND HAVE DONE (leads from its lead forms and what each cost, the cheapest first${format === "workout" ? "; class-group is a class or a group training together, workout one person or a coached pair" : ""}; the words are how each picture was read, not the fields below):\n${guide.lines.map((l) => `- ${l}`).join("\n")}`);
   if (guide?.winners?.length) out.push(`ITS BEST ADVERTS (the most leads, at or under the gym's median cost per lead):\n${guide.winners.map((w) => `- ${w.text}`).join("\n")}`);
-  out.push(`DIRECTION: draft from these results. About ${RESULTS_SHARE} of the new scenes are NEW VERSIONS of what earns this gym's leads cheaply — the same kind of picture as its best adverts (the same grouping, kind of place and mood) with a different ${format === "workout" ? "exercise, piece of equipment, age or moment" : "person, colour, stance or thing in their hands"}, never a copy or a near-copy of an existing scene. The rest try something its adverts have not shown yet, so that keeps being tested.${format === "workout" ? " Where these results and the shot types above disagree on how many people a scene has, the results decide." : ""}`);
+  out.push(`DIRECTION: draft from these results. About ${RESULTS_SHARE} of the new scenes are NEW VERSIONS of what earns this gym's leads cheaply — the same kind of picture as its best adverts (the same grouping, kind of place and mood) with a different ${format === "workout" ? "exercise, piece of equipment, age or moment" : "person, colour, stance or thing in their hands"}, never a copy or a near-copy of an existing scene. The rest try something its adverts have not shown yet, so that keeps being tested.${format === "workout" ? " Where these results and the shot types above disagree on how many people a scene has, the results decide." : ""}${must.length ? ` EVERY scene here shows ${must.map((c) => `${c.tag} ${c.value}`).join(" and ")}: that is what the next batch is testing, in new versions.` : ""}`);
   return out;
 }
 
@@ -278,7 +278,7 @@ export function buildRefreshRequest({ audience = "any", count = 6, direction = {
   ];
   // The high-performing references' shot types (reference-shots.mjs): scenes that can be photographed that way.
   if (shotGuide?.recipes?.length) lines.push(`SHOT TYPES that perform best — write scenes a photographer could shoot as one of these, close and at eye level, caught mid-rep or at peak effort with a clear expression: ${shotGuide.recipes.map((r) => `${r.name} (${r.when || r.moment})`).join("; ")}. About half the scenes have two people: a coach or a training partner.`);
-  if (direction.kind === "results") lines.push(...resultsLines(direction.guide, "workout"));
+  if (direction.kind === "results") lines.push(...resultsLines(direction.guide, "workout", direction.must || []));
   else if (direction.kind === "words") lines.push(`DIRECTION from the owner: ${direction.words.trim()} — every scene follows this, in this gym.`);
   else if (direction.kind === "reference") {
     lines.push(`DIRECTION: ${describeReference(direction.description)}`);
@@ -405,7 +405,8 @@ export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath 
   const portrait = format === "studio-portrait";
   if (!Number.isInteger(count) || count < 1 || count > 12) throw new Error("count must be 1 to 12");
   if (direction) { const errs = validateDirection(direction, { brandDir }); if (errs.length) throw new Error(`direction: ${errs.join("; ")}`); }
-  if (fromResults && (direction || cover)) throw new Error("from the results is a direction of its own: not together with words, a reference image or a cover list");
+  // From the results may be aimed (a cover list: what the next batch tests); words and a reference image are directions of their own.
+  if (fromResults && direction) throw new Error("from the results is a direction of its own: not together with words or a reference image");
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
   // From the results (2026-11-11): what the gym's own ads of this kind have done, by rule (what-wins.mjs). A gym whose
   // ads of this kind have no lead yet has nothing to draft from: said, and the refresh goes by the library's gaps.
@@ -432,9 +433,9 @@ export async function draftScenes({ brandDir, shotGuide = undefined, scenesPath 
     dir = { kind: "words", words: direction.words };
     stamp = { direction: { words: direction.words } };
   } else if (fromGuide) {
-    dir = { kind: "results", guide: fromGuide };
+    dir = { kind: "results", guide: fromGuide, must: cover || [] };
     const best = fromGuide.winners[0];
-    stamp = { direction: { results: true, summary: `from this gym's results: ${fromGuide.leads} leads over ${fromGuide.ads} ${format.replace("-", " ")} ads${best ? `; its best, ${best.leads} leads at ${best.cost_per_lead}${best.scene_id ? ` (${best.scene_id})` : best.saw ? ` (${best.saw})` : ""}` : ""}` } };
+    stamp = { ...(cover?.length ? { covers: cover.map((x) => `${x.tag}:${x.value}`) } : {}), direction: { results: true, summary: `from this gym's results: ${fromGuide.leads} leads over ${fromGuide.ads} ${format.replace("-", " ")} ads${best ? `; its best, ${best.leads} leads at ${best.cost_per_lead}${best.scene_id ? ` (${best.scene_id})` : best.saw ? ` (${best.saw})` : ""}` : ""}` } };
     log(`· from the results (${fromGuide.scope === "recent" ? "running now or the last 6 months" : "every ad on record"}): ${fromGuide.leads} leads over ${fromGuide.ads} ${format.replace("-", " ")} ads`);
     for (const l of fromGuide.lines) log(`    ${l}`);
     for (const w of fromGuide.winners) log(`    best: ${w.text}`);

@@ -47,7 +47,7 @@ import { cardsProblems, cardCount, pickCards } from "./cards.mjs";
 import { renderCard, loadCards } from "./render-cards.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
-import { SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
+import { ROOMS, SCENE_OPTIONAL_TAGS, SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
 import { draftScenes, validateDirection } from "./refresh-scenes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -216,7 +216,7 @@ export const VARIETY_WEIGHTS = { exercise: 3, age: 3, setting: 2, equipment: 2, 
 // scene tags. A scene that shows a lean is preferred until LEAN_SHARE of its kind's photos show it; the rest keep the
 // batch's variety, so the other values go on being tested. It only ever picks among approved scenes.
 export const LEAN_SHARE = 0.6, MAX_LEANS = 6;
-export const LEAN_TAGS = ["exercise", ...Object.keys(SCENE_TAGS), ...Object.keys(PORTRAIT_TAGS), "eye_contact", "people"];
+export const LEAN_TAGS = ["exercise", ...Object.keys(SCENE_TAGS), ...Object.keys(PORTRAIT_TAGS), "eye_contact", "people", ...Object.keys(SCENE_OPTIONAL_TAGS)];
 /** What is wrong with a brief's `lean`: a list of { tag, value, format?, why? }. */
 export function leanProblems(lean) {
   if (lean == null) return [];
@@ -224,16 +224,18 @@ export function leanProblems(lean) {
   const errs = [];
   for (const [i, l] of lean.entries()) {
     if (!l || typeof l !== "object" || Array.isArray(l)) { errs.push(`lean[${i}] must be { tag, value }`); continue; }
-    const vocab = SCENE_TAGS[l.tag] || PORTRAIT_TAGS[l.tag];
+    const vocab = SCENE_TAGS[l.tag] || PORTRAIT_TAGS[l.tag] || SCENE_OPTIONAL_TAGS[l.tag];
     if (!LEAN_TAGS.includes(l.tag)) errs.push(`lean[${i}]: unknown tag "${l.tag}" (use ${LEAN_TAGS.join(", ")})`);
     else if (vocab ? !vocab.includes(l.value) : l.tag === "eye_contact" ? typeof l.value !== "boolean" : l.tag === "people" ? !(Number.isInteger(l.value) && l.value >= 1 && l.value <= MAX_SCENE_PEOPLE) : !(typeof l.value === "string" && /^[a-z][a-z-]{1,30}$/.test(l.value))) errs.push(`lean[${i}]: "${l.value}" is not a value of ${l.tag}`);
     if (l.format != null && !SCENE_FORMATS[l.format]) errs.push(`lean[${i}]: format "${l.format}" is not one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
     if (l.why != null && (typeof l.why !== "string" || l.why.length > 300)) errs.push(`lean[${i}]: why is a short sentence`);
+    if (l.test != null && typeof l.test !== "boolean") errs.push(`lean[${i}]: test is true or false`);
+    if (l.photos != null && !(Number.isInteger(l.photos) && l.photos >= 1 && l.photos <= 12)) errs.push(`lean[${i}]: photos is a whole number, 1 to 12`);
   }
   return errs;
 }
 /** A lean in words: "dark-wall backdrop (studio portraits)". */
-export const leanName = (l) => `${l.tag === "people" ? `${l.value} people` : l.tag === "eye_contact" ? (l.value ? "looking into the camera" : "looking away") : `${l.value} ${l.tag}`}${l.format ? ` (${l.format})` : ""}`;
+export const leanName = (l) => `${l.tag === "people" ? `${l.value} people` : l.tag === "eye_contact" ? (l.value ? "looking into the camera" : "looking away") : l.tag === "room" ? ROOMS[l.value] || l.value : l.tag === "mood" ? `a ${l.value} mood` : `${l.value} ${l.tag}`}${l.format ? ` (${l.format})` : ""}`;
 
 /** A scene's age tag for an age in years: young 20s, prime 30s–40s, older 50s–60s (SCENE_TAGS.age). */
 export const ageBand = (n) => (n < 30 ? "young" : n < 50 ? "prime" : "older");
@@ -318,7 +320,10 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
   const out = [];
   // The lean: each one is followed until LEAN_SHARE of its kind's photos show it. One no scene here shows is said, not refused.
   const ofKind = (l, sc) => (!l.format || formatOf(sc) === l.format) && shows(sc, l.tag, l.value);
-  const leans = (lean || []).map((l) => ({ ...l, n: 0, cap: Math.max(1, Math.ceil(LEAN_SHARE * (l.format && mix ? mix[l.format] || 0 : count))), shown: suits.some((sc) => ofKind(l, sc)) }));
+  // A test (2026-11-11) is a lead not confirmed yet — one picture's leads, a tiring winner's kind: exactly `photos` of the
+  // batch repeat it in new versions, ahead of any lean, so the next review can confirm it or drop it. A lean with its own
+  // `photos` is held to that number too.
+  const leans = (lean || []).map((l) => { const of = l.format && mix ? mix[l.format] || 0 : count; return { ...l, n: 0, cap: Math.max(1, Number.isInteger(l.photos) ? Math.min(l.photos, of) : Math.ceil(LEAN_SHARE * of)), shown: suits.some((sc) => ofKind(l, sc)) }; });
   // What was asked for stays even: adding to a must_show value that is already ahead of the others
   // on its tag costs a scene more than any general variety is worth, so young and older men (or solo,
   // coached and group) come out close to level — without making every tag level at once, which ten
@@ -337,7 +342,7 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
         // Once every value has appeared, keep them even: a fourth older man counts against a scene.
         - Object.entries(VARIETY_WEIGHTS).reduce((n, [k, w]) => n + (s[k] != null ? w * (uses[k].get(s[k]) || 0) * 0.6 : 0), 0);
       const tilt = ahead(s);
-      const leaning = leans.filter((l) => l.n < l.cap && ofKind(l, s)).length;
+      const leaning = leans.filter((l) => !l.test && l.n < l.cap && ofKind(l, s)).length, testing = leans.filter((l) => l.test && l.n < l.cap && ofKind(l, s)).length;
       // The layout this scene would be made for: the one it prefers (a scene drafted from a reference
       // image keeps the reference's framing), if its pose fits; else the least-used one that fits.
       const fits = layouts.filter((la) => !poseProblem(la, s.pose, catalogue));
@@ -346,7 +351,7 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
       // The photo's target age (the bell curve): a scene of that age band first, one of another band last.
       const ageFit = ages && s.age ? (s.age === ageBand(ages[i]) ? 1 : -1) : 0;
       // A repeated scene is worst; then less new; then a busier layout. Ties keep the seeded order.
-      const score = -usedS.get(s) * 100000 + ageFit * 3000 + asked * 1000 + leaning * 500 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
+      const score = -usedS.get(s) * 100000 + testing * 6000 + ageFit * 3000 + asked * 1000 + leaning * 500 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
       if (!pick || score > pick.score) pick = { la, s, score };
     }
     if (!pick) throw new Error("no scene in the library fits any layout the batch can use");
@@ -359,9 +364,18 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
     out.push({ id: `g${String(i + 1).padStart(2, "0")}`, treatment: pick.la, scene: pick.s.scene, scene_id: pick.s.id || null, pose: pick.s.pose, people: pick.s.people, ...(formatOf(pick.s) !== "workout" ? { format: formatOf(pick.s) } : {}), tags, ...(ages ? { age: ages[i] } : {}), look: CHECK_LOOK });
     Object.defineProperty(out.at(-1), "src", { value: pick.s, enumerable: false }); // for the even-spread rule; not written out
   }
+  // Rooms (2026-11-11). Which of the gym's rooms a workout photo is matched to is the planner's to say, photo by photo: a scene
+  // that names its room keeps it; for the rest, a lean or a test on a room gives that room to its share of the photos. The
+  // run matches each such photo to the gym's own photo of that room (creative_defaults.room_references).
+  for (const o of out) if (o.src.room) o.room = o.src.room;
+  for (const l of leans.filter((x) => x.tag === "room")) {
+    const can = out.filter((o) => (!l.format || (o.format || "workout") === l.format) && (o.format || "workout") === "workout" && (!o.room || o.room === l.value));
+    l.shown = can.length > 0; l.n = can.filter((o) => o.room === l.value).length;
+    for (const o of can) { if (l.n >= l.cap) break; if (!o.room) { o.room = l.value; l.n++; } }
+  }
   const notShown = [...leftOut, ...wanted.filter((w) => !w.done).map((w) => `${w.tag} "${w.value}"`)];
   if (notShown.length) out.notShown = notShown; // no scene shows it, or too few photos for everything asked
-  if (leans.length) out.leaned = leans.map(({ tag, value, format, n, cap, shown }) => ({ tag, value, ...(format ? { format } : {}), photos: n, cap, shown })); // how far each lean was followed
+  if (leans.length) out.leaned = leans.map(({ tag, value, format, n, cap, shown, test }) => ({ tag, value, ...(format ? { format } : {}), ...(test ? { test: true } : {}), photos: n, cap, shown })); // how far each lean was followed
   return out;
 }
 
@@ -649,7 +663,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       if (!deps.generate) log(`· image model: ${imageModelFor(profile)}`);
       const rep = await generateVisuals({
         visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio, shotGuide: deps.shotGuide !== undefined ? deps.shotGuide : readShotGuide(),
-        refs: reference ? [at(reference)] : [], maxCalls: left, attempts: plan.attempts,
+        refs: reference ? [at(reference)] : [], roomRefs: Object.fromEntries(Object.entries(profile.creative_defaults?.room_references || {}).filter(([, p]) => typeof p === "string" && existsSync(at(p))).map(([k, p]) => [k, at(p)])), maxCalls: left, attempts: plan.attempts,
         // The gym's image model (creative_defaults.image_model, Pro by default); tests inject their own.
         generate: deps.generate || ((p, parts, o) => generateImage(p, parts, { ...o, model: imageModelFor(profile) })), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
         onProgress: (e) => {
@@ -675,7 +689,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       const a = prior[v.id];
       if (!same(a, v)) { if (!["flagged", "error", "skipped"].includes(prog.state.photos[v.id]?.state)) prog.photo(v.id, { state: a?.status === "flagged" ? "flagged" : "skipped", failures: a?.failures || [] }); log(`- ${v.id}: no passing photo (${a?.failures?.join("; ") || "not generated"}) — left out of the batch`); continue; }
       // A photo whose own layout did not work out has no primary look: the planner places it where it fits.
-      photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: a.own_layout_failed ? null : v.treatment, scene_id: v.scene_id, format: v.format || "workout", notes: [...(a.notes || []), ...(a.own_layout_failed ? [`not used in its own layout: ${a.own_layout_failed.join("; ")}`] : [])], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
+      photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: a.own_layout_failed ? null : v.treatment, scene_id: v.scene_id, format: v.format || "workout", ...(v.room ? { room: v.room } : {}), notes: [...(a.notes || []), ...(a.own_layout_failed ? [`not used in its own layout: ${a.own_layout_failed.join("; ")}`] : [])], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
     }
     photos.sort((a, b) => a.id.localeCompare(b.id));
     if (!photos.length && !cardCount(brief.cards)) throw new Error("no photos passed: nothing to render"); // a batch of cards alone has none to pass
@@ -732,6 +746,8 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
         crop: c.images.map((id) => focus[id]?.[c.treatment] || [0.5, 0.5]),
         words: { location: a.location, audience, offer: brief.offer, free: brief.free === true },
         replaced: c.replaced || null,
+        // How much of the picture the words cover (2026-11-11), measured from the render itself: the boxes of its lines over the canvas.
+        ...(() => { const rep = c.renders[a.location_index].r.report, [W, H] = rep?.canvas || []; if (!W || !H || !rep.blocks?.length) return {}; return { text_cover: Math.round((rep.blocks.reduce((t, b) => t + (b.rect ? b.rect.w * b.rect.h : 0), 0) / (W * H)) * 1000) / 1000 }; })(),
       };
     });
     const failed = results.filter((r) => r.failed).map((r) => ({ candidate: r.id, photo: r.visual, failures: r.failed }));

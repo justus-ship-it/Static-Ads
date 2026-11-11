@@ -286,3 +286,16 @@ test("C10 Chinese drafts are told apart (2026-10-07): the duplicate rule shaped 
   assert.equal(r.added.length, 3, `three distinct Chinese headlines kept (dropped: ${r.dropped.map((x) => x.why).join("; ")})`);
   assert.deepEqual(r.dropped.map((x) => x.why), ["reads like one already here"], "the one real repeat is dropped");
 });
+
+test("C11 which copy won leads the next draft (2026-11-11): the skeletons whose drafts earned this gym's own leads on Meta are named to the drafter by their number, the most leads first, with at least half the round to follow them and the rest left to new ones; no result, no line — the prompt is word for word what it was", async () => {
+  const { provenLine, buildDraftPrompt, PROVEN_SHARE } = await import("./draft-copy.mjs");
+  const sk = [{ id: "cp-a", angle: "pain", text: "LADIES WANTED IN {AREA}\n\nYou do not need more willpower." }, { id: "cp-b", angle: "call-out", text: "{AREA}: this is for you." }, { id: "cp-c", angle: "benefits", text: "Three things change in {DURATION}." }];
+  assert.equal(provenLine(sk, {}), null); assert.equal(provenLine(sk, null), null); assert.equal(provenLine(sk, { "cp-x": { leads: 9 }, "cp-a": { leads: 0 } }), null, "another skeleton, or none with a lead");
+  assert.equal(provenLine(sk, { "cp-c": { leads: 53 }, "cp-a": { leads: 131 } }), `PROVEN AT THIS GYM: skeleton 1 (131 leads), skeleton 3 (53 leads) earned its own leads on Meta. Write at least ${PROVEN_SHARE} of the drafts from these; the rest from the others, so new skeletons keep being tried.`);
+  assert.match(provenLine(sk, { "cp-b": { leads: 1 } }), /^PROVEN AT THIS GYM: skeleton 2 \(1 lead\) earned its own leads on Meta\. Write at least half of the drafts from this one;/);
+  const base = { profile: { display_name: "Test Gym" }, kind: "copy", offer: "6 Week Reset", audience: "LADIES", locations: ["BISHAN"], rules: { adjectives: [], never: ["free trial"], must_say: [] }, skeletons: sk, count: 4 };
+  const plain = buildDraftPrompt(base).prompt, led = buildDraftPrompt({ ...base, won: { "cp-a": { leads: 131 } } }).prompt;
+  assert.ok(!/PROVEN AT THIS GYM/.test(plain)); assert.equal(buildDraftPrompt({ ...base, won: {} }).prompt, plain, "nothing won: nothing added");
+  assert.match(led, /\n\nPROVEN AT THIS GYM: skeleton 1 \(131 leads\) earned its own leads on Meta\./);
+  assert.equal(led.replace(/\n\nPROVEN AT THIS GYM:[^\n]+/, ""), plain, "only that line is added");
+});

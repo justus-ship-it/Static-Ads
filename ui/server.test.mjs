@@ -863,7 +863,7 @@ test("U13 the page: Create opens with the profile's defaults (never the offer); 
   await until(`B.check && B.check.summary && B.check.summary.locations===2`, "the check with the pre-filled words");
   // The Overview.
   await ev("go('overview'); true");
-  await until("document.querySelectorAll('.ovc').length===8", "the eight sections");
+  await until("document.querySelectorAll('.ovc').length===9", "the nine sections (to create, to publish, and the rooms to learn from the results)");
   const ov = await ev("document.querySelector('#view').textContent");
   assert.match(ov, /To create ads/); assert.match(ov, /To publish to Meta/); assert.match(ov, /Meta link/);
   await ev("[...document.querySelectorAll('.ovc')].find(c=>/Meta link/.test(c.textContent)).click(); true");
@@ -881,7 +881,7 @@ test("U13 the page: Create opens with the profile's defaults (never the offer); 
   await ev(`(()=>{const el=document.querySelector('#ncName'); el.value='Third Gym'; el.dispatchEvent(new Event('input',{bubbles:true})); return true})()`);
   assert.equal(await ev("document.querySelector('#ncSlug').value"), "third-gym");
   await ev("newClientGo(); true");
-  await until("STATE.sel==='third-gym' && STATE.tab==='overview' && document.querySelectorAll('.ovc').length===8", "the new gym's overview");
+  await until("STATE.sel==='third-gym' && STATE.tab==='overview' && document.querySelectorAll('.ovc').length===9", "the new gym's overview");
   assert.match(await ev("document.querySelector('#view').textContent"), /to finish before creating ads/);
   assert.ok(existsSync(join(brands, "third-gym", "gym-profile.json")));
   await ev("go('batch'); true");
@@ -2984,7 +2984,9 @@ test("U53 scenes drafted from the results (2026-11-11): the review says when the
     // The run: from_results is checked, and is a direction of its own.
     const post = (body) => call("/api/run", { method: "POST", body });
     assert.equal((await post({ kind: "scenes-refresh", gym: GYM, audience: "men", count: 2, from_results: "yes" })).status, 400);
-    for (const extra of [{ words: "older men lifting with a coach" }, { cover: ["exercise:lunge"] }]) { const r = await post({ kind: "scenes-refresh", gym: GYM, audience: "men", count: 2, from_results: true, ...extra }); assert.equal(r.status, 400, JSON.stringify(extra)); assert.match((await r.json()).error, /a direction of its own/); }
+    { const r = await post({ kind: "scenes-refresh", gym: GYM, audience: "men", count: 2, from_results: true, words: "older men lifting with a coach" }); assert.equal(r.status, 400); assert.match((await r.json()).error, /a direction of its own/); }
+    // From the results may be aimed at what the next batch tests (a cover list): both ride on the run.
+    assert.match((await runAndWait({ kind: "scenes-refresh", gym: GYM, audience: "men", count: 2, from_results: true, cover: ["setting:group"] })).lines[0], /--count 2 --cover setting:group --from-results$/);
     const ran = await runAndWait({ kind: "scenes-refresh", gym: GYM, audience: "men", count: 2, from_results: true });
     assert.match(ran.lines[0], /^\$ node skills\/references\/refresh-scenes\.mjs --brand-dir \S+testgym --audience men --count 2 --from-results$/, "built server-side");
     assert.ok(ran.lines.some((l) => /this gym's workout adverts have no lead on record yet, so there are no results to draft from: drafting by the library's gaps instead/.test(l)), ran.lines.join("\n"));
@@ -3321,7 +3323,8 @@ test("U58 setting up a gym, step by step (2026-11-11): the Profile screens carry
   const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
   // The server says each thing a section needs, done or not, and whether the gym was ever imported from Meta.
   const V = await (await call(`/api/client/${GYM}`)).json();
-  assert.deepEqual(V.completeness.sections.map((s) => s.id), ["identity", "brand", "photos", "scenes", "offers", "defaults", "targeting", "meta"]);
+  assert.deepEqual(V.completeness.sections.map((s) => s.id), ["identity", "brand", "photos", "rooms", "scenes", "offers", "defaults", "targeting", "meta"]);
+  assert.deepEqual(V.completeness.sections.find((s) => s.id === "rooms").for, "learning", "which room a photo shows: for learning from the results, never in the way of creating or publishing");
   for (const s of V.completeness.sections) { assert.ok(s.items.length && s.items.every((i) => typeof i.what === "string" && typeof i.ok === "boolean"), s.id); assert.deepEqual(s.items.filter((i) => !i.ok).map((i) => i.what), s.missing, `${s.id}: the items say what the section's missing list says`); }
   assert.equal(typeof V.setup.imported, "boolean");
   const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u58#/${GYM}/overview` }, sessionId); await loaded;
@@ -3407,4 +3410,110 @@ test("U58 setting up a gym, step by step (2026-11-11): the Profile screens carry
   // A library page has neither the strip nor the indicator.
   await ev("go('copy'); true");
   await until("STATE.tab === 'copy' && document.querySelector('#cycle').innerHTML === '' && document.querySelector('#stepper').innerHTML === ''");
+});
+
+test("U59 the review, checked, and Pause on Meta (2026-11-11): every line of the review carries its verdict and its checks; an ad to pause has a button only where Meta can be reached, and pressing it asks first, naming the ad and what it has cost; the pause is one ad set to PAUSED on Meta — refused for an ad that is not this gym's, not running, or whose numbers are not the ones confirmed, and without the Meta link; it is kept in the gym's ledger, the ad reads as paused at once, and the review says so under Last time", async () => {
+  const g = join(brands, GYM);
+  await linkTestGym();
+  rmSync(join(g, "creative-reads.json"), { force: true }); rmSync(join(g, "insights.json"), { force: true });
+  const ID = (n) => `12000000000000${n}`;
+  const ad = (n, name, words, spend, leads, impressions) => ({ id: ID(n), name, adset_id: "s9", campaign_id: "c9", campaign: "Their campaign", status: words === "live" ? "ACTIVE" : "PAUSED", effective_status: words === "live" ? "ACTIVE" : "PAUSED", words, media: "image", created: "2026-10-01", hashes: [`h${n}`], all_time: { spend, leads, cost_per_lead: leads ? Math.round((spend / leads) * 100) / 100 : null, impressions }, last_30d: {} });
+  writeFileSync(join(g, "account-history.json"), JSON.stringify({ pulled: "2026-11-10T00:00:00.000Z", account: "act_111000000001", campaigns: [{ id: "c9", name: "Their campaign", objective: "OUTCOME_LEADS" }], adsets: [{ id: "s9", campaign_id: "c9", name: "Their set" }],
+    ads: [ad(1, "Winner", "live", 450, 30, 20000), ad(2, "Steady", "live", 400, 20, 15000), ad(3, "Nothing for it", "live", 80, 0, 3000), ad(4, "Stopped", "paused", 90, 0, 3000), ad(5, "Too new", "live", 36, 0, 300)] }));
+  const post = (id, body) => call(`/api/client/${GYM}/ad/${id}/pause`, { method: "POST", body });
+  const graphCalls = [];
+  const graph = http.createServer(async (req, res) => { let body = ""; for await (const c of req) body += c; graphCalls.push([req.method, new URL(req.url, "http://x").pathname.split("/").slice(2).join("/"), new URLSearchParams(body).get("status")]); res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ success: true })); });
+  await new Promise((r) => graph.listen(0, "127.0.0.1", r));
+  const main = panel;
+  try {
+    // The review, checked: a verdict and the checks behind each line; one to pause after a fair chance, one not judged yet.
+    let R = await (await call(`/api/client/${GYM}/account-review`)).json();
+    const by = (k) => R.insights.find((x) => x.key === k);
+    assert.ok(R.insights.every((x) => ["confirmed", "test", "early", "none"].includes(x.verdict) && Array.isArray(x.checks)));
+    assert.deepEqual([by(`pause:${ID(3)}`).kind, by(`pause:${ID(3)}`).verdict, by(`pause:${ID(5)}`).kind, by(`pause:${ID(5)}`).verdict, by(`pause:${ID(4)}`) ?? null], ["pause", "confirmed", "wait", "early", null]);
+    assert.match(by(`pause:${ID(3)}`).checks[0].text, /^3,000 impressions and SGD 80\.00 spent \(a fair chance is 1,000 impressions and SGD 35\.00\)$/);
+    assert.deepEqual([R.pause.length, R.wait.length, R.linked, R.last_time.paused], [1, 1, false, []]);
+    assert.match(R.text, /Consider pausing:\n- Consider pausing: Nothing for it — SGD 80\.00 spent for no lead[^\n]*\n\nNot judged yet:\n- Not judged yet: Too new — SGD 36\.00 spent for no lead, but it has not had a fair chance/);
+    // Refused: not this gym's ad, not running, not the numbers confirmed — and, on this panel, no Meta link.
+    const good = { confirm: { spend: 80, leads: 0 } };
+    assert.equal((await post("999999999999", good)).status, 404);
+    let r = await post(ID(4), { confirm: { spend: 90, leads: 0 } }); assert.equal(r.status, 409); assert.match((await r.json()).error, /not running on Meta as far as the last read says/);
+    for (const bad of [{}, { confirm: { spend: 79, leads: 0 } }, { confirm: { spend: 80, leads: 1 } }]) { r = await post(ID(3), bad); assert.equal(r.status, 409, JSON.stringify(bad)); assert.match((await r.json()).error, /not the ones that were confirmed/); }
+    r = await post(ID(3), good); assert.equal(r.status, 409); assert.match((await r.json()).error, /Meta link is not set up on this machine/);
+    assert.equal(existsSync(join(g, "insights.json")), false, "nothing kept for a pause that did not happen");
+    // The page without the link: the line is there, with where to pause it instead of a button.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const open = async (tag) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?${tag}#/${GYM}/results` }, sessionId); await loaded; await until(`STATE.sel === ${JSON.stringify(GYM)} && RS.review && RS.review.gym === STATE.sel && !!document.querySelector('#rsReview [data-kind=pause]')`); };
+    await open("u59a");
+    assert.deepEqual(await ev("[!!document.querySelector('#rsReview [data-kind=pause] button'), /Pause it in Ads Manager: this ad cannot be reached from here\\./.test(document.querySelector('#rsReview [data-kind=pause]').innerText)]"), [false, true]);
+    // With the link: the button, the confirmation that names the ad, and the pause.
+    panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: `http://127.0.0.1:${graph.address().port}` });
+    await open("u59b");
+    const line = await ev("document.querySelector('#rsReview [data-kind=pause] li').innerText");
+    assert.match(line, /^Nothing for it — SGD 80\.00 spent for no lead/); assert.match(line, /checked/); assert.match(line, /✓ 3,000 impressions and SGD 80\.00 spent/);
+    assert.match(await ev("document.querySelector('#rsReview [data-kind=wait] li').innerText"), /^Too new — SGD 36\.00 spent for no lead, but it has not had a fair chance[\s\S]*not judged yet[\s\S]*✕ 300 impressions/);
+    assert.equal(await ev("document.querySelector('#rsReview [data-kind=wait] button')"), null, "nothing to press for an ad not judged yet");
+    assert.equal(await ev("document.querySelector('#rsReview [data-kind=pause] button').textContent"), "Pause on Meta…");
+    await ev("document.querySelector('#rsReview [data-kind=pause] button').click(); true");
+    assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, /Nothing for it/.test(document.querySelector('#gModal .summary').innerText), /SGD 80 spent · 0 leads/.test(document.querySelector('#gModal .summary').innerText), /this one ad/.test(document.querySelector('#gModal').innerText), document.querySelector('#rsPauseGo').textContent]"), ["Pause this ad on Meta?", true, true, true, "Yes, pause it on Meta"]);
+    assert.deepEqual(graphCalls.filter((c) => c[0] === "POST"), [], "asking pauses nothing");
+    await ev("document.querySelector('#rsPauseGo').click(); true");
+    await until("!document.querySelector('#gModal .modal') && !!document.querySelector('#rsLastTime') && !document.querySelector('#rsReview [data-kind=pause]')");
+    assert.deepEqual(graphCalls.filter((c) => c[0] === "POST"), [["POST", ID(3), "PAUSED"]], "one ad, set to PAUSED: nothing else");
+    assert.match(await ev("document.querySelector('#rsLastTime').innerText"), /Nothing for it: paused from here on \d{4}-\d\d-\d\d after SGD 80\.00 for 0 leads — still paused\. paused/);
+    // Kept in the ledger with what it had cost; the ad reads as paused at once, before Meta is read again.
+    const L = JSON.parse(readFileSync(join(g, "insights.json"), "utf-8"));
+    assert.deepEqual(L.actions.map((a) => [a.what, a.ad_id, a.name, a.spend, a.leads, a.key]), [["pause", ID(3), "Nothing for it", 80, 0, `pause:${ID(3)}`]]);
+    const after = await (await call(`/api/client/${GYM}/account-review`)).json();
+    assert.deepEqual([after.insights.some((x) => x.key === `pause:${ID(3)}`), after.numbers.running.ads, R.numbers.running.ads, after.last_time.paused[0].status], [false, R.numbers.running.ads - 1, R.numbers.running.ads, "paused"]);
+    r = await post(ID(3), good); assert.equal(r.status, 409, "pausing it again is refused: it is not running");
+    // Once Meta is read again its own word rules: an account read after the pause that still says live shows it running again.
+    const H = JSON.parse(readFileSync(join(g, "account-history.json"), "utf-8")); H.pulled = "2099-01-01T00:00:00.000Z"; writeFileSync(join(g, "account-history.json"), JSON.stringify(H));
+    assert.equal((await (await call(`/api/client/${GYM}/account-review`)).json()).last_time.paused[0].status, "running");
+  } finally {
+    if (panel !== main) { await panel.stop(); panel = main; }
+    graph.close(); rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "insights.json"), { force: true });
+  }
+});
+
+test("U60 which room a premises photo shows (2026-11-11): said with one click under a cleaned premises photo, kept on the profile (one photo per room; another choice replaces it, none takes it off), refused for a photo that is not a cleaned premises photo or a room there is not; it is a part of the Brand and photos setup step, so it is not missed, and never in the way of creating or publishing", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), saved = readFileSync(pf);
+  try {
+    const before = JSON.parse(saved); delete before.creative_defaults?.room_references; writeFileSync(pf, JSON.stringify(before));
+    const A = await (await call(`/api/client/${GYM}/assets`)).json();
+    const photo = A.clean.find((x) => !x.people)?.path;
+    assert.ok(photo, "the test gym has a cleaned premises photo");
+    assert.deepEqual([A.rooms, A.room_references], [{ "studio-room": "the studio room", "gym-floor": "the gym floor" }, {}]);
+    const tag = (body) => call(`/api/client/${GYM}/room-tag`, { method: "POST", body });
+    assert.equal((await tag({ path: "facility/raw.jpg", room: "studio-room" })).status, 400, "not a cleaned premises photo");
+    assert.equal((await tag({ path: photo, room: "rooftop" })).status, 400, "not a room");
+    let V = await (await call(`/api/client/${GYM}`)).json();
+    const rooms = () => V.completeness.sections.find((s) => s.id === "rooms");
+    assert.deepEqual([rooms().status, rooms().items, rooms().page, rooms().for], ["missing", [{ what: "which room a premises photo shows", ok: false }], "photos", "learning"]);
+    const ready = [V.completeness.ready_to_create, V.completeness.ready_to_publish];
+    let r = await tag({ path: photo, room: "studio-room" }); assert.equal(r.status, 200); assert.deepEqual((await r.json()).room_references, { "studio-room": photo });
+    assert.deepEqual(JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.room_references, { "studio-room": photo });
+    V = await (await call(`/api/client/${GYM}`)).json();
+    assert.deepEqual([rooms().status, V.completeness.ready_to_create, V.completeness.ready_to_publish], ["done", ...ready], "done; and it never was in the way of creating or publishing");
+    assert.deepEqual((await (await tag({ path: photo, room: "gym-floor" })).json()).room_references, { "gym-floor": photo }, "one room per photo: the other choice replaces it");
+    assert.deepEqual((await (await tag({ path: photo, room: null })).json()).room_references, {}, "no room: the tag is off");
+    assert.equal("room_references" in JSON.parse(readFileSync(pf, "utf-8")).creative_defaults, false);
+    // The page: the choice under the photo, and the setup's own part for it.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready2) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready2))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready2), `never: ${ready2}`); };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u60#/${GYM}/photos` }, sessionId); await loaded;
+    await until(`!!STATE.status && STATE.sel === ${JSON.stringify(GYM)} && STATE.tab === 'photos' && !!document.querySelector('.roomsel') && !!document.querySelector('#setupStrip') && !!document.querySelector('#stpDo')`);
+    assert.deepEqual(await ev("[[...document.querySelector('.roomsel').options].map(o => o.textContent), document.querySelector('.roomsel').value]"), [["shows which room?", "the studio room", "the gym floor"], ""]);
+    // Photos & assets carries the setup while this is to do: the part is there, and its button takes the eye to the choice.
+    const part = await ev("(()=>{ const S = partsSetup(), i = S.parts.findIndex(p => p.name === 'Which room a premises photo shows'); return i < 0 ? null : [S.parts[i].done, S.parts[i].label || null, /pick the room it shows \\(the studio room, the gym floor\\): one click each/.test(S.parts[i].text || '')]; })()");
+    assert.deepEqual(part, [false, "Show me where", true]);
+    assert.ok(await ev("[...document.querySelectorAll('#stpParts .stpp .nm')].some(e => e.textContent === 'Which room a premises photo shows')"));
+    await ev("(()=>{ const s = document.querySelector('.roomsel'); s.value = 'studio-room'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()");
+    await until("A.data && Object.keys(A.data.room_references || {}).length === 1 && document.querySelector('.roomsel')?.value === 'studio-room'");
+    assert.deepEqual(JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.room_references, { "studio-room": photo });
+    await until("(()=>{ const M = setupModel(); return !!M && M[2].items.some(x => x.what === 'which room a premises photo shows' && x.ok); })()");
+  } finally { writeFileSync(pf, saved); }
 });

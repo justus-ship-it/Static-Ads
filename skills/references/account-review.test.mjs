@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ownLeans, portfolioLeans, lastBrief, suggestBrief, buildReview, reviewText, reviewAccount, LEAN_MIN_LEADS, LEAN_MIN_PICTURES, REVIEW_FILE } from "./account-review.mjs";
+import { ownTests, shareTests, TEST_PHOTOS, MAX_TESTS, ownLeans, portfolioLeans, lastBrief, suggestBrief, buildReview, reviewText, reviewAccount, readLedger, recordReview, recordAction, lastTime, LEDGER_FILE, LEAN_MIN_LEADS, LEAN_MIN_PICTURES, REVIEW_FILE } from "./account-review.mjs";
 import { importExport } from "./ads-export.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 import { validateBrief, planVisuals, leanProblems, LEAN_SHARE } from "./plan-offer-batch.mjs";
@@ -58,9 +58,10 @@ test("AR1 the lean from the gym's own leads: a value is leaned on only with soli
   // Too small a gap, or a thin winner, is no lean.
   assert.deepEqual(ownLeans([R({ ad_id: "a", spend: 200, leads: 10, read: read({}) }), R({ ad_id: "b", spend: 190, leads: 9, read: read({}) }), R({ ad_id: "c", spend: 460, leads: 20, read: read({ backdrop: "seamless-colour" }) })]).filter((l) => l.tag === "backdrop"), [], "19 leads is not solid");
   assert.deepEqual(ownLeans([R({ ad_id: "a", spend: 400, leads: 20, read: read({}) }), R({ ad_id: "b", spend: 400, leads: 20, read: read({}) }), R({ ad_id: "c", spend: 420, leads: 20, read: read({ backdrop: "seamless-colour" }) })]).filter((l) => l.tag === "backdrop"), [], "5% cheaper is not clearly cheaper");
-  // A workout picture's backdrop is not something a workout scene is asked for; a group is.
+  // A workout picture's group is a scene's setting; its room (the studio room, the gym floor) is what the photo is matched to (2026-11-11); any other backdrop is nothing a workout photo is asked for.
   const w = [R({ ad_id: "g1", spend: 300, leads: 30, read: read({ format: "workout", subject: "group", backdrop: "studio-room" }) }), R({ ad_id: "g2", spend: 300, leads: 30, read: read({ format: "workout", subject: "group", backdrop: "studio-room" }) }), R({ ad_id: "s1", spend: 400, leads: 20, read: read({ format: "workout", subject: "woman", backdrop: "gym-floor" }) })];
-  assert.deepEqual(ownLeans(w).map((l) => [l.format, l.tag, l.value]), [["workout", "setting", "group"]]);
+  assert.deepEqual(ownLeans(w).map((l) => [l.format, l.tag, l.value]), [["workout", "setting", "group"], ["workout", "room", "studio-room"]]);
+  assert.deepEqual(ownLeans(w.map((r) => ({ ...r, read: { ...r.read, backdrop: r.read.backdrop === "studio-room" ? "outdoors" : r.read.backdrop } }))).map((l) => l.tag), ["setting"]);
   assert.deepEqual(ownLeans(w, { formats: ["studio-portrait"] }), [], "only the kinds in the batch");
   // This app's own published ads carry their scene tags: the exercise that earns leads cheaper.
   const app = (id, photo, over) => R({ source: "app", ad_id: id, batch: "b1", photos: photo, format: null, ...over });
@@ -174,7 +175,9 @@ test("AR4 the review, from what is on disk and with no call: an export's running
     // The next batch: the owner's last words, the suggested mix as photos, and the lean on what earns leads here.
     assert.deepEqual([r.brief.offer, r.brief.locations, r.brief_from], ["6 Week Strength Challenge", ["JURONG WEST"], "2026-11-01-six-week"]);
     assert.deepEqual(r.brief.mix, { workout: 7, "studio-portrait": 3 });
-    assert.deepEqual(r.brief.lean.map((l) => [l.format, l.tag, l.value]), [["studio-portrait", "backdrop", "dark-wall"], ["studio-portrait", "eye_contact", false]]);
+    assert.deepEqual(r.brief.lean.filter((l) => !l.test).map((l) => [l.format, l.tag, l.value]), [["studio-portrait", "backdrop", "dark-wall"], ["studio-portrait", "eye_contact", false]]);
+    // What is not confirmed is tested, never leaned on: a tiring winner's kind, on photos set aside for it (2026-11-11).
+    assert.ok(r.brief.lean.filter((l) => l.test).every((l) => Number.isInteger(l.photos) && l.photos >= 1 && l.photos <= 3 && !["backdrop", "eye_contact"].includes(l.tag)), JSON.stringify(r.brief.lean));
     const text = reviewText(r);
     for (const re of [/^Test Gym — account review/, /Running now: 5 ads, SGD 2160\.00 spent, 128 leads at SGD 16\.88\. All time:/, /Tiring:/, /Consider pausing:/, /Meta differs from what the app sent:\n- 2026-10-01-old: ad set JURONG WEST's budget/, /The next batch:/, /Lean on dark-wall backdrop \(studio-portrait\)/]) assert.match(text, re);
     assert.doesNotMatch(text, /Last 30 days/);
@@ -237,8 +240,11 @@ test("AR5 scenes drafted from the results (2026-11-11): the guide the drafter is
     assert.deepEqual(s.brief.mix, { workout: 8, "studio-portrait": 2 });
     const none = s.left.find((l) => l.kind === "no_scenes");
     assert.match(none.text, /^2 studio portraits in the mix, but no studio portrait scene is approved for women \(1 draft await your approval on Draft Scenes\)\. Generate Creatives refuses the batch until one is: draft some first, or take them out of the mix on Generate Creatives\.$/);
-    assert.deepEqual(s.scenes.map((x) => [x.format, x.audience, x.count, x.from_results, x.needed, x.approved, x.drafts_waiting]), [["workout", "women", 6, true, false, 2, 0], ["studio-portrait", "women", 6, true, true, 0, 1]]);
-    assert.match(s.scenes[0].why, /^New versions of what earns this gym's leads: its best workout picture has 198 leads at SGD 17\.68 \(scene w-group-swing\)\.$/);
+    assert.deepEqual(s.scenes.map((x) => [x.format, x.audience, x.count, x.from_results, x.needed, x.approved, x.drafts_waiting, x.cover || null]), [["workout", "women", 6, true, false, 2, 0, ["setting:group"]], ["studio-portrait", "women", 6, true, true, 0, 1, null]]);
+    assert.match(s.scenes[0].why, /^New versions of what earns this gym's leads: its best workout picture has 198 leads at SGD 17\.68 \(scene w-group-swing\)\. No approved scene shows a smile mood \(workout\), which the results favour\. The batch tests group setting \(workout\) on 3 photos with only 1 approved scene that shows it: new versions need new scenes\.$/, "the old ad's smile is a lead too, but no scene says its mood yet: said, and drafted for");
+    // The winner stands on one picture (run in two places): the batch tests its setting on three photos rather than leaning on it.
+    assert.deepEqual(s.brief.lean.map((l) => [l.tag, l.value, l.format, l.test || false, l.photos ?? null]), [["setting", "group", "workout", true, 3]]);
+    assert.ok(s.reasons.some((x) => x.field === "test" && /^Test group setting \(workout\) on 3 of the 8 workout photos — To test: group earned 198 leads at SGD 17\.68 on one picture, against /.test(x.text)), JSON.stringify(s.reasons.map((x) => x.text)));
     assert.match(s.scenes[1].why, /^2 studio portraits are in the mix, but no studio portrait scene is approved for women: Generate Creatives refuses the batch until one is\. The drafter is told what this gym's studio portrait ads have done \(10 leads over 1 ad\)\.$/);
     assert.equal(s.scenes_waiting, 1);
     // Nothing to say for a kind with approved scenes and no results; and the report carries the list.
@@ -249,5 +255,135 @@ test("AR5 scenes drafted from the results (2026-11-11): the guide the drafter is
     const review = buildReview(dir, { now: NOW });
     assert.ok(Array.isArray(review.scenes) && review.scenes_waiting === 1);
     assert.match(reviewText({ ...review, scenes: s.scenes }), /Scenes to draft first \(text calls only, drafts for your approval\):\n- 6 workout scenes for women, from the results: New versions[^\n]+\n- 6 studio portrait scenes for women, from the results: [^\n]+\n- 1 scene draft await your approval on Draft Scenes\./);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("AR6 the ledger (2026-11-11): the owner's review keeps every checked line with its verdict then, and marks what is no longer said; an action of the owner's (a pause) is kept with the ad's numbers; the next review opens with what happened — how the last batch's leans and tests came out against the rest of that batch, the paused ads, and what changed (a keeper now fading)", () => {
+  const { d, g } = gym({ scenes: [workout("w-group", { audience: "women", people: 3, setting: "group" }), workout("w-solo", { audience: "women" }), workout("w-solo2", { audience: "women", exercise: "lunge" })] });
+  try {
+    assert.deepEqual([readLedger(g).insights, readLedger(g).actions], [{}, []]);
+    const keep = { key: "keep:111", kind: "keep", verdict: "confirmed", text: "Keep running: Ad one", name: "Ad one", ads: ["111"], numbers: { leads: 30, cost_per_lead: 16, recent: { days: 7, leads: 6, spend: 90, cost_per_lead: 15 } }, checks: [] };
+    const lead = { key: "attr:format=class-group", kind: "lead", verdict: "test", text: "To test…", label: "Format", attribute: "format", best: { value: "class-group", leads: 198, pictures: 1, cost_per_lead: 17.81 }, worst: { value: "workout", leads: 54, pictures: 5, cost_per_lead: 24.22 }, checks: [] };
+    let L = recordReview(g, { insights: [keep, lead] }, { now: new Date("2026-11-04T02:00:00Z") });
+    assert.deepEqual([Object.keys(L.insights).sort(), L.insights["keep:111"].history.length, L.insights["keep:111"].history[0].recent.cost_per_lead, L.insights["attr:format=class-group"].history[0].best.pictures, L.reviewed], [["attr:format=class-group", "keep:111"], 1, 15, 1, "2026-11-04T02:00:00.000Z"]);
+    assert.ok(existsSync(join(g, LEDGER_FILE)));
+    // A week on: the keeper is fading (said under another key), the lead is confirmed.
+    const fading = { key: "tiring:111", kind: "tiring", verdict: "confirmed", fading: true, text: "Fading: Ad one", name: "Ad one", ads: ["111"], numbers: { leads: 48, cost_per_lead: 19, recent: { days: 7, leads: 18, spend: 529, cost_per_lead: 29.42 } }, checks: [] };
+    const found = { ...lead, kind: "matters", verdict: "confirmed", best: { ...lead.best, pictures: 3 } };
+    let T = lastTime(g, { rows: [], insights: [fading, found], currency: "SGD" });
+    assert.deepEqual([T.since, T.changed.map((c) => c.text).sort()], ["2026-11-04T02:00:00.000Z", ["Ad one was a keeper on 2026-11-04; it is fading now.", "Format was a lead to test on 2026-11-04; it is a finding now."]]);
+    L = recordReview(g, { insights: [fading, found] }, { now: new Date("2026-11-11T02:00:00Z") });
+    assert.deepEqual([L.insights["keep:111"].gone, L.insights["tiring:111"].first_seen, L.insights["attr:format=class-group"].history.map((h) => h.kind)], ["2026-11-11T02:00:00.000Z", "2026-11-11T02:00:00.000Z", ["lead", "matters"]]);
+    assert.deepEqual(lastTime(g, { rows: [], insights: [fading, found] }).changed, [], "nothing changed since the review just kept");
+    // The owner paused an ad from here: kept with what it had cost; the next look says whether it has stayed paused.
+    recordAction(g, { what: "pause", key: "pause:222", ad_id: "222", name: "Ad two", spend: 52.2, leads: 0 }, { now: new Date("2026-11-11T03:00:00Z") });
+    T = lastTime(g, { rows: [{ ad_id: "222", status: "paused", paused_here: "2026-11-11T03:00:00.000Z", spend: 52.2 }], insights: [] });
+    assert.deepEqual([T.paused[0].status, T.paused[0].text], ["paused", "Ad two: paused from here on 2026-11-11 after SGD 52.20 for 0 leads — still paused"]);
+    T = lastTime(g, { rows: [{ ad_id: "222", status: "live", spend: 80 }], insights: [] });
+    assert.deepEqual([T.paused[0].status, / it is running again on Meta \(SGD 80\.00 spent now\)$/.test(T.paused[0].text)], ["running", true]);
+    // The last batch on Meta tested a group setting on three photos and leaned on older people: how each came out, against the rest of that batch.
+    mkdirSync(join(g, "outputs", "2026-11-12-offer"), { recursive: true });
+    writeFileSync(join(g, "outputs", "2026-11-12-offer", "batch.json"), JSON.stringify({ made: "2026-11-12T05:00:00Z", lean: [{ tag: "setting", value: "group", format: "workout", test: true, photos: 3 }, { tag: "exercise", value: "lunge", format: "workout" }, { tag: "setting", value: "coached", format: "workout" }] }));
+    const row = (ad_id, scenes, photos, spend, leads) => ({ source: "app", batch: "2026-11-12-offer", ad_id, scenes, photos, format: "workout", status: "live", spend, leads, cost_per_lead: leads ? spend / leads : null });
+    const rows = [row("1", "w-group", "g01", 300, 20), row("2", "w-group", "g02", 150, 10), row("3", "w-solo", "g03", 500, 20), row("4", "w-solo2", "g04", 90, 3), { ...row("5", "w-solo", "g05", 999, 0), superseded: true }, { ...row("9", "w-group", "g09", 10, 9), batch: "another" }];
+    T = lastTime(g, { rows, insights: [], currency: "SGD" });
+    assert.deepEqual([T.batch.id, T.batch.ads, T.batch.leads], ["2026-11-12-offer", 4, 53]);
+    assert.deepEqual(T.tested.map((t) => [t.name, t.test, t.verdict, t.pictures, t.tested.leads]), [["group setting (workout)", true, "held", 2, 30], ["lunge exercise (workout)", false, "early", 1, 3], ["coached setting (workout)", false, "not_made", 0, 0]]);
+    assert.equal(T.tested[0].text, "it held: 30 leads at SGD 15.00 over 2 pictures, against SGD 25.65 for the rest of the batch (23 leads)");
+    assert.equal(T.tested[1].text, "too early: 3 leads so far from 1 picture (it takes 10 to say)");
+    const worse = lastTime(g, { rows: rows.map((r) => (r.ad_id === "1" ? { ...r, spend: 900 } : r)), insights: [] }).tested[0];
+    assert.deepEqual([worse.verdict, /^it did not hold: 30 leads at SGD 35\.00 over 2 pictures, against SGD 25\.65/.test(worse.text)], ["not_held", true]);
+    // The report says it first.
+    const text = reviewText({ ...buildReview(g, { now: new Date("2026-11-13T00:00:00Z") }), last_time: T });
+    assert.match(text, /Last time, and what happened:\n- 2026-11-12-offer tested group setting \(workout\): it held: 30 leads at SGD 15\.00 over 2 pictures[^\n]+\n- 2026-11-12-offer leaned on lunge exercise \(workout\): too early[^\n]+\n[^\n]+not_made|no ad of the batch shows/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("AR7 tests in a batch (2026-11-11): what is clear but not confirmed is tested, not leaned on — a lead on one picture, a tiring or fading winner's kind — on photos set aside for it (three to one test, two and one to two), one test per picture, on the broadest thing a scene can be asked for, never on what is already leaned on; the planner gives a test its photos ahead of any lean; a brief's test is checked like a lean", () => {
+  const app = (ad_id, over) => R({ ad_id, source: "app", batch: "b1", status: "live", format: "workout", ...over });
+  const wr = (over) => read({ format: "workout", backdrop: "gym-floor", pose: "mid-exercise", expression: "effort", ...over });
+  const rows = [
+    app("g1", { photos: "r03", scenes: "w-group", setting: "group", equipment: "kettlebell", exercise: "kettlebell-swing", spend: 1800, leads: 100, read: wr({ format: "class-group", subject: "group" }) }),
+    app("g2", { photos: "r03", scenes: "w-group", setting: "group", equipment: "kettlebell", exercise: "kettlebell-swing", spend: 1700, leads: 98, read: wr({ format: "class-group", subject: "group" }) }),
+    app("s1", { photos: "r05", scenes: "w-solo", setting: "solo", equipment: "bodyweight", exercise: "lunge", spend: 660, leads: 30, read: wr() }),
+    app("s2", { photos: "r06", scenes: "w-solo2", setting: "solo", equipment: "machine", exercise: "chest-press", spend: 510, leads: 20, read: wr() }),
+  ];
+  // One picture (run in two places) names its setting, its equipment and its exercise at once: one test, on the setting.
+  assert.deepEqual(ownLeans(rows, { formats: ["workout"] }), [], "nothing is confirmed on one picture");
+  const tests = shareTests(ownTests(rows, { formats: ["workout"], currency: "SGD" }));
+  assert.deepEqual(tests.map((t) => [t.format, t.tag, t.value, t.test, t.photos]), [["workout", "setting", "group", true, 3]]);
+  assert.match(tests[0].why, /^To test: group earned 198 leads at SGD 17\.68 on one picture, against (woman|solo) with \d+ at SGD \d+\.\d\d\. One picture's leads are that picture's: this repeats it in new versions\.$/);
+  assert.deepEqual([TEST_PHOTOS, MAX_TESTS], [3, 2]);
+  // A second picture of the same kind and it is a lean, not a test; something already leaned on is never tested as well.
+  const two = [...rows, app("g3", { photos: "r09", scenes: "w-group2", setting: "group", equipment: "dumbbells", exercise: "squat", spend: 400, leads: 22, read: wr({ format: "class-group", subject: "group" }) })];
+  assert.deepEqual([ownLeans(two, { formats: ["workout"] }).map((l) => [l.tag, l.value]), ownTests(two, { formats: ["workout"], have: ownLeans(two, { formats: ["workout"] }) }).filter((t) => t.tag === "setting")], [[["setting", "group"]], []]);
+  // A tiring winner: new versions of its kind — the scene's setting for an ad this app made, what its reading maps to for another.
+  const tiring = (ad, fading = false) => ({ key: `tiring:${ad}`, kind: "tiring", verdict: "confirmed", fading, ads: [ad], name: `Ad ${ad}` });
+  const t2 = shareTests(ownTests([app("s1", { photos: "r05", scenes: "w-solo", setting: "coached", spend: 300, leads: 30, read: wr() })], { formats: ["workout"], insights: [tiring("s1", true)] }));
+  assert.deepEqual(t2.map((t) => [t.tag, t.value, t.photos, t.why]), [["setting", "coached", 3, "Fading: Ad s1 — new versions of the same kind before it stops paying."]]);
+  const portraits = [R({ ad_id: "p1", spend: 900, leads: 60, read: read({ subject: "couple", pose: "holding-equipment" }) }), R({ ad_id: "p2", spend: 500, leads: 20, read: read({ backdrop: "seamless-colour" }) })];
+  const t3 = shareTests(ownTests(portraits, { formats: ["studio-portrait"], insights: [tiring("p1")], have: [{ format: "studio-portrait", tag: "backdrop" }] }));
+  assert.deepEqual(t3.map((t) => [t.tag, t.value, t.photos]), [["stance", "holding-equipment", 3]], "the backdrop is leaned on already: its pose is the next thing a scene can be asked for");
+  // Two tests share the three photos; a third waits for another batch.
+  const every = ownTests([...rows, ...portraits], { formats: ["workout", "studio-portrait"], insights: [tiring("p1")] }), three = shareTests(every);
+  assert.deepEqual([every.length >= 2, three.length, three.map((t) => t.photos)], [true, 2, [2, 1]]);
+  // The planner: a test's photos come first, ahead of a lean; the plan says how far each was followed.
+  const scenes = [...["a", "b", "c", "d"].map((x) => workout(`w-group-${x}`, { audience: "women", people: 3, setting: "group", exercise: `swing-${x}` })), ...["a", "b", "c", "d", "e", "f", "g", "h"].map((x, i) => workout(`w-solo-${x}`, { audience: "women", setting: i % 2 ? "coached" : "solo", people: i % 2 ? 2 : 1, exercise: `lift-${x}`, age: i < 4 ? "older" : "prime" }))];
+  const cat = loadCatalogue(), plan = (lean) => planVisuals({ count: 8, scenes, audience: "women", seed: "ar7", catalogue: cat, ratio: "4x5", lean });
+  const vis = plan([{ tag: "setting", value: "group", format: "workout", test: true, photos: 3 }, { tag: "age", value: "older", format: "workout" }]);
+  const groupAt = vis.map((v, i) => (scenes.find((s) => s.id === v.scene_id).setting === "group" ? i : -1)).filter((i) => i >= 0);
+  assert.ok(groupAt.length >= 3 && groupAt.slice(0, 3).join() === "0,1,2", `the three test photos are planned first: ${groupAt}`);
+  assert.deepEqual(vis.leaned.map((l) => [l.tag, l.value, l.test || false, l.cap, l.photos >= l.cap]), [["setting", "group", true, 3, true], ["age", "older", false, 5, false]].map((x, i) => (i === 1 ? [x[0], x[1], x[2], x[3], vis.leaned[1].photos >= 5] : x)));
+  // A brief's test is checked like a lean: a whole number of photos, true or false.
+  const ok = { tag: "setting", value: "group", format: "workout", test: true, photos: 3 };
+  assert.deepEqual([leanProblems([ok]), leanProblems([{ ...ok, photos: 0 }]).length, leanProblems([{ ...ok, photos: 2.5 }]).length, leanProblems([{ ...ok, test: "yes" }]).length], [[], 1, 1, 1]);
+});
+
+test("AR8 rooms (2026-11-11): a photo is matched to one of the gym's rooms by the planner — a scene that names its room keeps it, a lean or a test on a room gives it to its share of the workout photos, never to a portrait — and the run takes that room's own photo as the reference for exactly those photos; a brief's room is checked against the rooms there are; a room the results favour with no photo tagged for it is said, with where to tag it", async () => {
+  const { generateVisuals } = await import("./generate-visuals.mjs");
+  const { ROOMS, SCENE_OPTIONAL_TAGS, sceneProblems } = await import("./scene-library.mjs");
+  assert.deepEqual([Object.keys(ROOMS), SCENE_OPTIONAL_TAGS.room, SCENE_OPTIONAL_TAGS.mood], [["studio-room", "gym-floor"], ["studio-room", "gym-floor"], ["effort", "smile", "calm"]]);
+  // A scene may say its room and its mood; anything else there is refused.
+  const base = workout("w-x", { audience: "women", muscles: "legs" });
+  assert.deepEqual([sceneProblems({ ...base, room: "gym-floor", mood: "smile" }), sceneProblems({ ...base, room: "rooftop" }).length, sceneProblems({ ...base, mood: "angry" }).length], [[], 1, 1]);
+  assert.deepEqual([leanProblems([{ tag: "room", value: "studio-room", format: "workout" }, { tag: "mood", value: "calm" }]), leanProblems([{ tag: "room", value: "rooftop" }]).length], [[], 1]);
+  // The planner: six workout photos, a lean on the studio room (60% of them), one scene that only makes sense on the gym floor.
+  const scenes = [...["a", "b", "c", "d", "e"].map((x) => workout(`w-${x}`, { audience: "women", exercise: `lift-${x}` })), workout("w-rack", { audience: "women", exercise: "rack-pull", room: "gym-floor" }), portrait("w-p", { audience: "women" })];
+  const cat = loadCatalogue();
+  const vis = planVisuals({ count: 7, scenes, audience: "women", seed: "ar8", catalogue: cat, ratio: "4x5", mix: { workout: 6, "studio-portrait": 1 }, lean: [{ tag: "room", value: "studio-room", format: "workout" }] });
+  const rooms = vis.map((v) => [v.scene_id, v.format || "workout", v.room || null]);
+  assert.deepEqual([rooms.filter((r) => r[2] === "studio-room").length, rooms.find((r) => r[0] === "w-rack")[2], rooms.find((r) => r[1] === "studio-portrait")[2]], [4, "gym-floor", null], `60% of six workout photos, the rack scene keeps its floor, the portrait has no room: ${JSON.stringify(rooms)}`);
+  assert.deepEqual(vis.leaned.map((l) => [l.tag, l.value, l.photos, l.cap, l.shown]), [["room", "studio-room", 4, 4, true]]);
+  // A test on a room: exactly its photos.
+  const t = planVisuals({ count: 6, scenes: scenes.slice(0, 5), audience: "women", seed: "ar8", catalogue: cat, ratio: "4x5", lean: [{ tag: "room", value: "gym-floor", format: "workout", test: true, photos: 2 }] });
+  assert.equal(t.filter((v) => v.room === "gym-floor").length, 2);
+  // The run: each photo's own room photo goes to the model, the default room reference to the rest.
+  const dir = mkdtempSync(join(tmpdir(), "rooms-"));
+  try {
+    const file = (n) => { const p = join(dir, n); writeFileSync(p, png(n.length)); return p; };
+    const def = file("default.png"), studio = file("studio-room.png"), sent = [];
+    const visuals = [{ id: "g01", treatment: vis[0].treatment, scene: "A woman lifts.", pose: "upright", people: 1, tags: {}, room: "studio-room" }, { id: "g02", treatment: vis[0].treatment, scene: "A woman rows.", pose: "upright", people: 1, tags: {} }, { id: "g03", treatment: vis[0].treatment, scene: "A woman presses.", pose: "upright", people: 1, tags: {}, room: "gym-floor" }];
+    const checked = [];
+    await generateVisuals({ visuals, outDir: join(dir, "out"), ratio: "4x5", refs: [def], roomRefs: { "studio-room": studio, "gym-floor": join(dir, "missing-is-never-asked.png") }.constructor === Object ? { "studio-room": studio } : {}, maxCalls: 3, attempts: 1, catalogue: cat,
+      checkRef: async (p) => { checked.push(p.split("/").pop()); return []; },
+      generate: async ({ parts, outPath, images }) => { sent.push((parts || images || []).length); writeFileSync(outPath, png(7)); return { file: outPath }; },
+      check: async () => ({ status: "passed", failures: [], notes: [], answer: { people_box: null, face_boxes: [], people_count: 1 } }), finish: null, log: () => {} }).catch((e) => { sent.push("error: " + e.message); });
+    assert.deepEqual(checked.sort(), ["default.png", "studio-room.png"], "the room's own photo is checked like any reference; a room no photo asks for is not");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+  // The review: the studio room earns the leads, on two pictures — a lean once a photo is tagged for it; said, with where, until then.
+  const wr = (over) => read({ format: "workout", backdrop: "gym-floor", pose: "mid-exercise", expression: "effort", ...over });
+  const rows = [R({ ad_id: "a", spend: 300, leads: 30, read: wr({ backdrop: "studio-room" }) }), R({ ad_id: "b", spend: 320, leads: 30, read: wr({ backdrop: "studio-room" }) }), R({ ad_id: "c", spend: 500, leads: 20, read: wr() })];
+  assert.deepEqual(ownLeans(rows, { formats: ["workout"] }).map((l) => [l.format, l.tag, l.value]), [["workout", "room", "studio-room"]]);
+  const { d, g } = gym({ scenes: scenes.slice(0, 5), brief: { batch_id: "2026-10-20-offer", offer: "6 Week Reset", locations: ["BISHAN"], audience: "LADIES" } });
+  try {
+    const profile = JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8")); profile.creative_defaults = { ...profile.creative_defaults, generated: 10 };
+    let s = suggestBrief(g, { rows, every: rows, currency: "SGD", profile });
+    assert.deepEqual([s.brief.lean || [], s.left.map((l) => [l.kind, l.tag, l.value])], [[], [["no_room", "room", "studio-room"]]]);
+    assert.match(s.left[0].text, /^the studio room \(workout\): no premises photo is tagged as the studio room yet, so a photo cannot be matched to it\. Say which photo shows it on Photos & assets \(one click\)\./);
+    assert.deepEqual(s.scenes, [], "a room is not a scene's to show: nothing to draft for it");
+    profile.creative_defaults.room_references = { "studio-room": "facility-clean/studio.png" };
+    s = suggestBrief(g, { rows, every: rows, currency: "SGD", profile });
+    assert.deepEqual([s.brief.lean.map((l) => [l.tag, l.value, l.format]), s.left], [[["room", "studio-room", "workout"]], []]);
+    assert.ok(s.reasons.some((x) => x.field === "lean" && /^Lean on the studio room \(workout\) — studio-room earns this gym's leads cheaper \(60 over 2 pictures at SGD 10\.33, against gym-floor with 20 at SGD 25\.00\)\.$/.test(x.text)), JSON.stringify(s.reasons.map((x) => x.text)));
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

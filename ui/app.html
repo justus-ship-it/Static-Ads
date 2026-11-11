@@ -74,6 +74,7 @@
   .stpdo.working{background:var(--warn-soft)} .stpdo.working .k{color:var(--warn);display:flex;align-items:center} .stpdo.working .s{color:var(--dim);white-space:nowrap}
   .stpdo.working .spin{border-color:#ecd9a6;border-top-color:var(--warn)} .stpp.busy{animation:waitpulse 1.4s ease-in-out infinite}
   .formrow{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;margin:0;font-weight:400;color:var(--text)} .formrow:last-child{border-bottom:none} .formrow:hover{background:var(--surface-2)}
+  .chip.test{background:var(--warn-soft);border-color:#e6cf95;color:var(--warn)}
   .stp{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:-6px 0 16px}
   .stpparts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px}
   .stpparts i{color:var(--faint);font-style:normal}
@@ -120,7 +121,8 @@
   .rvgrid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:22px}
   @media (max-width:980px){ .rvgrid{grid-template-columns:1fr} }
   .rvsec h4,.rvnext h4{margin:10px 0 4px;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
-  .rvsec ul{margin:0 0 0 18px;line-height:1.5;font-size:13px}
+  .rvsec ul{margin:0 0 0 18px;line-height:1.5;font-size:13px} .rvsec li{margin:0 0 6px}
+  .rvchk{display:flex;flex-direction:column;gap:1px;margin:2px 0 0;font-size:12px;color:var(--dim)} .rvchk .y{color:var(--ok)} .rvchk .n{color:var(--warn)}
   .rvnext{border-left:1px solid var(--line);padding-left:20px}
   @media (max-width:980px){ .rvnext{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:12px} }
   .rvbrief{font-size:13.5px;line-height:1.7} .rvbrief .k{display:inline-block;min-width:62px;color:var(--dim);font-size:12px}
@@ -347,6 +349,8 @@ const WAIT = { items:new Map(), seq:0, tick:null, was:null };
 /** What a request is, in plain words: [method, path, sentence | (body) => sentence]. The first match wins; `null` never shows. */
 const WAITS = [
   [/POST/, /\/batch\/check$|\/api\/preview$/, null], [/PUT/, /\/picks$/, null], [/GET/, /\/cycle$|\/progress$|\/api\/run\/|\/api\/status$|\/api\/token$|\/api\/enums$|\/api\/clients$|\/batch-setup$|\/api\/client\/[^/]+$/, null],
+  [/POST/, /\/ad\/\d+\/pause$/, 'Pausing the ad on Meta.'],
+  [/POST/, /\/room-tag$/, 'Saving which room the photo shows.'],
   [/POST/, /\/copy\/draft$/, (b) => `The agent is drafting ${/"kind":"headline"/.test(b||'') ? 'headlines' : 'copies'} from the copy library, then judging each one for clarity. This takes about a minute.`],
   [/POST/, /\/copy\/layout$/, 'The agent is adding line breaks to the copies.'],
   [/POST/, /\/copy\/recommended$/, 'Keeping the recommended ones.'],
@@ -652,13 +656,14 @@ async function viewOverview(v, seq=VIEW_SEQ){
       ${s.missing.length?`<div class="d">Still needs: ${s.missing.map(esc).join(', ')}</div>`:'<div class="d">Complete.</div>'}
       ${(s.tips||[]).map(t=>`<div class="d" style="color:var(--faint)">Tip: ${esc(t)}</div>`).join('')}
     </div>`;
-  const create = c.sections.filter(s=>s.for!=='publishing'), publish = c.sections.filter(s=>s.for==='publishing');
+  const create = c.sections.filter(s=>!s.for), publish = c.sections.filter(s=>s.for==='publishing'), learn = c.sections.filter(s=>s.for==='learning');
   v.innerHTML = `<div class="row" style="margin-bottom:4px"><h1 style="margin:0">${esc(p.display_name||STATE.sel)}</h1>${d.logo?`<img src="${esc(d.logo)}" alt="" style="height:34px;margin-left:8px;background:#0a0a0a;border-radius:6px;padding:4px 8px">`:''}</div>
     <p class="sub">The gym's profile: filled in once, remembered, and used by every batch. Switch gyms from the top bar.</p>
     ${c.ready_to_create ? '' : `<div class="msg">New gym? <a href="#" onclick="go('import');return false">Import from Meta</a> reads the Page, the ad account, its targeting, ads and forms, the website and Instagram in one run. Or piece by piece: <a href="#" onclick="go('website');return false">Read its website</a>: the colours, fonts, logo, address, Instagram and photos, proposed for you to tick.</div>`}
     ${c.ready_to_create ? `<div class="msg ok">Ready to create ads. <a href="#" onclick="go('batch');return false">Create →</a></div>` : `<div class="msg warn">${c.to_do} section${c.to_do===1?'':'s'} to finish before creating ads.</div>`}
     <h2 style="margin-top:16px">To create ads</h2><div class="ov">${create.map(card).join('')}</div>
-    <h2 style="margin-top:20px">To publish to Meta <span class="pill">later</span></h2><p class="hint" style="margin-top:-4px">Publishing is not built yet. Filling these in now means it will work for this gym when it is.</p><div class="ov">${publish.map(card).join('')}</div>`;
+    <h2 style="margin-top:20px">To publish to Meta <span class="pill">later</span></h2><p class="hint" style="margin-top:-4px">Publishing is not built yet. Filling these in now means it will work for this gym when it is.</p><div class="ov">${publish.map(card).join('')}</div>
+    ${learn.length?`<h2 style="margin-top:20px">To learn from the results</h2><p class="hint" style="margin-top:-4px">Never in the way of creating or publishing: these let the account review read the results more finely, and act on them.</p><div class="ov">${learn.map(card).join('')}</div>`:''}`;
 }
 
 function viewIdentity(v){
@@ -1394,12 +1399,15 @@ function applySuggestion(R, { whole = true } = {}){
 }
 /** The banner's one click: the whole suggestion on the form — the last batch's own words, the photos per kind, the cards, the lean. */
 function bSuggestUse(){ const R = B.draft?.suggested?.review; if (!R) return; applySuggestion(R); paintBatch($('#view')); scheduleCheck(0); schedulePreview(0); paintGapDrafts(); }
+function bLeanPhotos(i, d){ const l = B.draft.lean?.[i]; if (!l?.test) return; l.photos = Math.max(1, Math.min(Number(B.draft.generated)||1, (l.photos||1) + d)); B.touched = true; paintLean(); scheduleCheck(); }
 function bLeanDrop(i){ B.draft.lean.splice(i,1); B.touched = true; paintLean(); scheduleCheck(); }
 function bSuggestClear(){ bNew(); }
 function paintLean(){
   const box = $('#bLean'); if (!box) return;
   const d = B.draft, lean = d.lean||[], off = !!directionFromDraft();
-  box.innerHTML = !lean.length || B.mode==='rerender' ? '' : `<label style="margin-top:10px">Lean on <span class="n">· from the account review; about ${Math.round(0.6*100)}% of that kind's photos follow it, the rest keep the variety</span></label><div class="chips">${lean.map((l,i)=>`<span class="chip sel" title="${esc(l.why||'')}" style="${off?'opacity:.5':''}">${esc(LEAN_WORD(l))} <a href="#" onclick="bLeanDrop(${i});return false" title="Do not lean on this" style="margin-left:4px;color:inherit;text-decoration:none">×</a></span>`).join('')}</div>${off?'<div class="hint">Off for a directed batch: the reference or your words decide what the photos show.</div>':''}`;
+  // A lean is followed for about 60% of its kind's photos; a test (a lead not confirmed yet) gets exactly its photos, set with − and +.
+  const chip = (l,i) => `<span class="chip sel ${l.test?'test':''}" title="${esc(l.why||'')}" style="${off?'opacity:.5':''}">${l.test?`<b>Test</b> · `:''}${esc(LEAN_WORD(l))}${l.test?` · <a href="#" onclick="bLeanPhotos(${i},-1);return false" title="One photo fewer" style="color:inherit;text-decoration:none">−</a> <b id="bTestN${i}">${l.photos}</b> photo${l.photos===1?'':'s'} <a href="#" onclick="bLeanPhotos(${i},1);return false" title="One photo more" style="color:inherit;text-decoration:none">+</a>`:''} <a href="#" onclick="bLeanDrop(${i});return false" title="${l.test?'Do not test this':'Do not lean on this'}" style="margin-left:4px;color:inherit;text-decoration:none">×</a></span>`;
+  box.innerHTML = !lean.length || B.mode==='rerender' ? '' : `<label style="margin-top:10px">From the account review <span class="n">· a lean is followed by about ${Math.round(0.6*100)}% of that kind's photos; a test repeats a lead on exactly its photos, in new versions, so the next review can confirm it or drop it</span></label><div class="chips">${lean.map(chip).join('')}</div>${off?'<div class="hint">Off for a directed batch: the reference or your words decide what the photos show.</div>':''}`;
 }
 /** The offer wordings as chips: picking one is choosing its exact words. */
 function paintWordChips(){
@@ -1436,7 +1444,7 @@ function briefFromDraft(){
     // The photos per kind. An all-workout batch says nothing when that is the gym's own default — and says "workout" when the gym's default is a mix
     // (2026-11-11: a brief naming no kind takes the gym's mix, so the portraits set to 0 on this form came back and a gym without portrait scenes could not run a batch).
     ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m), gymMixed = Object.entries(B.setup.mix || profileMix(B.setup.creative_defaults || {})).some(([f,n])=>f!=='workout' && n>0); return !generated ? {} : live.length===1 && live[0]==='workout' ? (gymMixed ? { format:'workout' } : {}) : live.length===1 ? { format: live[0] } : { mix: m }; })(),
-    ...(generated>0 && !direction && (d.lean||[]).length ? { lean: d.lean.map(({ tag, value, format, why })=>({ tag, value, ...(format?{format}:{}), ...(why?{why}:{}) })) } : {}),
+    ...(generated>0 && !direction && (d.lean||[]).length ? { lean: d.lean.map(({ tag, value, format, why, test, photos })=>({ tag, value, ...(format?{format}:{}), ...(test?{ test:true, photos }:{}), ...(why?{why}:{}) })) } : {}),
     ...(d.spread && generated>0 && !direction ? { spread: true } : {}) };
 }
 function autoId(){
@@ -2430,6 +2438,14 @@ function reviewCard(){
   if (!R) return `<div class="card" id="rsReview"><h3>Account review</h3><p class="hint">Loading…</p></div>`;
   const n = R.numbers, tot = (x) => `${x.ads} ad${x.ads===1?'':'s'} · ${money(x.spend,cur)} spent · <b>${x.leads} lead${x.leads===1?'':'s'}${x.cost_per_lead!=null?` at ${money(x.cost_per_lead,cur)}`:''}</b>`;
   const list = (title, items, cls='') => items.length ? `<div class="rvsec"><h4>${title}</h4><ul class="${cls}">${items.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+  // Checked before it is said: each line carries its verdict and the checks behind it; one the owner can act on from here has its button.
+  const VERDICT = { confirmed:['on','checked'], test:['warn','to test'], early:['','not judged yet'], none:['','for the record'] };
+  const canPause = (x) => x.kind==='pause' && x.verdict==='confirmed' && /^\d{5,25}$/.test(x.ads?.[0]||'') && R.linked;
+  const insight = (x, strip) => `<li data-key="${esc(x.key)}">${esc(strip ? x.text.replace(strip,'') : x.text)} <span class="pill ${VERDICT[x.verdict][0]}">${VERDICT[x.verdict][1]}</span>
+      ${(x.checks||[]).filter(c=>c.ok!==null).length?`<div class="rvchk">${x.checks.filter(c=>c.ok!==null).map(c=>`<span class="${c.ok?'y':'n'}">${c.ok?'✓':'✕'} ${esc(c.text)}</span>`).join('')}</div>`:''}
+      ${canPause(x)?`<div style="margin:4px 0 2px"><button class="sm danger" onclick="rsPause('${esc(x.ads[0])}')" ${STATE.run&&!STATE.run.done?'disabled':''}>Pause on Meta…</button></div>`:x.kind==='pause'&&x.verdict==='confirmed'?'<div class="hint" style="margin:2px 0">Pause it in Ads Manager: this ad cannot be reached from here.</div>':''}</li>`;
+  const ins = (title, kinds, strip) => { const xs = (R.insights||[]).filter(x=>kinds.includes(x.kind)); return xs.length ? `<div class="rvsec" data-kind="${kinds[0]}"><h4>${title}</h4><ul>${xs.map(x=>insight(x, strip)).join('')}</ul></div>` : ''; };
+  const lt = R.last_time || { tested:[], paused:[], changed:[] };
   const copy = [...R.copy.copies.map(x=>['Copy',x]), ...R.copy.headlines.map(x=>['Headline',x])];
   const b = R.brief, mixLine = b.mix ? Object.entries(b.mix).map(([f,k])=>`${k} ${esc(FORMAT_PLURAL[f]||f)}`).join(', ') : `${b.generated} workout photos`;
   const fresh = R.last?.reviewed ? `reviewed ${esc(R.last.reviewed.slice(0,10))}` : 'not reviewed yet';
@@ -2441,18 +2457,22 @@ function reviewCard(){
     <p class="hint" style="margin:8px 0 10px">Running now: ${tot(n.running)}${n.last_30d?` &nbsp;·&nbsp; last 30 days: ${money(n.last_30d.spend,cur)} spent, ${n.last_30d.leads} leads${n.last_30d.cost_per_lead!=null?` at ${money(n.last_30d.cost_per_lead,cur)}`:''}`:''} &nbsp;·&nbsp; all time: ${tot(n.all_time)}. Everything below is by rule over Meta's numbers; nothing changes until you act.</p>
     <div class="rvgrid">
       <div>
-        ${list('Keep running', R.keep.map(x=>x.replace(/^Keep running: /,'')))}
-        ${list('Tiring', R.tiring.map(x=>x.replace(/^Tiring: /,'')))}
-        ${list('Consider pausing', R.pause.map(x=>x.replace(/^Consider pausing: /,'')))}
-        ${list('What matters', R.matters)}
+        ${lt.tested.length||lt.paused.length||lt.changed.length ? `<div class="rvsec" id="rsLastTime"><h4>Last time, and what happened</h4><ul>${lt.tested.map(t=>`<li>${esc(lt.batch.id)} ${t.test?'tested':'leaned on'} <b>${esc(t.name)}</b>: ${esc(t.text)}. <span class="pill ${t.verdict==='held'?'on':t.verdict==='not_held'?'err':''}">${t.verdict==='held'?'held':t.verdict==='not_held'?'did not hold':t.verdict==='early'?'too early':'not made'}</span></li>`).join('')}${lt.paused.map(p=>`<li>${esc(p.text)}. <span class="pill ${p.status==='running'?'warn':'on'}">${p.status==='running'?'running again':p.status==='gone'?'no longer on file':'paused'}</span></li>`).join('')}${lt.changed.map(c=>`<li>${esc(c.text)}</li>`).join('')}</ul></div>` : ''}
+        ${ins('Keep running', ['keep'], /^Keep running: /)}
+        ${ins('Tiring', ['tiring'], /^(Tiring|Fading): /)}
+        ${ins('Consider pausing', ['pause'], /^Consider pausing: /)}
+        ${ins('Not judged yet', ['wait'], /^Not judged yet: /)}
+        ${ins('What matters', ['matters'])}
+        ${ins('To test in the next batch', ['lead'], /^To test, not a finding yet — /)}
+        ${ins('For the record', ['fact'])}
         ${copy.length ? `<div class="rvsec"><h4>Which copy wins</h4><ul>${copy.map(([k,x])=>`<li><b>${k}</b> · ${x.leads} lead${x.leads===1?'':'s'}${x.cost_per_lead!=null?` at ${money(x.cost_per_lead,cur)}`:''} — ${esc(String(x.text).split('\n')[0].slice(0,110))}</li>`).join('')}</ul>${R.copy.never_led?`<div class="hint">${R.copy.never_led} text${R.copy.never_led===1?'':'s'} shown a thousand times or more without a lead.</div>`:''}</div>` : ''}
         ${R.drift.length ? `<div class="rvsec"><h4>Meta differs from what the app sent</h4><ul>${R.drift.map(d=>`<li><a href="#" onclick="openPublish('${esc(d.batch)}');return false">${esc(d.batch)}</a>: ${esc(d.text)}</li>`).join('')}</ul></div>` : ''}
         ${list('Notes', R.notes, 'hint')}
-        ${!(R.keep.length||R.tiring.length||R.pause.length||R.matters.length||copy.length||R.drift.length||R.notes.length) ? '<p class="hint">Nothing to say yet: no ad has enough leads to judge.</p>' : ''}
+        ${!((R.insights||[]).length||copy.length||R.drift.length||R.notes.length) ? '<p class="hint">Nothing to say yet: no ad has enough leads to judge.</p>' : ''}
       </div>
       <div class="rvnext">
         <h4 style="margin-top:0">The next batch</h4>
-        <div class="rvbrief"><div><span class="k">Offer</span> ${b.offer?esc(b.offer):'<i>for you to type</i>'}</div><div><span class="k">Where</span> ${esc((b.locations||[]).join(', ')||'—')}${b.audience?` · ${esc(b.audience)}`:''}</div><div><span class="k">Photos</span> ${mixLine}</div>${b.cards?`<div><span class="k">Cards</span> ${Object.entries(b.cards).map(([k,c])=>`${c} ${esc(CARD_NAMES[k]||k)}`).join(', ')}</div>`:''}${(b.lean||[]).length?`<div><span class="k">Lean on</span> ${b.lean.map(l=>`<span class="pill">${esc(LEAN_WORD(l))}</span>`).join(' ')}</div>`:''}</div>
+        <div class="rvbrief"><div><span class="k">Offer</span> ${b.offer?esc(b.offer):'<i>for you to type</i>'}</div><div><span class="k">Where</span> ${esc((b.locations||[]).join(', ')||'—')}${b.audience?` · ${esc(b.audience)}`:''}</div><div><span class="k">Photos</span> ${mixLine}</div>${b.cards?`<div><span class="k">Cards</span> ${Object.entries(b.cards).map(([k,c])=>`${c} ${esc(CARD_NAMES[k]||k)}`).join(', ')}</div>`:''}${(b.lean||[]).some(l=>!l.test)?`<div><span class="k">Lean on</span> ${b.lean.filter(l=>!l.test).map(l=>`<span class="pill">${esc(LEAN_WORD(l))}</span>`).join(' ')}</div>`:''}${(b.lean||[]).some(l=>l.test)?`<div id="rsTests"><span class="k">Test</span> ${b.lean.filter(l=>l.test).map(l=>`<span class="pill warn">${esc(LEAN_WORD(l))} · ${l.photos} photo${l.photos===1?'':'s'}</span>`).join(' ')}</div>`:''}</div>
         <ul class="hint" style="margin:8px 0 8px 18px;line-height:1.5">${R.reasons.map(x=>`<li>${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}${R.left.map(x=>`<li>Not yet — ${esc(x.text.replace(/studio-portrait/g,'studio portrait'))}</li>`).join('')}</ul>
         ${(R.scenes||[]).length || R.scenes_waiting ? `<div class="rvsec" id="rsScenes"><h4>Scenes to draft first</h4>
           ${(R.scenes||[]).map((s,i)=>`<div style="margin:0 0 8px"><div class="hint" style="margin:0 0 4px;line-height:1.5">${s.needed?'<b>Needed.</b> ':''}${esc(s.why.replace(/studio-portrait/g,'studio portrait'))}${s.drafts_waiting?` ${s.drafts_waiting} draft${s.drafts_waiting===1?'':'s'} of this kind already await your approval.`:''}</div><button class="sm" onclick="rsDraftScenes(${i})" ${STATE.run&&!STATE.run.done?'disabled':''}>Draft ${esc(FORMAT_NAMES[s.format]||s.format).toLowerCase()} scenes${s.from_results?' from the results':''}…</button></div>`).join('')}
@@ -2488,7 +2508,24 @@ function draftJobGo(){
   const s = DJ; if (!s) return;
   const count = parseInt($('#rsDsN').value, 10), audience = $('#rsDsAud').value; if (!(count >= 1 && count <= 12)) return;
   $('#gModal').innerHTML = '';
-  run({ kind:'scenes-refresh', gym: STATE.sel, audience, count, ...(s.format!=='workout'?{format:s.format}:{}), ...(s.from_results?{from_results:true}:{}) }, async (code) => { if (STATE.tab==='results') await rsLoadReview(); if (STATE.tab==='scenes') { try { await reloadScenes(); } catch{} } await loadCycle(); const w = CY.data?.scenes_waiting ?? RS.review?.scenes_waiting ?? 0; if (code===0) toast(`${w} scene draft${w===1?'':'s'} await your approval on Draft Scenes`, 'ok'); });
+  run({ kind:'scenes-refresh', gym: STATE.sel, audience, count, ...(s.format!=='workout'?{format:s.format}:{}), ...(s.from_results?{from_results:true}:{}), ...((s.cover||[]).length?{cover:s.cover}:{}) }, async (code) => { if (STATE.tab==='results') await rsLoadReview(); if (STATE.tab==='scenes') { try { await reloadScenes(); } catch{} } await loadCycle(); const w = CY.data?.scenes_waiting ?? RS.review?.scenes_waiting ?? 0; if (code===0) toast(`${w} scene draft${w===1?'':'s'} await your approval on Draft Scenes`, 'ok'); });
+}
+/** Pause on Meta (2026-11-11): one ad the review says to pause, after its checks — the owner's press, with a confirmation that names the ad and what it has cost. */
+function rsPause(adId){
+  const x = (RS.review?.insights||[]).find(i=>i.kind==='pause' && i.ads?.[0]===adId); if (!x) return;
+  const cur = STATE.profile?.locale?.currency || 'SGD', n = x.numbers;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Pause this ad on Meta?</h3>
+    <div class="summary"><b>${esc(x.name)}</b><br>${money(n.spend,cur)} spent · ${n.leads} lead${n.leads===1?'':'s'}${n.cost_per_lead!=null?` at ${money(n.cost_per_lead,cur)}`:''} · the median is ${money(n.median,cur)} a lead</div>
+    <ul class="hint" style="margin:0 0 8px 18px;line-height:1.5">${(x.checks||[]).filter(c=>c.ok!==null).map(c=>`<li>${c.ok?'✓':'✕'} ${esc(c.text)}</li>`).join('')}</ul>
+    <p class="hint">This sets <b>this one ad</b> to paused in the gym's ad account. Nothing else is touched and nothing is deleted: it can be switched on again in Ads Manager at any time.</p>
+    <div id="rsPauseErr"></div>
+    <div class="row" style="margin-top:12px"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="danger" id="rsPauseGo" onclick="rsPauseGo('${esc(adId)}')">Yes, pause it on Meta</button></div></div></div>`;
+}
+async function rsPauseGo(adId){
+  const x = (RS.review?.insights||[]).find(i=>i.kind==='pause' && i.ads?.[0]===adId); if (!x) return;
+  const b = $('#rsPauseGo'); if (b){ b.disabled = true; b.textContent = 'Pausing…'; }
+  try { const r = await api(`/api/client/${STATE.sel}/ad/${adId}/pause`, { method:'POST', body:{ confirm:{ spend:x.numbers.spend, leads:x.numbers.leads } } }); $('#gModal').innerHTML = ''; toast(`Paused on Meta: ${r.name}`, 'ok'); await rsReload(); loadCycle(); }
+  catch(e){ const box = $('#rsPauseErr'); if (box) box.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; if (b){ b.disabled = false; b.textContent = 'Yes, pause it on Meta'; } }
 }
 /** Create, opened on the review's suggestion: the owner's own last words, the suggested photos and cards, the lean — each changeable there. */
 function rsStartNext(){ if (!RS.review) return; B.pendingSuggest = RS.review; go('batch'); }
@@ -3353,7 +3390,9 @@ function paintAssets(v){
   const fac = d.kinds.find(k=>k.id==='facility'), n = A.sel.size, nPrem = [...A.sel].filter(p=>p.startsWith('facility/')).length, nPeople = n - nPrem;
   const cleanBtns = (kind) => { const mine = kind==='facility' ? nPrem : nPeople, other = kind==='facility' ? nPeople : nPrem, mixed = mine && other; return `<button class="sm" ${mine&&!other&&!running?'':'disabled'} title="${mixed?'select premises photos or people photos, not both':''}" onclick="aSurvey()">Survey ${mine||''} (free)</button><button class="sm primary" ${mine&&!other&&!running?'':'disabled'} title="${mixed?'select premises photos or people photos, not both':''}" onclick="aClean()">Clean ${mine||''}…</button>`; };
   const premClean = d.clean.filter(p=>!p.people), peopleClean = d.clean.filter(p=>p.people), rr = d.room_reference;
-  const cleanThumb = (p) => { const nm = p.path.split('/').pop(); return `<label style="max-width:168px"><a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="" style="width:168px;height:112px"></a><span style="font-size:11.5px">${esc(nm)}</span>${p.kept?`<span class="pill warn tag" title="kept on your word, with: ${esc((p.kept_with||[]).join('; '))}">kept anyway</span>`:''}${rr===p.path?'<span class="pill on tag">room reference</span>':`<button class="sm" style="margin-top:4px" onclick="aRoomRef('${esc(p.path)}')">Use as room reference</button>`}<button class="sm" style="margin-top:4px" onclick="aDiscardClean('${esc(nm)}')">Remove</button></label>`; };
+  const roomOf = (path) => Object.entries(d.room_references||{}).find(([, x])=>x===path)?.[0] || '';
+  const roomSel = (p) => p.people ? '' : `<select class="roomsel" style="margin-top:4px;font-size:12px;padding:3px 6px" title="Which room this photo shows: results are read by room, and a photo can be matched to it" onclick="event.preventDefault()" onchange="aRoomTag('${esc(p.path)}', this.value)"><option value="">shows which room?</option>${Object.entries(d.rooms||{}).map(([k,l])=>`<option value="${k}" ${roomOf(p.path)===k?'selected':''}>${esc(l)}</option>`).join('')}</select>`;
+  const cleanThumb = (p) => { const nm = p.path.split('/').pop(); return `<label style="max-width:168px"><a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="" style="width:168px;height:112px"></a><span style="font-size:11.5px">${esc(nm)}</span>${p.kept?`<span class="pill warn tag" title="kept on your word, with: ${esc((p.kept_with||[]).join('; '))}">kept anyway</span>`:''}${rr===p.path?'<span class="pill on tag">room reference</span>':`<button class="sm" style="margin-top:4px" onclick="aRoomRef('${esc(p.path)}')">Use as room reference</button>`}${roomSel(p)}<button class="sm" style="margin-top:4px" onclick="aDiscardClean('${esc(nm)}')">Remove</button></label>`; };
   v.innerHTML = `<h1>Photos & brand assets</h1><p class="sub">The gym's own files, kept with its profile: drop them here and they are filed and remembered. Premises photos are cleaned from here before a batch can use them.</p>
   <div class="card"><h3>Add files</h3>
     <div class="chips" id="aKinds">${d.kinds.map(k=>`<span class="chip ${A.kind===k.id?'sel':''}" onclick="A.kind='${k.id}';paintAssets($('#view'))">${esc(k.label)}</span>`).join('')}</div>
@@ -3427,6 +3466,8 @@ async function aDiscardClean(name){
   await loadAssets(); paintAssets($('#view'));
 }
 function aSurvey(){ run({kind:'photo-survey', gym:STATE.sel, photos:[...A.sel]}, async()=>{ await loadAssets(); paintAssets($('#view')); }); }
+/** Which room a cleaned premises photo shows (2026-11-11): one photo per room; an empty choice takes the tag off. */
+async function aRoomTag(path, room){ try { await api(`/api/client/${STATE.sel}/room-tag`, {method:'POST', body:{ path, room: room || null }}); await loadAssets(); paintAssets($('#view')); toast(room ? 'Room saved: results are read by it from now on' : 'Room tag removed'); } catch(e){ alert(e.message); } }
 async function aRoomRef(path){ try { await api(`/api/client/${STATE.sel}/room-reference`, {method:'POST', body:{path}}); await loadAssets(); paintAssets($('#view')); } catch(e){ alert(e.message); } }
 async function aCopyAsk(){ const items = [...document.querySelectorAll('#aAskList li')].map(l=>'- '+l.textContent); const text = `Could you send us 5-10 photos of the gym's training floor for the ads?\n${items.join('\n')}`; try { await navigator.clipboard.writeText(text); $('#aAskMsg').textContent = 'Copied.'; } catch { $('#aAskMsg').textContent = text; } }
 function aClean(){
@@ -3814,7 +3855,7 @@ function partsPublish(){
 const SETUP_STEPS = [
   { id:'connect', name:'Connect to Meta', home:'meta', tabs:['meta','import','metafacts'], sections:['meta'] },
   { id:'identity', name:'Who the gym is', home:'identity', tabs:['identity'], sections:['identity'] },
-  { id:'brand', name:'Brand and photos', home:'brand', tabs:['brand','website','instagram','photos'], sections:['brand','photos'] },
+  { id:'brand', name:'Brand and photos', home:'brand', tabs:['brand','website','instagram','photos'], sections:['brand','photos','rooms'] },
   { id:'offer', name:'Offer and ad defaults', home:'offer', tabs:['offer','defaults'], sections:['offers','defaults'] },
   { id:'targeting', name:'Targeting and budget', home:'targeting', tabs:['targeting'], sections:['targeting'] },
 ];
@@ -3826,7 +3867,7 @@ const SETUP_FIELD = {
   'a primary colour':'input[oninput*="brand_lock.colors.primary.hex"]', 'what photos must show':'textarea[oninput*="photography.must"],textarea[onchange*="photography.must"]',
   'what photos must never show':'textarea[oninput*="photography.never"],textarea[onchange*="photography.never"]', 'who is in the photos':'[oninput*="brand_lock.photography.people"]',
   'at least one offer wording':'#wNew', 'an age range':'[oninput*="demographics.age_min"]', 'a budget':'[oninput*="campaign_defaults.budget.amount"]',
-  'a cleaned photo of the premises, or a room reference':'#aDrop', 'at least one location callout':'#cdLocLabel', 'a radius pin':'#pinsHead',
+  'a cleaned photo of the premises, or a room reference':'#aDrop', 'at least one location callout':'#cdLocLabel', 'a radius pin':'#pinsHead', 'which room a premises photo shows':'.roomsel',
 };
 /** How to give each thing, in plain words. */
 const SETUP_HOW = {
@@ -3835,6 +3876,7 @@ const SETUP_HOW = {
   'a primary colour':"The brand's main colour, as a hex code (or read it from the website).", 'what photos must show':'What every generated photo must show: the real premises, its colours, its equipment. One per line.',
   'what photos must never show':'What a photo must never show: other brands, mirrors, anything the gym does not have. One per line.', 'who is in the photos':'Who the people in the photos are: ages, backgrounds, builds.',
   'a cleaned photo of the premises, or a room reference':"Add photos of the gym's floor, then Survey and Clean them, so generated photos match the real room.",
+  'which room a premises photo shows':"Under each cleaned premises photo, pick the room it shows (the studio room, the gym floor): one click each. The results are then read by room, and a photo can be matched to the room that earns the leads.",
   'at least one offer wording':'Type an offer exactly as it should read on the ads, then press Add.', 'at least one location callout':'Add the area names the ads call out, one ad set each.',
   'a radius pin':'Add a pin: where the ads are shown around, and how far.', 'an age range':'The youngest and oldest age the ads are shown to.', 'a budget':'How much an ad set may spend a day.',
   'ad account id':"Pick the gym's ad account from the list.", 'Facebook page id':"Pick the gym's Facebook Page from the list.", 'business portfolio id':'Pick the business portfolio from the list.', 'pixel id':"Pick the gym's pixel from the list.", 'lead form id':"Pick the form the gym's lead ads use by default.",

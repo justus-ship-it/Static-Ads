@@ -47,15 +47,15 @@ import { keptImagesZip } from "../skills/references/ad-images-zip.mjs";
 import { importExport } from "../skills/references/ads-export.mjs";
 import { readReviews, reviewView, addReview, editReview, findPlace, pullGoogleReviews, placesKey, readWords, addStatement, addTimeline, decideWords, draftCardWords, cardsAvailable, cardCount, durationOf, CARD_KINDS, MAX_CARDS, MIN_STARS, EXCERPT_LIMIT, STATEMENT_LIMIT } from "../skills/references/cards.mjs";
 import { renderCard, loadCards } from "../skills/references/render-cards.mjs";
-import { buildReview, reviewText } from "../skills/references/account-review.mjs";
+import { buildReview, reviewText, recordAction } from "../skills/references/account-review.mjs";
 import { cycleFrom } from "../skills/references/cycle.mjs";
-import { whatWins, whatWinsAcross, nextWave, mixSuggestion, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
+import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, madeShape, batchMix } from "../skills/references/plan-offer-batch.mjs";
-import { libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName } from "../skills/references/scene-library.mjs";
+import { ROOMS, libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
 import { readReading, checkUrl as checkSiteUrl, MIN_PHOTO_PX, ONBOARDING_DIR } from "../skills/references/read-website.mjs";
@@ -1430,6 +1430,27 @@ const server = createServer(async (req, res) => {
       let mix = null; try { mix = mixSuggestion(brandDir(gym), { formats: Object.keys(SCENE_FORMATS), current: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), currency }); } catch (e) { mix = { error: e.message }; }
       return json(res, 200, { rows, adsets: adsetRows([...rows, ...hrows]), campaigns: campaignRows([...rows, ...hrows]), texts: gymTextRows(brandDir(gym)), batches, history: h ? { pulled: h.pulled, campaigns: h.campaigns.length, adsets: h.adsets.length, ads: h.ads.length, rows: hrows, campaign_list: h.campaigns, exports: h.exports || [] } : null, copy_refs: readCopyRefs(brandDir(gym)).refs.length, wins, mix });
     }
+    // /api/client/{gym}/ad/{id}/pause — Pause on Meta (2026-11-11): the owner's press, with a confirmation, like Create on Facebook.
+    // One ad of this gym that the last read says is running is set to PAUSED on Meta — nothing else is touched, nothing is
+    // deleted, and it can be switched on again in Ads Manager. The confirmation must carry the ad's spend and leads as they are
+    // on file now, so what was confirmed is what is paused. The pause is kept in the gym's ledger with those numbers.
+    const pz = p.match(/^\/api\/client\/([^/]+)\/ad\/(\d{5,25})\/pause$/);
+    if (pz && req.method === "POST") {
+      const [, gym, adId] = pz;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const body = await readBody(req), r = gymRowsRead(brandDir(gym)).find((x) => x.ad_id === adId);
+      if (!r) return json(res, 404, { error: "this ad is not one of this gym's ads on file" });
+      if (!adIsActive(r)) return json(res, 409, { error: "this ad is not running on Meta as far as the last read says: review the account again" });
+      const c = body?.confirm;
+      if (!c || Number(c.spend) !== (r.spend || 0) || Number(c.leads) !== (r.leads || 0)) return json(res, 409, { error: "the ad's numbers are not the ones that were confirmed: look at the review again and confirm" });
+      const config = metaConfig({ gym });
+      if (!config.token) return json(res, 409, { error: "the Meta link is not set up on this machine, so nothing can be paused from here: pause it in Ads Manager" });
+      const name = r.ad_name || (r.folder ? `${r.batch}/${r.folder.replace(/^\d+-/, "")}` : adId);
+      try { await graphClient({ config }).post(adId, { status: "PAUSED" }); }
+      catch (e) { return json(res, 502, { error: `Meta did not pause it: ${scrubTokens(e.message)}` }); }
+      recordAction(brandDir(gym), { what: "pause", key: `pause:${adId}`, ad_id: adId, name, batch: r.batch || null, spend: r.spend || 0, leads: r.leads || 0, cost_per_lead: r.cost_per_lead ?? null });
+      return json(res, 200, { paused: adId, name });
+    }
     // /api/client/{gym}/cycle — where this gym stands on the five steps (Review Data → Draft Scenes → Generate Creatives →
     // Pick Ads → Publish Ads) and the one thing to do next, from what is on disk: no Meta call, no model call. It only nudges.
     const cy = p.match(/^\/api\/client\/([^/]+)\/cycle$/);
@@ -1632,6 +1653,24 @@ const server = createServer(async (req, res) => {
     // /api/client/{gym}/clean/keep {id} · /clean/discard {name} — the owner's word on the clean-up's photos.
     // /api/client/{gym}/room-reference { path | null } — the photo every generated picture matches its room to: one of the
     // cleaned photos (premises, or a coach/member photo from reference-clean, which is never an ad). Kept on the profile.
+    // /api/client/{gym}/room-tag { path, room | null } — which room a cleaned premises photo shows (2026-11-11). One photo per room;
+    // tagging another replaces it; null takes the tag off. A photo matched to that room in a batch takes this photo as its reference.
+    const rtg = p.match(/^\/api\/client\/([^/]+)\/room-tag$/);
+    if (rtg && req.method === "POST") {
+      const gym = rtg[1];
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const { path: want, room } = await readBody(req);
+      if (!cleanPhotos(gym).some((x) => x.path === want && !x.people)) return json(res, 400, { error: "a room is said of one of the cleaned premises photos" });
+      if (room != null && !ROOMS[room]) return json(res, 400, { error: `room must be one of ${Object.keys(ROOMS).join(", ")}, or null` });
+      const pf = join(brandDir(gym), "gym-profile.json"), profile = readJsonFile(pf) || {};
+      const map = Object.fromEntries(Object.entries((profile.creative_defaults ||= {}).room_references || {}).filter(([, p0]) => p0 !== want));
+      if (room) map[room] = want;
+      if (Object.keys(map).length) profile.creative_defaults.room_references = map; else delete profile.creative_defaults.room_references;
+      const { errors } = validateProfile(profile, { gymDir: brandDir(gym) });
+      if (errors.length) return json(res, 400, { error: errors[0] });
+      writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+      return json(res, 200, { ok: true, room_references: map });
+    }
     const rrm = p.match(/^\/api\/client\/([^/]+)\/room-reference$/);
     if (rrm && req.method === "POST") {
       const gym = rrm[1];
@@ -1732,7 +1771,7 @@ const server = createServer(async (req, res) => {
     if (am) {
       const [, gym, what, kind, name] = am;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "assets" && req.method === "GET") return json(res, 200, { kinds: ASSET_KINDS, assets: listAssets(gym), clean: cleanPhotos(gym), flagged: flaggedCleans(gym), room_reference: (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference || null, heic: hasSips(), max_bytes: MAX_ASSET_BYTES, max_clean: MAX_CLEAN_PHOTOS });
+      if (what === "assets" && req.method === "GET") return json(res, 200, { kinds: ASSET_KINDS, assets: listAssets(gym), clean: cleanPhotos(gym), flagged: flaggedCleans(gym), rooms: ROOMS, room_references: (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_references || {}, room_reference: (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).creative_defaults?.room_reference || null, heic: hasSips(), max_bytes: MAX_ASSET_BYTES, max_clean: MAX_CLEAN_PHOTOS });
       if (kind && req.method === "PUT") {
         let buf;
         try { buf = await readRaw(req, MAX_ASSET_BYTES); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
@@ -1824,7 +1863,9 @@ const server = createServer(async (req, res) => {
           if (!kindOk(kind)) return json(res, 400, { error: "kind is copy or headline" });
           mkdirSync(out, { recursive: true });
           const cta = (readJsonFile(join(out, "publish-settings.json")) || {}).words?.cta, button = ctaLabel(CTA_TYPES[cta] ? cta : "SIGN_UP", gymLanguage(profile));
-          const r = await draftCopy({ brandDir: dir, batchDir: out, kind, offer: brief.offer, audience: brief.audience || null, locations: brief.locations || [], count, button });
+          // Which copy won (2026-11-11): the skeletons whose drafts earned this gym's own leads on Meta lead the next round.
+          const won = {}; for (const t of gymTextRows(dir)) if (t.kind === kind && t.from && t.leads > 0) { const w = won[t.from] ||= { leads: 0, spend: 0 }; w.leads += t.leads; w.spend += t.spend || 0; }
+          const r = await draftCopy({ brandDir: dir, batchDir: out, kind, offer: brief.offer, audience: brief.audience || null, locations: brief.locations || [], count, button, won });
           return view({ added: r.added.length, dropped: r.dropped, calls: r.calls, recommended: r.recommended.length, skeletons: r.skeletons });
         }
         // Line breaks for the primary texts that came as one block (one text call; the words are not touched).
@@ -2074,7 +2115,7 @@ const server = createServer(async (req, res) => {
         }
         // From the account's results (2026-11-11): the drafter is told what the gym's own ads of this kind have done. A direction of its own.
         if (body.from_results != null && typeof body.from_results !== "boolean") return json(res, 400, { error: "from_results must be true or false" });
-        if (body.from_results && (body.words != null || body.reference != null || body.cover != null)) return json(res, 400, { error: "from the results is a direction of its own: not together with words, a reference image or a cover list" });
+        if (body.from_results && (body.words != null || body.reference != null)) return json(res, 400, { error: "from the results is a direction of its own: not together with words or a reference image" });
         const run = startRun(kind, { gym: body.gym, audience: body.audience, count: body.count, words: body.words?.trim() || null, reference: body.reference || null, cover: body.cover || null, format: body.format || null, from_results: body.from_results === true });
         return json(res, 200, { id: run.id, label: run.label });
       }

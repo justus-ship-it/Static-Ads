@@ -225,7 +225,15 @@ const schemaFor = (kind) => ({ type: "OBJECT", properties: { drafts: { type: "AR
  * The request: the gym, the offer's exact words, the audience and the areas, the rules, the library's skeletons of
  * this kind (the structure, rhythm and voice to follow — never a gym's own past ads), the shape wanted, the angles.
  */
-export function buildDraftPrompt({ profile, kind = "copy", offer, audience, locations, rules, skeletons, count, avoid = [], button = "Sign up" }) {
+/** How much of a draft round follows the skeletons that earned this gym's leads; the rest keep new ones being tried. */
+export const PROVEN_SHARE = "half";
+/** The skeletons that have earned this gym's own leads on Meta, said to the drafter by their number in its list (2026-11-11):
+ *  `won` maps a skeleton's id to { leads, cost_per_lead? } — from the gym's own text results, never another gym's. Null when none has. */
+export function provenLine(skeletons, won = {}) {
+  const hit = skeletons.map((s, i) => ({ n: i + 1, w: won?.[s.id] })).filter((x) => x.w && x.w.leads > 0).sort((a, b) => b.w.leads - a.w.leads).slice(0, 5);
+  return hit.length ? `PROVEN AT THIS GYM: ${hit.map((x) => `skeleton ${x.n} (${x.w.leads} lead${x.w.leads === 1 ? "" : "s"})`).join(", ")} earned its own leads on Meta. Write at least ${PROVEN_SHARE} of the drafts from ${hit.length === 1 ? "this one" : "these"}; the rest from the others, so new skeletons keep being tried.` : null;
+}
+export function buildDraftPrompt({ profile, kind = "copy", offer, audience, locations, rules, skeletons, count, avoid = [], button = "Sign up", won = null }) {
   const gym = profile.display_name || "the gym", what = kind === "headline" ? "headlines" : "primary texts", zh = gymLanguage(profile) === "zh";
   const lines = [
     `You write Meta lead ads for ${gym}, a gym in ${countryRules(profile?.locale?.country).name || "its city"}. Write ${count} different ${what} for one campaign.`,
@@ -240,6 +248,7 @@ export function buildDraftPrompt({ profile, kind = "copy", offer, audience, loca
     `VOICE: ${rules.adjectives.length ? rules.adjectives.join(", ") : "direct, warm, confident"}. ${countryRules(profile?.locale?.country).tone || "Plain English."} Short lines. No hype.`,
     `NEVER write any of these words or ideas: ${rules.never.join("; ")}. No prices. No before-and-after claims. No weight-loss numbers. No em dashes or en dashes; use a plain hyphen. No emoji in headlines. No other placeholder than {AREA} and {BUTTON}.`,
     rules.must_say.length ? `ALWAYS work in: ${rules.must_say.join("; ")}.` : "",
+    provenLine(skeletons, won) || "",
     avoid.length ? `ALREADY WRITTEN (do not repeat these): ${avoid.map((a) => (kindOf(a) === "headline" ? a.headline : a.message.split("\n")[0].slice(0, 80))).join(" | ")}` : "",
     kind === "headline"
       ? `SHAPE: one line, under ${LIMITS.headline_ideal} characters ideally and never over ${LIMITS.headline}, plus a description under ${LIMITS.description_ideal} characters or empty. Spread the ${count} across these angles and name each one's angle: ${ANGLES.join(", ")}.`
@@ -259,7 +268,7 @@ export const keptCopies = (batchDir, kind = "copy") => readCopy(batchDir).drafts
  * too; then one judge call rates the open drafts of that kind and the top five are recommended. `ask` is the model
  * call (callVision's shape); `skeletons` overrides the library (tests).
  */
-export async function draftCopy({ brandDir, batchDir, kind = "copy", offer, audience = null, locations = [], count = 10, button = "Sign up", libraryDir = undefined, skeletons = null, judge = true, ask = callVision, model = COPY_MODEL, log = () => {} }) {
+export async function draftCopy({ brandDir, batchDir, kind = "copy", offer, audience = null, locations = [], count = 10, button = "Sign up", libraryDir = undefined, skeletons = null, won = null, judge = true, ask = callVision, model = COPY_MODEL, log = () => {} }) {
   if (!KINDS.includes(kind)) throw new Error("kind is copy or headline");
   if (!offer) throw new Error("the offer's exact words are needed");
   if (!Number.isInteger(count) || count < 1 || count > 20) throw new Error("count must be 1 to 20");
@@ -274,7 +283,7 @@ export async function draftCopy({ brandDir, batchDir, kind = "copy", offer, audi
   let calls = 0;
   for (let round = 0; round < 2 && added.length < count; round++) {
     const want = count - added.length;
-    const { prompt, schema } = buildDraftPrompt({ profile, kind, offer, audience, locations, rules, skeletons: skel, count: want, avoid: [...data.drafts.filter((d) => kindOf(d) === kind), ...added], button });
+    const { prompt, schema } = buildDraftPrompt({ profile, kind, offer, audience, locations, rules, skeletons: skel, count: want, avoid: [...data.drafts.filter((d) => kindOf(d) === kind), ...added], button, won });
     const answer = await ask(null, prompt, schema, { model }); calls++;
     for (const raw of answer?.drafts || []) {
       const norm = (t, max) => clean(areaPlaceholder(buttonPlaceholder(plainDashes(t)), locations), max);

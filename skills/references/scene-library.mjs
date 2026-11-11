@@ -68,6 +68,11 @@ export function allocateMix(shares, count) {
 export const mixName = (counts) => { const live = Object.entries(counts || {}).filter(([, n]) => n > 0).map(([f]) => f); return live.length === 1 ? live[0] : live.length ? "mixed" : null; };
 /** What a portrait scene says beyond the description. The words are the creative readings' own (read-creatives.mjs:
  *  BACKDROPS, POSES, EXPRESSIONS), so a scene and what Meta's numbers say about ads like it are named alike. */
+/** The rooms of a gym a photo can be matched to (2026-11-11): the picture readings' own words, so a room and Meta's numbers for
+ *  pictures of it are named alike. A gym says which of its cleaned premises photos shows which (creative_defaults.room_references). */
+export const ROOMS = { "studio-room": "the studio room", "gym-floor": "the gym floor" };
+/** Tags a scene may carry and need not: a workout scene's room (when it only makes sense in one) and its mood — the readings' expression, in a scene's words. */
+export const SCENE_OPTIONAL_TAGS = { room: Object.keys(ROOMS), mood: ["effort", "smile", "calm"] };
 export const PORTRAIT_TAGS = {
   backdrop: ["seamless-colour", "dark-wall", "gym-floor"], // a flat studio colour · a plain dark wall · the gym, softened to a blur
   stance: ["easy-posed", "holding-equipment", "stretch", "walking"],
@@ -83,6 +88,7 @@ export function sceneProblems(s) {
   if (!POSES[s.pose]) errs.push(`pose must be one of ${Object.keys(POSES).join(", ")}`);
   if (!Number.isInteger(s.people) || s.people < 1 || s.people > MAX_SCENE_PEOPLE) errs.push(`people must be 1 to ${MAX_SCENE_PEOPLE}`);
   if (s.audience && !AUDIENCES.includes(s.audience)) errs.push('audience must be "men", "women" or "any"');
+  for (const [k, vals] of Object.entries(SCENE_OPTIONAL_TAGS)) if (s[k] != null && !vals.includes(s[k])) errs.push(`${k} must be one of ${vals.join(", ")} (or left out)`);
   for (const [tag, allowed] of Object.entries(SCENE_TAGS)) if (s[tag] != null && !allowed.includes(s[tag])) errs.push(`${tag} must be one of ${allowed.join(", ")}`);
   if (s.format != null && !SCENE_FORMATS[s.format]) errs.push(`format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
   for (const [tag, allowed] of Object.entries(PORTRAIT_TAGS)) if (s[tag] != null && !allowed.includes(s[tag])) errs.push(`${tag} must be one of ${allowed.join(", ")}`);

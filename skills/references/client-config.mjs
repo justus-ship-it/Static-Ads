@@ -485,6 +485,15 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       for (const a of list("audiences")) for (const e of validateInputs({ location: "X", audience: a, offer: "x" })) if (e.startsWith("audience")) errors.push(`audience callout ${JSON.stringify(a)}: ${e.replace(/^audience /, "")}`);
       for (const p of list("real_photos")) if (typeof p !== "string" || p.includes("..") || (gymDir && !existsSync(join(gymDir, "brand-assets", p)))) errors.push(`real photo ${JSON.stringify(p)} is not in brand-assets`);
       // The room reference: a cleaned premises photo, or a cleaned coach/member photo (reference-clean), never a raw one.
+      // Which of the cleaned photos shows which room (2026-11-11): a photo matched to a room takes that room's own photo as its reference.
+      const rooms = cd.room_references;
+      if (rooms != null) {
+        if (typeof rooms !== "object" || Array.isArray(rooms)) errors.push("creative_defaults.room_references must map a room to one of the cleaned photos");
+        else for (const [room, path] of Object.entries(rooms)) {
+          if (!ROOM_IDS.includes(room)) errors.push(`creative_defaults.room_references: "${room}" is not a room (use ${ROOM_IDS.join(", ")})`);
+          else if (typeof path !== "string" || path.includes("..") || !/^[a-z0-9-]+-clean\//.test(path) || (gymDir && !existsSync(join(gymDir, "brand-assets", path)))) errors.push(`creative_defaults.room_references: the photo for ${room} must be one of the cleaned photos`);
+        }
+      }
       const rr = cd.room_reference;
       if (rr != null && rr !== "" && (typeof rr !== "string" || rr.includes("..") || !/^[a-z0-9-]+-clean\//.test(rr) || (gymDir && !existsSync(join(gymDir, "brand-assets", rr))))) errors.push(`creative_defaults.room_reference ${JSON.stringify(rr)} must be one of the cleaned photos (facility-clean or reference-clean)`);
       const int = (k, lo, hi) => { if (cd[k] != null && !(Number.isInteger(cd[k]) && cd[k] >= lo && cd[k] <= hi)) errors.push(`creative_defaults.${k} must be a whole number from ${lo} to ${hi}`); };
@@ -541,6 +550,8 @@ export function validateProfile(profile, { gymDir = null } = {}) {
  * `have` carries what the panel knows beyond the profile file: cleaned photos, the scene library's
  * status, the number of offer wordings.
  */
+/** The rooms a photo can be matched to (scene-library's ROOMS: kept as a list here, so this module imports nothing from it). */
+export const ROOM_IDS = ["studio-room", "gym-floor"];
 export function profileCompleteness(profile, { gymDir = null, cleanPhotos = 0, roomReference = false, scenes = null, wordings = 0 } = {}) {
   const p = profile || {}, loc = (p.locations || [])[0] || {}, lock = p.brand_lock || {}, ph = lock.photography || {}, cd = p.creative_defaults || {};
   const logo = lock.logo?.files?.primary;
@@ -561,14 +572,16 @@ export function profileCompleteness(profile, { gymDir = null, cleanPhotos = 0, r
     S("brand", "Brand & photography", "brand", [["a primary colour", !!lock.colors?.primary?.hex], ["what photos must show", (ph.must || []).length > 0], ["what photos must never show", (ph.never || []).length > 0], ["who is in the photos", !!ph.people]],
       { tips: logoFound ? [] : ["add the logo file (brand-assets/logo) — kept for later, not drawn on the ads"] }),
     S("photos", "Real photos", "photos", [["a cleaned photo of the premises, or a room reference", cleanPhotos > 0 || !!roomReference || !!profile.creative_defaults?.room_reference]]),
+    // To learn from the results by room (2026-11-11): one click per photo on Photos & assets. Never in the way of creating or publishing.
+    S("rooms", "Rooms", "photos", [["which room a premises photo shows", Object.keys(cd.room_references || {}).length > 0]], { for: "learning" }),
     S("scenes", "Scene library", "scenes", [["an approved scene library", !!scenes?.exists && !!scenes?.approved], ...audiences.filter((a, i, all) => all.indexOf(a) === i && a !== "any").map((a) => [`scenes for ${a}`, sceneFor(a)])]),
     S("offers", "Offer wording", "offer", [["at least one offer wording", wordings > 0]]),
     S("defaults", "Ad defaults", "defaults", [["at least one location callout", (cd.locations || []).length > 0]]),
     S("targeting", "Targeting & budget", "targeting", [["a radius pin", pinUsable(pin)], ["an age range", dem.age_min != null && dem.age_max != null], ["a budget", p.campaign_defaults?.budget?.amount > 0]], { for: "publishing" }),
     S("meta", "Meta link", "meta", [["ad account id", !!m.ad_account_id], ["Facebook page id", !!m.page_id], ["business portfolio id", !!m.business_id], ["pixel id", !!m.pixel_id], ["lead form id", !!m.lead_form_id]], { for: "publishing" }),
   ];
-  const create = sections.filter((s) => s.for !== "publishing");
-  return { sections, ready_to_create: create.every((s) => s.status === "done"), ready_to_publish: sections.every((s) => s.status === "done"), to_do: create.filter((s) => s.status !== "done").length };
+  const create = sections.filter((s) => !s.for);
+  return { sections, ready_to_create: create.every((s) => s.status === "done"), ready_to_publish: sections.filter((s) => s.for !== "learning").every((s) => s.status === "done"), to_do: create.filter((s) => s.status !== "done").length };
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────

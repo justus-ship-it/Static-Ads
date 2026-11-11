@@ -35,10 +35,19 @@ export function valueOf(row, key) {
   if (FROM_ROW.has(key)) return row[key] || null;
   // An ad this app made knows its format from its batch (Phase 4): the record wins over what a reading of the picture guessed.
   if (key === "format" && row.format) return row.format;
+  // By record, not by eye (2026-11-11): for this app's own ads the room and the words' size are what the batch recorded.
+  // The vision reader called the same words in the same layout "heavy" on one Sculpt Society ad and "light" on another.
+  if (row.source === "app") {
+    if (key === "backdrop" && row.room) return row.room;
+    if (key === "text_density") return row.text_cover == null ? null : coverWord(row.text_cover);
+  }
   const r = row.read; if (!r) return null;
   if (key === "logo" || key === "eye_contact") return yesNo(r[key]);
   return r[key] ?? null;
 }
+/** How much of the picture the words cover, in the reading's own words: under COVER_LIGHT light, from COVER_HEAVY heavy. Measured at render (batch.json → text_cover), never guessed. */
+export const COVER_LIGHT = 0.1, COVER_HEAVY = 0.18;
+export const coverWord = (c) => (c < COVER_LIGHT ? "light" : c >= COVER_HEAVY ? "heavy" : "medium");
 /** Every row with its reading attached (by ad id). */
 export function joinReads(rows, byAd) { return rows.map((r) => ({ ...r, read: (r.ad_id && byAd.get(r.ad_id)) || null })); }
 /** The median cost per lead over the ads that have at least an early number of leads; null without any. */
@@ -55,7 +64,7 @@ export function attributeTables(rows, { median = medianCpl(rows) } = {}) {
   return ATTRIBUTES.map(([key, label]) => {
     const by = new Map(); let unread = 0, unreadLeads = 0;
     for (const r of rows) { const v = valueOf(r, key); if (v == null) { unread++; unreadLeads += r.leads || 0; continue; } (by.get(v) || by.set(v, []).get(v)).push(r); }
-    const values = [...by.entries()].map(([value, rs]) => { const s = sum(rs); return { value, ...s, cost_per_lead: s.leads ? round2(s.spend / s.leads) : null, share: totalLeads ? round2((s.leads / totalLeads) * 100) : 0, vs_median: s.leads && median ? round2(s.spend / s.leads / median) : null, confidence: confidence(s.leads) }; })
+    const values = [...by.entries()].map(([value, rs]) => { const s = sum(rs); return { value, ...s, pictures: new Set(rs.map(pictureKey)).size, cost_per_lead: s.leads ? round2(s.spend / s.leads) : null, share: totalLeads ? round2((s.leads / totalLeads) * 100) : 0, vs_median: s.leads && median ? round2(s.spend / s.leads / median) : null, confidence: confidence(s.leads) }; })
       .sort((a, b) => (a.cost_per_lead ?? Infinity) - (b.cost_per_lead ?? Infinity) || b.leads - a.leads || b.spend - a.spend);
     return { key, label, values, unread, unread_leads: unreadLeads };
   });
@@ -67,23 +76,113 @@ const adName = (r) => r.ad_name || (r.folder ? `${r.batch}/${r.folder.replace(/^
 const kindOf = (r) => { const d = r.read; if (!d) return r.media || "ad"; return [d.format, d.subject !== "none" ? d.subject : null, d.backdrop].filter(Boolean).join(", "); };
 const money = (n, cur) => (n == null ? "—" : `${cur} ${Number(n).toFixed(2)}`);
 
-/** What to do, by rule. Each item: { kind, text, ads?, attribute? }. Nothing here acts. */
+// ── checked before it is said (2026-11-11) ───────────────────────────────────
+// The review told Sculpt Society to keep running an ad that "still leads cheaply" at SGD 17.81 — its all-time figure — while
+// its last 7 days cost SGD 29.42 a lead; and it read one ad's leads as three findings (its backdrop, its kind of shot, its
+// words). So every line is checked by rule before it is advice, and carries its verdict:
+//   confirmed — it stands: act on it        test  — one picture, or contradicted inside an ad set: the next batch tests it
+//   early     — not judged yet (no fair chance, or its whole ad set is weak)        none — true, and nothing here changes it
+/** An ad is judged a loser only after this many impressions and a spend of this many median leads. */
+export const FAIR_IMPRESSIONS = 1000, FAIR_SPEND_X = 2;
+/** A winner is fading when its recent cost per lead is this much above its own all-time figure, on at least this many recent leads. */
+export const FADE_X = 1.25, FADE_MIN_LEADS = 5;
+/** A pattern is confirmed on at least this many different pictures; a gap between two values matters from this ratio. */
+export const CONFIRM_PICTURES = 2, MATTERS_GAP = 1.25;
+/** Attributes nothing in the app changes: said for the record, never acted on. */
+export const NO_LEVER = new Set(["ratio", "logo", "media", "offer"]);
+/** An ad's most recent figures on file: the last 7 days for this app's ads, the last 30 for the account's; null for an export's. */
+export function recentOf(r) {
+  for (const [d, l, s] of [[7, "leads_7d", "spend_7d"], [30, "leads_30d", "spend_30d"]]) if (r[l] != null || r[s] != null) { const leads = r[l] || 0, spend = round2(r[s] || 0); return { days: d, leads, spend, cost_per_lead: leads ? round2(spend / leads) : null }; }
+  return null;
+}
+const check = (name, ok, text) => ({ name, ok, text });
+/** The other ads of an ad's own ad set: their leads, spend and cost per lead (the same audience, the same budget). */
+function restOfAdset(r, rows) { const o = rows.filter((x) => x !== r && x.adset_id && x.adset_id === r.adset_id); const leads = o.reduce((t, x) => t + (x.leads || 0), 0), spend = round2(o.reduce((t, x) => t + (x.spend || 0), 0)); return { ads: o.length, leads, spend, cost_per_lead: leads ? round2(spend / leads) : null }; }
+/**
+ * The running ads, checked: { key, kind: keep | tiring | pause | wait, verdict, ads, name, what, numbers, checks[], text }.
+ *   keep    — 10+ leads at 85% of the median or less, and not fading
+ *   tiring  — seen 3 times a person or more, or a winner whose recent leads cost 25% more than its own average ("fading")
+ *   pause   — dear (150% of the median on 5+ leads) or spend for nothing — after a fair chance, and not when its whole ad set is weak
+ *   wait    — would be paused, but not judged yet
+ */
+export function adInsights(rows, { median = medianCpl(rows), currency = "SGD" } = {}) {
+  if (median == null) return [];
+  const out = [], active = rows.filter(isActive);
+  const cheap = active.filter((r) => (r.leads || 0) >= LEADS_KEEP && r.cost_per_lead != null && r.cost_per_lead <= CHEAP * median).sort((a, b) => b.leads - a.leads);
+  const numbers = (r, rec) => ({ leads: r.leads || 0, spend: r.spend || 0, cost_per_lead: r.cost_per_lead ?? null, impressions: r.impressions || 0, frequency: r.frequency ?? null, median, recent: rec });
+  const tired = new Map(); // ad → reasons
+  for (const r of cheap.slice(0, 6)) {
+    const rec = recentOf(r), fading = !!rec && rec.leads >= FADE_MIN_LEADS && rec.cost_per_lead >= FADE_X * r.cost_per_lead, rest = restOfAdset(r, active);
+    const checks = [
+      rec ? check("recent", rec.leads < FADE_MIN_LEADS ? null : !fading, rec.leads < FADE_MIN_LEADS ? `only ${rec.leads} lead${rec.leads === 1 ? "" : "s"} in the last ${rec.days} days: too few to say whether it still pays` : `the last ${rec.days} days: ${rec.leads} leads at ${money(rec.cost_per_lead, currency)}, against ${money(r.cost_per_lead, currency)} over its whole run`) : check("recent", null, "no recent figure on file to set beside its total"),
+      rest.ads ? check("adset", rest.cost_per_lead == null ? null : r.cost_per_lead <= rest.cost_per_lead, rest.cost_per_lead == null ? "the other ads of its ad set have no lead to compare with" : `the other ${rest.ads} ad${rest.ads === 1 ? "" : "s"} of its ad set cost ${money(rest.cost_per_lead, currency)} a lead`) : check("adset", null, "it is alone in its ad set"),
+    ];
+    if (fading) { tired.set(r, { fading: rec, checks }); continue; }
+    out.push({ key: `keep:${r.ad_id}`, kind: "keep", verdict: "confirmed", ads: [r.ad_id], name: adName(r), what: kindOf(r), numbers: numbers(r, rec), checks,
+      text: `Keep running: ${adName(r)} — ${r.leads} leads at ${money(r.cost_per_lead, currency)} against a median of ${money(median, currency)} (${kindOf(r)}).${rec && rec.leads >= FADE_MIN_LEADS ? ` Still paying: ${rec.leads} leads at ${money(rec.cost_per_lead, currency)} in the last ${rec.days} days.` : ""}` });
+  }
+  for (const r of fatigueRows(active)) if (!tired.has(r)) tired.set(r, { fading: null, checks: [] });
+  for (const [r, t] of tired) {
+    const rec = recentOf(r), isCheap = cheap.includes(r), seen = (r.frequency || 0) >= FREQ_TIRED;
+    const checks = [...t.checks, ...(seen ? [check("frequency", false, `seen ${r.frequency} times per person (${FREQ_TIRED} or more is tiring)`)] : [])];
+    const text = t.fading
+      ? `Fading: ${adName(r)} — its last ${t.fading.days} days cost ${money(t.fading.cost_per_lead, currency)} a lead (${t.fading.leads} leads) against ${money(r.cost_per_lead, currency)} over its whole run (${r.leads} leads); the median is ${money(median, currency)}.${seen ? ` It has been seen ${r.frequency} times per person.` : ""} Make new versions of the same kind (${kindOf(r)}) now.`
+      : `Tiring: ${adName(r)} has been seen ${r.frequency} times per person${isCheap ? " and still leads cheaply" : ""}. Make new versions of the same kind (${kindOf(r)}) before it fades${isCheap ? "" : ", or let it go"}.`;
+    out.push({ key: `tiring:${r.ad_id}`, kind: "tiring", verdict: "confirmed", fading: !!t.fading, ads: [r.ad_id], name: adName(r), what: kindOf(r), numbers: numbers(r, rec), checks, text });
+  }
+  const retire = active.filter((r) => ((r.leads || 0) >= LEADS_EARLY && r.cost_per_lead >= DEAR * median) || (!(r.leads || 0) && (r.spend || 0) >= FAIR_SPEND_X * median)).sort((a, b) => (b.cost_per_lead ?? -1) - (a.cost_per_lead ?? -1));
+  for (const r of retire.slice(0, 6)) {
+    const rest = restOfAdset(r, active), seenEnough = !(r.impressions > 0) || r.impressions >= FAIR_IMPRESSIONS, spentEnough = (r.spend || 0) >= FAIR_SPEND_X * median, weakSet = rest.ads > 0 && !rest.leads && !(r.leads || 0);
+    const checks = [
+      check("fair", seenEnough && spentEnough, `${r.impressions > 0 ? `${r.impressions.toLocaleString("en-GB")} impressions and ` : ""}${money(r.spend, currency)} spent (a fair chance is ${FAIR_IMPRESSIONS.toLocaleString("en-GB")} impressions and ${money(round2(FAIR_SPEND_X * median), currency)})`),
+      rest.ads ? check("adset", !weakSet, weakSet ? `no ad in its ad set has a lead (${money(rest.spend, currency)} spent between the other ${rest.ads}): that points at the audience, not this ad` : `the other ${rest.ads} ad${rest.ads === 1 ? "" : "s"} of its ad set: ${rest.leads} lead${rest.leads === 1 ? "" : "s"}${rest.cost_per_lead != null ? ` at ${money(rest.cost_per_lead, currency)}` : ""}`) : check("adset", null, "it is alone in its ad set"),
+    ];
+    const fair = seenEnough && spentEnough && !weakSet, said = r.leads ? `${r.leads} leads at ${money(r.cost_per_lead, currency)}` : `${money(r.spend, currency)} spent for no lead`;
+    out.push(fair
+      ? { key: `pause:${r.ad_id}`, kind: "pause", verdict: "confirmed", ads: [r.ad_id], name: adName(r), what: kindOf(r), numbers: numbers(r, recentOf(r)), checks, text: `Consider pausing: ${adName(r)} — ${said} (${kindOf(r)}).` }
+      : { key: `pause:${r.ad_id}`, kind: "wait", verdict: "early", ads: [r.ad_id], name: adName(r), what: kindOf(r), numbers: numbers(r, recentOf(r)), checks, text: `Not judged yet: ${adName(r)} — ${said}, but ${weakSet ? "no ad in its ad set has a lead, which points at the audience rather than this ad" : "it has not had a fair chance"} (${checks[weakSet ? 1 : 0].text}).` });
+  }
+  return out;
+}
+/**
+ * What the ads' attributes say, checked: the widest gaps between two values with solid leads on both sides, each
+ * { key, kind: matters | lead | fact, verdict, attribute, label, best, worst, gap, checks[], text }.
+ *   matters (confirmed) — the cheaper value stands on two or more pictures, and no ad set says the opposite
+ *   lead (test)         — one picture's leads are that picture's: something to test, not a finding
+ *   fact (none)         — true, and nothing in the app changes it (the ratio, a logo)
+ */
+export function attrInsights(rows, tables, { currency = "SGD", top = 3 } = {}) {
+  const gaps = tables.map((t) => { const vs = t.values.filter((v) => v.cost_per_lead != null && v.confidence === "solid"); if (vs.length < 2) return null; const best = vs[0], worst = vs[vs.length - 1]; return { t, best, worst, gap: round2(worst.cost_per_lead / best.cost_per_lead) }; }).filter((g) => g && g.gap >= MATTERS_GAP).sort((a, b) => b.gap - a.gap);
+  // One picture is one lead to test, however many of its attributes it would name (its kind of shot, its subject, its backdrop):
+  // the widest gap speaks for it, and the line says which picture it is.
+  const soleOf = (t, v) => { const of = rows.filter((r) => valueOf(r, t.key) === v.value); return v.pictures === 1 && of.length ? of[0] : null; }, seenPic = new Set();
+  const kept = gaps.filter((g) => { const one = soleOf(g.t, g.best); if (!one || NO_LEVER.has(g.t.key)) return true; const k = pictureKey(one); if (seenPic.has(k)) return false; seenPic.add(k); return true; });
+  return kept.slice(0, top).map(({ t, best, worst, gap }) => {
+    // Like with like: inside each ad set that ran both values with enough leads, which one was cheaper there?
+    const sets = new Map();
+    for (const r of rows) { const v = valueOf(r, t.key); if (!r.adset_id || (v !== best.value && v !== worst.value)) continue; const s = sets.get(r.adset_id) || sets.set(r.adset_id, { b: { leads: 0, spend: 0 }, w: { leads: 0, spend: 0 } }).get(r.adset_id), x = v === best.value ? s.b : s.w; x.leads += r.leads || 0; x.spend += r.spend || 0; }
+    const both = [...sets.values()].filter((s) => s.b.leads >= FADE_MIN_LEADS && s.w.leads >= FADE_MIN_LEADS), agree = both.filter((s) => s.b.spend / s.b.leads <= s.w.spend / s.w.leads).length;
+    const pics = (v) => `${v.pictures === 1 ? "one picture" : `${v.pictures} pictures`}`;
+    const checks = [
+      check("pictures", best.pictures >= CONFIRM_PICTURES, `${best.value} stands on ${pics(best)} (${best.leads} leads), ${worst.value} on ${pics(worst)} (${worst.leads})`),
+      both.length ? check("adset", agree > 0, `inside ${both.length === 1 ? "the one ad set" : `${both.length} ad sets`} that ran both, ${best.value} was cheaper in ${agree}`) : check("adset", null, "no ad set ran both with enough leads to compare like with like"),
+    ];
+    const lever = !NO_LEVER.has(t.key), confirmed = best.pictures >= CONFIRM_PICTURES && !(both.length && !agree), one = soleOf(t, best);
+    const base = { ...(one ? { picture: { name: adName(one), scene: one.source === "app" && one.scenes && !String(one.scenes).includes("+") ? one.scenes : null, ad_id: one.ad_id } } : {}), key: `attr:${t.key}=${best.value}`, attribute: t.key, label: t.label, best: { value: best.value, leads: best.leads, pictures: best.pictures, cost_per_lead: best.cost_per_lead }, worst: { value: worst.value, leads: worst.leads, pictures: worst.pictures, cost_per_lead: worst.cost_per_lead }, gap, checks };
+    if (!lever) return { ...base, kind: "fact", verdict: "none", text: `${t.label}: ${best.value} leads at ${money(best.cost_per_lead, currency)} (${best.leads} leads) against ${worst.value} at ${money(worst.cost_per_lead, currency)} (${worst.leads}). For the record: nothing in the app changes this.` };
+    return confirmed
+      ? { ...base, kind: "matters", verdict: "confirmed", text: `${t.label} matters: ${best.value} leads at ${money(best.cost_per_lead, currency)} (${best.leads} leads over ${pics(best)}) against ${worst.value} at ${money(worst.cost_per_lead, currency)} (${worst.leads} over ${pics(worst).replace(" pictures", "").replace("one picture", "one")}). Make more of the first.` }
+      : { ...base, kind: "lead", verdict: "test", text: `To test, not a finding yet — ${t.label}: ${best.value} at ${money(best.cost_per_lead, currency)} (${best.leads} leads, ${pics(best)}) against ${worst.value} at ${money(worst.cost_per_lead, currency)} (${worst.leads} over ${pics(worst)}). ${best.pictures < CONFIRM_PICTURES ? `One picture's leads are that picture's${one ? ` (${one.source === "app" && one.scenes && !String(one.scenes).includes("+") ? `scene ${one.scenes}` : adName(one)})` : ""}` : `Inside the ad sets that ran both, ${best.value} was not the cheaper one`}: the next batch tests it with new versions.` };
+  });
+}
+
+/** What to do, by rule, each line checked first (adInsights, attrInsights). Each item: { kind, text, ads?, attribute?, verdict?, checks? }. Nothing here acts. */
 export function suggestions(rows, tables, { median = medianCpl(rows), currency = "SGD", everyRows = rows } = {}) {
   const out = [], total = rows.reduce((t, r) => t + (r.leads || 0), 0);
-  const active = rows.filter(isActive);
   if (total < LEADS_SOLID) out.push({ kind: "thin", text: `Too few leads to conclude anything yet: ${total} in all. Let the current ads run to ${LEADS_SOLID} before changing the mix.` });
   if (median == null) { out.push({ kind: "thin", text: `No ad has ${LEADS_EARLY} leads yet, so there is no median cost per lead to compare against.` }); return out; }
-  const keep = active.filter((r) => (r.leads || 0) >= LEADS_KEEP && r.cost_per_lead != null && r.cost_per_lead <= CHEAP * median).sort((a, b) => b.leads - a.leads);
-  for (const r of keep.slice(0, 6)) out.push({ kind: "keep", ads: [r.ad_id], text: `Keep running: ${adName(r)} — ${r.leads} leads at ${money(r.cost_per_lead, currency)} against a median of ${money(median, currency)} (${kindOf(r)}).` });
-  for (const r of fatigueRows(active)) {
-    const cheap = keep.includes(r);
-    out.push({ kind: "tiring", ads: [r.ad_id], text: `Tiring: ${adName(r)} has been seen ${r.frequency} times per person${cheap ? " and still leads cheaply" : ""}. Make new versions of the same kind (${kindOf(r)}) before it fades${cheap ? "" : ", or let it go"}.` });
-  }
-  const retire = active.filter((r) => ((r.leads || 0) >= LEADS_EARLY && r.cost_per_lead >= DEAR * median) || (!(r.leads || 0) && (r.spend || 0) >= 2 * median)).sort((a, b) => (b.cost_per_lead ?? -1) - (a.cost_per_lead ?? -1));
-  for (const r of retire.slice(0, 6)) out.push({ kind: "pause", ads: [r.ad_id], text: `Consider pausing: ${adName(r)} — ${r.leads ? `${r.leads} leads at ${money(r.cost_per_lead, currency)}` : `${money(r.spend, currency)} spent for no lead`} (${kindOf(r)}).` });
-  // The attribute whose values differ most, among values with solid leads on both sides (a 7-lead value proves nothing).
-  const gaps = tables.map((t) => { const vs = t.values.filter((v) => v.cost_per_lead != null && v.confidence === "solid"); if (vs.length < 2) return null; const best = vs[0], worst = vs[vs.length - 1]; return { t, best, worst, gap: round2(worst.cost_per_lead / best.cost_per_lead) }; }).filter((g) => g && g.gap >= 1.25).sort((a, b) => b.gap - a.gap);
-  for (const g of gaps.slice(0, 3)) out.push({ kind: "matters", attribute: g.t.key, text: `${g.t.label} matters: ${g.best.value} leads at ${money(g.best.cost_per_lead, currency)} (${g.best.leads} leads) against ${g.worst.value} at ${money(g.worst.cost_per_lead, currency)} (${g.worst.leads}). Make more of the first.` });
+  out.push(...adInsights(rows, { median, currency }));
+  out.push(...attrInsights(rows, tables, { currency }));
   const fmt = tables.find((t) => t.key === "format");
   if (fmt && everyRows.some((r) => r.read)) {
     // Tried anywhere in the gym's history, not only in the scope: an old campaign's class shot still counts as tried.
@@ -126,7 +225,9 @@ export function leftOutWhy(r) {
 }
 /** A gym's rows with their readings, and what was left out and why. */
 export function gymRowsSplit(gymDir) {
-  const all = joinReads(allRows(gymDir), readsFor(gymDir).byAd), left_out = { abroad: 0, objective: 0, recruitment: 0 }, rows = [];
+  // An ad the owner paused from here (insights.json → actions) reads as paused at once: Meta's own word takes over at the next read of the account.
+  let paused = new Map(); try { for (const a of JSON.parse(readFileSync(join(gymDir, "insights.json"), "utf-8")).actions || []) if (a.what === "pause" && a.ad_id) paused.set(a.ad_id, a.at); } catch { /* no ledger yet */ }
+  const all = joinReads(allRows(gymDir), readsFor(gymDir).byAd).map((r) => (paused.has(r.ad_id) && String(r.pulled || "") < paused.get(r.ad_id) && isActive(r) ? { ...r, status: "paused", paused_here: paused.get(r.ad_id) } : r)), left_out = { abroad: 0, objective: 0, recruitment: 0 }, rows = [];
   for (const r of all) { const why = leftOutWhy(r); if (why) left_out[why]++; else rows.push(r); }
   return { rows, left_out };
 }

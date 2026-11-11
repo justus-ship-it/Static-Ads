@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCsv, parseExport, adNameParts, adsetNameFacts, similarity, matchCreatives, listCreatives, parseCopyText, rtfToText, importExport, MATCH_FLOOR } from "./ads-export.mjs";
 import { readCreatives, readsFor, ratioOf, READS_FILE, FORMATS, pictures, unreadCount } from "./read-creatives.mjs";
-import { attributeTables, suggestions, medianCpl, joinReads, confidence, whatWins, campaignList, LEADS_EARLY, LEADS_SOLID, FREQ_TIRED, inScope, inTrack, trackSums, RECENT_DAYS, leftOutWhy, poolTables, acrossSuggestions, nextWave, whatWinsAcross, refreshAll, readAll } from "./what-wins.mjs";
+import { adInsights, attrInsights, recentOf, valueOf, coverWord, COVER_LIGHT, COVER_HEAVY, FAIR_IMPRESSIONS, FAIR_SPEND_X, FADE_X, FADE_MIN_LEADS, CONFIRM_PICTURES, NO_LEVER, attributeTables, suggestions, medianCpl, joinReads, confidence, whatWins, campaignList, LEADS_EARLY, LEADS_SOLID, FREQ_TIRED, inScope, inTrack, trackSums, RECENT_DAYS, leftOutWhy, poolTables, acrossSuggestions, nextWave, whatWinsAcross, refreshAll, readAll } from "./what-wins.mjs";
 import { readHistory, historyRows, pullAccountHistory, readCopyRefs, fetchPictures, PICTURES_DIR } from "./meta-results.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 
@@ -278,4 +278,78 @@ test("X5 every account, refreshed and read: the delivered ads' pictures fetched 
     assert.ok(A.suggestions.some((x) => x.kind === "no-data" && x.gym === "two") && Array.isArray(A.tables));
     assert.ok(!A.gyms[0].rows && A._gyms[0].rows.every((x) => !x.abroad), "ad sets reaching abroad are left out of every table");
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("X6 checked before it is said (2026-11-11): a winner is kept only while its recent leads still pay — one whose last 7 days cost a quarter more than its own average is fading, not a keeper; an ad is called a loser only after a fair chance (impressions and spend) and never when its whole ad set has no lead; a gap between two values is a finding only on two or more pictures and when no ad set says the opposite, else a lead to test, said once per picture; the ratio and the logo are for the record; this app's own ads are described by their record, never by a guess at the picture", () => {
+  const A = (ad_id, over = {}) => ({ source: "account", ad_id, ad_name: ad_id, adset_id: "s1", status: "live", media: "image", offer: "Offer", spend: 0, impressions: 5000, leads: 0, cost_per_lead: null, frequency: 1, hashes: [ad_id], ...over });
+  const rd = (over = {}) => ({ format: "workout", subject: "woman", backdrop: "gym-floor", pose: "mid-exercise", expression: "effort", eye_contact: false, text_density: "light", logo: false, ratio: "4:5", ...over });
+  const cpl = (spend, leads) => ({ spend, leads, cost_per_lead: leads ? Math.round((spend / leads) * 100) / 100 : null });
+  // Sculpt Society's case: 198 leads at 17.81 all told, 18 at 29.42 in the last 7 days.
+  const rows = [
+    A("winner", { ...cpl(3525.53, 198), frequency: 3.24, leads_7d: 18, spend_7d: 529.54, read: rd({ format: "class-group", subject: "group", backdrop: "studio-room" }) }),
+    A("steady", { ...cpl(480, 30), leads_7d: 6, spend_7d: 90, read: rd({ backdrop: "studio-room" }) }),
+    A("quiet", { ...cpl(170, 10), leads_7d: 2, spend_7d: 60, read: rd() }),
+    A("mid1", { ...cpl(510, 20), read: rd() }), A("mid2", { ...cpl(260, 10), read: rd() }),
+    A("nothing", { ...cpl(52.2, 0), impressions: 1880, read: rd() }),
+    A("starved", { ...cpl(50, 0), impressions: 400, read: rd() }),
+    A("lonely", { ...cpl(60, 0), impressions: 3000, adset_id: "s2", read: rd() }), A("lonely2", { ...cpl(55, 0), impressions: 2500, adset_id: "s2", read: rd() }),
+  ];
+  const median = medianCpl(rows);
+  assert.equal(median, 17.81, "over the ads with 5+ leads: 16, 17, 17.81, 25.5, 26");
+  assert.deepEqual([recentOf(rows[0]), recentOf({ leads_30d: 4, spend_30d: 100 }), recentOf({})], [{ days: 7, leads: 18, spend: 529.54, cost_per_lead: 29.42 }, { days: 30, leads: 4, spend: 100, cost_per_lead: 25 }, null]);
+  // The ads. A winner fading is not a keeper; a keeper says it still pays; too few recent leads is said, not judged.
+  const cheapRows = rows.map((r) => (r.ad_id === "winner" ? { ...r, ...cpl(2772, 198) } : r)), m2 = medianCpl(cheapRows); // 14.00 a lead all told: cheap against the median
+  const ads = adInsights(cheapRows, { median: m2, currency: "SGD" }), by = (k) => ads.find((x) => x.key === k);
+  assert.deepEqual([by("tiring:winner").kind, by("tiring:winner").fading, by("tiring:winner").verdict, !!by("keep:winner")], ["tiring", true, "confirmed", false]);
+  assert.match(by("tiring:winner").text, /^Fading: winner — its last 7 days cost SGD 29\.42 a lead \(18 leads\) against SGD 14\.00 over its whole run \(198 leads\); the median is SGD 17\.00\. It has been seen 3\.24 times per person\. Make new versions of the same kind \(class-group, group, studio-room\) now\.$/);
+  assert.deepEqual(by("tiring:winner").checks.map((c) => [c.name, c.ok]), [["recent", false], ["adset", true], ["frequency", false]]);
+  assert.equal(ads.filter((x) => x.kind === "keep").length, 0, "16.00 and 17.00 are not 15% under a median of 17.00: nothing else is a keeper");
+  // With a dearer field the steady ad is a keeper, and says it still pays; one with two recent leads says that is too few to tell.
+  const field = [...cheapRows.filter((r) => !["mid1", "mid2"].includes(r.ad_id)), A("mid1", { ...cpl(700, 20), read: rd() }), A("mid2", { ...cpl(400, 10), read: rd() }), A("mid3", { ...cpl(380, 10), read: rd() })];
+  const ads2 = adInsights(field, { currency: "SGD" }), keep = ads2.filter((x) => x.kind === "keep");
+  assert.deepEqual(keep.map((x) => x.ads[0]), ["steady", "quiet"]);
+  assert.match(keep[0].text, /^Keep running: steady — 30 leads at SGD 16\.00 against a median of SGD \d+\.\d\d \(workout, woman, studio-room\)\. Still paying: 6 leads at SGD 15\.00 in the last 7 days\.$/);
+  assert.deepEqual([keep[1].checks[0].ok, /only 2 leads in the last 7 days: too few to say/.test(keep[1].checks[0].text), / Still paying/.test(keep[1].text)], [null, true, false]);
+  // Spend for nothing: a fair chance first, and never when the whole ad set has no lead.
+  assert.deepEqual([by("pause:nothing").kind, by("pause:nothing").verdict, by("pause:nothing").text], ["pause", "confirmed", "Consider pausing: nothing — SGD 52.20 spent for no lead (workout, woman, gym-floor)."]);
+  assert.match(by("pause:nothing").checks[0].text, /^1,880 impressions and SGD 52\.20 spent \(a fair chance is 1,000 impressions and SGD 34\.00\)$/);
+  assert.deepEqual([by("pause:starved").kind, by("pause:starved").verdict], ["wait", "early"]);
+  assert.match(by("pause:starved").text, /^Not judged yet: starved — SGD 50\.00 spent for no lead, but it has not had a fair chance \(400 impressions and SGD 50\.00 spent/);
+  assert.deepEqual([by("pause:lonely").kind, /no ad in its ad set has a lead, which points at the audience rather than this ad/.test(by("pause:lonely").text)], ["wait", true]);
+  assert.ok(FAIR_IMPRESSIONS === 1000 && FAIR_SPEND_X === 2 && FADE_X === 1.25 && FADE_MIN_LEADS === 5 && CONFIRM_PICTURES === 2);
+  // The attributes. One picture is a lead to test, said once whatever it would name; two pictures a finding.
+  const tables = attributeTables(rows), at = attrInsights(rows, tables, { currency: "SGD", top: 9 });
+  const lead = at.filter((x) => x.kind === "lead"), found = at.find((x) => x.kind === "matters"), fact = at.filter((x) => x.kind === "fact");
+  assert.deepEqual([lead.length, lead[0].verdict, lead[0].best.pictures, lead[0].picture.name, lead[0].checks[0].ok], [1, "test", 1, "winner", false], "its kind of shot and its subject are one picture: one lead");
+  assert.match(lead[0].text, /^To test, not a finding yet — (Format|Subject): (class-group|group) at SGD 17\.81 \(198 leads, one picture\) against (workout|woman) at SGD \d+\.\d\d \(\d+ over \d pictures\)\. One picture's leads are that picture's \(winner\): the next batch tests it with new versions\.$/);
+  assert.deepEqual([found.attribute, found.verdict, found.best.value, found.best.pictures], ["backdrop", "confirmed", "studio-room", 2]);
+  assert.match(found.text, /^Backdrop matters: studio-room leads at SGD 17\.57 \(228 leads over 2 pictures\) against gym-floor at SGD \d+\.\d\d \(\d+ over 7\)\. Make more of the first\.$/);
+  assert.equal(found.checks[1].ok, true, "inside the one ad set that ran both, the studio room was cheaper");
+  assert.deepEqual(fact, [], "nothing to say about the ratio here: every picture is 4:5");
+  // Two pictures, but inside the ad set that ran both the other value was cheaper: a lead to test, not a finding.
+  const split = [A("a", { ...cpl(100, 20), adset_id: "x", read: rd({ backdrop: "studio-room" }) }), A("b", { ...cpl(100, 20), adset_id: "x", read: rd({ backdrop: "studio-room" }) }), A("c", { ...cpl(900, 30), adset_id: "x", read: rd() }),
+    A("d", { ...cpl(1500, 30), adset_id: "y", read: rd({ backdrop: "studio-room" }) }), A("e", { ...cpl(200, 20), adset_id: "y", read: rd() })];
+  const sp = attrInsights(split.filter((r) => r.adset_id === "y"), attributeTables(split.filter((r) => r.adset_id === "y")), { top: 9 });
+  assert.deepEqual(sp.map((x) => [x.attribute, x.best.value, x.kind]), [["backdrop", "gym-floor", "lead"]], "one picture each");
+  const contra = [A("p1", { ...cpl(200, 40), adset_id: "x", read: rd({ pose: "easy-posed" }) }), A("p2", { ...cpl(900, 30), adset_id: "y", read: rd({ pose: "easy-posed" }) }), A("q1", { ...cpl(1600, 20), adset_id: "x", read: rd() }), A("q2", { ...cpl(600, 30), adset_id: "y", read: rd() }), A("q3", { ...cpl(2000, 20), adset_id: "z", read: rd() })];
+  const ct = attrInsights(contra, attributeTables(contra), { top: 9 }).find((x) => x.attribute === "pose");
+  assert.deepEqual([ct.best.value, ct.best.pictures, ct.kind, ct.checks[1].ok, /inside 2 ad sets that ran both, easy-posed was cheaper in 1/.test(ct.checks[1].text)], ["easy-posed", 2, "matters", true, true], "cheaper in one of the two ad sets that ran both: it stands");
+  const against = contra.map((r) => (r.ad_id === "p1" ? { ...r, ...cpl(4000, 40) } : r.ad_id === "q3" ? { ...r, ...cpl(9000, 20) } : r));
+  const ag = attrInsights(against, attributeTables(against), { top: 9 }).find((x) => x.attribute === "pose");
+  assert.deepEqual([ag.best.value, ag.kind, ag.verdict, ag.checks[1].ok], ["easy-posed", "lead", "test", false], "cheaper overall, dearer inside both ad sets that ran both: a lead to test");
+  assert.match(ag.text, /Inside the ad sets that ran both, easy-posed was not the cheaper one: the next batch tests it with new versions\.$/);
+  // Nothing in the app changes a ratio: for the record.
+  const ratios = [A("r1", { ...cpl(200, 20), read: rd({ ratio: "4:5" }) }), A("r2", { ...cpl(200, 20), read: rd({ ratio: "4:5" }) }), A("r3", { ...cpl(900, 30), read: rd({ ratio: "1:1" }) })];
+  const rf = attrInsights(ratios, attributeTables(ratios), { top: 9 });
+  assert.deepEqual(rf.map((x) => [x.attribute, x.kind, x.verdict]), [["ratio", "fact", "none"]]); assert.match(rf[0].text, /For the record: nothing in the app changes this\.$/);
+  assert.ok(NO_LEVER.has("ratio") && NO_LEVER.has("logo") && !NO_LEVER.has("text_density"));
+  // By record: this app's own ad says its room and how much of the picture its words cover as the batch recorded them.
+  const own = { source: "app", read: rd({ backdrop: "gym-floor", text_density: "heavy" }) };
+  assert.deepEqual([valueOf({ ...own, room: "studio-room" }, "backdrop"), valueOf(own, "backdrop"), valueOf(own, "text_density"), valueOf({ ...own, text_cover: 0.21 }, "text_density"), valueOf({ ...own, text_cover: 0.14 }, "text_density"), valueOf({ ...own, text_cover: 0.06 }, "text_density"), valueOf({ source: "account", read: rd({ text_density: "heavy" }) }, "text_density")],
+    ["studio-room", "gym-floor", null, "heavy", "medium", "light", "heavy"], "never the reader's guess for an ad this app made");
+  assert.deepEqual([coverWord(COVER_LIGHT - 0.01), coverWord(COVER_LIGHT), coverWord(COVER_HEAVY)], ["light", "medium", "heavy"]);
+  // The suggestions carry them: kinds, verdicts and checks, with the lines nobody checked (thin, never tried, unread) as before.
+  const sug = suggestions(rows, tables, { currency: "SGD" });
+  assert.deepEqual([...new Set(sug.map((s) => s.kind))].sort(), ["lead", "matters", "pause", "test", "tiring", "wait"]);
+  assert.ok(sug.filter((s) => s.key).every((s) => ["confirmed", "test", "early", "none"].includes(s.verdict) && Array.isArray(s.checks)));
 });
