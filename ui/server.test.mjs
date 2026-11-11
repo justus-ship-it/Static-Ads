@@ -1366,8 +1366,8 @@ test("U20 the Publish Ads screen: the plan for a batch's kept ads from the API (
   assert.match(await ev("document.querySelector('#view').textContent"), /a day in all/);
   // Review's foot leads here.
   await open(`${panel.url}/?u20b#/${GYM}/review/${BRIEF.batch_id}`);
-  await until("R.data && [...document.querySelectorAll('#rvFoot button')].some(b=>/Publish to Meta/.test(b.textContent))", "the Publish button on Review");
-  await ev("[...document.querySelectorAll('#rvFoot button')].find(b=>/Publish to Meta/.test(b.textContent)).click(); true");
+  await until("R.data && [...document.querySelectorAll('#rvFoot button')].some(b=>/Publish Ads →/.test(b.textContent))", "the Publish button on Review");
+  await ev("[...document.querySelectorAll('#rvFoot button')].find(b=>/Publish Ads →/.test(b.textContent)).click(); true");
   await until("location.hash==='#/" + GYM + "/publish/" + BRIEF.batch_id + "'", "the Publish route");
 });
 
@@ -2703,7 +2703,7 @@ test("U49 the kind of photograph (Phase 3, 2026-11-10): a gym's Ad defaults take
     assert.deepEqual(await ev("[document.querySelector('#cdMix-studio-portrait').value, /The rest, 0%, are workout photos/.test(document.querySelector('#cdMixRest').textContent)]"), ["100", true], "a gym set to one kind reads as all of that kind");
     await open("create", "!!document.querySelector('#bMix-studio-portrait')");
     assert.deepEqual(await ev("[Number(document.querySelector('#bMix-studio-portrait').value) === Number(B.draft.generated), briefFromDraft().format, 'mix' in briefFromDraft()]"), [true, "studio-portrait", false], "the gym's default pre-fills the batch: every new photo a portrait");
-    assert.deepEqual(await ev("bMixSet('studio-portrait', 0); ['format' in briefFromDraft(), 'mix' in briefFromDraft()]"), [false, false], "none of them portraits: a workout batch needs no saying");
+    assert.deepEqual(await ev("bMixSet('studio-portrait', 0); [briefFromDraft().format, 'mix' in briefFromDraft()]"), ["workout", false], "none of them portraits: for a gym whose default is another kind the brief says workout, or the gym's default would come back (2026-11-11)");
     await open("scenes", "!!document.querySelector('#bSceneCard button')");
     assert.match(await ev("document.querySelector('#bSceneCard').textContent"), /2 studio portrait/);
     assert.deepEqual(await ev("bRefreshConfirm(); new Promise(r=>setTimeout(()=>r([[...document.querySelectorAll('#bRfFormat option')].map(o=>o.textContent), document.querySelector('#bRfFormat').value, /plain backdrop/.test(document.querySelector('#bRfFormatHint').textContent), document.querySelector('#bRfGapsWords').textContent]),80))"), [["Workout", "Studio portrait"], "studio-portrait", true, "Spread across backdrops (the ones this audience has fewest of first)"]);
@@ -2760,7 +2760,7 @@ test("U50 the mix (Phase 4, 2026-11-10): a gym's default mix is shares that sum 
     assert.deepEqual(await ev("(()=>{ const b = briefFromDraft(), g = b.generated; return [b.mix && b.mix.workout + b.mix['studio-portrait'] === g, b.mix && Math.abs(b.mix.workout - b.mix['studio-portrait']) <= 1, 'format' in b, document.querySelector('#bMixRest').textContent === (b.mix.workout + ' workout') || document.querySelector('#bMixRest').textContent === '']; })()"), [true, true, false, true], "half and half of the gym's photo count");
     assert.deepEqual(await ev("bSet('generated', 6); bMixSet('studio-portrait', 2); [briefFromDraft().mix, document.querySelector('#bMixRest').textContent]"), [{ workout: 4, "studio-portrait": 2 }, "4 workout"]);
     assert.deepEqual(await ev("bMixSet('studio-portrait', 9); [briefFromDraft().format, 'mix' in briefFromDraft(), document.querySelector('#bMix-studio-portrait').value]"), ["studio-portrait", false, "6"], "never more portraits than photos: all six, so one kind");
-    assert.deepEqual(await ev("bMixSet('studio-portrait', 0); ['format' in briefFromDraft(), 'mix' in briefFromDraft()]"), [false, false]);
+    assert.deepEqual(await ev("bMixSet('studio-portrait', 0); [briefFromDraft().format, 'mix' in briefFromDraft()]"), ["workout", false], "all workout, said: the gym's default is a mix");
     await open("results", "!!document.querySelector('#rsMix')");
     assert.deepEqual(await ev("[document.querySelectorAll('#rsMix tbody tr').length, document.querySelector('#rsMixNow').textContent, /Use this mix|No change suggested/.test(document.querySelector('#rsMix').textContent)]"), [2, "50% workout photos · 50% studio portraits", true]);
   } finally { writeFileSync(pf, before); writeFileSync(sp, scenesBefore); }
@@ -3008,12 +3008,13 @@ test("U54 the cycle (2026-11-11): the panel opens on Review Data; the rail lists
     assert.ok(!rail.slice(7).some((x) => /Scenes/.test(x)), rail.join(" / "));
     assert.equal(await ev("document.querySelector('#rail .tab.sel').textContent.replace(/\\d+$/,'')"), "1Review Data");
     // The strip: five steps, this one marked, the scenes waiting, and the one thing to do next.
-    const strip = await ev("({ steps: [...document.querySelectorAll('#cyc .cycstep')].map(b => [b.querySelector('.hd').textContent, b.querySelector('.tx').textContent, b.classList.contains('st-todo'), b.classList.contains('here')]), next: document.querySelector('#cycNext .t').textContent, button: document.querySelector('#cycNext button')?.textContent || null })");
+    const strip = await ev("({ steps: [...document.querySelectorAll('#cyc .cycstep')].map(b => [b.querySelector('.hd').textContent, b.querySelector('.tx').textContent, b.classList.contains('st-todo'), b.classList.contains('here')]) })");
     const now = await (await call(`/api/client/${GYM}/cycle`)).json();
     assert.deepEqual(strip.steps.map((s) => s[0]), ["1Review Data", "2Draft Scenes", "3Generate Creatives", "4Pick Ads", "5Publish Ads"]);
-    assert.deepEqual([strip.steps[0][3], strip.steps[1].slice(1), strip.next], [true, ["1 kind needs scenes", true, false], now.next.text]);
+    assert.deepEqual([strip.steps[0][3], strip.steps[1].slice(1)], [true, ["1 kind needs scenes", true, false]]);
+    // What to press is said once, by the step's own indicator (U55): here the review is read, then the cycle's next thing.
     const there = now.next.tab === "results" && !now.next.batch;
-    assert.equal(strip.button, there || now.next.idle ? null : `${now.next.name} →`, "the button names the step; none when this is the screen");
+    assert.deepEqual(await ev("[!!document.querySelector('#cycNext'), !!document.querySelector('#stpDo')]"), [false, true]);
     // A step's box opens its screen; Draft Scenes says what the data asks for.
     await ev("document.querySelectorAll('#cyc .cycstep')[1].click(); true");
     await until("STATE.tab === 'scenes' && !!document.querySelector('#scAsksCard button') && document.querySelector('#cyc .cycstep.here .hd').textContent === '2Draft Scenes'");
@@ -3049,6 +3050,107 @@ test("U54 the cycle (2026-11-11): the panel opens on Review Data; the rail lists
     await until("STATE.tab === 'batch'");
     await ev(`location.hash = '#/${GYM}/nosuchscreen'; true`);
     await until("STATE.tab === 'results'");
+  } finally {
+    for (const [p, body] of keep) { if (body) writeFileSync(p, body); else rmSync(p, { force: true }); }
+    rmSync(bdir, { recursive: true, force: true }); rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true });
+  }
+});
+
+test("U55 the step indicator (2026-11-11): inside each of the five steps, its own parts in order — done, now, later — and one bar that says what to do now with the one button that does it; a part is done by what is on file or on the form, never by a click on the indicator; the button presses what the screen already has (the same confirmations); a step with nothing waiting says so and points at the cycle's next thing; the library has no indicator", async () => {
+  const g = join(brands, GYM);
+  await linkTestGym();
+  const keep = ["gym-profile.json", "scenes.json"].map((n) => [join(g, n), existsSync(join(g, n)) ? readFileSync(join(g, n)) : null]);
+  rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "creative-reads.json"), { force: true });
+  const bdir = join(g, "batches", "2099-01-04-stepper-check");
+  const scene = (id, over = {}) => ({ id, audience: "men", pose: "upright", people: 1, exercise: "back-squat", age: "prime", setting: "solo", equipment: "barbell", muscles: "legs", scene: `A man in his thirties mid-set of a barbell back squat in a rack, chest up (${id}).`, ...over });
+  const HEADER = `"Reporting starts","Reporting ends","Ad name","Ad delivery","Attribution setting",Results,"Result indicator","Cost per results","Ad set budget","Ad set budget type","Amount spent (SGD)",Impressions,Reach`;
+  const row = (ad, results, spend) => `2026-04-13,2026-11-08,"${ad}",active,"7-day click or 1-day view",${results},actions:leadgen.other,${(spend / results).toFixed(4)},100,Daily,${spend},${results * 900 + 500},${results * 300 + 200}`;
+  try {
+    mkdirSync(bdir, { recursive: true });
+    writeFileSync(join(bdir, "brief.json"), JSON.stringify({ batch_id: "2099-01-04-stepper-check", offer: "6 Week Stepper Check", locations: ["BISHAN"], audience: "MEN", generated: 10 }));
+    const profile = JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8")); profile.creative_defaults = { ...profile.creative_defaults, generated: 10, mix: { workout: 80, "studio-portrait": 20 } }; delete profile.creative_defaults.format;
+    writeFileSync(join(g, "gym-profile.json"), JSON.stringify(profile));
+    writeFileSync(join(g, "scenes.json"), JSON.stringify({ approved: true, approved_on: "2026-11-01", scenes: [scene("m-squat-u55"), scene("m-press-u55", { exercise: "shoulder-press", equipment: "dumbbells", muscles: "shoulders", scene: "A man in his twenties seated, pressing dumbbells overhead with effort on his face (u55)." })] }));
+    const r = await fetch(`${panel.url}/api/client/${GYM}/history/export/stepper.csv`, { method: "PUT", headers: { "content-type": "text/csv", "x-panel-token": panel.token }, body: [HEADER, row("0413 Body Reset | Image 1: Lady One", 30, 450), row("0413 Body Reset | Image 2: Lady Two", 10, 250)].join("\n") + "\n" });
+    assert.equal(r.status, 200);
+    const C = await (await call(`/api/client/${GYM}/cycle`)).json();
+    assert.deepEqual([C.info.ads >= 2, C.info.running, C.info.stale, C.info.data_age, C.info.unread >= 0, C.info.linked, Array.isArray(C.batches), "current" in C], [true, 2, false, 0, true, false, true, true]);
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    // What the indicator shows: each part with its state, the bar's label, its sentence and its button.
+    const read = () => ev("(()=>{ const d = document.querySelector('#stpDo'); return { parts: [...document.querySelectorAll('#stpParts .stpp')].map(e => [e.textContent.replace(/^[✓\\d]/, ''), e.classList.contains('done') ? 'done' : e.classList.contains('now') ? 'now' : 'later']), k: d?.querySelector('.k').textContent || null, t: d?.querySelector('.t').textContent || '', b: d?.querySelector('#stpGo')?.textContent || null, primary: document.querySelectorAll('#stp button.primary').length, else_: document.querySelector('#stpElse')?.textContent || null }; })()");
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u55#/${GYM}/results` }, sessionId); await loaded;
+    await until(`STATE.sel === ${JSON.stringify(GYM)} && CY.gym === STATE.sel && !!CY.data && RS.review && RS.review.gym === STATE.sel && !!document.querySelector('#stp')`);
+    const next = await ev("CY.data.next");
+    assert.equal(await ev("!!document.querySelector('#cycNext')"), false, "one bar says what to press: the strip has no second one");
+    // Step 1 · Review Data: the numbers are fresh and every picture is read, so the review is the thing to read, then on.
+    let S = await read();
+    const info = await ev("CY.data.info"), unread = info.unread > 0; // earlier tests may leave published ads whose pictures are not read
+    assert.deepEqual(S.parts, [["Get the latest numbers", "done"], ["Read the pictures", unread ? "now" : "done"], ["Read the review, then go on", unread ? "later" : "now"]]);
+    if (unread) { assert.deepEqual([S.k, S.b, S.primary], ["Do this now · 2 of 3", "Read the creatives…", 1]); assert.match(S.t, /^\d+ pictures? of your ads ha(s|ve) not been read yet/); }
+    else {
+      assert.deepEqual([S.k, S.primary], ["Do this now · 3 of 3", next.tab === "results" && !next.batch || next.idle ? 0 : 1]);
+      assert.match(S.t, /^Read the review below: what to keep running, what is tiring, what to pause, and the next batch it suggests\./);
+      if (!(next.tab === "results" && !next.batch)) { assert.ok(S.t.endsWith(`Then: ${next.text}`), S.t); if (!next.idle) assert.equal(S.b, `${next.name} →`); }
+    }
+    // The last part hands over to the cycle: its sentence ends with the next thing and its button is that step's.
+    assert.deepEqual(await ev("(()=>{ const c = { ...CY.data, info: { ...CY.data.info, unread: 0 } }; const p = partsResults(c).parts; return [p.map(x => x.done), p[2].cycle, p[2].label || null]; })()"), [[true, true, false], true, null]);
+    // With no data the first part is the thing to do; with data a week old and ads running, the same.
+    assert.deepEqual(await ev("(()=>{ const c = { ...CY.data, info: { ...CY.data.info, ads: 0, running: 0, account: true, linked: true } }; const p = partsResults(c).parts; return [p[0].done, p[0].label, p[1].done]; })()"), [false, "Review the account…", false]);
+    assert.deepEqual(await ev("(()=>{ const c = { ...CY.data, info: { ...CY.data.info, stale: true, data_age: 9, unread: 3, account: true, linked: true } }; const p = partsResults(c).parts; return [p[0].done, /last read 9 days ago/.test(p[0].text), p[1].done, p[1].label, /^3 pictures of your ads have not been read yet/.test(p[1].text)]; })()"), [false, true, false, "Read the creatives…", true]);
+    // Step 2 · Draft Scenes: a kind in the mix has no scene and no draft — drafting it is the one button, and it opens the same confirmation.
+    await ev("go('scenes'); true");
+    await until("STATE.tab === 'scenes' && !!document.querySelector('#scAsksCard') && !!document.querySelector('#stpGo')");
+    S = await read();
+    assert.deepEqual([S.parts, S.k, S.b, S.primary], [[["Draft the scenes the data asks for", "now"], ["Approve the ones you want", "done"], ["Scenes ready for the next batch", "later"]], "Do this now · 1 of 3", "Draft studio portrait scenes…", 1]);
+    assert.match(S.t, /The next batch has studio portrait photos in it and no scene of that kind is approved\. Have the agent draft some: text only, no image calls\./);
+    await ev("document.querySelector('#stpGo').click(); true");
+    assert.deepEqual(await ev("[document.querySelector('#rsDsAud')?.value, !!document.querySelector('#rsDsGo')]"), ["men", true], "the bar's button is the screen's own: the confirmation, nothing started");
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // Drafts of that kind waiting: approving is the thing; nothing needed and nothing waiting: the step is done.
+    assert.deepEqual(await ev("(()=>{ const c = { ...CY.data, scenes_waiting: 4, jobs: CY.data.jobs.map(j => ({ ...j, drafts_waiting: 4 })) }; const p = partsScenes(c).parts; return [p.map(x => x.done), p[1].label, /^4 drafts are waiting below/.test(p[1].text)]; })()"), [[true, false, false], "Show the drafts ↓", true]);
+    assert.deepEqual(await ev("(()=>{ const c = { ...CY.data, scenes_waiting: 0, jobs: [] }; const s = partsScenes(c); return [s.parts.map(x => x.done), s.after.cycle, /^Every kind of photo in the next batch has approved scenes\\./.test(s.after.text)]; })()"), [[true, true, true], true, true]);
+    // Step 3 · Generate Creatives: the offer first (the review's suggestion is the one button), then the check, then Generate.
+    await ev("go('batch'); true");
+    await until("STATE.tab === 'batch' && !!document.querySelector('#bSuggestUse') && document.querySelector('#stpGo')?.textContent === 'Use this suggestion'");
+    S = await read();
+    assert.deepEqual([S.parts, S.k, S.primary], [[["Say the offer and where", "now"], ["Fix what the check says", "later"], ["Generate the ads", "later"], ["Pick the ads", "later"]], "Do this now · 1 of 4", 1]);
+    assert.equal(await ev("document.querySelector('#bSuggestUse').classList.contains('primary')"), false, "one primary button for the step: the bar's");
+    await ev("document.querySelector('#stpGo').click(); true");
+    await until("document.querySelector('#bOffer').value === '6 Week Stepper Check' && !!B.check");
+    { const t0 = Date.now(); while (Date.now() - t0 < 15000 && !(await ev("/^Generate \\d+ ads…$/.test(document.querySelector('#stpGo')?.textContent || '')"))) await new Promise((x) => setTimeout(x, 150)); }
+    assert.match(await ev("document.querySelector('#stpGo')?.textContent || ''"), /^Generate \d+ ads…$/, JSON.stringify(await ev("[document.querySelector('#stpDo')?.textContent, B.check?.errors, STATE.run && { done: STATE.run.done, label: STATE.run.label }]")));
+    S = await read();
+    // The suggestion held the studio portraits back (no scene of that kind is approved), and the brief says so to the check:
+    // an all-workout batch for a gym whose default is a mix names "workout", or the gym's mix would come back.
+    assert.deepEqual(await ev("[B.check.errors, B.check.brief.format, 'mix' in B.check.brief, !!document.querySelector('#bSuggestHeld')]"), [[], "workout", false, true]);
+    assert.deepEqual([S.parts.map((p) => p[1]), S.k], [["done", "done", "now", "later"], "Do this now · 3 of 4"]);
+    assert.match(S.t, /^The brief is good\. This makes \d+ ads from \d+ photos, with at most \d+ image calls\. Nothing spends until you confirm\.$/);
+    assert.equal(S.b, await ev("document.querySelector('#bRun').textContent"), "the same words as the screen's own button");
+    // A problem on the form is the second part, in the check's own words.
+    await ev("bSet('offer', '12 Week — Reset'); true"); // an em dash: the server's rule refuses it
+    await until("/^Do this now · 2 of 4/.test(document.querySelector('#stpDo .k')?.textContent || '')");
+    S = await read();
+    assert.deepEqual([S.parts.map((p) => p[1]), S.b], [["done", "now", "later", "later"], "Show me"]); assert.match(S.t, /^\d+ things? to fix before this can run: /);
+    // Blank again: the offer is the thing, with no suggestion to take.
+    await ev("bSuggestClear(); true");
+    await until("document.querySelector('#stpGo')?.textContent === 'Go to the offer'");
+    assert.deepEqual((await read()).parts.map((p) => p[1]), ["now", "later", "later", "later"]);
+    // Steps 4 and 5, the lists: a batch that is waiting is the one button; with none waiting the step says so and points on.
+    for (const [tab, n, first, fn] of [["review", 4, "Open a batch", "partsReviewList"], ["exports", 5, "Open a batch", "partsExports"]]) {
+      await ev(`go('${tab}'); true`);
+      await until(`STATE.tab === '${tab}' && document.querySelectorAll('#stpParts .stpp').length === ${n}`);
+      S = await read();
+      assert.equal(S.parts[0][0], first); assert.ok(["Do this now · 1 of " + n, "Nothing to do here now"].includes(S.k), S.k);
+      const made = (over) => `{ ...CY.data, batches: [{ id: 'b-1', ads: 12, kept: 8, excluded: 2, unreviewed: 2, stories: 0, open: true, published: null, ...${JSON.stringify(over)} }] }`;
+      assert.deepEqual(await ev(`(()=>{ const s = ${fn}(${made({})}); return [!!s.idle, s.parts[0].label, s.parts.length]; })()`), [false, "Open it →", n]);
+      assert.deepEqual(await ev(`(()=>{ const s = ${fn}(${made({ open: false, unreviewed: 0, stories: 8, published: { done: true, ads: 8 } })}); return [typeof s.idle, s.parts.every(p => !p.done && !p.label)]; })()`), ["string", true], "published and done: nothing is waiting here");
+    }
+    assert.deepEqual(await ev("[PICK_PARTS, PUB_PARTS]"), [["Open a batch", "Keep or exclude each ad", "Make Stories versions", "Go to publish"], ["Open a batch", "Keep copy and headlines", "Check the ad sets", "Create on Facebook, paused", "Turn the ads on"]]);
+    // No indicator outside the cycle.
+    await ev("go('copy'); true");
+    await until("STATE.tab === 'copy' && document.querySelector('#stepper').innerHTML === ''");
   } finally {
     for (const [p, body] of keep) { if (body) writeFileSync(p, body); else rmSync(p, { force: true }); }
     rmSync(bdir, { recursive: true, force: true }); rmSync(join(g, "account-history.json"), { force: true }); rmSync(join(g, "onboarding", "exports"), { recursive: true, force: true }); rmSync(join(g, "copy-references.json"), { force: true });

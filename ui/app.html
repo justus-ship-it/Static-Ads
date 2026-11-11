@@ -65,6 +65,22 @@
   .cycstep.st-todo{border-color:#e6cf95;background:var(--warn-soft)} .cycstep.st-todo .tx{color:var(--warn)} .cycstep.st-todo .n{background:var(--warn);border-color:var(--warn);color:#fff}
   .cycstep.st-going .tx{color:var(--link)}
   .cycstep.here{border-color:var(--navy);box-shadow:inset 0 0 0 1px var(--navy)} .cycstep.here .n{background:var(--navy);border-color:var(--navy);color:#fff}
+  .stp{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:-6px 0 16px}
+  .stpparts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px}
+  .stpparts i{color:var(--faint);font-style:normal}
+  .stpp{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 5px;border-radius:14px;border:1px solid var(--line);color:var(--faint);background:var(--surface);white-space:nowrap}
+  .stpp .n{width:18px;height:18px;line-height:18px;text-align:center;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:11px;font-weight:700;color:var(--faint);flex:none}
+  .stpp.done{color:var(--ok);border-color:#bfe3cd;background:var(--ok-soft)} .stpp.done .n{background:var(--ok);border-color:var(--ok);color:#fff}
+  .stpp.now{color:var(--navy);border-color:var(--navy);font-weight:600;box-shadow:inset 0 0 0 1px var(--navy)} .stpp.now .n{background:var(--navy);border-color:var(--navy);color:#fff}
+  .stpdo{display:flex;align-items:center;gap:12px;margin-top:10px;padding:10px 12px;border-radius:8px;background:var(--accent-soft);font-size:13.5px;line-height:1.45}
+  .stpdo .k{color:var(--navy);font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;white-space:nowrap} .stpdo .t{flex:1;min-width:0}
+  .stpdo button{white-space:nowrap;padding:9px 16px;font-size:14px}
+  .stpelse{margin-top:8px;font-size:12.5px;color:var(--dim)}
+  .stpflash{outline:3px solid #f0b429;outline-offset:3px;transition:outline-color .3s}
+  .main.full .stp{margin:0 0 10px;padding:6px 8px;display:flex;align-items:center;gap:10px} .main.full .stpparts{flex:none;flex-wrap:nowrap} .main.full .stpparts i{display:none}
+  .main.full .stpp:not(.now){padding:4px 5px} .main.full .stpp:not(.now) .nm{display:none}
+  .main.full .stpdo{flex:1;min-width:0;margin-top:0;padding:6px 10px} .main.full .stpdo .k{display:none} .main.full .stpdo .t{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:13px;line-height:1.35}
+  .main.full .stpdo button{padding:7px 14px;font-size:13.5px} .main.full .stpelse{display:none}
   .cycnext{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:13.5px}
   .cycnext .k{color:var(--faint);font-size:11px;letter-spacing:.8px;text-transform:uppercase;font-weight:700} .cycnext .t{flex:1;min-width:0}
   @media (max-width:1100px){ .cycsteps{grid-template-columns:repeat(2,minmax(0,1fr))} }
@@ -167,7 +183,7 @@
   button.excl{background:var(--surface);border-color:#eab4b4;color:var(--err);font-weight:700;padding:9px 18px}
   button.excl:hover:not(:disabled){background:var(--err-soft);border-color:var(--err)}
   button.keep.on{box-shadow:0 0 0 3px #bfe6cd} button.excl.on{background:var(--err);border-color:var(--err);color:#fff}
-  .rv-stage{position:relative;overflow:hidden;background:#0b1430;border-radius:12px;height:max(360px,calc(100vh - 322px));display:flex;align-items:stretch;justify-content:center;gap:22px;padding:16px 70px 10px}
+  .rv-stage{position:relative;overflow:hidden;background:#0b1430;border-radius:12px;height:max(360px,calc(100vh - 322px - 74px));display:flex;align-items:stretch;justify-content:center;gap:22px;padding:16px 70px 10px}
   .rv-stage figure{margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;min-height:0}
   .rv-stage figure img{max-height:calc(100% - 22px);max-width:100%;object-fit:contain;border-radius:6px;display:block;box-shadow:0 10px 30px rgba(0,0,0,.4)}
   .rv-stage figure.ex img{opacity:.35;filter:grayscale(.6)}
@@ -277,7 +293,7 @@
     <div class="switch"><div class="wrap"><span class="dot"></span><select id="clientSel" onchange="selectClient(this.value)"></select></div><button class="sm" onclick="newClient()">+ New client</button></div>
   </header>
   <nav class="rail" id="rail"></nav>
-  <main class="main" id="main"><div id="cycle"></div><div id="view"></div></main>
+  <main class="main" id="main"><div id="cycle"></div><div id="stepper"></div><div id="view"></div></main>
 </div>
 <div id="gModal"></div><div id="lfModal"></div>
 
@@ -426,7 +442,7 @@ async function loadCycle(){
   const seq = ++CY.seq;
   try { const d = await api(`/api/client/${gym}/cycle`); if (seq !== CY.seq || gym !== STATE.sel) return; CY.gym = gym; CY.data = d; CY.error = null; }
   catch(e){ if (seq !== CY.seq || gym !== STATE.sel) return; CY.gym = gym; CY.data = null; CY.error = e.message; }
-  paintCycle(); paintRail(); paintSceneAsks();
+  paintCycle(); paintRail(); paintSceneAsks(); paintStepper();
 }
 function paintCycle(){
   const box = $('#cycle'); if (!box) return;
@@ -434,10 +450,9 @@ function paintCycle(){
   if (!STATE.sel || !CYCLE_TABS.includes(STATE.tab) || (STATE.tab==='review' && STATE.batch)){ box.innerHTML = ''; return; }
   const D = CY.gym===STATE.sel ? CY.data : null;
   if (!D){ box.innerHTML = CY.gym===STATE.sel && CY.error ? `<div class="cyc"><div class="hint" style="margin:0">Where this gym stands could not be read: ${esc(CY.error)}</div></div>` : ''; return; }
-  const here = STATE.tab==='generating' ? 'batch' : STATE.tab==='publish' ? 'exports' : STATE.tab, n = D.next;
-  const there = n && n.tab===STATE.tab && (n.batch||null)===(STATE.batch||null);
+  const here = STATE.tab==='generating' ? 'batch' : STATE.tab==='publish' ? 'exports' : STATE.tab;
   box.innerHTML = `<div class="cyc" id="cyc"><div class="cycsteps">${D.steps.map(s=>`<button class="cycstep st-${s.state} ${s.tab===here?'here':''}" onclick="go('${s.tab}')" title="${esc(s.name)}"><span class="hd"><span class="n">${s.n}</span>${esc(s.name)}</span><span class="tx">${esc(s.text)}</span></button>`).join('')}</div>
-    ${n?`<div class="cycnext" id="cycNext"><span class="k">Next</span><span class="t">${esc(n.text)}</span>${there||n.idle?'':`<button class="sm primary" onclick="cyGo()">${esc(n.name)} →</button>`}</div>`:''}</div>`;
+    </div>`;
 }
 /** The strip's Next button: the step's screen, on its batch when it names one. */
 function cyGo(){ const n = CY.data?.next; if (!n) return; if (n.batch && n.tab==='review') return openReview(n.batch); if (n.batch && n.tab==='publish') return openPublish(n.batch); if (n.batch && n.tab==='generating') return openGenerating(n.batch); go(n.tab); }
@@ -451,7 +466,7 @@ function render(){
   const bad = STATE.status.checks.filter(c=>!c.ok && !c.optional).length;
   paintRail();
   paintCrumb();
-  paintCycle(); loadCycle();
+  paintCycle(); paintStepper(); loadCycle();
 
   const v = $('#view');
   if (STATE.tab==='setup') return viewSetup(v);
@@ -1301,7 +1316,9 @@ function briefFromDraft(){
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
     ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(),
-    ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m); return !generated || (live.length===1 && live[0]==='workout') ? {} : live.length===1 ? { format: live[0] } : { mix: m }; })(),
+    // The photos per kind. An all-workout batch says nothing when that is the gym's own default — and says "workout" when the gym's default is a mix
+    // (2026-11-11: a brief naming no kind takes the gym's mix, so the portraits set to 0 on this form came back and a gym without portrait scenes could not run a batch).
+    ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m), gymMixed = Object.entries(B.setup.mix || profileMix(B.setup.creative_defaults || {})).some(([f,n])=>f!=='workout' && n>0); return !generated ? {} : live.length===1 && live[0]==='workout' ? (gymMixed ? { format:'workout' } : {}) : live.length===1 ? { format: live[0] } : { mix: m }; })(),
     ...(generated>0 && !direction && (d.lean||[]).length ? { lean: d.lean.map(({ tag, value, format, why })=>({ tag, value, ...(format?{format}:{}), ...(why?{why}:{}) })) } : {}),
     ...(d.spread && generated>0 && !direction ? { spread: true } : {}) };
 }
@@ -1321,7 +1338,7 @@ function paintBatch(v){
   ${!re && STATE.view?.completeness && !STATE.view.completeness.ready_to_create ? `<div class="msg warn">This gym's profile still needs: ${STATE.view.completeness.sections.filter(s=>s.for!=='publishing'&&s.status!=='done').map(s=>esc(s.label)).join(', ')}. <a href="#" onclick="go('overview');return false">Open the overview →</a></div>` : ''}
   ${!re && d.suggested ? (() => { const S = d.suggested, b = S.brief || {}, words = (x) => esc(x.text.replace(/studio-portrait/g,'studio portrait'));
     const mixLine = b.mix ? Object.entries(b.mix).map(([f,k])=>`${k} ${esc(FORMAT_PLURAL[f]||f)}`).join(', ') : `${b.generated} workout photos`;
-    return `<div class="msg ok" id="bSuggest" style="color:var(--text)"><div class="row"><b>${S.whole?'Pre-filled from':'Suggested by'} the account review${S.built?` of ${esc(S.built.slice(0,10))}`:''}</b><div class="spacer"></div>${S.whole?'':`<button class="sm primary" id="bSuggestUse" onclick="bSuggestUse()">Use this suggestion</button>`}<a href="#" onclick="bSuggestClear();return false">Start blank instead</a></div>
+    return `<div class="msg ok" id="bSuggest" style="color:var(--text)"><div class="row"><b>${S.whole?'Pre-filled from':'Suggested by'} the account review${S.built?` of ${esc(S.built.slice(0,10))}`:''}</b><div class="spacer"></div>${S.whole?'':`<button class="sm" id="bSuggestUse" onclick="bSuggestUse()">Use this suggestion</button>`}<a href="#" onclick="bSuggestClear();return false">Start blank instead</a></div>
     ${S.whole?'':`<div class="rvbrief" style="margin-top:8px"><div><span class="k">Offer</span> ${b.offer?`${esc(b.offer)} <span class="hint">· your last batch's words</span>`:'<i>for you to type</i>'}</div><div><span class="k">Where</span> ${esc((b.locations||[]).join(', ')||'—')}${b.audience?` · ${esc(b.audience)}`:''}</div><div><span class="k">Photos</span> ${mixLine}</div>${b.cards?`<div><span class="k">Cards</span> ${Object.entries(b.cards).map(([k,c])=>`${c} ${esc(CARD_NAMES[k]||k)}`).join(', ')}</div>`:''}</div>
       <div class="hint" style="margin-top:6px">On this form so far: ${(d.lean||[]).length?'the lean (below Photos)':'nothing'}. The offer is yours to type, the photos are this gym's Ad defaults and no card is added until you take the suggestion.</div>`}
     <ul style="margin:6px 0 0 18px;line-height:1.5">${S.reasons.map(x=>`<li>${words(x)}</li>`).join('')}${(S.held||[]).map(h=>`<li id="bSuggestHeld">Left out for now — ${h.photos} ${esc((h.photos===1?FORMAT_NAMES[h.format]:FORMAT_PLURAL[h.format])||h.format).toLowerCase()}: no scene of that kind is approved yet. <a href="#" onclick="go('scenes');return false">Draft Scenes →</a></li>`).join('')}${S.left.map(x=>`<li>Not yet — ${words(x)}</li>`).join('')}</ul><div class="hint" style="margin-top:6px">Every word is yours to change. Nothing is generated until you confirm the run.</div></div>`; })() : ''}
@@ -1660,7 +1677,7 @@ async function viewReviewList(v, seq=VIEW_SEQ){
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
       <div class="d">${esc(b.id)}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:''}</div>
       <div class="d">${b.running?'<span class="pill navy">generating…</span>':r?`<span class="pill on">${r.kept} kept</span> ${r.excluded?`<span class="pill err">${r.excluded} excluded</span>`:''} ${r.unreviewed?`<span class="pill warn">${r.unreviewed} to review</span>`:''}`:''}</div>
-      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Watch it →</button>`:''}${b.ads?`<button class="sm ${b.running?'':'primary'}" onclick="openReview('${esc(b.id)}')">Review →</button>`:''}</div>
+      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Watch it →</button>`:''}${b.ads?`<button class="sm ${b.running?'':'primary'}" onclick="openReview('${esc(b.id)}')">Pick ads →</button>`:''}</div>
     </div></div>`; }).join('')}</div>` : '<div class="empty">No campaigns with ads yet. Make one under Create.</div>'}`;
 }
 
@@ -1731,7 +1748,7 @@ function paintFoot(busy){
       <button class="sm primary" onclick="rvStoriesConfirm()" ${busy?'disabled':''}>${st?'Make Stories versions again…':'Make Stories versions…'}</button>
       ${st?`<button class="sm" onclick="rvStoriesRerender()" ${busy?'disabled':''}>Re-render Stories (free)</button>`:''}
       <button class="sm" onclick="openWords('${esc(R.id)}')" ${busy?'disabled':''}>Change the words</button>
-      <button class="sm ok" onclick="openPublish('${esc(R.id)}')" ${busy?'disabled':''}>Publish to Meta →</button>
+      <button class="sm ok" onclick="openPublish('${esc(R.id)}')" ${busy?'disabled':''}>Publish Ads →</button>
       <span class="spacer"></span><span class="keys"><kbd>←</kbd> <kbd>→</kbd> move · <kbd>K</kbd> keep · <kbd>X</kbd> exclude · <kbd>U</kbd> undo</span><span id="rvSaved">${d.saved?'Picks saved':''}</span>`;
 }
 function paintCounts(){
@@ -1912,7 +1929,6 @@ function paintGenerating(){
   const latest = mine ? STATE.run.lines.filter(l=>l.stream!=='meta').at(-1)?.line : null;
   const keepLog = $('#runbox')?.closest('details')?.open;
   v.innerHTML = `
-  <div class="steps">${step('Brief','done')}<i>›</i>${step('Photos', inPhotos&&!failed&&!stopped?'now':(inAds||done)?'done':'')}<i>›</i>${step('Ads', inAds&&!stopped?'now':done?'done':'')}<i>›</i>${step('Review', done?'now':'')}</div>
   <h1>${esc(title)}</h1>
   <p class="sub">${failed ? '' : inPhotos ? 'Each photo appears as it passes its checks. ' : ''}${spent} image call${spent===1?'':'s'} used of ${p?.max_calls ?? '—'}${p?.real?` · plus ${p.real} real photo${p.real===1?'':'s'}`:''}${inAds?' · no image calls while rendering':''}</p>
   ${failed ? `<div class="msg err">${esc(p.error||'the run stopped')}</div>` : ''}
@@ -1923,9 +1939,9 @@ function paintGenerating(){
   <div class="bar"><i style="width:${pct}%"></i></div>
   <div class="gen">${photos.map(([id,x])=>genCard(id,x)).join('') || '<div class="hint">No new photos in this batch: real photos only.</div>'}</div>
   <div class="row" style="margin-top:16px">
-    ${d.made ? `<button class="primary" onclick="openReview('${esc(STATE.batch)}','ads')">Review ${p?.ads ?? ''} ads →</button>` : passed ? `<button class="keep" onclick="openReview('${esc(STATE.batch)}','photos')">Review the ${passed} passed photo${passed===1?'':'s'} →</button>` : ''}
+    ${d.made ? `<button class="primary" onclick="openReview('${esc(STATE.batch)}','ads')">Pick Ads · ${p?.ads ?? ''} ads →</button>` : passed ? `<button class="keep" onclick="openReview('${esc(STATE.batch)}','photos')">Review the ${passed} passed photo${passed===1?'':'s'} →</button>` : ''}
     ${!d.made && live ? '<span class="hint" style="margin:0">The ads render as soon as the photos are in; you can review photos meanwhile.</span>' : ''}
-    <div class="spacer"></div>${live ? `<button class="danger" id="genStopBtn" ${G.stopping||STATE.run?.stopping?'disabled':''} onclick="genStop()">${G.stopping?'Stopping…':'Stop'}</button>` : ''}<button onclick="go('batch')">Back to Create</button>
+    <div class="spacer"></div>${live ? `<button class="danger" id="genStopBtn" ${G.stopping||STATE.run?.stopping?'disabled':''} onclick="genStop()">${G.stopping?'Stopping…':'Stop'}</button>` : ''}<button onclick="go('batch')">Back to the brief</button>
   </div>
   ${latest ? `<div class="latest" title="${esc(latest)}">${esc(latest)}</div>` : ''}
   ${mine ? `<details style="margin-top:10px" ${keepLog?'open':''}><summary>Full log</summary><div id="runbox"></div></details>` : ''}`;
@@ -1957,7 +1973,7 @@ async function viewExports(v, seq=VIEW_SEQ){
       ${b.thumb?`<img src="${esc(b.thumb)}" alt="" style="width:64px;height:64px;border-radius:8px;object-fit:cover">`:''}
       <div style="flex:1"><b>${esc(b.words.offer)}</b> · ${esc(b.words.locations.join(' / '))}${b.words.audience?` · ${esc(b.words.audience)}`:''}
         <div class="hint">${esc(b.id)} · ${b.ads} ads · ${r.kept||0} kept${r.excluded?`, ${r.excluded} excluded`:''}${r.unreviewed?`, ${r.unreviewed} to review`:''} · ${b.stories} Stories versions</div></div>
-      <button class="sm" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm primary" onclick="openPublish('${esc(b.id)}')">Publish…</button></div></div>`; }).join('') : '<div class="empty">No campaign has ads yet. Create one first.</div>'}`;
+      <button class="sm" onclick="openReview('${esc(b.id)}')">Pick ads</button><button class="sm primary" onclick="openPublish('${esc(b.id)}')">Open →</button></div></div>`; }).join('') : '<div class="empty">No campaign has ads yet. Create one first.</div>'}`;
 }
 
 // ── From the ad account (onboarding, part three) ────────────────────────────
@@ -2437,7 +2453,7 @@ function paintPublish(v){
   </div>`; };
   const adRow = (a) => { const t = D.thumbs[a.folder]||{}; return `<div style="text-align:center;width:118px"><img src="${esc(t.url||'')}" alt="" style="width:110px;height:110px;border-radius:8px;object-fit:cover;border:1px solid var(--line)"><div class="hint" style="font-size:11px;line-height:1.3;margin-top:3px">${esc(a.folder.replace(/^\d+-/,''))}${a.story?'':'<br><span style="color:var(--warn)">no 9:16</span>'}</div></div>`; };
   v.innerHTML = `
-  <div class="row" style="margin-bottom:4px"><h1 style="margin:0">Publish ${esc(P.campaign.name)}</h1><div class="spacer"></div><button onclick="openReview('${esc(PB.id)}')">← Review</button></div>
+  <div class="row" style="margin-bottom:4px"><h1 style="margin:0">Publish ${esc(P.campaign.name)}</h1><div class="spacer"></div><button onclick="openReview('${esc(PB.id)}')">← Pick Ads</button></div>
   <p class="sub">What will be created in ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account, every object paused. Every field below is this campaign's own; the profile's defaults filled it in. Nothing is created until the last button.</p>
   ${PB.error?`<div class="msg err">${esc(PB.error)}</div>`:''}
   ${P.problems.map(x=>`<div class="msg err">${esc(x)}</div>`).join('')}${P.warnings.map(x=>`<div class="msg warn">${esc(x)}</div>`).join('')}
@@ -2610,7 +2626,7 @@ function readinessBlock(R, P){
   return `<div class="msg warn"><b>Before you create, ${open.length} thing${open.length===1?'':'s'} to check:</b><ul style="margin:4px 0 0 18px">${open.map(c=>`<li>${esc(c.text)}${c.where?` — <a href="#" onclick="pbJump('${c.where}');return false">${esc(label[c.where]||c.where)}</a>`:''}</li>`).join('')}</ul>${R.checks.some(c=>c.ok===true)?`<div class="hint" style="margin-top:6px">Fine: ${R.checks.filter(c=>c.ok===true).map(c=>esc(c.text)).join(' · ')}.</div>`:''}</div>`;
 }
 function pbJump(where){
-  const re = { destination:/^Destination and identity/, targeting:/^Ad sets/, copy:/^Copy\b/, ads:/^Ads ·/ }[where] || /./;
+  const re = { destination:/^Destination and identity/, targeting:/^Ad sets/, copy:/^Copy\b/, headlines:/^Headlines\b/, ads:/^Ads ·/ }[where] || /./;
   const h = [...document.querySelectorAll('#view h2, #view h3')].find(x=>re.test(x.textContent.trim()));
   (h?.closest('.card') || h)?.scrollIntoView({ behavior:'smooth', block:'start' });
 }
@@ -3428,6 +3444,149 @@ async function newOffer(){
   try{ await api('/api/clients',{method:'POST',body:{gym:STATE.sel,offer:offer.trim()}});
     await loadClients(); await selectClient(STATE.sel); await loadOffer(offer.trim());
   }catch(e){ alert(e.message); }
+}
+
+// ── The step indicator ───────────────────────────────────────────────────────
+// Inside each of the cycle's five steps (2026-11-11, the owner: "a stepper within each step, to know where I am and
+// clearly what button to press"): the step's own parts in order — done, now, later — and ONE bar under them that says
+// what to do now in plain words, with the one button that does it. Every button here presses what the screen already
+// has (the same confirmation dialogs, the same rules); nothing is locked: the rest of the screen works as before.
+// A part is done by what is on file or on the form, never by a click on the indicator. When every part of a step is
+// done, the bar is the cycle's own next thing (cyGo).
+const STP = { go:null };
+const STEP_OF = { results:1, scenes:2, batch:3, generating:3, review:4, exports:5, publish:5 };
+const part = (name, done, act) => ({ name, done: !!done, ...(act||{}) });
+const plur = (n, one, many) => `${n} ${n===1 ? one : (many || one+'s')}`;
+/** Bring a control into view and flash it, so the eye lands on what the bar is talking about. */
+function stpScroll(sel){ const el = typeof sel==='string' ? $(sel) : sel; if (!el) return; el.scrollIntoView({ behavior:'smooth', block:'center' }); el.classList.add('stpflash'); setTimeout(()=>el.classList.remove('stpflash'), 1800); }
+
+/** Step 1 · Review Data: fresh numbers → every picture read → read the review and go on. */
+function partsResults(C){
+  if (!C) return null;
+  const i = C.info, canPull = i.account && i.linked;
+  const pull = canPull || !$('#wins input[type=file]')
+    ? { text: i.ads ? `The account was last read ${plur(i.data_age,'day')} ago and ads are running. Read it again, so everything below is today's. Read-only: nothing on Meta changes.` : "Nothing is on file for this gym yet. Read its ad account: every campaign, ad and number. Read-only: nothing on Meta changes. (No account yet? Go straight to Generate Creatives for a first batch.)", label:'Review the account…', go:()=>{ rsView('review'); rsReviewAccount(); } }
+    : { text: i.ads ? `This gym's numbers come as a file, and the last one is ${plur(i.data_age,'day')} old. Export the ads from Ads Manager as a CSV and import it.` : "This gym's ad account is not linked, so its numbers come as a file: export the ads from Ads Manager as a CSV and import it. (Nothing to import? Go straight to Generate Creatives for a first batch.)", label:'Import an export (CSV)…', go:()=>{ rsView('review'); $('#wins input[type=file]')?.click(); } };
+  return { parts: [
+    part('Get the latest numbers', i.ads > 0 && !i.stale, pull),
+    part('Read the pictures', i.ads > 0 && i.unread === 0, { text:`${plur(i.unread,'picture')} of your ads ${i.unread===1?'has':'have'} not been read yet, so What wins cannot count ${i.unread===1?'it':'them'}. One vision call each; you set the cap first.`, label:'Read the creatives…', go:()=>{ rsView('review'); rsReadCreatives(); } }),
+    part('Read the review, then go on', false, { text:'Read the review below: what to keep running, what is tiring, what to pause, and the next batch it suggests.', cycle:true }),
+  ] };
+}
+/** Step 2 · Draft Scenes: draft what the data asks for → approve the ones you want → ready. */
+function partsScenes(C){
+  if (!C || !B.scenes) return null;
+  const jobs = C.jobs || [], needed = jobs.filter(j=>j.needed), first = jobs.findIndex(j=>j.needed && !(j.drafts_waiting > 0));
+  const none = !B.scenes.status?.exists, waiting = C.scenes_waiting || 0, kind = (j) => (FORMAT_NAMES[j.format]||j.format).toLowerCase();
+  return { parts: [
+    part('Draft the scenes the data asks for', !none && first < 0, none
+      ? { text:'This gym has no scenes yet. A scene is one photo idea in words. Have the agent draft the first ones: text only, no image calls, and nothing is used until you approve it.', label:'Draft the first scenes…', go:()=>bRefreshConfirm() }
+      : { text:`The next batch has ${kind(jobs[first]||{format:'workout'})} photos in it and no scene of that kind is approved. Have the agent draft some: text only, no image calls.`, label:`Draft ${kind(jobs[first]||{format:'workout'})} scenes…`, go:()=>scDraft(first) }),
+    part('Approve the ones you want', waiting === 0, { text:`${plur(waiting,'draft')} ${waiting===1?'is':'are'} waiting below. Read each one: Approve the good ones, Reject the rest and say why. Nothing is generated from a draft.`, label:'Show the drafts ↓', go:()=>stpScroll('#bSceneCard .scene') }),
+    part('Scenes ready for the next batch', needed.length === 0, { text:'A kind of photo in the next batch still has no approved scene: approve one of its drafts, or draft more.', label:'Show the drafts ↓', go:()=>stpScroll('#bSceneCard .scene') }),
+  ], after: { text:`Every kind of photo in the next batch has approved scenes.${jobs.some(j=>!j.needed)?' Optional: draft new versions of your best picture, above.':''}`, cycle:true } };
+}
+/** Step 3 · Generate Creatives, the brief: the offer and where → the check → generate → pick. */
+const BRIEF_PARTS = ['Say the offer and where', 'Fix what the check says', 'Generate the ads', 'Pick the ads'];
+function partsBatch(C){
+  const d = B.draft; if (!d || !B.setup || B.mode === 'rerender') return null;
+  const hasOffer = (d.offer||'').trim() !== '' && (d.locations||[]).some(l=>l!==''), errs = B.check?.errors || [], s = B.check?.summary, busy = STATE.run && !STATE.run.done;
+  const sug = !!$('#bSuggestUse');
+  return { parts: [
+    part(BRIEF_PARTS[0], hasOffer, sug
+      ? { text:"Type the offer exactly as it should read on the ads, and the locations. Or take the review's suggestion: your last batch's own words, with the suggested photos and cards.", label:'Use this suggestion', go:()=>bSuggestUse() }
+      : { text:'Type the offer exactly as it should read on the ads (or pick one of your wordings), and at least one location. Every word on the ads is what you type.', label:'Go to the offer', go:()=>{ const o = $('#bOffer'); stpScroll(o); o?.focus(); } }),
+    part(BRIEF_PARTS[1], hasOffer && !!B.check && errs.length === 0, !B.check
+      ? { text:'Checking the brief…' }
+      : { text:`${plur(errs.length,'thing')} to fix before this can run: ${errs[0]||''}`, label:'Show me', go:()=>stpScroll('#bErrors .msg') }),
+    part(BRIEF_PARTS[2], false, busy
+      ? { text:`A run is going: ${STATE.run.label||''}. Wait for it to end.`, ...(STATE.run.batch ? { label:'Watch it →', go:()=>openGenerating(STATE.run.batch) } : {}) }
+      : { text: s ? `The brief is good. This makes ${plur(s.ads,'ad')} from ${plur(s.photos,'photo')}, with at most ${plur(s.max_calls,'image call')}. Nothing spends until you confirm.` : 'The brief is good.', label: s ? `Generate ${plur(s.ads,'ad')}…` : 'Generate…', go:()=>bConfirm() }),
+    part(BRIEF_PARTS[3], false, null),
+  ] };
+}
+/** Step 3 · Generate Creatives, while a batch is being made. */
+function partsGenerating(){
+  const d = G.data; if (!d) return null;
+  const p = d.progress, photos = Object.values(p?.photos || {}), passed = photos.filter(x=>x.state==='passed').length;
+  const stage = p?.stage || (d.made ? 'done' : 'photos'), live = !!(d.run || d.orphan), done = stage === 'done' && !d.run, bad = !done && (stage === 'failed' || stage === 'stopped' || !live);
+  return { parts: [ part(BRIEF_PARTS[0], true), part(BRIEF_PARTS[1], true),
+    part(BRIEF_PARTS[2], done, bad
+      ? { text: stage === 'stopped' ? 'You stopped this run. The photos it finished are kept and reused.' : 'This run did not finish. The photos that passed are kept and reused.', label:'Run again…', go:()=>bRunAgain(STATE.batch) }
+      : { text:`The agent is making the photos and checking each one${photos.length?`: ${passed} of ${photos.length} passed`:''}. Nothing to press: this screen updates by itself, and the ads render when the photos are in.` }),
+    part(BRIEF_PARTS[3], false, { text:`Done: ${p?.ads ?? 'the'} ads are made. Now choose the ones to run.`, label:'Pick Ads →', go:()=>openReview(STATE.batch, 'ads') }),
+  ] };
+}
+/** Step 4 · Pick Ads: open a batch → keep or exclude each ad → Stories versions → publish. */
+const PICK_PARTS = ['Open a batch', 'Keep or exclude each ad', 'Make Stories versions', 'Go to publish'];
+function partsReviewList(C){
+  if (!C) return null;
+  const bs = (C.batches||[]).filter(b=>b.ads > 0), b = bs.find(x=>x.open && x.unreviewed > 0) || bs.find(x=>x.open && !x.stories);
+  const rest = PICK_PARTS.slice(1).map(n=>part(n, false, null));
+  if (!b) return { idle: bs.length ? 'No batch is waiting to be picked: every recent one has been looked at. The batches below can still be opened.' : 'No batch has ads yet.', parts: [part(PICK_PARTS[0], false, null), ...rest] };
+  return { parts: [ part(PICK_PARTS[0], false, { text: b.unreviewed > 0 ? `${b.id} has ${plur(b.unreviewed,'ad')} you have not looked at yet.` : `${b.id} has no Stories versions yet: ${plur(b.kept ?? b.ads,'ad')} kept.`, label:'Open it →', go:()=>openReview(b.id) }), ...rest ] };
+}
+function partsReview(){
+  const d = R.data; if (!d || R.id !== STATE.batch) return null;
+  const c = d.counts || {}, kept = (c.kept||0) + (c.unreviewed||0), busy = !!d.run || (STATE.run && !STATE.run.done);
+  if (!d.made) return { parts: [ part(PICK_PARTS[0], true), part(PICK_PARTS[1], false, { text:'The ads render once every photo is in. You can look at the photos meanwhile.', ...(d.run ? { label:'Watch progress →', go:()=>openGenerating(R.id) } : {}) }), part(PICK_PARTS[2], false, null), part(PICK_PARTS[3], false, null) ] };
+  return { parts: [ part(PICK_PARTS[0], true),
+    part(PICK_PARTS[1], !(c.unreviewed > 0), { text:`${plur(c.unreviewed,'ad')} not looked at yet. For each one press ✓ Keep or ✕ Exclude, top right (K or X on the keyboard; ← → to move). Picks save by themselves.`, label:'Show the ones left', go:()=>{ rvShow('todo'); const s = $('#rvShow'); if (s) s.value = 'todo'; } }),
+    part(PICK_PARTS[2], !!d.stories && d.stories.ads > 0, busy
+      ? { text:'A run is going. Wait for it to end.' }
+      : { text:`Stories and Reels need a tall (9:16) version of each kept ad: ${plur(kept,'ad')} kept. You confirm the image calls first.`, label:'Make Stories versions…', go:()=>rvStoriesConfirm() }),
+    part(PICK_PARTS[3], false, { text:`${plur(kept,'ad')} kept, with ${plur(d.stories?.ads||0,'Stories version')}. Next: the words beside them, and where they run.`, label:'Publish Ads →', go:()=>openPublish(R.id) }),
+  ] };
+}
+/** Step 5 · Publish Ads: open a batch → copy and headlines → the ad sets → create, paused → turn them on. */
+const PUB_PARTS = ['Open a batch', 'Keep copy and headlines', 'Check the ad sets', 'Create on Facebook, paused', 'Turn the ads on'];
+function partsExports(C){
+  if (!C) return null;
+  const bs = (C.batches||[]).filter(b=>b.ads > 0), b = bs.find(x=>x.published && !x.published.done) || bs.find(x=>x.open && !(x.unreviewed > 0)) || bs.find(x=>x.open);
+  const rest = PUB_PARTS.slice(1).map(n=>part(n, false, null));
+  if (!b) return { idle: bs.length ? 'No batch is waiting to be published: every recent one is on Facebook. The batches below can still be opened.' : 'No batch has ads yet.', parts: [part(PUB_PARTS[0], false, null), ...rest] };
+  return { parts: [ part(PUB_PARTS[0], false, { text:`${b.id}: ${plur(b.kept ?? b.ads,'ad')} kept, ${b.published ? 'creating on Facebook not finished' : b.unreviewed > 0 ? `${plur(b.unreviewed,'ad')} not looked at yet, not on Facebook` : 'not on Facebook yet'}.`, label:'Open it →', go:()=>openPublish(b.id) }), ...rest ] };
+}
+function partsPublish(){
+  const D = PB.data; if (!D || PB.id !== STATE.batch) return null;
+  const P = D.plan, drafts = D.copy?.drafts || [], of = (k) => drafts.filter(x=>(x.kind||'copy')===k), kept = (k) => of(k).filter(x=>x.status==='keep').length, open = (k) => of(k).filter(x=>x.status==='draft').length;
+  const rec = D.published, made = Object.keys(rec?.ads||{}).length, live = Object.values(PB.results?.ads||{}).filter(a=>a.words==='live').length, toCheck = (D.readiness?.checks||[]).filter(c=>c.ok!==true).length;
+  const url = rec?.campaign?.id ? `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${encodeURIComponent((rec.account||'').replace(/^act_/,''))}&selected_campaign_ids=${encodeURIComponent(rec.campaign.id)}` : null;
+  const words = (k, noun) => open(k)
+    ? { text:`${plur(open(k), noun==='copies'?'copy':'headline', noun)} ${open(k)===1?'is':'are'} drafted and waiting. Keep the ones you like: the recommended ones are first.`, label:`Show the ${noun} ↓`, go:()=>pbJump(k==='headline'?'headlines':'copy') }
+    : { text: k==='copy' ? 'Each ad needs words beside it. Have the agent draft copies from the copy library, then keep the ones you like. One or two text calls.' : 'Each ad needs a headline too. Draft some, then keep the ones you like.', label:`Draft 10 ${noun}…`, go:()=>cpDraft(k) };
+  return { parts: [ part(PUB_PARTS[0], true),
+    part(PUB_PARTS[1], kept('copy') > 0 && kept('headline') > 0, kept('copy') > 0 ? words('headline','headlines') : words('copy','copies')),
+    part(PUB_PARTS[2], !!P.ready, { text:`${plur((P.problems||[]).length,'thing')} ${(P.problems||[]).length===1?'stops':'stop'} this from being created: ${(P.problems||[])[0]||''}`, label:'Show the ad sets ↓', go:()=>pbJump('targeting') }),
+    part(PUB_PARTS[3], !!rec?.done, { text: made ? `${made} of ${plur(P.counts.ads,'ad')} ${made===1?'is':'are'} on Facebook. Continue: nothing is made twice.` : `This makes 1 campaign, ${plur(P.counts.adsets,'ad set')} and ${plur(P.counts.ads,'ad')} in the gym's ad account, every one paused.${toCheck?` ${plur(toCheck,'thing')} to check first ${toCheck===1?'is':'are'} listed above the button.`:''} You confirm first.`, label: made ? 'Continue creating…' : 'Create on Facebook, paused…', go:()=>pbCreateConfirm() }),
+    part(PUB_PARTS[4], live > 0, { text:'Everything was made paused. Look it over in Ads Manager and switch the campaign on there when you are ready: this app never switches an ad on. Then press Pull results from Meta below and this ticks.', ...(url ? { label:'Open Ads Manager ↗', go:()=>window.open(url, '_blank', 'noopener') } : {}) }),
+  ], after: { text:`${plur(live,'ad')} ${live===1?'is':'are'} live. Come back in a few days to read what they did: the cycle starts again there.`, label:'Review Data →', go:()=>go('results') } };
+}
+function stepParts(){
+  const C = CY.gym === STATE.sel ? CY.data : null, t = STATE.tab;
+  return t==='results' ? partsResults(C) : t==='scenes' ? partsScenes(C) : t==='batch' ? partsBatch(C) : t==='generating' ? partsGenerating()
+    : t==='review' ? (STATE.batch ? partsReview() : partsReviewList(C)) : t==='exports' ? partsExports(C) : t==='publish' ? (STATE.batch ? partsPublish() : partsExports(C)) : null;
+}
+function paintStepper(){
+  const box = $('#stepper'); if (!box) return;
+  let S = null; try { S = STATE.sel && CYCLE_TABS.includes(STATE.tab) ? stepParts() : null; } catch(e){ console.error(e); }
+  if (!S){ box.innerHTML = ''; STP.go = null; return; }
+  const n = (CY.gym === STATE.sel ? CY.data?.next : null) || null, there = n && n.tab === STATE.tab && (n.batch||null) === (STATE.batch||null);
+  const i = S.idle ? -1 : S.parts.findIndex(p=>!p.done), act = S.idle ? { cycle:true, text:S.idle } : i >= 0 ? S.parts[i] : (S.after || { cycle:true, text:'' });
+  let text = act.text || '', label = act.label || null, fn = act.go || null;
+  // The step's last word is the cycle's: where to go from here.
+  if (act.cycle && n && !there){ text = `${text} ${S.idle ? 'Next in the cycle' : 'Then'}: ${n.text}`.trim(); if (!n.idle){ label = `${n.name} →`; fn = cyGo; } }
+  STP.go = fn;
+  const else_ = !act.cycle && n && !n.idle && n.step !== STEP_OF[STATE.tab] ? n : null;
+  box.innerHTML = `<div class="stp" id="stp"><div class="stpparts" id="stpParts">${S.parts.map((p,k)=>`<span class="stpp ${p.done?'done':k===i?'now':'later'}" title="${esc(`${k+1}. ${p.name}${p.done?' — done':k===i?' — now':''}`)}"><span class="n">${p.done?'✓':k+1}</span><span class="nm">${esc(p.name)}</span></span>`).join('<i>›</i>')}</div>
+    <div class="stpdo" id="stpDo"><span class="k">${S.idle ? 'Nothing to do here now' : i >= 0 ? `Do this now · ${i+1} of ${S.parts.length}` : 'This step is done'}</span><span class="t" title="${esc(text)}">${esc(text)}</span>${label ? `<button class="primary" id="stpGo" onclick="stpGo()">${esc(label)}</button>` : ''}</div>
+    ${else_ ? `<div class="stpelse" id="stpElse">Elsewhere in the cycle — ${esc(else_.text)} <a href="#" onclick="cyGo();return false">${esc(else_.name)} →</a></div>` : ''}</div>`;
+}
+function stpGo(){ const f = STP.go; if (f) f(); }
+// Every repaint of a step's screen repaints its indicator: the parts follow the form and the files, never a click here.
+for (const name of ['paintResults','paintScenes','paintSceneAsks','paintBatch','paintDerived','paintGenerating','paintReview','paintCounts','paintFoot','paintPublish','viewReviewList','viewExports']) {
+  const f = window[name]; if (typeof f !== 'function') continue;
+  window[name] = function(){ const r = f.apply(this, arguments); if (r && typeof r.then === 'function') r.then(()=>paintStepper(), ()=>{}); else { try { paintStepper(); } catch{} } return r; };
 }
 
 boot().catch(e=>{ document.body.innerHTML=`<div style="padding:40px;color:#b42323">Failed to start: ${esc(e.message)}</div>`; });

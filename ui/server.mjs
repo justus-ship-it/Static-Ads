@@ -1436,7 +1436,7 @@ const server = createServer(async (req, res) => {
     if (cy && req.method === "GET") {
       const gym = cy[1];
       if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
-      try { return json(res, 200, cycleFrom({ review: buildReview(brandDir(gym), { brandsDir: BRANDS }), batches: listBatches(gym) })); }
+      try { const c = cycleFrom({ review: buildReview(brandDir(gym), { brandsDir: BRANDS }), batches: listBatches(gym) }); return json(res, 200, { ...c, info: { ...c.info, linked: !!metaConfig({ gym }).token } }); }
       catch (e) { return json(res, 500, { error: scrubTokens(e.message) }); }
     }
     // /api/client/{gym}/account-review — the review, built from what is on disk (no Meta call, no model call): the numbers,

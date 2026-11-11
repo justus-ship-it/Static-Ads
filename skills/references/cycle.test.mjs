@@ -22,6 +22,11 @@ test("CY1 the five steps in the owner's order, each on its own screen; a gym wit
   assert.deepEqual(c.steps.map((s) => s.text), ["266 leads at SGD 19.71 running · read 10 Nov", "Nothing waiting", "Last batch made 24 Sep", "Nothing to pick", "Last published 25 Sep · 266 leads"]);
   assert.deepEqual([c.next.step, c.next.name, c.next.tab, c.next.text], [3, "Generate Creatives", "batch", "Generate the next batch: it opens filled in from the review."]);
   assert.deepEqual(c.counts, { scenes: 0, pick: 0, publish: 0 });
+  // The facts each step's own indicator reads: how old the data is, pictures not read, the batches and the one in hand.
+  assert.deepEqual(c.info, { ads: 151, running: 10, data_age: 1, stale: false, unread: 0, pictures: 0, account: false, exports: 0 });
+  assert.deepEqual([c.current, c.batches.map((b) => [b.id, b.ads, b.unreviewed, b.kept, b.published.done, b.open])], [null, [["2026-09-24-offer", 20, 0, 20, true, false]]]);
+  const hand = cycleFrom({ review: review({ data: { pulled: "2026-10-20T03:00:00Z", exports: [], unread: 7, pictures: 40, account: "act_1" } }), batches: [batch("2026-11-10-offer", { review: { kept: 14, excluded: 2, unreviewed: 4 }, stories: 6 })], now: NOW });
+  assert.deepEqual([hand.current, hand.batches[0].open, hand.batches[0].stories, hand.info.stale, hand.info.data_age, hand.info.unread, hand.info.account], ["2026-11-10-offer", true, 6, true, 22, 7, true]);
 });
 
 test("CY2 scenes: a kind in the mix with no approved scene, or drafts awaiting approval, is the next thing once no batch is in hand; a suggestion to draft new versions of the winners is said and never nags", () => {

@@ -89,5 +89,9 @@ export function cycleFrom({ review, batches = [], now = new Date() } = {}) {
   else next = { step: 3, tab: "batch", text: all.ads ? "Generate the next batch: it opens filled in from the review." : "Generate a first batch." };
   next.name = step(next.step - 1);
 
-  return { steps, next, data_at: dataAt, reviewed_at: reviewedAt, counts: { scenes: needed.length + waiting, pick: open.filter((b) => (b.review?.unreviewed || 0) > 0).length, publish: (ready ? 1 : 0) + (partly ? 1 : 0) }, jobs, scenes_waiting: waiting, day: day(today) };
+  // What each step's own indicator needs (the page's stepper, 2026-11-11): the facts, not the wording.
+  const info = { ads: all.ads || 0, running: running.ads || 0, data_age: dataAge, stale: !!(all.ads && running.ads > 0 && dataAge != null && dataAge > STALE_DAYS), unread: R.data?.unread || 0, pictures: R.data?.pictures || 0, account: !!R.data?.account, exports: (R.data?.exports || []).length };
+  const hand = going || toPick || partly || ready || null; // the batch in hand: the current turn of the cycle
+  const list = batches.slice(0, 12).map((b) => ({ id: b.id, offer: b.words?.offer || null, made: b.made || null, ads: b.ads || 0, running: !!b.running, stopped: !!b.stopped, failed: !!b.failed, kept: b.review?.kept ?? null, excluded: b.review?.excluded ?? null, unreviewed: b.review?.unreviewed ?? null, stories: b.stories || 0, published: b.published ? { done: !!b.published.done, ads: b.published.ads || 0, at: b.published.at || null } : null, open: open.includes(b) }));
+  return { steps, next, info, batches: list, current: hand ? hand.id : null, data_at: dataAt, reviewed_at: reviewedAt, counts: { scenes: needed.length + waiting, pick: open.filter((b) => (b.review?.unreviewed || 0) > 0).length, publish: (ready ? 1 : 0) + (partly ? 1 : 0) }, jobs, scenes_waiting: waiting, day: day(today) };
 }
