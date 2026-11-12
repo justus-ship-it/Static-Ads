@@ -164,7 +164,7 @@ export function lastBrief(gymDir) {
  * locations, audience (the owner's last words), generated, mix (photos per kind), cards, lean — Create fills the rest
  * from the gym's Ad defaults as it always does. `reasons` say where each part comes from; `left` what could not be used.
  */
-export function suggestBrief(gymDir, { rows = gymRowsRead(gymDir), every = rows, mix = null, next = [], insights = [], currency = "SGD", profile = readJson(join(gymDir, "gym-profile.json")) || {}, now = new Date() } = {}) {
+export function suggestBrief(gymDir, { rows = gymRowsRead(gymDir), every = rows, mix = null, next = [], insights = [], ledger = [], currency = "SGD", profile = readJson(join(gymDir, "gym-profile.json")) || {}, now = new Date() } = {}) {
   const cd = profile.creative_defaults || {}, reasons = [], left = [];
   const last = lastBrief(gymDir), wording = readWordings(gymDir)[0]?.text || null;
   const offer = last?.brief.offer || wording || "";
@@ -185,7 +185,9 @@ export function suggestBrief(gymDir, { rows = gymRowsRead(gymDir), every = rows,
   // The lean: this gym's own account first, then what holds across the others — and only what an approved scene of this audience can show.
   const formats = Object.keys(photos);
   const own = ownLeans(rows, { formats, currency }), tests = ownTests(rows, { formats, currency, insights, have: own });
-  const wanted = [...own, ...tests, ...portfolioLeans(next, { formats, have: [...own, ...tests] })];
+  // What held when another gym tested it (the ledger across every gym): a test here, after this gym's own tests — never a lean on another gym's word.
+  const elsewhere = ledgerTests(ledger, gymDir.split("/").filter(Boolean).pop(), { formats, have: [...own, ...tests] });
+  const wanted = [...own, ...tests, ...elsewhere, ...portfolioLeans(next, { formats, have: [...own, ...tests, ...elsewhere] })];
   let scenes = []; try { scenes = loadScenes(join(gymDir, "scenes.json")); } catch { scenes = []; }
   const aud = sceneAudience(audience, last?.brief.scene_audience), lean = [];
   const runnable = [];
@@ -273,7 +275,7 @@ export function recordAction(gymDir, action, { now = new Date() } = {}) {
 }
 /** How a lean or a test of a batch came out, from that batch's own ads: the ones that show it against the rest. */
 export const TEST_MIN_LEADS = 10;
-function leanOutcome(l, rows, scenes, currency) {
+export function leanOutcome(l, rows, scenes, currency) {
   const byId = new Map(scenes.map((s) => [s.id, s]));
   const showing = (r) => { if (l.format && (r.format || "workout") !== l.format) return false; if (l.tag === "room") return r.room === l.value; const sc = r.scenes && !String(r.scenes).includes("+") ? byId.get(r.scenes) : null; return !!sc && shows(sc, l.tag, l.value); };
   const of = rows.filter((r) => !l.format || (r.format || "workout") === l.format), T = of.filter(showing), O = of.filter((r) => !showing(r));
@@ -311,6 +313,87 @@ export function lastTime(gymDir, { rows = gymRowsRead(gymDir), insights = [], cu
       const twin = !x && /^(keep|tiring|pause):/.test(e.key) ? insights.find((y) => y.ads && y.ads[0] === e.key.split(":")[1]) : null, cur = x || twin;
       if (cur && (cur.kind !== before.kind || cur.verdict !== before.verdict)) out.changed.push({ key: e.key, from: before.kind, to: cur.kind, text: `${e.name || e.key} was ${word[before.kind] || before.kind} on ${before.at.slice(0, 10)}; it is ${cur.fading ? "fading" : word[cur.kind] || cur.kind} now.` });
     }
+  }
+  return out;
+}
+
+// ── the ledger across every gym (2026-11-12) ─────────────────────────────────
+// What was said, what was tested and what held — pooled over every gym, where each gym's own ledger and "last time"
+// stop at its own door. One entry per thing a scene can be asked for (kind of photograph · tag · value): the gyms
+// whose own account says it now (by the same rules as their review's leans and tests), every batch on Meta that
+// leaned on it or tested it with how it came out against the rest of that batch, and a verdict by rule. Pure: from
+// the files, no Meta call, no model call, nothing stored — so it cannot drift from the batches it reads.
+//   holds      — held in two gyms' tests or more, and failed none        held_once — held in one gym's, failed none
+//   mixed      — held somewhere and failed somewhere                     not_held  — failed wherever it was judged
+//   testing    — in a batch, too few leads to say (under TEST_MIN_LEADS) untested  — said by an account, never in a batch
+// Check, then test, then act holds across gyms too: what held elsewhere is a TEST in a gym that has not tried it
+// (suggestBrief), never a lean on another gym's word.
+export const LEDGER_VERDICTS = { holds: "Holds across gyms", mixed: "Mixed", held_once: "Held where it was tested", not_held: "Did not hold", testing: "Being tested", untested: "Said, never tested" };
+const claimKey = (l) => `${l.format || "workout"}|${l.tag}|${l.value}`;
+/** One gym's part of it: what its own account says now, and every lean or test its batches on Meta carried. */
+export function gymLedger(gymDir, { now = new Date() } = {}) {
+  const gym = gymDir.split("/").filter(Boolean).pop(), profile = readJson(join(gymDir, "gym-profile.json")) || {}, currency = profile.locale?.currency || "SGD";
+  const rows = gymRowsRead(gymDir), recent = inScope(rows, "recent", { now }), basis = recent.length ? recent : rows;
+  let insights = []; try { insights = whatWins(gymDir, { currency, scope: "active", track: "stills", now }).suggestions.filter((s) => s.key); } catch { insights = []; }
+  const own = ownLeans(basis, { currency }), tests = ownTests(basis, { currency, insights, have: own });
+  const said = [...own.map((l) => ({ ...l, kind: "lean" })), ...tests.map((l) => ({ ...l, kind: "test" }))].map((l) => ({ key: claimKey(l), format: l.format || "workout", tag: l.tag, value: l.value, kind: l.kind, why: l.why }));
+  const scenes = readJson(join(gymDir, "scenes.json"))?.scenes || [], outDir = join(gymDir, "outputs"), tested = [];
+  if (existsSync(outDir)) for (const id of readdirSync(outDir).sort()) {
+    const b = readJson(join(outDir, id, "batch.json")); if (!b?.lean?.length) continue;
+    const mine = rows.filter((r) => r.batch === id && !r.superseded); if (!mine.length) continue; // never on Meta: nothing happened yet
+    for (const l of b.lean) tested.push({ key: claimKey(l), batch: id, made: b.made || null, ...leanOutcome(l, mine, scenes, currency) });
+  }
+  return { gym, name: profile.display_name || gym, currency, reviewed: readLedger(gymDir).reviewed || null, said, tested };
+}
+/** When anything the ledger reads last changed, per gym: the pooled ledger is rebuilt only when this moves (the review is built on every screen). */
+function ledgerStamp(brandsDir, dirs, now) {
+  const m = (p) => { try { return statSync(p).mtimeMs; } catch { return 0; } }, parts = [now.toISOString().slice(0, 10)];
+  for (const n of dirs) { const g = join(brandsDir, n), out = join(g, "outputs"); parts.push(n, ...["gym-profile.json", "account-history.json", "account-daily.json", "creative-reads.json", "scenes.json", LEDGER_FILE].map((f) => m(join(g, f))));
+    if (existsSync(out)) for (const id of readdirSync(out)) parts.push(id, m(join(out, id, "batch.json")), m(join(out, id, "results.json")), m(join(out, id, "publish.json"))); }
+  return parts.join("|");
+}
+const ledgerMemo = new Map();
+/** Every gym's part, pooled (see ledgerFrom). From the files; kept until one of them changes. */
+export function ledgerAcross(brandsDir, { now = new Date() } = {}) {
+  const dirs = existsSync(brandsDir) ? readdirSync(brandsDir).filter((n) => !n.startsWith(".") && !n.startsWith("_") && existsSync(join(brandsDir, n, "gym-profile.json"))).sort() : [];
+  const stamp = ledgerStamp(brandsDir, dirs, now), had = ledgerMemo.get(brandsDir);
+  if (had?.stamp === stamp) return had.value;
+  const value = ledgerFrom(dirs.map((n) => { try { return gymLedger(join(brandsDir, n), { now }); } catch { return null; } }).filter(Boolean));
+  ledgerMemo.set(brandsDir, { stamp, value });
+  return value;
+}
+/** The gyms' parts → { gyms, entries[{ key, format, tag, value, name, verdict, label, text, said[], tested[], counts, try_in[] }], counts }. Pure. */
+export function ledgerFrom(G = []) {
+  const by = new Map();
+  const at = (c) => { if (!by.has(c.key)) by.set(c.key, { key: c.key, format: c.format || "workout", tag: c.tag, value: c.value, name: leanName({ tag: c.tag, value: c.value, format: c.format || "workout" }), said: [], tested: [] }); return by.get(c.key); };
+  for (const g of G) {
+    for (const s of g.said) at(s).said.push({ gym: g.gym, name: g.name, kind: s.kind, why: s.why });
+    for (const t of g.tested) at(t).tested.push({ gym: g.gym, name: g.name, currency: g.currency, batch: t.batch, made: t.made, test: !!t.test, verdict: t.verdict, pictures: t.pictures, leads: t.tested.leads, cost_per_lead: t.tested.cost_per_lead, rest_leads: t.rest.leads, rest_cost_per_lead: t.rest.cost_per_lead, text: t.text });
+  }
+  const names = (xs) => [...new Set(xs.map((x) => x.name))], list = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : xs[0] || ""), rank = Object.keys(LEDGER_VERDICTS);
+  const entries = [...by.values()].map((e) => {
+    const held = names(e.tested.filter((t) => t.verdict === "held")), failed = names(e.tested.filter((t) => t.verdict === "not_held")), early = names(e.tested.filter((t) => t.verdict === "early" || t.verdict === "not_made"));
+    const verdict = held.length && failed.length ? "mixed" : held.length >= 2 ? "holds" : held.length ? "held_once" : failed.length ? "not_held" : e.tested.length ? "testing" : "untested";
+    const one = (v) => e.tested.find((t) => t.verdict === v), sayers = names(e.said);
+    const text = verdict === "holds" ? `Held when ${list(held)} tested it, and failed no test.`
+      : verdict === "held_once" ? `Held when ${held[0]} tested it (${one("held").batch}): ${one("held").text}. One gym so far.`
+      : verdict === "mixed" ? `Held at ${list(held)}; did not hold at ${list(failed)}.`
+      : verdict === "not_held" ? `Did not hold when ${list(failed)} tested it: ${one("not_held").text}.`
+      : verdict === "testing" ? `In a batch at ${list(early)}: ${e.tested[0].text}.`
+      : `${list(sayers)}'${sayers.length > 1 || !/s$/.test(sayers[0] || "") ? "s" : ""} own account${sayers.length > 1 ? "s say" : " says"} it; no batch has tested it yet.`;
+    const touched = new Set([...e.said, ...e.tested].map((x) => x.gym));
+    return { ...e, verdict, label: LEDGER_VERDICTS[verdict], text, counts: { said: sayers.length, held: held.length, not_held: failed.length, early: early.length }, try_in: verdict === "holds" || verdict === "held_once" ? G.filter((g) => !touched.has(g.gym)).map((g) => ({ gym: g.gym, name: g.name })) : [] };
+  }).sort((a, b) => rank.indexOf(a.verdict) - rank.indexOf(b.verdict) || b.counts.said + b.tested.length - (a.counts.said + a.tested.length) || a.name.localeCompare(b.name));
+  const counts = Object.fromEntries(rank.map((v) => [v, entries.filter((e) => e.verdict === v).length]));
+  return { gyms: G.map((g) => ({ gym: g.gym, name: g.name, currency: g.currency, reviewed: g.reviewed, said: g.said.length, tested: g.tested.length })), entries, counts };
+}
+/** What held when another gym tested it and this gym has neither said nor tried: a test here (each { format, tag, value, test, source: "ledger", why }). */
+export function ledgerTests(entries = [], gym, { formats = Object.keys(SCENE_FORMATS), have = [] } = {}) {
+  const out = [];
+  for (const e of entries) {
+    if (!(e.verdict === "holds" || e.verdict === "held_once") || !formats.includes(e.format) || [...e.said, ...e.tested].some((x) => x.gym === gym) || [...have, ...out].some((l) => (l.format || "workout") === e.format && l.tag === e.tag)) continue;
+    const h = e.tested.filter((t) => t.verdict === "held"), who = [...new Set(h.map((t) => t.name))];
+    out.push({ format: e.format, tag: e.tag, value: e.value, test: true, source: "ledger", why: `Held when ${who.join(" and ")} tested it (${h[0].leads} leads at ${money(h[0].cost_per_lead, h[0].currency)}${h[0].rest_cost_per_lead != null ? `, against ${money(h[0].rest_cost_per_lead, h[0].currency)} for the rest of that batch` : ""}). Not tried in this gym yet: a test here, not a finding.` });
   }
   return out;
 }
@@ -368,11 +451,12 @@ export function buildReview(gymDir, { brandsDir = resolve(gymDir, ".."), now = n
   const drift = [], outDir = join(gymDir, "outputs");
   if (existsSync(outDir)) for (const id of readdirSync(outDir).sort()) for (const d of readJson(join(outDir, id, "results.json"))?.drift || []) drift.push({ batch: id, kind: d.kind, text: d.text, fixable: !!d.fixable });
   const history = readJson(join(gymDir, "account-history.json")), u = (() => { try { return unreadCount(gymDir); } catch { return { pictures: 0, unread: 0 }; } })();
-  const suggested = suggestBrief(gymDir, { rows: inScope(rows, "recent", { now }).length ? inScope(rows, "recent", { now }) : rows, every: rows, mix, next, insights: wins.suggestions.filter((s) => s.key), currency, profile, now });
+  let ledger = { gyms: [], entries: [], counts: {} }; try { ledger = ledgerAcross(brandsDir, { now }); } catch { /* one gym's files could not be read: the review goes on without the pooled ledger */ }
+  const suggested = suggestBrief(gymDir, { rows: inScope(rows, "recent", { now }).length ? inScope(rows, "recent", { now }) : rows, every: rows, mix, next, insights: wins.suggestions.filter((s) => s.key), ledger: ledger.entries, currency, profile, now });
   const pick = (kind) => wins.suggestions.filter((s) => s.kind === kind).map((s) => s.text);
   return {
     gym, name: profile.display_name || gym, currency, built: now.toISOString(), last: readJson(join(gymDir, REVIEW_FILE)),
-    data: { account: profile.meta_assets?.ad_account_id || null, pulled: history?.pulled || null, exports: (history?.exports || []).map((e) => ({ label: e.label || e.name || null, imported: e.imported || null })), pictures: u.pictures, unread: u.unread, ads: rows.length },
+    data: { account: profile.meta_assets?.ad_account_id || null, pulled: history?.pulled || null, numbers_read: rows.map((r) => r.numbers_read).filter(Boolean).sort().pop() || null, exports: (history?.exports || []).map((e) => ({ label: e.label || e.name || null, imported: e.imported || null })), pictures: u.pictures, unread: u.unread, ads: rows.length },
     numbers: { running: totals(running), last_30d: d30.length ? { spend: s30, leads: l30, cost_per_lead: l30 ? round2(s30 / l30) : null } : null, all_time: totals(rows), median: wins.median, scope: wins.scope },
     keep: pick("keep"), tiring: pick("tiring"), pause: pick("pause"), matters: pick("matters"), notes: [...pick("thin"), ...pick("test"), ...pick("unread")],
     // Checked before it is said (2026-11-11): what is only a lead to test, what is not judged yet, what nothing here changes —
@@ -382,6 +466,7 @@ export function buildReview(gymDir, { brandsDir = resolve(gymDir, ".."), now = n
     copy: { copies: copyOf("copy"), headlines: copyOf("headline"), never_led: dead },
     drift, mix: { current: mix.current, suggested: mix.suggested, changed: mix.changed, reasons: mix.reasons, formats: mix.formats },
     last_time: lastTime(gymDir, { rows, insights: wins.suggestions.filter((s) => s.key), currency }),
+    ledger: { gyms: ledger.gyms.length, counts: ledger.counts, entries: ledger.entries.map((e) => ({ ...e, here: e.tested.some((t) => t.gym === gym) ? "tested" : e.said.some((s) => s.gym === gym) ? "said" : null })) },
     next, across, brief: suggested.brief, brief_from: suggested.from, reasons: suggested.reasons, left: suggested.left, scenes: suggested.scenes, scenes_waiting: suggested.scenes_waiting,
   };
 }
@@ -402,6 +487,8 @@ export function reviewText(r) {
   for (const [title, items] of [["Notes", r.notes]]) if (items.length) { L.push("", `${title}:`); for (const x of items) L.push(`- ${x}`); }
   if (r.copy.copies.length || r.copy.headlines.length) { L.push("", "Which copy wins:"); for (const [k, xs] of [["copy", r.copy.copies], ["headline", r.copy.headlines]]) for (const x of xs) L.push(`- ${k}: ${x.leads} leads${x.cost_per_lead != null ? ` at ${money(x.cost_per_lead, c)}` : ""} — ${x.text.split("\n")[0].slice(0, 90)}`); }
   if (r.drift.length) { L.push("", "Meta differs from what the app sent:"); for (const d of r.drift) L.push(`- ${d.batch}: ${d.text}`); }
+  const led = (r.ledger?.entries || []).filter((e) => e.verdict !== "untested");
+  if (led.length) { L.push("", "Tested across every gym:"); for (const e of led) L.push(`- ${e.name} — ${e.label.toLowerCase()}. ${e.text}${e.try_in.some((g) => g.gym === r.gym) ? " Not tried here yet." : ""}`); }
   L.push("", "The mix:"); for (const x of r.mix.reasons) L.push(`- ${x}`);
   L.push("", "The next batch:"); for (const x of r.reasons) L.push(`- ${x.text}`); for (const x of r.left) L.push(`- Not yet: ${x.text}`);
   if (r.scenes?.length) { L.push("", "Scenes to draft first (text calls only, drafts for your approval):"); for (const x of r.scenes) L.push(`- ${x.count} ${x.format.replace("-", " ")} scenes for ${x.audience === "any" ? "a mixed audience" : x.audience}${x.from_results ? ", from the results" : ""}: ${x.why}`); }
@@ -435,8 +522,10 @@ export async function reviewAccount({ gymDir, brandsDir = resolve(gymDir, ".."),
 // ── CLI ──────────────────────────────────────────────────────────────────────
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
-  const { values: v } = parseArgs({ options: { "brand-dir": { type: "string" }, "read-max": { type: "string", default: "0" }, show: { type: "boolean", default: false }, json: { type: "boolean", default: false } } });
-  if (!v["brand-dir"]) { console.error("Usage: account-review.mjs --brand-dir brands/<gym> [--read-max N] | --show [--json]\n  --show prints the review from what is on disk (no call). Without it the account is read again (read-only) and up to N new pictures are read."); process.exit(1); }
+  const { values: v } = parseArgs({ options: { "brand-dir": { type: "string" }, "brands-dir": { type: "string" }, "read-max": { type: "string", default: "0" }, show: { type: "boolean", default: false }, ledger: { type: "boolean", default: false }, json: { type: "boolean", default: false } } });
+  // --ledger: what every gym's account says and what its batches tested, pooled (from the files; no call).
+  if (v.ledger) { const L = ledgerAcross(v["brands-dir"] ? resolve(v["brands-dir"]) : resolve(fileURLToPath(new URL("../../brands", import.meta.url)))); if (v.json) console.log(JSON.stringify(L, null, 2)); else { console.log(`${L.gyms.length} gyms · ${Object.entries(L.counts).filter(([, n]) => n).map(([k, n]) => `${n} ${LEDGER_VERDICTS[k].toLowerCase()}`).join(" · ") || "nothing said or tested yet"}`); for (const e of L.entries) console.log(`- ${e.name} — ${e.label}. ${e.text}${e.try_in.length ? ` Not tried at: ${e.try_in.map((g) => g.name).join(", ")}.` : ""}`); } process.exit(0); }
+  if (!v["brand-dir"]) { console.error("Usage: account-review.mjs --brand-dir brands/<gym> [--read-max N] | --show [--json]   |   --ledger [--brands-dir <dir>] [--json]\n  --show prints the review from what is on disk (no call). Without it the account is read again (read-only) and up to N new pictures are read."); process.exit(1); }
   const gymDir = resolve(v["brand-dir"]);
   try {
     if (v.show) { const r = buildReview(gymDir); console.log(v.json ? JSON.stringify(r, null, 2) : reviewText(r)); }

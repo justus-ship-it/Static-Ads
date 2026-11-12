@@ -3545,6 +3545,7 @@ test("U61 all gyms (2026-11-12): GET /api/portfolio is every gym's marketing num
     // The test gym's numbers as a read leaves them: one lead ad set running, 50 a day for 40 days, 1 lead a day this week and 4 a day before.
     const lead = (n) => (n ? [{ action_type: "lead", value: String(n) }] : []), day = (until, i) => new Date(Date.parse(until + "T00:00:00Z") - i * 86400000).toISOString().slice(0, 10);
     const client = { list: async (path, q) => {
+      if (/\/adsets$/.test(path)) return [{ id: "S1", optimization_goal: "LEAD_GENERATION" }];
       if (/\/ads$/.test(path)) return [{ id: "A1", name: "c01", adset_id: "S1", campaign_id: "C1", created_time: new Date(Date.now() - 3 * 86400000).toISOString(), adset: { id: "S1", name: "BISHAN set", daily_budget: "5000" }, campaign: { id: "C1", name: "1101 6 Week Challenge", objective: "OUTCOME_LEADS" } }];
       const range = JSON.parse(q.time_range);
       if (q.time_increment) return Array.from({ length: 40 }, (_, i) => ({ adset_id: "S1", adset_name: "BISHAN set", campaign_id: "C1", campaign_name: "1101 6 Week Challenge", objective: "OUTCOME_LEADS", date_start: day(range.until, i), spend: "50", impressions: "2000", inline_link_clicks: "40", actions: lead(i < 7 ? 1 : 4) }));
@@ -3611,4 +3612,67 @@ test("U61 all gyms (2026-11-12): GET /api/portfolio is every gym's marketing num
     await ev(`(()=>{ const s = document.querySelector('#clientSel'); s.value = 'u61-gym'; s.onchange(); return true; })()`);
     await until("location.hash === '#/u61-gym/results' && STATE.sel === 'u61-gym' && STATE.tab === 'results'");
   } finally { rmSync(made, { recursive: true, force: true }); rmSync(empty, { recursive: true, force: true }); if (had) writeFileSync(dailyFile, had); else rmSync(dailyFile, { force: true }); }
+});
+
+test("U62 the ledger across gyms and the Ad Library survey on Review Data (2026-11-12): the review's answer carries the pooled ledger and the page shows it as a card that says when nothing has been tested; GET /api/library/survey answers from what is on file — the advertisers per kind of picture, the ones running 90 days or more, what is left out, and for the gym each kind with whether it has run it and how it is made here; the run is checked server-side (the country, the caps, nothing to do, the notice before a pull) and a reading with nothing to read makes no call; the card and its confirmation say what it costs and carry the notice", async () => {
+  const swipe = join(dirname(brands), "swipe", "gym"), raw = join(swipe, "raw", "2026-11-01");
+  const PNG1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+  try {
+    // An empty folder first: nothing surveyed.
+    let S = await (await call(`/api/library/survey?gym=${GYM}`)).json();
+    assert.deepEqual([S.ads, S.read, S.candidates, S.scrapes, typeof S.has_apify, S.limits.pull_min, S.limits.pull_max, S.long_run_days], [0, 0, [], [], "boolean", 20, 300, 90]);
+    // A scrape and its readings on file: three studios run portraits (two for 90+ days), three run workout shots (one), a phone shop is left out.
+    mkdirSync(join(raw, "images"), { recursive: true });
+    const ads = [["1", "Iron Gym", 200, "p1"], ["2", "Core Pilates", 120, "p2"], ["3", "Flow Yoga", 20, "p3"], ["4", "Iron Gym", 30, "w4"], ["5", "Lift Studio", 95, "w5"], ["6", "Box Fitness", 10, "w6"], ["7", "Phone Shop", 500, "w7"]];
+    for (const a of ads) writeFileSync(join(raw, "images", `${a[3]}.png`), PNG1);
+    writeFileSync(join(raw, "ads-normalized.json"), JSON.stringify({ niche: "gym", country: "SG", scraped_at: "2026-11-01T02:00:00Z", terms: ["gym"], ads: ads.map(([id, page, days, img]) => ({ ad_id: id, page_name: page, start_date: "2026-01-01", days_active: days, variant_count: 1, primary_text: page === "Phone Shop" ? "New phones" : "Join us", image_files: [`images/${img}.png`] })) }));
+    writeFileSync(join(swipe, "survey-reads.json"), JSON.stringify({ schema: 1, reads: Object.fromEntries(ads.slice(0, 6).map((a) => [a[3], { ratio: "4:5", format: a[3][0] === "p" ? "studio-portrait" : "workout", subject: "woman", people: 1, backdrop: "gym-floor", pose: "easy-posed", expression: "smile", eye_contact: true, text_density: "light", logo: false }])) }));
+    S = await (await call(`/api/library/survey?gym=${GYM}`)).json();
+    assert.deepEqual([S.ads, S.kept, S.read, S.unread, S.advertisers, S.long_running, S.overall, S.left_out, S.scope, S.surveyed.last], [7, 6, 6, 0, 5, 3, 60, { not_fitness: 1 }, "SG", "2026-11-01"]);
+    assert.deepEqual(S.candidates.map((c) => [c.format, c.advertisers, c.long_running, c.share, c.makeable]), [["studio-portrait", 3, 2, 67, true], ["workout", 3, 1, 33, true]]);
+    assert.ok(S.candidates.every((c) => typeof c.tried === "boolean" && c.text.startsWith(c.format + ": 3 advertisers run it")));
+    // The run, checked before anything starts.
+    const bad = async (body, status, re) => { const r = await call("/api/run", { method: "POST", body: { kind: "library-survey", ...body } }); assert.equal(r.status, status, JSON.stringify(body)); assert.match((await r.json()).error, re); };
+    await bad({ country: "Singapore", pull: 0, max: 5 }, 400, /two letters/);
+    await bad({ country: "SG", pull: 5, max: 5, tos: true }, 400, /0 \(none\) or 20 to 300/);
+    await bad({ country: "SG", pull: 301, max: 5, tos: true }, 400, /20 to 300/);
+    await bad({ country: "SG", pull: 0, max: 801 }, 400, /0 to 800/);
+    await bad({ country: "SG", pull: 0, max: 0 }, 400, /nothing to do/);
+    await bad({ country: "SG", pull: 40, max: 5 }, 400, /only once the notice is agreed to/);
+    assert.equal((await call("/api/run", { method: "POST", body: { kind: "library-survey", country: "SG", pull: 0, max: 5 }, token: null })).status, 403);
+    // Reading with nothing left to read: the command is built server-side, never pulls, and makes no call.
+    const made = await runAndWait({ kind: "library-survey", country: "sg", pull: 0, max: 5 });
+    assert.equal(made.code, 0, made.lines.join("\n"));
+    assert.match(made.lines[0], /^\$ node skills\/references\/library-survey\.mjs --swipe-dir \S+swipe\/gym --read --max 5 --ours /); assert.ok(!/--pull|--i-understand-tos/.test(made.lines[0]));
+    assert.ok(made.lines.some((l) => /0 pictures read \(0 calls\), 6 read before/.test(l)), made.lines.join("\n"));
+    // The review carries the pooled ledger.
+    const R = await (await call(`/api/client/${GYM}/account-review`)).json();
+    assert.ok(R.ledger && Array.isArray(R.ledger.entries) && R.ledger.gyms >= 1 && "untested" in R.ledger.counts);
+    // The page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u62#/${GYM}/results` }, sessionId); await loaded;
+    await until("STATE.tab === 'results' && !!document.querySelector('#rsLedger') && !!document.querySelector('#rsSurveyKinds')");
+    assert.deepEqual(await ev("[...document.querySelectorAll('#view .card[id]')].map(c => c.id).filter(id => ['across', 'rsLedger', 'rsSurvey'].includes(id))"), ["across", "rsLedger", "rsSurvey"], "under Across every gym, in this order");
+    assert.match(await ev("document.querySelector('#rsLedger').innerText.replace(/\\s+/g, ' ')"), /^TESTED ACROSS EVERY GYM \d+ gyms? · \d+ tested in a batch · \d+ said by an account and never tested What each gym's own account says/i);
+    assert.equal(await ev("document.querySelectorAll('#rsLedger tbody tr').length"), R.ledger.entries.length);
+    if (!R.ledger.entries.some((e) => e.verdict !== "untested")) assert.equal(await ev("!!document.querySelector('#rsLedgerNone')"), true, "nothing tested yet is said");
+    const card = await ev("document.querySelector('#rsSurvey').innerText.replace(/\\s+/g, ' ')");
+    assert.match(card, /Meta's Ad Library in SG: 7 ads on file, last pulled 1 Nov 2026 · 6 read · left out: 1 not a fitness business/);
+    assert.match(card, /Analysis only\. The Ad Library shows no spend and no leads/); assert.match(card, /5 advertisers read; 3 of them \(60%\) have kept an ad running 90 days or more\./);
+    assert.deepEqual(await ev("[...document.querySelectorAll('#rsSurveyKinds tbody tr')].map(r => [r.dataset.format, ...[...r.querySelectorAll('td')].slice(1, 4).map(td => td.innerText.replace(/\\s+/g, ' ').trim())])"), [["studio-portrait", "3", "2", "67% · 1.12×"], ["workout", "3", "1", "33% · 0.55×"]]);
+    assert.match(card, /Longest running: Iron Gym \(200 days, studio portrait\) · Core Pilates \(120 days, studio portrait\)/);
+    // The confirmation: what it costs, the notice, and nothing runs until it makes sense.
+    await ev("document.querySelector('#rsSurveyGo').click(); true");
+    assert.deepEqual(await ev("[document.querySelector('#svCountry').value, document.querySelector('#svTos').checked, /billed to your Apify account/.test(document.querySelector('#gModal').innerText), /grey area under Meta's terms/.test(document.querySelector('#gModal').innerText), /never republished/.test(document.querySelector('#gModal').innerText)]"), ["SG", false, true, true, true]);
+    await ev("document.querySelector('#svPull').disabled = false; document.querySelector('#svPull').value = '40'; document.querySelector('#svGo').click(); true");
+    assert.match(await ev("document.querySelector('#svWhy').textContent"), /^Tick the box to run the pull/);
+    await ev("document.querySelector('#svPull').value = '0'; document.querySelector('#svRead').value = '0'; document.querySelector('#svGo').click(); true");
+    assert.match(await ev("document.querySelector('#svWhy').textContent"), /^Nothing to do/);
+    await ev("document.querySelector('#svCountry').value = 'Singapore'; document.querySelector('#svGo').click(); true");
+    assert.match(await ev("document.querySelector('#svWhy').textContent"), /two letters/);
+    assert.equal(await ev("!!(STATE.run && !STATE.run.done)"), false, "nothing was started");
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+  } finally { rmSync(join(dirname(brands), "swipe"), { recursive: true, force: true }); }
 });

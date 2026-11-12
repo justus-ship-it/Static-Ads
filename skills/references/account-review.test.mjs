@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ownTests, shareTests, TEST_PHOTOS, MAX_TESTS, ownLeans, portfolioLeans, lastBrief, suggestBrief, buildReview, reviewText, reviewAccount, readLedger, recordReview, recordAction, lastTime, LEDGER_FILE, LEAN_MIN_LEADS, LEAN_MIN_PICTURES, REVIEW_FILE, actionFor } from "./account-review.mjs";
+import { ownTests, shareTests, TEST_PHOTOS, MAX_TESTS, ownLeans, portfolioLeans, lastBrief, suggestBrief, buildReview, reviewText, reviewAccount, readLedger, recordReview, recordAction, lastTime, LEDGER_FILE, LEAN_MIN_LEADS, LEAN_MIN_PICTURES, REVIEW_FILE, actionFor, ledgerFrom, ledgerAcross, ledgerTests, gymLedger, LEDGER_VERDICTS } from "./account-review.mjs";
 import { importExport } from "./ads-export.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 import { validateBrief, planVisuals, leanProblems, LEAN_SHARE } from "./plan-offer-batch.mjs";
@@ -420,4 +420,53 @@ test("AR9 what becomes of each line (2026-11-11): every checked line of the revi
   // A kind of photograph that is in the mix is acted on through the mix; one nothing can express is said.
   assert.deepEqual(A({ kind: "matters", attribute: "format", best: { value: "studio-portrait" } }), ["acting", "In the next batch through the mix: 8 workout, 2 studio portrait."]);
   assert.deepEqual(A({ kind: "matters", attribute: "colours", best: { value: "warm" } }), ["none", "Not acted on: nothing a scene or a photo can be asked for expresses this yet."]);
+});
+
+test("AR10 the ledger across every gym (2026-11-12): what each gym's own account says and what its batches tested are pooled per thing a scene can be asked for, with a verdict by rule — holds (held in two gyms' tests, failed none), mixed, held once, did not hold, being tested, said and never tested — and the gyms that have not touched what held; what held elsewhere becomes a TEST in a gym that has neither said nor tried it (never a lean), after its own; the pooled ledger is rebuilt only when a file it reads changes", () => {
+  const part = (gym, said, tested) => ({ gym, name: gym.toUpperCase(), currency: "SGD", reviewed: null, said, tested });
+  const say = (tag, value, format = "workout", kind = "lean") => ({ key: `${format}|${tag}|${value}`, format, tag, value, kind, why: "its own leads" });
+  const tst = (tag, value, verdict, batch, leads = 20) => ({ key: `workout|${tag}|${value}`, batch, made: "2026-11-01", tag, value, format: null, test: true, verdict, pictures: 3, tested: { ads: 3, spend: leads * 15, leads, cost_per_lead: 15 }, rest: { ads: 7, spend: 700, leads: 28, cost_per_lead: 25 },
+    text: verdict === "held" ? "it held: 20 leads at SGD 15.00 over 3 pictures, against SGD 25.00 for the rest of the batch (28 leads)" : verdict === "not_held" ? "it did not hold: 20 leads at SGD 15.00" : `too early: ${leads} leads so far from 3 pictures (it takes 10 to say)` });
+  const L = ledgerFrom([
+    part("a", [say("setting", "group")], [tst("setting", "group", "held", "b1")]),
+    part("b", [], [tst("setting", "group", "held", "b2"), tst("mood", "smile", "not_held", "b2")]),
+    part("c", [say("mood", "smile"), say("backdrop", "dark-wall", "studio-portrait")], [tst("mood", "smile", "held", "b3"), tst("equipment", "barbell", "early", "b3", 4), tst("exercise", "squat", "held", "b3")]),
+    part("d", [say("backdrop", "dark-wall", "studio-portrait", "test")], [tst("age", "older", "not_held", "b4")]),
+  ]);
+  assert.deepEqual(L.entries.map((e) => [e.name, e.verdict]), [["group setting (workout)", "holds"], ["a smile mood (workout)", "mixed"], ["squat exercise (workout)", "held_once"], ["older age (workout)", "not_held"], ["barbell equipment (workout)", "testing"], ["dark-wall backdrop (studio-portrait)", "untested"]]);
+  assert.deepEqual(L.counts, { holds: 1, mixed: 1, held_once: 1, not_held: 1, testing: 1, untested: 1 });
+  assert.deepEqual(L.gyms.map((g) => [g.gym, g.said, g.tested]), [["a", 1, 1], ["b", 0, 2], ["c", 2, 3], ["d", 1, 1]]);
+  const e = Object.fromEntries(L.entries.map((x) => [x.key, x]));
+  assert.deepEqual([e["workout|setting|group"].label, e["workout|setting|group"].text, e["workout|setting|group"].counts, e["workout|setting|group"].try_in.map((g) => g.gym)], ["Holds across gyms", "Held when A and B tested it, and failed no test.", { said: 1, held: 2, not_held: 0, early: 0 }, ["c", "d"]]);
+  assert.equal(e["workout|mood|smile"].text, "Held at C; did not hold at B."); assert.deepEqual(e["workout|mood|smile"].try_in, [], "what failed somewhere is not handed on");
+  assert.match(e["workout|exercise|squat"].text, /^Held when C tested it \(b3\): it held: 20 leads at SGD 15\.00 over 3 pictures, against SGD 25\.00 for the rest of the batch \(28 leads\)\. One gym so far\.$/);
+  assert.deepEqual(e["workout|exercise|squat"].try_in.map((g) => g.gym), ["a", "b", "d"]);
+  assert.match(e["workout|age|older"].text, /^Did not hold when D tested it: /); assert.match(e["workout|equipment|barbell"].text, /^In a batch at C: too early: 4 leads so far/);
+  assert.equal(e["studio-portrait|backdrop|dark-wall"].text, "C and D's own accounts say it; no batch has tested it yet.");
+  assert.deepEqual(e["studio-portrait|backdrop|dark-wall"].said.map((s) => [s.gym, s.kind]), [["c", "lean"], ["d", "test"]]);
+  // What held elsewhere is a test here — only for a gym that has neither said nor tried it, only for a kind in the batch, never over something it already wants.
+  const t = ledgerTests(L.entries, "d");
+  assert.deepEqual(t.map((x) => [x.format, x.tag, x.value, x.test, x.source]), [["workout", "setting", "group", true, "ledger"], ["workout", "exercise", "squat", true, "ledger"]]);
+  assert.equal(t[0].why, "Held when A and B tested it (20 leads at SGD 15.00, against SGD 25.00 for the rest of that batch). Not tried in this gym yet: a test here, not a finding.");
+  assert.deepEqual(ledgerTests(L.entries, "a").map((x) => x.tag), ["exercise"], "a gym that tested it itself is not told to test it again");
+  assert.deepEqual(ledgerTests(L.entries, "d", { formats: ["studio-portrait"] }), []);
+  assert.deepEqual(ledgerTests(L.entries, "d", { have: [{ format: "workout", tag: "setting", value: "solo" }] }).map((x) => x.tag), ["exercise"], "its own account already speaks on the setting");
+  // In the suggested brief: the gym's own tests first, then what held elsewhere, as a test with its photos — and said as such.
+  const { d, g } = gym({ scenes: [workout("w-1"), workout("w-2", { exercise: "lunge" }), workout("w-g1", { setting: "group", people: 3 }), workout("w-g2", { setting: "group", people: 4, exercise: "lunge" }), workout("w-g3", { setting: "group", people: 3, exercise: "deadlift" })], brief: { batch_id: "2026-11-01-six-week", offer: "6 Week Strength Challenge", locations: ["BISHAN"], audience: "LADIES WANTED", generated: 10 } });
+  try {
+    const S = suggestBrief(g, { rows: [], every: [], ledger: L.entries.filter((x) => x.key === "workout|setting|group"), currency: "SGD" });
+    assert.deepEqual(S.brief.lean, [{ tag: "setting", value: "group", format: "workout", test: true, photos: 3, why: t[0].why }]);
+    assert.deepEqual(S.reasons.filter((r) => r.field === "test").map((r) => [r.source, r.text.slice(0, 58)]), [["ledger", "Test group setting (workout) on 3 of the 10 workout photos"]]);
+    assert.deepEqual(suggestBrief(g, { rows: [], every: [], currency: "SGD" }).brief.lean, undefined, "without the ledger nothing is tested");
+    // From the files: a gym with nothing on file says and tested nothing; the pooled ledger is kept until a file it reads changes.
+    const brandsDir = join(d, "brands");
+    assert.deepEqual(gymLedger(g), { gym: "testgym", name: "Test Gym", currency: "SGD", reviewed: null, said: [], tested: [] });
+    const A1 = ledgerAcross(brandsDir), A2 = ledgerAcross(brandsDir);
+    assert.deepEqual([A1.entries, A1.gyms.map((x) => x.gym)], [[], ["testgym"]]); assert.equal(A1, A2, "nothing changed: not built again");
+    writeFileSync(join(g, "account-history.json"), JSON.stringify({ pulled: "2026-11-12T00:00:00.000Z", campaigns: [], adsets: [], ads: [] }));
+    assert.notEqual(ledgerAcross(brandsDir), A1, "a file it reads changed: built again");
+    const r = buildReview(g, { brandsDir });
+    assert.deepEqual([r.ledger.gyms, r.ledger.entries, r.ledger.counts.holds], [1, [], 0]); assert.ok(!/Tested across every gym/.test(reviewText(r)));
+    assert.match(reviewText({ ...r, ledger: { entries: L.entries.map((x) => ({ ...x, try_in: x.try_in.map((y) => (y.gym === "d" ? { ...y, gym: r.gym } : y)) })) } }), /Tested across every gym:\n- group setting \(workout\) — holds across gyms\. Held when A and B tested it, and failed no test\. Not tried here yet\.\n- a smile mood \(workout\) — mixed\. Held at C; did not hold at B\.\n/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });

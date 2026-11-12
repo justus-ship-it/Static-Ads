@@ -90,10 +90,15 @@ export const FADE_X = 1.25, FADE_MIN_LEADS = 5;
 export const CONFIRM_PICTURES = 2, MATTERS_GAP = 1.25;
 /** Attributes nothing in the app changes: said for the record, never acted on. */
 export const NO_LEVER = new Set(["ratio", "logo", "media", "offer"]);
-/** An ad's most recent figures on file: the last 7 days for this app's ads, the last 30 for the account's; null for an export's. */
+/**
+ * An ad's most recent figures on file: the last 7 days when they hold enough leads to judge (FADE_MIN_LEADS), else the
+ * last 30 when those do, else the shortest window on file; null for an export's. Since 2026-11-12 every ad of an
+ * account that was read day by day carries both windows (withDaily) — before, this app's ads had 7 days and the
+ * account's older ones 30, so two ads of one gym were judged over different stretches.
+ */
 export function recentOf(r) {
-  for (const [d, l, s] of [[7, "leads_7d", "spend_7d"], [30, "leads_30d", "spend_30d"]]) if (r[l] != null || r[s] != null) { const leads = r[l] || 0, spend = round2(r[s] || 0); return { days: d, leads, spend, cost_per_lead: leads ? round2(spend / leads) : null }; }
-  return null;
+  const c = [[7, "leads_7d", "spend_7d"], [30, "leads_30d", "spend_30d"]].filter(([, l, s]) => r[l] != null || r[s] != null).map(([d, l, s]) => { const leads = r[l] || 0, spend = round2(r[s] || 0); return { days: d, leads, spend, cost_per_lead: leads ? round2(spend / leads) : null }; });
+  return c.find((x) => x.leads >= FADE_MIN_LEADS) || c[0] || null;
 }
 const check = (name, ok, text) => ({ name, ok, text });
 /** The other ads of an ad's own ad set: their leads, spend and cost per lead (the same audience, the same budget). */
@@ -216,19 +221,61 @@ export function inScope(rows, scope, { now = new Date() } = {}) {
 export const NOT_LEAD_OBJECTIVE = /AWARENESS|ENGAGEMENT|TRAFFIC|LINK_CLICKS|VIDEO_VIEWS|REACH|PAGE_LIKES|APP_INSTALLS|APP_PROMOTION/i;
 /** Hiring ads: their "leads" are job applicants, not members (F45 Xinyi's "HR | …" ads). */
 export const RECRUITMENT = /(^|[^a-z])HR([^a-z]|$)|hiring|recruit|we'?re hiring|join our team|招募|徵才|招聘|徵人/i;
-/** Why a row is left out of What wins, or null: an ad set reaching outside the gym's country, a campaign that was not after leads, a hiring ad. */
+/**
+ * What an ad set was after, by its optimisation goal (the owner's ruling, 2026-11-12: "leave it out" — BFIT's 52 ad
+ * sets optimised for website conversions spent SGD 12,337 in 180 days for no lead-form lead inside a campaign whose
+ * objective says "leads", so the campaign's objective cannot tell them apart): null for one after lead-form leads
+ * (or unknown), "website", "chat" (WhatsApp, Messenger and Instagram conversations), "objective" for anything else.
+ */
+export const LEAD_GOALS = /^(LEAD_GENERATION|QUALITY_LEAD)$/;
+export function goalKind(goal) {
+  if (!goal || LEAD_GOALS.test(goal)) return null;
+  if (/^(OFFSITE_CONVERSIONS|VALUE|LANDING_PAGE_VIEWS)$/.test(goal)) return "website";
+  if (/CONVERSATIONS/.test(goal)) return "chat";
+  return "objective";
+}
+/** Why a row is left out of What wins, or null: an ad set reaching outside the gym's country, a campaign that was not after leads, a hiring ad, an ad set after website conversions or chats. */
 export function leftOutWhy(r) {
   if (r.abroad) return "abroad";
   if (r.objective && NOT_LEAD_OBJECTIVE.test(r.objective)) return "objective";
   if (RECRUITMENT.test([r.campaign, r.adset_name, r.ad_name].filter(Boolean).join(" | "))) return "recruitment";
+  if (r.not_leads) return r.not_leads;
   return null;
+}
+/** The day-fresh numbers file (portfolio-numbers.mjs reads the account into it once a day). */
+export const DAILY_FILE = "account-daily.json";
+const dayBack = (date, n) => { const [y, m, d] = String(date).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10); };
+/**
+ * A gym's rows with the day's read laid over them (2026-11-12: Review Data on the same numbers as All gyms). For every
+ * ad of the account that was read — never an export's rows, which are another account's: its last 7, 30 and 90 days
+ * (nought when it did not deliver), whether it is running now (Meta's word as of that read, when the read is newer
+ * than the row's own), what its ad set was after, and — for an ad made inside the last 90 days, whose 90-day total is
+ * its whole run — its totals and frequency as of the read. A gym with no such file is returned as it is.
+ */
+export function withDaily(rows, gymDir) {
+  let file = null; try { file = JSON.parse(readFileSync(join(gymDir, DAILY_FILE), "utf-8")); } catch { return rows; }
+  if (!file?.ads || !file.span?.until) return rows;
+  const by = (d) => new Map((file.ads[d] || []).map((a) => [a.ad_id, a])), a7 = by(7), a30 = by(30), a90 = by(90), live = new Set((file.live || []).map((a) => a.id)), since90 = dayBack(file.span.until, 89);
+  return rows.map((r) => {
+    if (r.origin === "export" || !r.ad_id) return r;
+    const out = { ...r, numbers_read: file.pulled }, kind = file.not_leads?.[r.adset_id], of = (m) => { const x = m.get(r.ad_id); return x ? [x.spend, x.leads] : [0, 0]; };
+    if (kind) out.not_leads = kind;
+    [out.spend_7d, out.leads_7d] = of(a7); [out.spend_30d, out.leads_30d] = of(a30); [out.spend_90d, out.leads_90d] = of(a90);
+    if (String(file.pulled) > String(r.pulled || "")) { out.status_read = file.pulled; if (live.has(r.ad_id)) out.status = "live"; else if (isActive(r)) out.status = "not running"; }
+    const x = a90.get(r.ad_id);
+    if (x && r.published && String(r.published).slice(0, 10) >= since90 && x.spend >= (r.spend || 0)) {
+      Object.assign(out, { spend: x.spend, leads: x.leads, impressions: x.impressions, clicks: x.clicks, cost_per_lead: x.leads ? round2(x.spend / x.leads) : null, ctr: x.impressions ? round2((x.clicks / x.impressions) * 100) : null, cpm: x.impressions ? round2((x.spend / x.impressions) * 1000) : null });
+      if (x.frequency != null) out.frequency = x.frequency; if (x.reach) out.reach = x.reach;
+    }
+    return out;
+  });
 }
 /** A gym's rows with their readings, and what was left out and why. */
 export function gymRowsSplit(gymDir) {
   // An ad the owner paused from here (insights.json → actions) reads as paused at once: Meta's own word takes over at the next read of the account.
   let paused = new Map(); try { for (const a of JSON.parse(readFileSync(join(gymDir, "insights.json"), "utf-8")).actions || []) if (a.what === "pause" && a.ad_id) paused.set(a.ad_id, a.at); } catch { /* no ledger yet */ }
-  const all = joinReads(allRows(gymDir), readsFor(gymDir).byAd).map((r) => (paused.has(r.ad_id) && String(r.pulled || "") < paused.get(r.ad_id) && isActive(r) ? { ...r, status: "paused", paused_here: paused.get(r.ad_id) } : r)), left_out = { abroad: 0, objective: 0, recruitment: 0 }, rows = [];
-  for (const r of all) { const why = leftOutWhy(r); if (why) left_out[why]++; else rows.push(r); }
+  const all = withDaily(joinReads(allRows(gymDir), readsFor(gymDir).byAd), gymDir).map((r) => (paused.has(r.ad_id) && String(r.status_read || r.pulled || "") < paused.get(r.ad_id) && isActive(r) ? { ...r, status: "paused", paused_here: paused.get(r.ad_id) } : r)), left_out = { abroad: 0, objective: 0, recruitment: 0 }, rows = [];
+  for (const r of all) { const why = leftOutWhy(r); if (why) left_out[why] = (left_out[why] || 0) + 1; else rows.push(r); }
   return { rows, left_out };
 }
 export const gymRowsRead = (gymDir) => gymRowsSplit(gymDir).rows;

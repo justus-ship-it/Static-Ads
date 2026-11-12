@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCsv, parseExport, adNameParts, adsetNameFacts, similarity, matchCreatives, listCreatives, parseCopyText, rtfToText, importExport, MATCH_FLOOR } from "./ads-export.mjs";
 import { readCreatives, readsFor, ratioOf, READS_FILE, FORMATS, pictures, unreadCount } from "./read-creatives.mjs";
+import { withDaily, goalKind, gymRowsSplit, isActive, DAILY_FILE } from "./what-wins.mjs";
 import { adInsights, attrInsights, recentOf, valueOf, coverWord, COVER_LIGHT, COVER_HEAVY, FAIR_IMPRESSIONS, FAIR_SPEND_X, FADE_X, FADE_MIN_LEADS, CONFIRM_PICTURES, NO_LEVER, attributeTables, suggestions, medianCpl, joinReads, confidence, whatWins, campaignList, LEADS_EARLY, LEADS_SOLID, FREQ_TIRED, inScope, inTrack, trackSums, RECENT_DAYS, leftOutWhy, poolTables, acrossSuggestions, nextWave, whatWinsAcross, refreshAll, readAll } from "./what-wins.mjs";
 import { readHistory, historyRows, pullAccountHistory, readCopyRefs, fetchPictures, PICTURES_DIR } from "./meta-results.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
@@ -352,4 +353,43 @@ test("X6 checked before it is said (2026-11-11): a winner is kept only while its
   const sug = suggestions(rows, tables, { currency: "SGD" });
   assert.deepEqual([...new Set(sug.map((s) => s.kind))].sort(), ["lead", "matters", "pause", "test", "tiring", "wait"]);
   assert.ok(sug.filter((s) => s.key).every((s) => ["confirmed", "test", "early", "none"].includes(s.verdict) && Array.isArray(s.checks)));
+});
+
+test("X7 the review on the day's numbers (2026-11-12): withDaily lays the day's read over a gym's rows — every ad of the account carries its last 7, 30 and 90 days (nought when it did not deliver), runs or not by Meta's word as of that read when the read is newer than the row, and an ad made inside the last 90 days takes its totals and frequency from the read; an export's rows (another account's) are left alone; an ad set after website conversions or chats is left out of What wins like a campaign that was not after leads; recentOf judges over 7 days when they hold 5 leads, else over 30; a gym with no such file reads as it did", () => {
+  const dir = mkdtempSync(join(tmpdir(), "x7-")), g = join(dir, "seven"); mkdirSync(g, { recursive: true });
+  writeFileSync(join(g, "gym-profile.json"), JSON.stringify({ ...PROFILE_STARTER("seven", "Seven"), locale: { country: "SG", currency: "SGD" } }));
+  const ad = (id, set, over = {}) => ({ id, name: id, adset_id: set, campaign_id: "c1", campaign: "1101 6 Week", adset: set, words: "live", effective_status: "ACTIVE", media: "image", created: "2026-10-20", all_time: { spend: 100, impressions: 5000, reach: 2500, clicks: 50, leads: 5, cost_per_lead: 20, ctr: 1, cpm: 20, frequency: 2 }, last_30d: { spend: 100, leads: 5 }, ...over });
+  writeFileSync(join(g, "account-history.json"), JSON.stringify({ pulled: "2026-11-05T04:00:00.000Z", currency: "SGD", campaigns: [{ id: "c1", name: "1101 6 Week", objective: "OUTCOME_LEADS", words: "live" }], adsets: [{ id: "s1" }, { id: "s2" }, { id: "s3" }],
+    ads: [ad("a1", "s1"), ad("a2", "s1"), ad("a3", "s1", { created: "2026-01-10", all_time: { spend: 900, impressions: 40000, reach: 9000, clicks: 400, leads: 60, cost_per_lead: 15, ctr: 1, cpm: 22.5, frequency: 4.4 } }), ad("w1", "s2"), ad("m1", "s3"),
+      ad("export:1", "x1", { origin: "export", words: "active", last_30d: undefined })], exports: [{ file: "e.csv", reporting: { to: "2026-11-08" } }] }));
+  const plain = gymRowsSplit(g);
+  assert.deepEqual(plain.left_out, { abroad: 0, objective: 0, recruitment: 0 }); assert.equal(plain.rows.length, 6);
+  assert.deepEqual(recentOf(plain.rows.find((r) => r.ad_id === "a1")), { days: 30, leads: 5, spend: 100, cost_per_lead: 20 }, "before the day's read: the account's ads have 30 days only");
+  // The day's read: a1 runs and has leads this week, a2 no longer delivers, a3 is old (its totals stay the history's), s2 was after website conversions, s3 after chats.
+  const A = (ad_id, adset_id, spend, leads, extra = {}) => ({ ad_id, name: ad_id, adset_id, campaign_id: "c1", spend, impressions: spend * 50, clicks: spend / 2, leads, reach: spend * 20, frequency: 2.5, ...extra });
+  writeFileSync(join(g, DAILY_FILE), JSON.stringify({ schema: 1, pulled: "2026-11-12T01:00:00.000Z", currency: "SGD", span: { since: "2026-05-17", until: "2026-11-12" }, adsets: {}, campaigns: {}, days: [], reach: {}, not_leads: { s2: "website", s3: "chat" },
+    ads: { 7: [A("a1", "s1", 120, 6), A("a3", "s1", 40, 1)], 30: [A("a1", "s1", 180, 8), A("a3", "s1", 300, 12)], 90: [A("a1", "s1", 180, 8, { frequency: 3.1 }), A("a3", "s1", 500, 30)] },
+    live: [{ id: "a1", adset_id: "s1", campaign_id: "c1", created: "2026-10-20" }, { id: "a3", adset_id: "s1", campaign_id: "c1", created: "2026-01-10" }] }));
+  const S = gymRowsSplit(g), by = Object.fromEntries(S.rows.map((r) => [r.ad_id, r]));
+  assert.deepEqual(S.left_out, { abroad: 0, objective: 0, recruitment: 0, website: 1, chat: 1 }, "an ad set after website conversions or chats is left out, and counted");
+  assert.deepEqual(Object.keys(by).sort(), ["a1", "a2", "a3", "export:1"]);
+  assert.deepEqual([by.a1.status, by.a1.spend_7d, by.a1.leads_7d, by.a1.spend_30d, by.a1.leads_30d, by.a1.spend_90d, by.a1.leads_90d, by.a1.numbers_read], ["live", 120, 6, 180, 8, 180, 8, "2026-11-12T01:00:00.000Z"]);
+  assert.deepEqual([by.a1.spend, by.a1.leads, by.a1.cost_per_lead, by.a1.impressions, by.a1.frequency], [180, 8, 22.5, 9000, 3.1], "made inside the last 90 days: its 90-day total is its whole run, as of the read");
+  assert.deepEqual([by.a2.status, by.a2.spend_7d, by.a2.leads_7d, by.a2.spend_30d, by.a2.spend], ["not running", 0, 0, 0, 100], "live in the history, not delivering as of the read: not running, and nought for the week");
+  assert.deepEqual([by.a3.status, by.a3.spend, by.a3.leads, by.a3.frequency, by.a3.spend_30d, by.a3.leads_30d], ["live", 900, 60, 4.4, 300, 12], "an older ad keeps its all-time totals; its recent windows come from the read");
+  assert.deepEqual([by["export:1"].status, by["export:1"].spend_7d, by["export:1"].numbers_read], ["active", null, undefined], "an export's rows are another account's: left alone");
+  assert.deepEqual(S.rows.filter(isActive).map((r) => r.ad_id).sort(), ["a1", "a3", "export:1"]);
+  // Recent: 7 days when they hold enough leads to judge, else 30.
+  assert.deepEqual(recentOf(by.a1), { days: 7, leads: 6, spend: 120, cost_per_lead: 20 });
+  assert.deepEqual(recentOf(by.a3), { days: 30, leads: 12, spend: 300, cost_per_lead: 25 }, "one lead this week says nothing: the last 30 days do");
+  assert.deepEqual(recentOf(by.a2), { days: 7, leads: 0, spend: 0, cost_per_lead: null });
+  assert.equal(recentOf(by["export:1"]), null);
+  // The old winner is now judged on a recent window it never had: 25 a lead against 15 over its whole run is fading.
+  const ins = adInsights(S.rows, { median: 30, currency: "SGD" }), fade = ins.find((i) => i.ads?.[0] === "a3");
+  assert.deepEqual([fade.kind, fade.fading], ["tiring", true]); assert.match(fade.text, /^Fading: .*last 30 days cost SGD 25\.00 a lead \(12 leads\) against SGD 15\.00 over its whole run/);
+  // A read older than the row does not overrule the row's own status.
+  const f = JSON.parse(readFileSync(join(g, DAILY_FILE), "utf-8")); f.pulled = "2026-11-01T00:00:00.000Z"; writeFileSync(join(g, DAILY_FILE), JSON.stringify(f));
+  assert.equal(gymRowsSplit(g).rows.find((r) => r.ad_id === "a2").status, "live");
+  assert.equal(goalKind("QUALITY_LEAD"), null); assert.equal(goalKind("OFFSITE_CONVERSIONS"), "website"); assert.equal(goalKind("CONVERSATIONS"), "chat"); assert.equal(goalKind("REACH"), "objective"); assert.equal(goalKind(null), null);
+  rmSync(dir, { recursive: true, force: true });
 });

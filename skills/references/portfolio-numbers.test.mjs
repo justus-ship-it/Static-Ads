@@ -22,9 +22,12 @@ function fakeClient({ recentLeads = 2, budget = "12000", lastDaysSpend = 100, co
     spend: String(i < 30 ? (i < 3 && i > 0 ? lastDaysSpend : 100) : 50), impressions: "1000", inline_link_clicks: "20", actions: lead(i < 7 ? recentLeads : i < 30 ? 4 : 2) });
   for (let i = 0; i < 10; i++) rows.push({ adset_id: "S2", adset_name: "Coaches", campaign_id: "C2", campaign_name: "HR | Hiring coaches", objective: "OUTCOME_LEADS", date_start: day(i), spend: "40", impressions: "500", inline_link_clicks: "5", actions: lead(3) });
   for (let i = 0; i < 10; i++) rows.push({ adset_id: "S3", adset_name: "Reach", campaign_id: "C3", campaign_name: "Brand", objective: "OUTCOME_AWARENESS", date_start: day(i), spend: "10", impressions: "5000", inline_link_clicks: "1", actions: [] });
+  for (let i = 0; i < 3; i++) rows.push({ adset_id: "S5", adset_name: "Website", campaign_id: "C1", campaign_name: "1101 6 Week Challenge | SS | Women", objective: "OUTCOME_LEADS", date_start: day(i), spend: "20", impressions: "800", inline_link_clicks: "9", actions: [] });
+  for (let i = 0; i < 2; i++) rows.push({ adset_id: "S6", adset_name: "WhatsApp", campaign_id: "C1", campaign_name: "1101 6 Week Challenge | SS | Women", objective: "OUTCOME_LEADS", date_start: day(i), spend: "8", impressions: "300", inline_link_clicks: "4", actions: [] });
   for (let i = 0; i < 5; i++) rows.push({ adset_id: "S4", adset_name: "Dhaka", campaign_id: "C4", campaign_name: "Leads abroad", objective: "OUTCOME_LEADS", date_start: day(i), spend: "5", impressions: "9000", inline_link_clicks: "90", actions: lead(30) });
   return { calls, list: async (path, params) => {
     calls.push({ path, ...params });
+    if (/\/adsets$/.test(path)) return [{ id: "S1", optimization_goal: "LEAD_GENERATION" }, { id: "S2", optimization_goal: "QUALITY_LEAD" }, { id: "S5", optimization_goal: "OFFSITE_CONVERSIONS" }, { id: "S6", optimization_goal: "CONVERSATIONS" }, { id: "S7", optimization_goal: "OFFSITE_CONVERSIONS" }];
     if (/\/ads$/.test(path)) return [
       { id: "A1", name: "c01", adset_id: "S1", campaign_id: "C1", created_time: "2026-11-01T02:00:00+0800", adset: { id: "S1", name: "1101 KATONG | 6 Week", daily_budget: budget, targeting: { geo_locations: { custom_locations: [{ country }] } } }, campaign: { id: "C1", name: "1101 6 Week Challenge | SS | Women", objective: "OUTCOME_LEADS" } },
       { id: "A2", name: "c02", adset_id: "S1", campaign_id: "C1", created_time: "2026-11-08T02:00:00+0800", adset: { id: "S1", name: "1101 KATONG | 6 Week", daily_budget: budget, targeting: { geo_locations: { custom_locations: [{ country }] } } }, campaign: { id: "C1", name: "1101 6 Week Challenge | SS | Women", objective: "OUTCOME_LEADS" } },
@@ -43,10 +46,11 @@ function fakeClient({ recentLeads = 2, budget = "12000", lastDaysSpend = 100, co
 }
 const HISTORY = { pulled: "2026-11-10T04:00:00.000Z", account: "act_111", currency: "SGD", campaigns: [], adsets: [{ id: "S4", abroad: true }], ads: [] };
 
-test("PN1 the read: eight read-only calls, one file, and what is left out of the numbers", async () => {
+test("PN1 the read: nine read-only calls, one file, and what is left out of the numbers", async () => {
   const root = mkdtempSync(join(tmpdir(), "pn1-")), dir = gymDir(root, "one", { history: HISTORY }), calls = [];
   const file = await pullDaily({ client: fakeClient({ calls }), accountId: "111", gymDir: dir, now: NOW });
-  assert.equal(calls.length, 8, "one day-by-day read, reach and ads for three periods, the running ads");
+  assert.equal(calls.length, 9, "one day-by-day read, reach and ads for three periods, the running ads, what each ad set was after");
+  assert.deepEqual([calls[8].path, calls[8].fields], ["act_111/adsets", "id,optimization_goal"]);
   assert.ok(calls.every((c) => c.path.startsWith("act_111/")), "the account's own edges only");
   const daily = calls[0]; assert.equal(daily.level, "adset"); assert.equal(daily.time_increment, 1);
   assert.deepEqual(JSON.parse(daily.time_range), { since: addDays(UNTIL, -(DAYS_KEPT - 1)), until: UNTIL }, "the last 180 days up to today in the account's time zone");
@@ -57,13 +61,15 @@ test("PN1 the read: eight read-only calls, one file, and what is left out of the
   assert.equal(onDisk.adsets.S1.left_out, null); assert.equal(onDisk.adsets.S1.running, true); assert.equal(onDisk.adsets.S1.daily_budget, 120, "cents become dollars");
   assert.equal(onDisk.adsets.S2.left_out, "recruitment"); assert.equal(onDisk.adsets.S3.left_out, "objective");
   assert.equal(onDisk.adsets.S4.left_out, "abroad", "an ad set no longer running is known to reach abroad from the history on file");
-  assert.equal(onDisk.days.length, 85); assert.deepEqual(onDisk.days[0], { d: UNTIL, s: "S1", spend: 100, impressions: 1000, clicks: 20, leads: 2 });
+  assert.deepEqual([onDisk.adsets.S5.left_out, onDisk.adsets.S6.left_out, onDisk.adsets.S1.goal], ["website", "chat", "LEAD_GENERATION"], "after website conversions or chats inside a leads campaign: left out by the ad set's own goal");
+  assert.deepEqual(onDisk.not_leads, { S5: "website", S6: "chat", S7: "website" }, "every ad set of the account, for the review's older rows");
+  assert.equal(onDisk.days.length, 90); assert.deepEqual(onDisk.days[0], { d: UNTIL, s: "S1", spend: 100, impressions: 1000, clicks: 20, leads: 2 });
   assert.equal(onDisk.ads[7].length, 4); assert.equal(onDisk.live.length, 3); assert.deepEqual(onDisk.errors, []);
   assert.ok(!/token|EAA/i.test(readFileSync(join(dir, DAILY_FILE), "utf-8")), "no token is ever written");
   // A step that fails is said and the rest is kept; the day-by-day read failing fails the read.
   const c2 = fakeClient(), inner = c2.list; c2.list = async (p, q) => { if (q.level === "ad") throw new Error("Meta said no access_token=EAAsecretsecretsecretsecret"); return inner(p, q); };
   const f2 = await pullDaily({ client: c2, accountId: "act_111", gymDir: dir, now: NOW });
-  assert.equal(f2.errors.length, 3); assert.ok(f2.errors.every((e) => !/EAAsecret/.test(e)), "the token is scrubbed"); assert.equal(f2.days.length, 85);
+  assert.equal(f2.errors.length, 3); assert.ok(f2.errors.every((e) => !/EAAsecret/.test(e)), "the token is scrubbed"); assert.equal(f2.days.length, 90);
   const c3 = fakeClient(); c3.list = async () => { throw new Error("down"); };
   await assert.rejects(pullDaily({ client: c3, accountId: "111", gymDir: dir, now: NOW }), /down/);
   assert.equal(leftOut({ objective: "OUTCOME_TRAFFIC" }), "objective"); assert.equal(leftOut({ name: "招募教練" }), "recruitment"); assert.equal(leftOut({ objective: "OUTCOME_LEADS", campaign: "6 Week" }), null);
@@ -90,7 +96,7 @@ test("PN2 the numbers: each period against the one before, the marks, the best a
   // 90 days: only 60 days of delivery, and the 90 days before are on file (180 kept).
   assert.equal(n.periods[90].spend, 4500); assert.equal(n.periods[90].prev.spend, 0); assert.equal(n.periods[90].change.cost_per_lead, null);
   // What is left out is said beside the row, never added: the hiring and awareness campaigns and the ad set abroad.
-  assert.equal(n.other[7], 7 * 40 + 7 * 10 + 5 * 5); assert.deepEqual(n.left_out, { recruitment: 1, objective: 1, abroad: 1 });
+  assert.equal(n.other[7], 7 * 40 + 7 * 10 + 5 * 5 + 3 * 20 + 2 * 8); assert.deepEqual(n.left_out, { recruitment: 1, objective: 1, website: 1, chat: 1, abroad: 1 });
   // The best ad has 3+ leads; the dearest is the one that spent two leads' worth for nothing.
   assert.deepEqual(n.ads[7].best, { ad_id: "A1", name: "c01", spend: 300, leads: 12, cost_per_lead: 25 });
   assert.deepEqual(n.ads[7].dearest, { ad_id: "A3", name: "c03", spend: 150, leads: 0, cost_per_lead: null });
@@ -165,6 +171,6 @@ test("PN4 refreshing every gym: a gym without an account or a link is said, one 
   const done = await refreshNumbers({ brandsDir: root, now: NOW, log: (m) => log.push(m), clientFor: (gym) => (gym === "delta" ? null : gym === "beta" ? { list: async () => { throw new Error("(#17) too many calls, access_token=EAAxxxxxxxxxxxxxxxxxxxxxxx"); } } : fakeClient()) });
   assert.deepEqual(done.map((d) => [d.gym, d.skipped || (d.error ? "error" : "ok")]), [["alpha", "ok"], ["beta", "error"], ["delta", "no Meta link"], ["gamma", "no ad account"]]);
   assert.ok(existsSync(join(root, "alpha", DAILY_FILE))); assert.ok(!existsSync(join(root, "beta", DAILY_FILE)));
-  assert.match(log[0], /ALPHA: 85 ad-set days, 3 ads running · last 30 days SGD 3000 spent, 106 leads at 28.3/);
+  assert.match(log[0], /ALPHA: 90 ad-set days, 3 ads running · last 30 days SGD 3000 spent, 106 leads at 28.3/);
   assert.ok(log.every((l) => !/EAAx/.test(l)), "no token in the log");
 });

@@ -28,9 +28,9 @@ import { fileURLToPath } from "url";
 import { metrics, readHistory } from "./meta-results.mjs";
 import { actId, dateWindow, budgetFrom, metaConfig, graphClient, scrubTokens } from "./meta-api.mjs";
 import { isAbroad } from "./meta-targeting.mjs";
-import { NOT_LEAD_OBJECTIVE, RECRUITMENT, FREQ_TIRED, gymRowsSplit, isActive } from "./what-wins.mjs";
+import { NOT_LEAD_OBJECTIVE, RECRUITMENT, FREQ_TIRED, DAILY_FILE, goalKind, gymRowsSplit, isActive } from "./what-wins.mjs";
 
-export const DAILY_FILE = "account-daily.json";
+export { DAILY_FILE };
 /** Days kept day by day (so the 90-day period has a 90 days before it), and the periods the screen offers. */
 export const DAYS_KEPT = 180, PERIODS = [7, 30, 90];
 /** The marks, by rule from the numbers: cost per lead up a quarter on 5+ leads each side; running with no lead in 3 days; spending under 70% of the budget. */
@@ -44,18 +44,18 @@ const round2 = (v) => Math.round(v * 100) / 100, round1 = (v) => Math.round(v * 
 export const addDays = (date, n) => { const [y, m, d] = String(date).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
 const daysBetween = (a, b) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000);
 
-/** Why an ad set is left out of the numbers, or null (the same three reasons What wins uses). */
-export function leftOut({ abroad, objective, campaign, name }) {
+/** Why an ad set is left out of the numbers, or null (the same reasons What wins uses; `goal` is the ad set's optimisation goal: one after website conversions or chats was never after a lead-form lead). */
+export function leftOut({ abroad, objective, campaign, name, goal }) {
   if (abroad) return "abroad";
   if (objective && NOT_LEAD_OBJECTIVE.test(objective)) return "objective";
   if (RECRUITMENT.test([campaign, name].filter(Boolean).join(" | "))) return "recruitment";
-  return null;
+  return goalKind(goal);
 }
 
 // ── The read (read-only on Meta) ─────────────────────────────────────────────
 
 /**
- * Read one gym's account for the numbers screen: 8 calls, nothing written to Meta, no model call. A step that fails
+ * Read one gym's account for the numbers screen: 9 calls, nothing written to Meta, no model call. A step that fails
  * is recorded and the rest is kept; the day-by-day read failing is the one thing that fails the whole read.
  */
 export async function pullDaily({ client, accountId, gymDir, now = new Date() }) {
@@ -69,10 +69,13 @@ export async function pullDaily({ client, accountId, gymDir, now = new Date() })
     const range = JSON.stringify(dateWindow(d, { timezone, now }));
     const r = await soft(`reach over ${d} days`, client.list(`${acct}/insights`, { level: "adset", time_range: range, fields: "adset_id,impressions,reach,frequency", limit: 500 }));
     reach[d] = Object.fromEntries(r.map((x) => [x.adset_id, { impressions: Number(x.impressions) || 0, reach: Number(x.reach) || 0, frequency: x.frequency != null ? round2(Number(x.frequency)) : null }]));
-    const a = await soft(`ads over ${d} days`, client.list(`${acct}/insights`, { level: "ad", time_range: range, fields: "ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,inline_link_clicks,actions", limit: 500 }));
-    ads[d] = a.map((x) => { const m = metrics(x); return { ad_id: x.ad_id, name: x.ad_name || null, adset_id: x.adset_id, campaign_id: x.campaign_id, spend: m.spend, impressions: m.impressions, clicks: m.clicks, leads: m.leads }; }).filter((x) => x.spend > 0 || x.leads > 0);
+    const a = await soft(`ads over ${d} days`, client.list(`${acct}/insights`, { level: "ad", time_range: range, fields: "ad_id,ad_name,adset_id,campaign_id,spend,impressions,reach,frequency,clicks,inline_link_clicks,actions", limit: 500 }));
+    ads[d] = a.map((x) => { const m = metrics(x); return { ad_id: x.ad_id, name: x.ad_name || null, adset_id: x.adset_id, campaign_id: x.campaign_id, spend: m.spend, impressions: m.impressions, clicks: m.clicks, leads: m.leads, reach: m.reach, frequency: m.frequency }; }).filter((x) => x.spend > 0 || x.leads > 0);
   }
   const live = await soft("the ads running now", client.list(`${acct}/ads`, { effective_status: JSON.stringify(["ACTIVE"]), fields: "id,name,adset_id,campaign_id,created_time,adset{id,name,daily_budget,targeting{geo_locations}},campaign{id,name,objective,daily_budget}", limit: 100 }));
+  // What every ad set of the account was after (its optimisation goal): the ones after website conversions or chats are left out, here and in the review.
+  const goals = Object.fromEntries((await soft("what each ad set was after", client.list(`${acct}/adsets`, { fields: "id,optimization_goal", limit: 500 }))).map((s) => [s.id, s.optimization_goal || null]));
+  const not_leads = Object.fromEntries(Object.entries(goals).map(([id, g]) => [id, goalKind(g)]).filter(([, k]) => k));
   // What is known of each ad set: Meta's own words on the day rows, the running ads' budgets and reach, and — for an ad set no longer running — whether it reached abroad from the account's history on file.
   const onFile = Object.fromEntries((readHistory(gymDir)?.adsets || []).map((s) => [s.id, s])), adsets = {}, campaigns = {};
   const camp = (id, name, objective) => (campaigns[id] = { name: name || campaigns[id]?.name || null, objective: objective || campaigns[id]?.objective || null, daily_budget: campaigns[id]?.daily_budget ?? null, running: campaigns[id]?.running || false });
@@ -81,9 +84,9 @@ export async function pullDaily({ client, accountId, gymDir, now = new Date() })
     const c = camp(a.campaign_id, a.campaign?.name, a.campaign?.objective); c.running = true; c.daily_budget = budgetFrom(a.campaign?.daily_budget, currency);
     adsets[a.adset_id] = { name: a.adset?.name || adsets[a.adset_id]?.name || null, campaign_id: a.campaign_id, abroad: a.adset?.targeting ? isAbroad(a.adset.targeting, home) : !!onFile[a.adset_id]?.abroad, running: true, daily_budget: budgetFrom(a.adset?.daily_budget, currency) };
   }
-  for (const s of Object.values(adsets)) s.left_out = leftOut({ abroad: s.abroad, objective: campaigns[s.campaign_id]?.objective, campaign: campaigns[s.campaign_id]?.name, name: s.name });
+  for (const [id, s] of Object.entries(adsets)) { s.goal = goals[id] || null; s.left_out = leftOut({ abroad: s.abroad, objective: campaigns[s.campaign_id]?.objective, campaign: campaigns[s.campaign_id]?.name, name: s.name, goal: s.goal }); }
   const out = {
-    schema: 1, pulled: (typeof now === "string" ? new Date(now) : now).toISOString(), account: acct, currency, timezone, span, adsets, campaigns,
+    schema: 1, pulled: (typeof now === "string" ? new Date(now) : now).toISOString(), account: acct, currency, timezone, span, adsets, campaigns, not_leads,
     days: daily.map((r) => { const m = metrics(r); return { d: r.date_start, s: r.adset_id, spend: m.spend, impressions: m.impressions, clicks: m.clicks, leads: m.leads }; }),
     reach, ads, live: live.map((a) => ({ id: a.id, name: a.name || null, adset_id: a.adset_id, campaign_id: a.campaign_id, created: String(a.created_time || "").slice(0, 10) || null })), errors,
   };
@@ -124,7 +127,7 @@ function extremes(ads, cpl) {
   const dry = ads.filter((a) => !a.leads && cpl && a.spend >= 2 * cpl).sort((a, b) => b.spend - a.spend)[0] || null;
   // The only ad with a lead is not "the dearest": that needs a second one to be dearer than.
   const dear = dry || (withLeads.length >= 2 ? withLeads.filter((a) => a.ad_id !== best?.ad_id).sort((a, b) => b.cost_per_lead - a.cost_per_lead)[0] : null) || null;
-  const short = (a) => a && { ad_id: a.ad_id, name: a.name, spend: round2(a.spend), leads: a.leads, cost_per_lead: a.leads ? round2(a.spend / a.leads) : null };
+  const short = (a) => a && { ad_id: a.ad_id, name: a.name, spend: round2(a.spend), leads: a.leads, cost_per_lead: a.leads ? round2(a.spend / a.leads) : null }; // (an ad's own reach and frequency stay in the file, for the review)
   return { best: short(best), dearest: short(dear) };
 }
 

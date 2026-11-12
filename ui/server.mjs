@@ -50,6 +50,7 @@ import { renderCard, loadCards } from "../skills/references/render-cards.mjs";
 import { buildReview, reviewText, recordAction } from "../skills/references/account-review.mjs";
 import { cycleFrom } from "../skills/references/cycle.mjs";
 import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
+import { buildSurvey, PULL_MIN, PULL_MAX, PULL_DEFAULT, READ_DEFAULT } from "../skills/references/library-survey.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -77,6 +78,13 @@ const IG_SCRIPT = join(REPO_ROOT, "skills", "references", "read-instagram.mjs");
 const CREATIVES_SCRIPT = join(REPO_ROOT, "skills", "references", "read-creatives.mjs");
 const WINS_SCRIPT = join(REPO_ROOT, "skills", "references", "what-wins.mjs");
 const NUMBERS_SCRIPT = join(REPO_ROOT, "skills", "references", "portfolio-numbers.mjs");
+const SURVEY_SCRIPT = join(REPO_ROOT, "skills", "references", "library-survey.mjs");
+// Other operators' ads from the Ad Library (analysis only; gitignored). A test panel names its own clients folder and gets its own beside it.
+const SWIPE_DIR = resolve(process.env.PANEL_SWIPE_DIR || (process.env.PANEL_BRANDS_DIR ? join(dirname(BRANDS), "swipe", "gym") : join(REPO_ROOT, "swipe", "gym")));
+/** Whether an Apify token is set (the environment, else .env); its value is never read out. */
+const hasApify = () => { if (process.env.APIFY_TOKEN) return true; try { return /^APIFY_TOKEN=(?!your-)\S+/m.test(readFileSync(join(REPO_ROOT, ".env"), "utf-8")); } catch { return false; } };
+/** The names of this app's own gyms: their ads in the Ad Library are theirs, not another operator's. */
+const ownNames = () => listClients().flatMap((c) => { const p = readJsonFile(join(brandDir(c.gym), "gym-profile.json")) || {}; return [p.display_name, p.meta_assets?.labels?.page]; }).filter(Boolean);
 const REVIEW_SCRIPT = join(REPO_ROOT, "skills", "references", "account-review.mjs");
 /** A reading run's cap: one vision call per picture, a portfolio holds a few hundred. */
 const MAX_READ_CALLS = 800;
@@ -163,6 +171,8 @@ const RUNNABLE = {
   "portfolio-refresh": { label: "Refresh every gym's account (read-only)", argv: () => [WINS_SCRIPT, "--refresh", "--brands-dir", BRANDS] },
   // All gyms (2026-11-12): every linked account's numbers day by day for the last 180 days (read-only on Meta, 8 calls a gym, no model call).
   "portfolio-numbers": { label: "Read every gym's numbers (read-only)", argv: () => [NUMBERS_SCRIPT, "--refresh", "--brands-dir", BRANDS] },
+  // The Ad Library survey (2026-11-12): other operators' ads pulled through Apify (the owner's click, the scraper's notice agreed to) and their pictures read (one vision call each, under the cap). Analysis only.
+  "library-survey": { label: "Survey the Ad Library", argv: ({ country, pull, max }) => [SURVEY_SCRIPT, "--swipe-dir", SWIPE_DIR, ...(pull > 0 ? ["--pull", String(pull), "--country", country, "--i-understand-tos"] : []), ...(max > 0 ? ["--read", "--max", String(max)] : []), "--ours", ownNames().join("|")] },
   "portfolio-read": { label: "Read every gym's creatives", argv: ({ max }) => [WINS_SCRIPT, "--read", "--max", String(max), "--brands-dir", BRANDS] },
   "photo-clean": { label: "Clean photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...(photos.some((p) => p.includes("/") && !p.startsWith("facility/")) ? ["--clean-dir", join(brandDir(gym), "brand-assets", "reference-clean")] : []), ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", p.includes("/") ? p : `facility/${p}`)])] },
 };
@@ -582,7 +592,7 @@ function setupStatus() {
     checks: [
       { key: "GEMINI_KEY", label: "Gemini API key", ok: isSet("GEMINI_KEY"), blocks: "Image generation (Phase 3)",
         fix: "Add GEMINI_KEY=... to .env — get one at aistudio.google.com" },
-      { key: "APIFY_TOKEN", label: "Apify token", ok: isSet("APIFY_TOKEN"), blocks: "Competitor swipe (Phase 0)",
+      { key: "APIFY_TOKEN", label: "Apify token", ok: hasApify(), blocks: "Competitor swipe (Phase 0)",
         fix: "Add APIFY_TOKEN=... to .env" },
       { key: "FIRECRAWL", label: "Firecrawl CLI", ok: firecrawl, blocks: "Brand research (Phase 1)",
         fix: "npm install -g firecrawl-cli && firecrawl auth" },
@@ -1551,6 +1561,14 @@ const server = createServer(async (req, res) => {
     }
     if (p === "/api/enums") return json(res, 200, { cta: CTA_ENUM, offerTypes: OFFER_TYPES, priceQualifiers: PRICE_QUALIFIERS, maxLocations: MAX_LOCATIONS });
     if (p === "/api/clients" && req.method === "GET") return json(res, 200, { clients: listClients() });
+    // /api/library/survey?gym= — the Ad Library survey from what is on file (no call): how many advertisers run each kind
+    // of picture and how many kept one running 90 days or more; for the gym, each kind with whether it has run it.
+    if (p === "/api/library/survey" && req.method === "GET") {
+      const gym = url.searchParams.get("gym") || "", known = okSlug(gym) && existsSync(join(brandDir(gym), "gym-profile.json"));
+      let ran = [], country = null;
+      if (known) { country = readJsonFile(join(brandDir(gym), "gym-profile.json"))?.locale?.country || "SG"; try { ran = [...new Set(gymRowsRead(brandDir(gym)).map((r) => r.read?.format || (r.source === "app" ? r.format || "workout" : null)).filter(Boolean))]; } catch { ran = []; } }
+      return json(res, 200, { ...buildSurvey(SWIPE_DIR, { country, ours: ownNames(), ran }), has_apify: hasApify(), limits: { pull_min: PULL_MIN, pull_max: PULL_MAX, pull_default: PULL_DEFAULT, read_default: READ_DEFAULT, read_max: MAX_READ_CALLS } });
+    }
     // /api/portfolio — every gym's marketing numbers side by side (2026-11-12): spend, lead-form leads, cost per lead and
     // what moved it, for the last 7, 30 and 90 days against the days before, from what the last read put on disk
     // (portfolio-numbers.mjs). No Meta call, no model call: the read is the owner's click or the day's own.
@@ -2187,6 +2205,17 @@ const server = createServer(async (req, res) => {
         if (!metaConfig().token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
         saveSchedule({ last_started: new Date().toISOString(), last_finished: null, last_result: "running (started by you)" });
         const run = startRun(kind, {}, { onDone: (r) => saveSchedule({ last_finished: new Date().toISOString(), last_result: r.code === 0 ? "refreshed by you" : `the refresh ended with code ${r.code}` }) });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "library-survey") {
+        const country = String(body.country || "").toUpperCase(), pull = body.pull ?? 0, max = body.max ?? READ_DEFAULT;
+        if (!/^[A-Z]{2}$/.test(country)) return json(res, 400, { error: "the country is two letters, such as SG or TW" });
+        if (!Number.isInteger(pull) || (pull !== 0 && (pull < PULL_MIN || pull > PULL_MAX))) return json(res, 400, { error: `how many ads to pull must be 0 (none) or ${PULL_MIN} to ${PULL_MAX}` });
+        if (!Number.isInteger(max) || max < 0 || max > MAX_READ_CALLS) return json(res, 400, { error: `how many pictures to read must be 0 to ${MAX_READ_CALLS}` });
+        if (!pull && !max) return json(res, 400, { error: "nothing to do: no ads to pull and no pictures to read" });
+        if (pull > 0 && body.tos !== true) return json(res, 400, { error: "the pull scrapes Meta's Ad Library, a grey area under Meta's terms: it runs only once the notice is agreed to" });
+        if (pull > 0 && !hasApify()) return json(res, 409, { error: "no APIFY_TOKEN in .env: the Ad Library cannot be pulled (the pictures already on file can still be read)" });
+        const run = startRun(kind, { country, pull, max });
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "portfolio-numbers") {

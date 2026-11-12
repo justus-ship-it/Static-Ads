@@ -359,6 +359,7 @@ const WAIT = { items:new Map(), seq:0, tick:null, was:null };
 const WAITS = [
   [/POST/, /\/batch\/check$|\/api\/preview$/, null], [/PUT/, /\/picks$/, null], [/GET/, /\/cycle$|\/progress$|\/api\/run\/|\/api\/status$|\/api\/token$|\/api\/enums$|\/api\/clients$|\/batch-setup$|\/api\/client\/[^/]+$/, null],
   [/GET/, /\/api\/portfolio$/, "Adding up every gym's numbers from what is on file."],
+  [/GET/, /\/api\/library\/survey/, null],
   [/POST/, /\/ad\/\d+\/pause$/, 'Pausing the ad on Meta.'],
   [/POST/, /\/room-tag$/, 'Saving which room the photo shows.'],
   [/POST/, /\/copy\/draft$/, (b) => `The agent is drafting ${/"kind":"headline"/.test(b||'') ? 'headlines' : 'copies'} from the copy library, then judging each one for clarity. This takes about a minute.`],
@@ -628,7 +629,7 @@ function pfSpark(series, days){
   return `<svg class="pfspark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"><title>${total} lead${total===1?'':'s'} over ${days} days, ${days>30?'a week':'a day'} a point; the most ${max}</title><polyline fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" points="${pts}"/></svg>`;
 }
 async function viewPortfolio(v, seq=VIEW_SEQ){
-  v.innerHTML = `<h1>All gyms</h1><p class="sub" id="pfSub">Every gym's lead ads for the period you pick, against the period before. A result is a lead-form lead; hiring ads, campaigns that were not after leads and ad sets abroad are left out.</p><div id="pfBody"></div>`;
+  v.innerHTML = `<h1>All gyms</h1><p class="sub" id="pfSub">Every gym's lead ads for the period you pick, against the period before. A result is a lead-form lead; hiring ads, ad sets abroad and anything that was not after lead-form leads (awareness, website conversions, chats) are left out.</p><div id="pfBody"></div>`;
   if (PF.data) paintPortfolio();
   await pfReload(seq);
 }
@@ -674,7 +675,7 @@ function paintPortfolio(){
   };
   const ad = (a, cur) => a ? `${esc(a.name||a.ad_id)} ${a.leads ? `at ${pfMoney(a.cost_per_lead, cur)} (${a.leads} lead${a.leads===1?'':'s'})` : `${pfN(a.spend, 0)} spent, no lead`}` : null;
   const detail = (g) => {
-    const cur = g.currency, bits = [], L = g.left_out || {}, lo = Object.entries({ recruitment:'hiring', objective:'not after leads', abroad:'abroad' }).filter(([k])=>L[k]).map(([k,w])=>`${L[k]} ${w}`);
+    const cur = g.currency, bits = [], L = g.left_out || {}, lo = Object.entries({ recruitment:'hiring', objective:'not after leads', website:'after website conversions', chat:'after chats', abroad:'abroad' }).filter(([k])=>L[k]).map(([k,w])=>`${L[k]} ${w}`);
     let camps = [], ex = null;
     if (p==='all'){ camps = (g.all?.campaigns||[]).map(c=>({ ...c, f:c.figures })); ex = g.all?.best_dearest; }
     else if (g.source==='meta'){ camps = g.campaigns.filter(c=>c.running || c.periods[days].spend > 0).map(c=>({ ...c, f:c.periods[days] })); ex = g.ads[days];
@@ -683,7 +684,7 @@ function paintPortfolio(){
       if (g.last_lead) bits.push(`last lead ${g.days_since_lead===0 ? 'today' : g.days_since_lead===1 ? 'yesterday' : `${g.days_since_lead} days ago`}`);
       if (g.other[days] > 0) bits.push(`also ${esc(cur)} ${pfN(g.other[days], 0)} on ad sets that are not counted (${esc(lo.join(', '))})`);
       if (g.errors?.length) bits.push(`not read: ${esc(g.errors.join('; '))}`);
-      if (g.export_also){ const e = g.export_also; bits.push(`<b>Not in the figures above</b>: an Ads Manager export on file${e.label ? ` (${esc(e.label)})` : ''}, up to ${esc(pfDay(e.to))}, shows ${e.ads} ad${e.ads===1?'':'s'} running in an account this link cannot read — ${esc(cur)} ${pfN(e.spend, 0)} spent, ${pfN(e.leads)} leads${e.cost_per_lead != null ? ` at ${pfMoney(e.cost_per_lead, cur)}` : ''}${e.tiring ? `, ${e.tiring} tiring` : ''}. Share that account with the Strategym portfolio to read it here`); }
+      if (g.export_also){ const e = g.export_also; bits.push(`<b>Not in the figures above</b>: an Ads Manager export on file${e.label ? ` (${esc(e.label)})` : ''}, up to ${esc(pfDay(e.to))}, shows ${e.ads} ad${e.ads===1?'':'s'} running in an account this link cannot read — ${esc(cur)} ${pfN(e.spend, 0)} spent, ${pfN(e.leads)} leads${e.cost_per_lead != null ? ` at ${pfMoney(e.cost_per_lead, cur)}` : ''}${e.tiring ? `, ${e.tiring} tiring` : ''}`); }
     } else if (g.source==='export'){ camps = g.fixed.campaigns.map(c=>({ ...c, f:c.figures })); ex = g.fixed.ads; bits.push(`From the Ads Manager export${g.export.label ? ` (${esc(g.export.label)})` : ''}, up to ${esc(pfDay(g.export.to))}: the figures are that export's own period, whatever period is picked`); }
     else bits.push(g.source==='file' ? 'Only the account\'s history is on file: Refresh the numbers reads the periods' : g.account ? 'Nothing on file yet: Refresh the numbers reads this account' : 'No ad account on this gym\'s profile yet');
     if (ex?.best) bits.unshift(`Best ad ${ad(ex.best, cur)}`); if (ex?.dearest) bits.splice(ex?.best ? 1 : 0, 0, `dearest ${ad(ex.dearest, cur)}`);
@@ -2512,7 +2513,7 @@ function openResults(){ go('results'); }
 /** Review Data's two tabs (2026-11-11): the review (the account review, What wins, the mix, across every gym) and every result as tables. */
 function rsView(v){ RS.view = v==='tables' ? 'tables' : 'review'; if (STATE.tab==='results' && RS.data) paintResults($('#view')); }
 async function viewResults(v, seq=VIEW_SEQ){
-  if (RS.gym !== STATE.sel || !RS.data){ v.innerHTML = '<h1>Review Data</h1><p class="sub">Loading…</p>'; RS.gym = STATE.sel; RS.data = null; RS.view = 'review'; RS.level = 'campaigns'; RS.campaign = null; RS.adset = null; RS.winCampaign = null; try { RS.data = await api(`/api/client/${STATE.sel}/results`); } catch(e){ RS.error = e.message; RS.data = { rows:[], batches:[], adsets:[], campaigns:[], history:null }; } if (seq !== VIEW_SEQ) return; RS.across = null; RS.acrossError = null; RS.review = null; RS.reviewError = null; rsLoadAcross(); rsLoadReview(); }
+  if (RS.gym !== STATE.sel || !RS.data){ v.innerHTML = '<h1>Review Data</h1><p class="sub">Loading…</p>'; RS.gym = STATE.sel; RS.data = null; RS.view = 'review'; RS.level = 'campaigns'; RS.campaign = null; RS.adset = null; RS.winCampaign = null; try { RS.data = await api(`/api/client/${STATE.sel}/results`); } catch(e){ RS.error = e.message; RS.data = { rows:[], batches:[], adsets:[], campaigns:[], history:null }; } if (seq !== VIEW_SEQ) return; RS.across = null; RS.acrossError = null; RS.review = null; RS.reviewError = null; RS.survey = null; RS.surveyError = null; rsLoadAcross(); rsLoadReview(); rsLoadSurvey(); }
   paintResults(v);
 }
 const RCOLS = {
@@ -2553,7 +2554,7 @@ function paintResults(v){
     <select onchange="RS.source=this.value;paintResults($('#view'))"><option value="all" ${RS.source==='all'?'selected':''}>both sources</option><option value="app" ${RS.source==='app'?'selected':''}>this app</option><option value="account" ${RS.source==='account'?'selected':''}>the account before</option></select>
     <button class="${H?'sm':'primary'}" onclick="rsPullHistory()" ${RS.busy?'disabled':''}>${RS.busy?'Working…':H?'Pull the account again':"Pull the account's history from Meta"}</button></div>
   ${RS.msg?`<div class="msg ${/failed|could not|not set/i.test(RS.msg)?'err':'ok'}">${esc(RS.msg)}</div>`:''}
-  ${tables ? '' : reviewCard() + winsCard(D) + mixCard(D) + acrossCard()}
+  ${tables ? '' : reviewCard() + winsCard(D) + mixCard(D) + acrossCard() + ledgerCard() + surveyCard()}
   <div class="card" id="rsTables" style="${tables?'':'display:none'}"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?(H.pulled?` · account pulled ${esc(H.pulled.slice(0,10))}`:' · from an Ads Manager export'):''}</span>${RS.level==='adsets'&&camp&&(D.texts||[]).some(t=>t.campaign_id===camp.campaign_id)?`<button class="sm" onclick="rsGo('texts')">Which copy wins</button>`:''}<div class="spacer"></div>
       ${RS.level==='ads'?`<button class="sm" onclick="rsPickTop(10)">Pick the top 10 by leads</button><button class="sm primary" onclick="rsImport()" ${RS.hsel.size&&!RS.busy?'':'disabled'}>Bring ${RS.hsel.size||''} into the library</button>`:`<span class="hint">${clickable?'click a row to open it · ':''}click a column to sort</span>`}</div>
     ${RS.level==='ads'?"<p class=\"hint\">Ads from the account before this app can be brought into the library: the picture joins Reference images (a video's poster frame counts), the primary text and headline join the copy references with their results. Rows from outside the gym's country are greyed and left out of the top picks.</p>":''}
@@ -2584,7 +2585,7 @@ function reviewCard(){
   const copy = [...R.copy.copies.map(x=>['Copy',x]), ...R.copy.headlines.map(x=>['Headline',x])];
   const b = R.brief, mixLine = b.mix ? Object.entries(b.mix).map(([f,k])=>`${k} ${esc(FORMAT_PLURAL[f]||f)}`).join(', ') : `${b.generated} workout photos`;
   const fresh = R.last?.reviewed ? `reviewed ${esc(R.last.reviewed.slice(0,10))}` : 'not reviewed yet';
-  const from = R.data.pulled ? `account read ${esc(R.data.pulled.slice(0,10))}` : R.data.exports.length ? 'from an Ads Manager export' : 'no account data yet';
+  const from = R.data.pulled ? `account read ${esc(R.data.pulled.slice(0,10))}${R.data.numbers_read ? `, its numbers ${esc(R.data.numbers_read.slice(0,10))}` : ''}` : R.data.exports.length ? 'from an Ads Manager export' : 'no account data yet';
   return `<div class="card" id="rsReview">
     <div class="row" style="flex-wrap:wrap"><h3 style="margin:0">Account review</h3><span class="hint" style="margin:0">${fresh} · ${from}${R.data.unread?` · ${R.data.unread} picture${R.data.unread===1?'':'s'} not read yet`:''}</span><div class="spacer"></div>
       <button class="sm" onclick="rsCopyReview()" title="The review as plain text">Copy the report</button>
@@ -2707,6 +2708,65 @@ async function rsUseMix(){
   const M = RS.data?.mix; if (!M?.changed) return;
   try { await api(`/api/client/${STATE.sel}/mix`, { method:'POST', body:{ mix: M.suggested } }); try { await refreshProfile(); } catch {} B.setup = null; await rsReload(); const m = $('#rsMixMsg'); if (m) m.textContent = 'Saved as this gym\'s mix.'; toast('The mix is saved on Ad defaults', 'ok'); }
   catch(e){ const m = $('#rsMixMsg'); if (m) m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+}
+/** Tested across every gym (2026-11-12): what each gym's account says and what its batches tested, pooled, with a verdict by rule. From the review's own answer: no call. */
+function ledgerCard(){
+  const L = RS.review?.ledger; if (!L) return '';
+  const tone = { holds:'on', held_once:'on', mixed:'warn', not_held:'bad', testing:'navy', untested:'' };
+  const here = (e) => e.here==='tested' ? 'tested here' : e.here==='said' ? 'this gym\'s own account says it' : e.try_in.some(g=>g.gym===STATE.sel) ? '<b>not tried here: a test for the next batch</b>' : '';
+  const row = (e) => `<tr data-key="${esc(e.key)}" data-verdict="${e.verdict}"><td><b>${esc(e.name)}</b></td><td><span class="pill ${tone[e.verdict]}">${esc(e.label)}</span></td>
+    <td>${esc(e.text)}${e.tested.length > 1 || (e.tested.length && e.verdict==='holds') ? `<div class="hint" style="margin-top:3px">${e.tested.map(t=>`${esc(t.name)} · ${esc(t.batch)}: ${esc(t.text)}`).join('<br>')}</div>` : ''}</td><td>${here(e)}</td></tr>`;
+  const tested = L.entries.filter(e=>e.verdict!=='untested'), said = L.entries.filter(e=>e.verdict==='untested');
+  return `<div class="card" id="rsLedger">
+    <div class="row" style="flex-wrap:wrap"><h3 style="margin:0">Tested across every gym</h3><span class="hint">${L.gyms} gym${L.gyms===1?'':'s'} · ${tested.length} tested in a batch · ${said.length} said by an account and never tested</span></div>
+    <p class="hint" style="margin:8px 0 10px">What each gym's own account says the photos should favour, and how it came out whenever a batch leaned on it or tested it — its ads against the rest of that batch, from 10 leads. What held in another gym is only ever a <b>test</b> here, never taken on its word.</p>
+    ${L.entries.length ? `<div style="overflow:auto"><table class="tbl"><thead><tr><th>What</th><th>Verdict</th><th>What happened</th><th>This gym</th></tr></thead><tbody>${[...tested, ...said].map(row).join('')}</tbody></table></div>` : '<p class="hint" id="rsLedgerNone">Nothing yet: no account says anything clear enough to lean on, and no batch on Meta has tested anything.</p>'}
+    ${L.entries.length && !tested.length ? '<p class="hint" id="rsLedgerNone" style="margin-top:8px">No batch on Meta has leaned on or tested any of these yet. The first verdicts appear once a batch that does has 10 leads on the ads that show it.</p>' : ''}
+  </div>`;
+}
+/** What other operators run (2026-11-12): the Ad Library survey — analysis only; a survivorship proxy, never a result. */
+async function rsLoadSurvey(){ const gym = STATE.sel; try { const s = await api(`/api/library/survey?gym=${gym}`); if (gym !== STATE.sel) return; RS.survey = s; RS.surveyError = null; } catch(e){ RS.survey = null; RS.surveyError = e.message; } if (STATE.tab==='results' && RS.data && RS.view!=='tables') paintResults($('#view')); }
+function surveyCard(){
+  const S = RS.survey;
+  if (!S) return `<div class="card" id="rsSurvey"><h3 style="margin:0">What other operators run</h3><p class="hint">${RS.surveyError?esc(RS.surveyError):'Loading…'}</p></div>`;
+  const day = (d) => d ? new Date(d+'T12:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '';
+  const left = Object.entries(S.left_out||{}).map(([k,n])=>`${n} ${({ not_fitness:'not a fitness business', no_picture:'with no picture', ours:'your own gyms\'', no_advertiser:'with no advertiser' })[k]||k}`);
+  const where = S.scope ? `in ${esc(S.scope)}` : S.countries.length ? `in ${esc(S.countries.join(', '))}${S.asked && !S.countries.includes(S.asked) ? ` — ${esc(S.asked)} has not been surveyed yet` : ''}` : '';
+  const cand = (c) => `<tr data-format="${esc(c.format)}" class="${c.confidence==='early'?'dim':''}"><td><b>${esc(c.format.replace('-', ' '))}</b></td><td style="text-align:right">${c.advertisers}</td><td style="text-align:right">${c.long_running}</td><td style="text-align:right">${c.share}%${c.index!=null?` <span class="hint">· ${c.index.toFixed(2)}×</span>`:''}</td><td style="text-align:right">${c.median_days}</td>
+    <td>${c.tried ? 'this gym has run it' : c.makeable ? `<b>never run here</b> · made as ${esc(c.how)}` : `never run here · ${esc(c.why_not)}`}${c.candidate?' <span class="pill navy">candidate</span>':''}</td></tr>`;
+  const pills = S.tables.filter(t=>t.key!=='format').map(t=>{ const vs = t.values.filter(v=>v.confidence!=='early'); return vs.length ? `<div style="margin:6px 0"><span class="hint" style="display:inline-block;min-width:150px">${esc(t.label)}</span>${vs.map(v=>`<span class="pill" title="${v.ads} ads · median ${v.median_days} days running">${esc(v.value)} · ${v.long_running} of ${v.advertisers} (${v.share}%)</span>`).join(' ')}</div>` : ''; }).join('');
+  return `<div class="card" id="rsSurvey">
+    <div class="row" style="flex-wrap:wrap"><h3 style="margin:0">What other operators run</h3><span class="hint">${S.ads ? `Meta's Ad Library ${where}: ${S.ads} ads on file${S.surveyed.last?`, last pulled ${esc(day(S.surveyed.last))}`:''} · ${S.read} read${S.unread?`, ${S.unread} not read yet`:''}${left.length?` · left out: ${esc(left.join(', '))}`:''}` : 'Meta\'s Ad Library has not been surveyed yet'}</span><div class="spacer"></div>
+      <button class="sm" id="rsSurveyGo" onclick="rsSurveyAsk()">Survey the Ad Library…</button></div>
+    <p class="hint" style="margin:8px 0 10px"><b>Analysis only.</b> The Ad Library shows no spend and no leads, so this counts how many advertisers run each kind of picture and how many of them have kept one running ${S.long_run_days} days or more: an ad still paid for after three months is presumably paying. It is a clue, never a result. No other operator's ad is republished, attached to an image call or shown to a drafter.</p>
+    ${S.read ? `<p class="hint" style="margin:0 0 8px">${S.advertisers} advertisers read; ${S.long_running} of them (${S.overall}%) have kept an ad running ${S.long_run_days} days or more.</p>
+      ${S.candidates.length ? `<div style="overflow:auto"><table class="tbl" id="rsSurveyKinds"><thead><tr><th>Kind of picture</th><th style="text-align:right">Advertisers</th><th style="text-align:right">${S.long_run_days}+ days</th><th style="text-align:right">Share</th><th style="text-align:right">Median days</th><th>This gym</th></tr></thead><tbody>${S.candidates.map(cand).join('')}</tbody></table></div>` : '<p class="hint">No kind of picture has three advertisers behind it yet: read more pictures or pull more ads.</p>'}
+      ${pills}
+      ${S.long_runners.length ? `<p class="hint" style="margin:10px 0 0">Longest running: ${S.long_runners.slice(0,6).map(r=>`${esc(r.advertiser)} (${r.days} days, ${esc(r.format.replace('-',' '))})`).join(' · ')}</p>` : ''}`
+     : `<p class="hint" id="rsSurveyNone">${S.ads ? `${S.unread} picture${S.unread===1?'':'s'} on file ${S.unread===1?'is':'are'} not read yet: Survey the Ad Library… reads them (one vision call each).` : 'Nothing on file yet. Survey the Ad Library… pulls the ads and reads their pictures.'}</p>`}
+  </div>`;
+}
+function rsSurveyAsk(){
+  const S = RS.survey || {}, cc = STATE.profile?.locale?.country || 'SG';
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Survey the Ad Library</h3>
+    <p class="hint">Pulls the gym and fitness ads running in a country from Meta's Ad Library, then reads each new ad's picture into the same attributes this app reads your own creatives with.</p>
+    <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:10px 0">
+      <div><label for="svCountry">Country</label><input id="svCountry" value="${esc(cc)}" maxlength="2" style="text-transform:uppercase"></div>
+      <div><label for="svPull">Ads to pull <span class="n">· 0 = none</span></label><input id="svPull" type="number" min="0" max="${S.limits?.pull_max||300}" value="${S.has_apify ? (S.limits?.pull_default||80) : 0}" ${S.has_apify?'':'disabled'}></div>
+      <div><label for="svRead">Pictures to read <span class="n">· at most</span></label><input id="svRead" type="number" min="0" max="${S.limits?.read_max||800}" value="${S.limits?.read_default||60}"></div></div>
+    <p class="hint"><b>What it costs:</b> the pull runs through Apify and is billed to your Apify account per ad returned; each picture read is one Gemini vision call. ${S.has_apify ? '' : '<b>No Apify token is in .env, so nothing can be pulled</b>; the pictures already on file can still be read. '}${S.unread ? `${S.unread} picture${S.unread===1?' is':'s are'} on file and not read yet.` : ''}</p>
+    <p class="hint"><b>Notice:</b> Meta's official Ad Library API does not return commercial ads, so the pull scrapes the Ad Library's pages, which is a grey area under Meta's terms. The creatives are other operators' copyrighted work: used for pattern analysis only, never republished, never used as a reference image. They stay in a folder that is never committed.</p>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--text)"><input type="checkbox" id="svTos" style="width:auto"> I have read the notice and want the pull to run</label>
+    <p class="hint" id="svWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="svGo" onclick="rsSurveyRun()">Run the survey</button></div></div></div>`;
+}
+function rsSurveyRun(){
+  const country = $('#svCountry').value.trim().toUpperCase(), pull = Number($('#svPull').value)||0, max = Number($('#svRead').value)||0, tos = $('#svTos').checked, why = $('#svWhy');
+  if (!/^[A-Z]{2}$/.test(country)) return why.textContent = 'The country is two letters, such as SG or TW.';
+  if (pull > 0 && !tos) return why.textContent = 'Tick the box to run the pull, or set Ads to pull to 0 to only read what is on file.';
+  if (!pull && !max) return why.textContent = 'Nothing to do: both numbers are 0.';
+  $('#gModal').innerHTML = '';
+  run({ kind:'library-survey', country, pull, max, tos }, ()=>rsLoadSurvey());
 }
 function acrossCard(){
   const A = RS.across;
