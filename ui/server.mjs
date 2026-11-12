@@ -172,7 +172,7 @@ const RUNNABLE = {
   // All gyms (2026-11-12): every linked account's numbers day by day for the last 180 days (read-only on Meta, 8 calls a gym, no model call).
   "portfolio-numbers": { label: "Read every gym's numbers (read-only)", argv: () => [NUMBERS_SCRIPT, "--refresh", "--brands-dir", BRANDS] },
   // The Ad Library survey (2026-11-12): other operators' ads pulled through Apify (the owner's click, the scraper's notice agreed to) and their pictures read (one vision call each, under the cap). Analysis only.
-  "library-survey": { label: "Survey the Ad Library", argv: ({ country, pull, max }) => [SURVEY_SCRIPT, "--swipe-dir", SWIPE_DIR, ...(pull > 0 ? ["--pull", String(pull), "--country", country, "--i-understand-tos"] : []), ...(max > 0 ? ["--read", "--max", String(max)] : []), "--ours", ownNames().join("|")] },
+  "library-survey": { label: "Survey the Ad Library", argv: ({ country, pull, max }) => [SURVEY_SCRIPT, "--swipe-dir", SWIPE_DIR, "--country", country, ...(pull > 0 ? ["--pull", String(pull), "--i-understand-tos"] : []), ...(max > 0 ? ["--read", "--max", String(max)] : []), "--ours", ownNames().join("|")] },
   "portfolio-read": { label: "Read every gym's creatives", argv: ({ max }) => [WINS_SCRIPT, "--read", "--max", String(max), "--brands-dir", BRANDS] },
   "photo-clean": { label: "Clean photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...(photos.some((p) => p.includes("/") && !p.startsWith("facility/")) ? ["--clean-dir", join(brandDir(gym), "brand-assets", "reference-clean")] : []), ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", p.includes("/") ? p : `facility/${p}`)])] },
 };

@@ -77,10 +77,15 @@ export const readSurveyReads = (swipeDir) => { const j = readJson(join(swipeDir,
 /** How many pictures a reading would cost: one per ad kept and not read yet (the same picture under two ads is read once). */
 export function unreadSurvey(swipeDir, opts = {}) { const store = readSurveyReads(swipeDir), ids = new Set(); for (const a of surveyAds(swipeDir, opts)) if (!a.left_out && !store.reads[a.sha]?.format) ids.add(a.sha); return ids.size; }
 
-/** Read the pictures not read yet, one vision call each, under `max`. The attributes are kept; the words printed on another operator's ad are not. */
-export async function readSurvey({ swipeDir, ask = callVision, max = READ_DEFAULT, ours = [], log = () => {}, now = () => new Date().toISOString() }) {
-  const store = readSurveyReads(swipeDir), done = { read: 0, cached: 0, calls: 0, left: 0, failed: [] }, seen = new Set();
-  for (const a of surveyAds(swipeDir, { ours })) {
+/**
+ * Read the pictures not read yet, one vision call each, under `max`. The attributes are kept; the words printed on
+ * another operator's ad are not. **The country asked for is read first, the newest pull first** (2026-11-12: the first
+ * Singapore survey spent its cap on an older United States pull, read in the order the pulls were made).
+ */
+export async function readSurvey({ swipeDir, ask = callVision, max = READ_DEFAULT, ours = [], country = null, log = () => {}, now = () => new Date().toISOString() }) {
+  const store = readSurveyReads(swipeDir), done = { read: 0, cached: 0, calls: 0, left: 0, failed: [] }, seen = new Set(), first = country ? String(country).toUpperCase() : null;
+  const order = surveyAds(swipeDir, { ours }).map((a, i) => ({ a, i })).sort((x, y) => (y.a.country === first) - (x.a.country === first) || String(y.a.scraped).localeCompare(String(x.a.scraped)) || x.i - y.i).map((x) => x.a);
+  for (const a of order) {
     if (a.left_out || seen.has(a.sha)) continue; seen.add(a.sha);
     if (store.reads[a.sha]?.format) { done.cached++; continue; }
     if (done.calls >= max) { done.left++; continue; }
@@ -156,7 +161,7 @@ if (isMain) {
       execFileSync(process.execPath, [join(REPO_ROOT, "skills", "references", "scrape-meta-ads.mjs"), "--niche", v.niche, "--country", v.country.toUpperCase(), "--limit", String(n), "--out", swipeDir, "--i-understand-tos", ...(v.terms ? ["--terms", v.terms] : [])], { stdio: "inherit", cwd: REPO_ROOT });
     }
     if (v.read) {
-      const d = await readSurvey({ swipeDir, max: Math.max(0, parseInt(v.max, 10) || 0), ours, log: (m) => console.log(`  ${m}`) });
+      const d = await readSurvey({ swipeDir, max: Math.max(0, parseInt(v.max, 10) || 0), ours, country: v.country, log: (m) => console.log(`  ${m}`) });
       console.log(`· ${d.read} picture${d.read === 1 ? "" : "s"} read (${d.calls} call${d.calls === 1 ? "" : "s"}), ${d.cached} read before${d.left ? `, ${d.left} left for another run (the cap)` : ""}${d.failed.length ? `, ${d.failed.length} failed` : ""}`);
       for (const f of d.failed.slice(0, 5)) console.log(`  ! ${f}`);
     }

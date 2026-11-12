@@ -63,6 +63,11 @@ test("SV2 the reading: one vision call per picture not read yet, under the cap, 
     assert.deepEqual([d.read, d.cached, d.calls], [1, 2, 1]); assert.equal(calls.length, 3);
     d = await readSurvey({ swipeDir: dir, ask: ask(calls), max: 10 });
     assert.deepEqual([d.read, d.cached, d.calls], [0, 3, 0]); assert.equal(readSurveyReads(dir).reads.g4.subject, "group");
+    // The country asked for is read first, and the newest pull before an older one: the cap is not spent on another country's older ads.
+    scrape(dir, "2026-11-02", "US", [{ id: "u1", page: "Texas Gym", days: 50, img: "w21" }, { id: "u2", page: "Ohio Gym", days: 50, img: "w22" }]);
+    scrape(dir, "2026-11-03", "SG", [{ id: "s1", page: "Bishan Gym", days: 50, img: "w31" }]); scrape(dir, "2026-11-04", "SG", [{ id: "s2", page: "Katong Gym", days: 50, img: "w41" }]);
+    const order = []; await readSurvey({ swipeDir: dir, ask: ask(order), max: 3, country: "sg" });
+    assert.deepEqual(order.map((c) => c.file.split("/").pop()), ["w41.png", "w31.png", "w21.png"]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

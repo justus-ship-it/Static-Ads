@@ -3643,7 +3643,7 @@ test("U62 the ledger across gyms and the Ad Library survey on Review Data (2026-
     // Reading with nothing left to read: the command is built server-side, never pulls, and makes no call.
     const made = await runAndWait({ kind: "library-survey", country: "sg", pull: 0, max: 5 });
     assert.equal(made.code, 0, made.lines.join("\n"));
-    assert.match(made.lines[0], /^\$ node skills\/references\/library-survey\.mjs --swipe-dir \S+swipe\/gym --read --max 5 --ours /); assert.ok(!/--pull|--i-understand-tos/.test(made.lines[0]));
+    assert.match(made.lines[0], /^\$ node skills\/references\/library-survey\.mjs --swipe-dir \S+swipe\/gym --country SG --read --max 5 --ours /); assert.ok(!/--pull|--i-understand-tos/.test(made.lines[0]));
     assert.ok(made.lines.some((l) => /0 pictures read \(0 calls\), 6 read before/.test(l)), made.lines.join("\n"));
     // The review carries the pooled ledger.
     const R = await (await call(`/api/client/${GYM}/account-review`)).json();
