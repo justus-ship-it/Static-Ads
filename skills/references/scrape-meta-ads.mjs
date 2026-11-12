@@ -36,7 +36,7 @@ const __dirname = dirname(__filename);
 // ---------------------------------------------------------------------------
 
 const DEFAULT_ACTOR = "curious_coder~facebook-ads-library-scraper";
-const APIFY_BASE = "https://api.apify.com/v2";
+const APIFY_BASE = (process.env.APIFY_BASE_URL || "https://api.apify.com/v2").replace(/\/$/, ""); // APIFY_BASE_URL points the tests at a fake
 const DOWNLOAD_CONCURRENCY = 6;
 
 // ---------------------------------------------------------------------------
@@ -219,18 +219,36 @@ function buildDefaultInput(searchUrls, limit, country, active) {
   };
 }
 
+/**
+ * Start the actor, wait for it, read its dataset. The run is started on its own (not "run-sync") so that it has an
+ * id: a stop from the panel (SIGTERM) ABORTS the run on Apify (2026-11-12, the owner: "an option to cancel the run
+ * halfway, so I don't keep expending credits") — with run-sync a stopped script left the actor running, and billing,
+ * on Apify's side. What the actor had already returned by then is billed; nothing after it.
+ */
+let ACTIVE_RUN = null;
+const ENDED = ["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"];
+async function abortActiveRun(token) {
+  if (!ACTIVE_RUN) return false;
+  try { const r = await fetch(`${APIFY_BASE}/actor-runs/${ACTIVE_RUN}/abort?token=${encodeURIComponent(token)}`, { method: "POST", signal: AbortSignal.timeout(3000) }); return r.ok; } catch { return false; }
+}
 async function runApifyActor(actorId, token, input) {
-  const url = `${APIFY_BASE}/acts/${actorId}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}&clean=true`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Apify run failed (${res.status}): ${text.slice(0, 400)}`);
+  const t = encodeURIComponent(token), poll = Number(process.env.APIFY_POLL_MS) || 5000;
+  const res = await fetch(`${APIFY_BASE}/acts/${actorId}/runs?token=${t}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(`Apify run failed (${res.status}): ${(await res.text()).slice(0, 400)}`);
+  const run = (await res.json())?.data;
+  if (!run?.id) throw new Error("Apify did not answer with a run");
+  ACTIVE_RUN = run.id;
+  console.log(`  Apify run ${run.id} started (stopping this aborts it on Apify).`);
+  let status = run.status || "RUNNING", dataset = run.defaultDatasetId;
+  while (!ENDED.includes(status)) {
+    await sleep(poll);
+    try { const r = await fetch(`${APIFY_BASE}/actor-runs/${run.id}?token=${t}`); if (r.ok) { const d = (await r.json())?.data || {}; status = d.status || status; dataset = d.defaultDatasetId || dataset; } } catch { /* a dropped poll: ask again */ }
   }
-  const items = await res.json();
+  ACTIVE_RUN = null;
+  if (status !== "SUCCEEDED") throw new Error(`the Apify run ended ${status}`);
+  const out = await fetch(`${APIFY_BASE}/datasets/${dataset}/items?clean=true&format=json&token=${t}`);
+  if (!out.ok) throw new Error(`Apify's results could not be read (${out.status}): ${(await out.text()).slice(0, 400)}`);
+  const items = await out.json();
   if (!Array.isArray(items)) {
     throw new Error(`Unexpected Apify response (expected array): ${JSON.stringify(items).slice(0, 200)}`);
   }
@@ -361,6 +379,9 @@ async function main() {
   console.log(sep);
 
   // ── Run actor ──
+  // A stop (the panel's Stop, Ctrl+C) aborts the run on Apify before this script ends.
+  const stop = async () => { const did = await abortActiveRun(token); console.error(did ? "\nStopped: the Apify run was aborted, so nothing more is billed for it." : "\nStopped."); process.exit(130); };
+  process.on("SIGTERM", stop); process.on("SIGINT", stop);
   console.log("\nRunning Apify actor (this can take a few minutes)...");
   const rawItems = await runApifyActor(actorId, token, input);
   console.log(`  Actor returned ${rawItems.length} raw items.`);

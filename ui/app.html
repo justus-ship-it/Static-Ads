@@ -65,7 +65,7 @@
   .chg{font-size:11.5px;margin-left:5px;color:var(--faint);font-weight:600} .chg.bad{color:var(--err)} .chg.good{color:var(--ok)} .pill.bad{background:var(--err-soft);border-color:#f0c2c2;color:var(--err)}
   @media (max-width:900px){ .pftiles{grid-template-columns:repeat(2,minmax(0,1fr))} }
   .cyc{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:16px}
-  .cycsteps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+  .cycsteps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px} #cyc .cycsteps{grid-template-columns:repeat(6,minmax(0,1fr))}
   .cycstep{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);min-width:0;height:auto}
   .cycstep .hd{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;color:var(--text);white-space:nowrap}
   .cycstep .n{width:18px;height:18px;line-height:18px;text-align:center;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:11px;font-weight:700;color:var(--dim);flex:none}
@@ -104,7 +104,7 @@
   .cycstep.st-wait .tx{color:var(--faint)}
   .cycnext{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:13.5px}
   .cycnext .k{color:var(--faint);font-size:11px;letter-spacing:.8px;text-transform:uppercase;font-weight:700} .cycnext .t{flex:1;min-width:0}
-  @media (max-width:1100px){ .cycsteps{grid-template-columns:repeat(2,minmax(0,1fr))} }
+  @media (max-width:1100px){ .cycsteps, #cyc .cycsteps{grid-template-columns:repeat(2,minmax(0,1fr))} }
   .rail .badge{margin-left:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 7px;font-size:11px;color:var(--dim);font-weight:600}
   .rail .foot{margin-top:auto;padding:12px;font-size:11px;color:var(--faint);line-height:1.5}
   .main{padding:24px 28px 40px;max-width:1360px;width:100%;min-width:0}
@@ -422,6 +422,8 @@ function paintWait(){
   // The step indicator follows: working (the agent, or a run) or back to what to do now. A plain load leaves it alone.
   const key = w && w.kind !== 'load' ? `${w.kind}|${w.text}|${waitSecs(w.secs)}` : null;
   if (key !== WAIT.was){ WAIT.was = key; if (typeof paintStepper === 'function') { try { paintStepper(); } catch{} } }
+  // The survey's own screen follows its run: the line it is on, and from "idle" to "running" and back.
+  if (typeof STATE !== 'undefined' && STATE.tab === 'survey' && typeof svRunning === 'function'){ const box = document.getElementById('svStatus'), on = svRunning(); if (box && (box.dataset.state === 'running') !== on) { try { paintSurvey(); } catch{} } else if (on){ const el = document.getElementById('svNow'), last = (STATE.run.lines||[]).filter(l=>l.stream!=='meta').at(-1)?.line; if (el && last) el.textContent = last; const b = document.getElementById('svStop'); if (b && STATE.run.stopping){ b.disabled = true; b.textContent = 'Stopping…'; } } }
   if (!w && !WAIT.items.size && WAIT.tick && !(typeof STATE !== 'undefined' && STATE.run && !STATE.run.done)){ clearInterval(WAIT.tick); WAIT.tick = null; }
 }
 
@@ -458,13 +460,13 @@ let STATE = { clients:[], sel:null, offer:null, tab:'results', batch:null, rmode
 // were (results, scenes, batch, review, exports), so every old address still opens its screen.
 const NAV = [
   ['sec','Portfolio'], ['portfolio','All gyms','▦'],
-  ['sec','The cycle'], ['results','Review Data','1'], ['scenes','Draft Scenes','2'], ['batch','Generate Creatives','3'], ['review','Pick Ads','4'], ['exports','Publish Ads','5'],
+  ['sec','The cycle'], ['survey','Survey Ad Library','0'], ['results','Review Data','1'], ['scenes','Draft Scenes','2'], ['batch','Generate Creatives','3'], ['review','Pick Ads','4'], ['exports','Publish Ads','5'],
   ['sec','Library'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'], ['cards','Cards','▭'], ['leadforms','Lead forms','▤'],
   ['sec','Profile'], ['overview','Overview','◎'], ['import','Import from Meta','⇣'], ['metafacts','From the ad account','◆'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'],
 ];
-const CYCLE_TABS = ['results','scenes','batch','generating','review','exports','publish'];
-const TITLES = { portfolio:'All gyms', batch:'Generate Creatives', generating:'Generate Creatives', review:'Pick Ads', exports:'Publish Ads', publish:'Publish Ads', results:'Review Data', copy:'Copy', cards:'Cards', leadforms:'Lead forms', import:'Import from Meta', scenes:'Draft Scenes', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
+const CYCLE_TABS = ['survey','results','scenes','batch','generating','review','exports','publish'];
+const TITLES = { portfolio:'All gyms', survey:'Survey Ad Library', batch:'Generate Creatives', generating:'Generate Creatives', review:'Pick Ads', exports:'Publish Ads', publish:'Publish Ads', results:'Review Data', copy:'Copy', cards:'Cards', leadforms:'Lead forms', import:'Import from Meta', scenes:'Draft Scenes', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -739,6 +741,7 @@ function render(){
   if (STATE.tab==='generating') return viewGenerating(v, seq);
   if (STATE.tab==='exports') return viewExports(v, seq);
   if (STATE.tab==='publish') return STATE.batch ? viewPublish(v, seq) : viewExports(v, seq);
+  if (STATE.tab==='survey') return viewSurvey(v, seq);
   if (STATE.tab==='results') return viewResults(v, seq);
   if (STATE.tab==='copy') return viewCopyRefs(v, seq);
   if (STATE.tab==='metafacts') return viewMetaFacts(v, seq);
@@ -2513,7 +2516,7 @@ function openResults(){ go('results'); }
 /** Review Data's two tabs (2026-11-11): the review (the account review, What wins, the mix, across every gym) and every result as tables. */
 function rsView(v){ RS.view = v==='tables' ? 'tables' : 'review'; if (STATE.tab==='results' && RS.data) paintResults($('#view')); }
 async function viewResults(v, seq=VIEW_SEQ){
-  if (RS.gym !== STATE.sel || !RS.data){ v.innerHTML = '<h1>Review Data</h1><p class="sub">Loading…</p>'; RS.gym = STATE.sel; RS.data = null; RS.view = 'review'; RS.level = 'campaigns'; RS.campaign = null; RS.adset = null; RS.winCampaign = null; try { RS.data = await api(`/api/client/${STATE.sel}/results`); } catch(e){ RS.error = e.message; RS.data = { rows:[], batches:[], adsets:[], campaigns:[], history:null }; } if (seq !== VIEW_SEQ) return; RS.across = null; RS.acrossError = null; RS.review = null; RS.reviewError = null; RS.survey = null; RS.surveyError = null; rsLoadAcross(); rsLoadReview(); rsLoadSurvey(); }
+  if (RS.gym !== STATE.sel || !RS.data){ v.innerHTML = '<h1>Review Data</h1><p class="sub">Loading…</p>'; RS.gym = STATE.sel; RS.data = null; RS.view = 'review'; RS.level = 'campaigns'; RS.campaign = null; RS.adset = null; RS.winCampaign = null; try { RS.data = await api(`/api/client/${STATE.sel}/results`); } catch(e){ RS.error = e.message; RS.data = { rows:[], batches:[], adsets:[], campaigns:[], history:null }; } if (seq !== VIEW_SEQ) return; RS.across = null; RS.acrossError = null; RS.review = null; RS.reviewError = null; rsLoadAcross(); rsLoadReview(); }
   paintResults(v);
 }
 const RCOLS = {
@@ -2554,7 +2557,7 @@ function paintResults(v){
     <select onchange="RS.source=this.value;paintResults($('#view'))"><option value="all" ${RS.source==='all'?'selected':''}>both sources</option><option value="app" ${RS.source==='app'?'selected':''}>this app</option><option value="account" ${RS.source==='account'?'selected':''}>the account before</option></select>
     <button class="${H?'sm':'primary'}" onclick="rsPullHistory()" ${RS.busy?'disabled':''}>${RS.busy?'Working…':H?'Pull the account again':"Pull the account's history from Meta"}</button></div>
   ${RS.msg?`<div class="msg ${/failed|could not|not set/i.test(RS.msg)?'err':'ok'}">${esc(RS.msg)}</div>`:''}
-  ${tables ? '' : reviewCard() + winsCard(D) + mixCard(D) + acrossCard() + ledgerCard() + surveyCard()}
+  ${tables ? '' : reviewCard() + winsCard(D) + mixCard(D) + acrossCard() + ledgerCard()}
   <div class="card" id="rsTables" style="${tables?'':'display:none'}"><div class="row">${RS.level!=='campaigns'?`<button class="sm" onclick="rsBack()">← Back</button>`:''}<h3 style="margin:0">${title}</h3><span class="hint">${money(tot.spend,cur)} spent · ${tot.leads} leads${tot.leads?` at ${money(tot.spend/tot.leads,cur)}`:''}${H&&RS.level==='campaigns'?(H.pulled?` · account pulled ${esc(H.pulled.slice(0,10))}`:' · from an Ads Manager export'):''}</span>${RS.level==='adsets'&&camp&&(D.texts||[]).some(t=>t.campaign_id===camp.campaign_id)?`<button class="sm" onclick="rsGo('texts')">Which copy wins</button>`:''}<div class="spacer"></div>
       ${RS.level==='ads'?`<button class="sm" onclick="rsPickTop(10)">Pick the top 10 by leads</button><button class="sm primary" onclick="rsImport()" ${RS.hsel.size&&!RS.busy?'':'disabled'}>Bring ${RS.hsel.size||''} into the library</button>`:`<span class="hint">${clickable?'click a row to open it · ':''}click a column to sort</span>`}</div>
     ${RS.level==='ads'?"<p class=\"hint\">Ads from the account before this app can be brought into the library: the picture joins Reference images (a video's poster frame counts), the primary text and headline join the copy references with their results. Rows from outside the gym's country are greyed and left out of the top picks.</p>":''}
@@ -2724,49 +2727,93 @@ function ledgerCard(){
     ${L.entries.length && !tested.length ? '<p class="hint" id="rsLedgerNone" style="margin-top:8px">No batch on Meta has leaned on or tested any of these yet. The first verdicts appear once a batch that does has 10 leads on the ads that show it.</p>' : ''}
   </div>`;
 }
-/** What other operators run (2026-11-12): the Ad Library survey — analysis only; a survivorship proxy, never a result. */
-async function rsLoadSurvey(){ const gym = STATE.sel; try { const s = await api(`/api/library/survey?gym=${gym}`); if (gym !== STATE.sel) return; RS.survey = s; RS.surveyError = null; } catch(e){ RS.survey = null; RS.surveyError = e.message; } if (STATE.tab==='results' && RS.data && RS.view!=='tables') paintResults($('#view')); }
-function surveyCard(){
-  const S = RS.survey;
-  if (!S) return `<div class="card" id="rsSurvey"><h3 style="margin:0">What other operators run</h3><p class="hint">${RS.surveyError?esc(RS.surveyError):'Loading…'}</p></div>`;
+// ── Step 0 · Survey Ad Library (2026-11-12) ──────────────────────────────────
+// What other gyms run in this gym's country, from Meta's Ad Library — research before the cycle's turn. ONE button:
+// the app works out what the survey needs (read what is unread, or pull and read), says it with its cost, and runs
+// exactly that once confirmed. While it runs the screen and the step's bar both carry Stop. Analysis only: a
+// survivorship proxy, never a result; no other operator's ad is republished or attached to an image call.
+const SV = { data:null, error:null, gym:null };
+async function viewSurvey(v, seq=VIEW_SEQ){
+  v.innerHTML = `<h1>Survey Ad Library</h1><p class="sub" id="svSub">What other gyms and fitness studios are running on Facebook and Instagram, and which kinds of picture they keep running. Research before the cycle's turn: nothing here changes your ads.</p><div id="svBody"></div>`;
+  if (SV.gym === STATE.sel && SV.data) paintSurvey();
+  await svLoad(seq);
+}
+async function svLoad(seq=VIEW_SEQ){
+  const gym = STATE.sel;
+  try { const d = await api(`/api/library/survey?gym=${gym}`); if (gym !== STATE.sel) return; SV.data = d; SV.gym = gym; SV.error = null; } catch(e){ SV.error = e.message; }
+  if (seq !== VIEW_SEQ || STATE.tab !== 'survey') return;
+  paintSurvey();
+  // A survey that is going (started in another tab, or before a reload) is followed here.
+  const going = SV.data?.status?.running;
+  if (going && !(STATE.run && !STATE.run.done)) { attachRun(going, 'Survey the Ad Library', ()=>{}); STATE.run.kind = 'library-survey'; }
+}
+const svRunning = () => !!(STATE.run && !STATE.run.done && (STATE.run.kind === 'library-survey' || /Survey the Ad Library/.test(STATE.run.label||'')));
+function paintSurvey(){
+  const box = $('#svBody'); if (!box) return;
+  if (SV.error && !SV.data){ box.innerHTML = `<div class="empty">The survey could not be read: ${esc(SV.error)}</div>`; return; }
+  const S = SV.data, st = S.status, p = st.plan, s = (n,w) => `${n} ${w}${n===1?'':'s'}`;
   const day = (d) => d ? new Date(d+'T12:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '';
-  const left = Object.entries(S.left_out||{}).map(([k,n])=>`${n} ${({ not_fitness:'not a fitness business', no_picture:'with no picture', ours:'your own gyms\'', no_advertiser:'with no advertiser' })[k]||k}`);
-  const where = S.scope ? `in ${esc(S.scope)}` : S.countries.length ? `in ${esc(S.countries.join(', '))}${S.asked && !S.countries.includes(S.asked) ? ` — ${esc(S.asked)} has not been surveyed yet` : ''}` : '';
-  const cand = (c) => `<tr data-format="${esc(c.format)}" class="${c.confidence==='early'?'dim':''}"><td><b>${esc(c.format.replace('-', ' '))}</b></td><td style="text-align:right">${c.advertisers}</td><td style="text-align:right">${c.long_running}</td><td style="text-align:right">${c.share}%${c.index!=null?` <span class="hint">· ${c.index.toFixed(2)}×</span>`:''}</td><td style="text-align:right">${c.median_days}</td>
-    <td>${c.tried ? 'this gym has run it' : c.makeable ? `<b>never run here</b> · made as ${esc(c.how)}` : `never run here · ${esc(c.why_not)}`}${c.candidate?' <span class="pill navy">candidate</span>':''}</td></tr>`;
+  // The gym by its own name, so the table reads without working out who "this gym" is.
+  const gymName = STATE.profile?.display_name || STATE.clients.find(c=>c.gym===STATE.sel)?.display_name || STATE.sel;
+  const run = svRunning() ? STATE.run : null, last = run ? (run.lines||[]).filter(l=>l.stream!=='meta').at(-1)?.line || 'Starting…' : '';
+  const stopped = !run && st.progress?.stage === 'stopped';
+  // Where it stands, in one sentence; and what the one button would do.
+  const stands = st.never ? `${esc(st.name)} has not been surveyed yet.`
+    : `${esc(st.name)}: ${s(st.ads,'ad')} from ${s(st.advertisers,'advertiser')} on file, pulled ${esc(day(st.last_pull))} · ${s(st.read,'picture')} read${st.unread ? ` · <b>${s(st.unread,'picture')} not read yet</b>` : ''}.`;
+  const status = run
+    ? `<div class="card" id="svStatus" data-state="running"><div class="row"><span class="spin"></span><b>Surveying ${esc(st.name)}</b><div class="spacer"></div><button class="danger" id="svStop" onclick="stopRunNow()" ${run.stopping?'disabled':''}>${run.stopping?'Stopping…':'Stop'}</button></div>
+        <p class="hint" id="svNow" style="margin:8px 0 0">${esc(last)}</p>
+        <p class="hint" style="margin:6px 0 0">Stop ends it at once. Every picture read so far is kept and paid for; nothing after it is. A pull that is stopped is cancelled on Apify, so it stops billing.</p></div>`
+    : `<div class="card" id="svStatus" data-state="${st.never?'never':st.unread?'unread':'read'}"><div class="row" style="flex-wrap:wrap"><span id="svStands">${stands}</span><div class="spacer"></div>${p.action==='pull' ? '' : `<button class="sm" id="svFresh" onclick="svAsk(true)">Pull fresh ads…</button>`}</div>
+        ${stopped ? `<p class="hint" id="svStopped" style="margin:8px 0 0">The last run was stopped${st.progress.total ? ` after ${st.progress.done||0} of ${s(st.progress.total,'picture')}` : ' during the pull'}. What it had read is kept.</p>` : ''}
+        <p class="hint" id="svPlan" style="margin:8px 0 0">${p.action==='none' ? esc(p.text) : `<b>Next:</b> ${esc(p.text)} ${esc(p.cost)}`}</p>
+        ${S.has_apify ? '' : '<p class="hint" style="margin:6px 0 0;color:var(--warn)">No Apify token is in .env, so nothing can be pulled; pictures already on file can still be read.</p>'}</div>`;
+  const cand = (c) => `<tr data-format="${esc(c.format)}"><td><b>${esc(c.format.replace('-', ' '))}</b></td><td style="text-align:right">${c.advertisers}</td><td style="text-align:right">${c.long_running}</td><td style="text-align:right">${c.share}%${c.index!=null?` <span class="hint">· ${c.index.toFixed(2)}×</span>`:''}</td><td style="text-align:right">${c.median_days}</td>
+    <td>${c.tried ? `${esc(gymName)} has run it` : c.makeable ? `<b>${esc(gymName)} has never run it</b> · made as ${esc(c.how)}` : `${esc(gymName)} has never run it · ${esc(c.why_not)}`}${c.candidate?' <span class="pill navy">candidate</span>':''}</td></tr>`;
   const pills = S.tables.filter(t=>t.key!=='format').map(t=>{ const vs = t.values.filter(v=>v.confidence!=='early'); return vs.length ? `<div style="margin:6px 0"><span class="hint" style="display:inline-block;min-width:150px">${esc(t.label)}</span>${vs.map(v=>`<span class="pill" title="${v.ads} ads · median ${v.median_days} days running">${esc(v.value)} · ${v.long_running} of ${v.advertisers} (${v.share}%)</span>`).join(' ')}</div>` : ''; }).join('');
-  return `<div class="card" id="rsSurvey">
-    <div class="row" style="flex-wrap:wrap"><h3 style="margin:0">What other operators run</h3><span class="hint">${S.ads ? `Meta's Ad Library ${where}: ${S.ads} ads on file${S.surveyed.last?`, last pulled ${esc(day(S.surveyed.last))}`:''} · ${S.read} read${S.unread?`, ${S.unread} not read yet`:''}${left.length?` · left out: ${esc(left.join(', '))}`:''}` : 'Meta\'s Ad Library has not been surveyed yet'}</span><div class="spacer"></div>
-      <button class="sm" id="rsSurveyGo" onclick="rsSurveyAsk()">Survey the Ad Library…</button></div>
-    <p class="hint" style="margin:8px 0 10px"><b>Analysis only.</b> The Ad Library shows no spend and no leads, so this counts how many advertisers run each kind of picture and how many of them have kept one running ${S.long_run_days} days or more: an ad still paid for after three months is presumably paying. It is a clue, never a result. No other operator's ad is republished, attached to an image call or shown to a drafter.</p>
-    ${S.read ? `<p class="hint" style="margin:0 0 8px">${S.advertisers} advertisers read; ${S.long_running} of them (${S.overall}%) have kept an ad running ${S.long_run_days} days or more.</p>
-      ${S.candidates.length ? `<div style="overflow:auto"><table class="tbl" id="rsSurveyKinds"><thead><tr><th>Kind of picture</th><th style="text-align:right">Advertisers</th><th style="text-align:right">${S.long_run_days}+ days</th><th style="text-align:right">Share</th><th style="text-align:right">Median days</th><th>This gym</th></tr></thead><tbody>${S.candidates.map(cand).join('')}</tbody></table></div>` : '<p class="hint">No kind of picture has three advertisers behind it yet: read more pictures or pull more ads.</p>'}
-      ${pills}
-      ${S.long_runners.length ? `<p class="hint" style="margin:10px 0 0">Longest running: ${S.long_runners.slice(0,6).map(r=>`${esc(r.advertiser)} (${r.days} days, ${esc(r.format.replace('-',' '))})`).join(' · ')}</p>` : ''}`
-     : `<p class="hint" id="rsSurveyNone">${S.ads ? `${S.unread} picture${S.unread===1?'':'s'} on file ${S.unread===1?'is':'are'} not read yet: Survey the Ad Library… reads them (one vision call each).` : 'Nothing on file yet. Survey the Ad Library… pulls the ads and reads their pictures.'}</p>`}
-  </div>`;
+  const left = Object.entries(S.left_out||{}).map(([k,n])=>`${n} ${({ not_fitness:'not a fitness business', no_picture:'with no picture', ours:'your own gyms\'', no_advertiser:'with no advertiser' })[k]||k}`);
+  const scope = S.scope ? esc(countryOf(S.scope)) : S.countries.length ? `every country on file (${esc(S.countries.join(', '))}): ${esc(st.name)} has no ads on file yet` : '';
+  const found = S.read
+    ? `<div class="card" id="svFound"><h3>What the survey found${scope ? ` · ${scope}` : ''}</h3>
+        <p class="hint" style="margin:0 0 10px">${s(S.advertisers,'advertiser')} read; ${S.long_running} of them (${S.overall}%) have kept an ad running ${S.long_run_days} days or more.${left.length ? ` Left out: ${esc(left.join(', '))}.` : ''}</p>
+        ${S.candidates.length ? `<div style="overflow:auto"><table class="tbl" id="svKinds"><thead><tr><th>Kind of picture</th><th style="text-align:right">Advertisers</th><th style="text-align:right">${S.long_run_days}+ days</th><th style="text-align:right">Share</th><th style="text-align:right">Median days</th><th id="svGymCol">${esc(gymName)}</th></tr></thead><tbody>${S.candidates.map(cand).join('')}</tbody></table></div>` : '<p class="hint" id="svThin">No kind of picture has three advertisers behind it yet: more pictures need reading.</p>'}
+        ${pills}
+        ${S.long_runners.length ? `<p class="hint" style="margin:10px 0 0">Longest running: ${S.long_runners.slice(0,6).map(r=>`${esc(r.advertiser)} (${r.days} days, ${esc(r.format.replace('-',' '))})`).join(' · ')}</p>` : ''}</div>`
+    : `<div class="card" id="svFound"><p class="hint" id="svNone" style="margin:0">Nothing to show yet: the survey appears here once pictures have been read.</p></div>`;
+  box.innerHTML = status + found + `<p class="hint" id="svNotice" style="margin-top:12px"><b>Analysis only.</b> The Ad Library shows no spend and no leads, so this counts how many advertisers run each kind of picture and how many of them have kept one running ${S.long_run_days} days or more: an ad still paid for after three months is presumably paying. It is a clue, never a result. No other operator's ad is republished, attached to an image call or shown to a drafter.</p>`;
 }
-function rsSurveyAsk(){
-  const S = RS.survey || {}, cc = STATE.profile?.locale?.country || 'SG';
-  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Survey the Ad Library</h3>
-    <p class="hint">Pulls the gym and fitness ads running in a country from Meta's Ad Library, then reads each new ad's picture into the same attributes this app reads your own creatives with.</p>
-    <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:10px 0">
-      <div><label for="svCountry">Country</label><input id="svCountry" value="${esc(cc)}" maxlength="2" style="text-transform:uppercase"></div>
-      <div><label for="svPull">Ads to pull <span class="n">· 0 = none</span></label><input id="svPull" type="number" min="0" max="${S.limits?.pull_max||300}" value="${S.has_apify ? (S.limits?.pull_default||80) : 0}" ${S.has_apify?'':'disabled'}></div>
-      <div><label for="svRead">Pictures to read <span class="n">· at most</span></label><input id="svRead" type="number" min="0" max="${S.limits?.read_max||800}" value="${S.limits?.read_default||60}"></div></div>
-    <p class="hint"><b>What it costs:</b> the pull runs through Apify and is billed to your Apify account per ad returned; each picture read is one Gemini vision call. ${S.has_apify ? '' : '<b>No Apify token is in .env, so nothing can be pulled</b>; the pictures already on file can still be read. '}${S.unread ? `${S.unread} picture${S.unread===1?' is':'s are'} on file and not read yet.` : ''}</p>
-    <p class="hint"><b>Notice:</b> Meta's official Ad Library API does not return commercial ads, so the pull scrapes the Ad Library's pages, which is a grey area under Meta's terms. The creatives are other operators' copyrighted work: used for pattern analysis only, never republished, never used as a reference image. They stay in a folder that is never committed.</p>
-    <label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--text)"><input type="checkbox" id="svTos" style="width:auto"> I have read the notice and want the pull to run</label>
+const countryOf = (cc) => { try { return new Intl.DisplayNames(['en'], { type:'region' }).of(cc) || cc; } catch { return cc; } };
+/** The one button's confirmation: what will happen, what it costs, and — only when ads are pulled — the notice to agree to. */
+async function svAsk(fresh){
+  let st = SV.data?.status; if (!st) return;
+  if (fresh){ try { st = (await api(`/api/library/survey?gym=${STATE.sel}&fresh=1`)).status; } catch(e){ return toast('Could not plan the pull: ' + e.message, 'warn'); } }
+  const p = st.plan; if (p.action === 'none') return toast(p.text);
+  if (p.action === 'pull' && !SV.data.has_apify) return toast('No Apify token is in .env, so the Ad Library cannot be pulled.', 'warn');
+  SV.ask = { country: st.country, fresh: !!fresh, plan: p };
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3 id="svAskTitle">${p.action==='pull' ? `Survey ${esc(st.name)}` : `Read ${p.reads} picture${p.reads===1?'':'s'}`}</h3>
+    <p id="svAskText" style="margin:0 0 8px">${esc(p.text)}</p>
+    <p class="hint" id="svAskCost"><b>What it costs:</b> ${esc(p.cost)}</p>
+    <p class="hint"><b>You can stop it at any time</b> with Stop on this screen: what has been read is kept, and nothing after the stop is billed.</p>
+    ${p.action==='pull' ? `<p class="hint"><b>Notice:</b> Meta's official Ad Library API does not return commercial ads, so the pull scrapes the Ad Library's pages, which is a grey area under Meta's terms. The creatives are other operators' copyrighted work: used for pattern analysis only, never republished, never used as a reference image. They stay in a folder that is never committed.</p>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--text)"><input type="checkbox" id="svTos" style="width:auto"> I have read the notice and want the pull to run</label>` : ''}
     <p class="hint" id="svWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p>
-    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="svGo" onclick="rsSurveyRun()">Run the survey</button></div></div></div>`;
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="svGo" onclick="svRun()">${p.action==='pull' ? 'Start the survey' : 'Start reading'}</button></div></div></div>`;
 }
-function rsSurveyRun(){
-  const country = $('#svCountry').value.trim().toUpperCase(), pull = Number($('#svPull').value)||0, max = Number($('#svRead').value)||0, tos = $('#svTos').checked, why = $('#svWhy');
-  if (!/^[A-Z]{2}$/.test(country)) return why.textContent = 'The country is two letters, such as SG or TW.';
-  if (pull > 0 && !tos) return why.textContent = 'Tick the box to run the pull, or set Ads to pull to 0 to only read what is on file.';
-  if (!pull && !max) return why.textContent = 'Nothing to do: both numbers are 0.';
+function svRun(){
+  const A = SV.ask; if (!A) return; const tos = !!$('#svTos')?.checked;
+  if (A.plan.action === 'pull' && !tos) return $('#svWhy').textContent = 'Tick the box to run the pull.';
   $('#gModal').innerHTML = '';
-  run({ kind:'library-survey', country, pull, max, tos }, ()=>rsLoadSurvey());
+  run({ kind:'library-survey', country:A.country, fresh:A.fresh, tos, confirm:{ action:A.plan.action, pull:A.plan.pull, reads:A.plan.reads } }, ()=>{}).then(()=>{ if (STATE.run && !STATE.run.done) STATE.run.kind = 'library-survey'; if (STATE.tab==='survey') paintSurvey(); });
+}
+/** Step 0 · Survey Ad Library: pull the ads → read the pictures → read the survey. Done by what is on file. */
+function partsSurvey(C){
+  const st = (SV.gym === STATE.sel && SV.data?.status) || C?.info?.survey; if (!st) return null;
+  const p = st.plan || {}, act = p.action === 'none' ? null : { text:`${p.text} ${p.cost}`, label: p.action==='pull' ? `Survey ${st.name}…` : `Read ${p.reads} picture${p.reads===1?'':'s'}…`, go:()=>svAsk(false) };
+  return { parts: [
+    part('Pull the ads', !st.never, act),
+    part('Read the pictures', !st.never && !st.unread, act),
+    part('Read the survey, then go on', false, { text:`Read below which kinds of picture other operators keep running, and which of them ${STATE.profile?.display_name || 'this gym'} has never run.`, cycle:true }),
+  ] };
 }
 function acrossCard(){
   const A = RS.across;
@@ -3863,7 +3910,7 @@ async function run(params, after){
   renderRunBox(); paintWait(); if (!WAIT.tick) WAIT.tick = setInterval(paintWait, 500);
   try{
     const { id, label } = await api('/api/run',{method:'POST',body:params});
-    attachRun(id, label, after, params.batch || null);
+    attachRun(id, label, after, params.batch || null); if (STATE.run) STATE.run.kind = params.kind;
   }catch(e){
     STATE.run = { label:'Failed to start', lines:[{stream:'err',line:e.message}], done:true, code:1 };
     renderRunBox();
@@ -3927,7 +3974,7 @@ async function newOffer(){
 // A part is done by what is on file or on the form, never by a click on the indicator. When every part of a step is
 // done, the bar is the cycle's own next thing (cyGo).
 const STP = { go:null };
-const STEP_OF = { results:1, scenes:2, batch:3, generating:3, review:4, exports:5, publish:5 };
+const STEP_OF = { survey:0, results:1, scenes:2, batch:3, generating:3, review:4, exports:5, publish:5 };
 const part = (name, done, act) => ({ name, done: !!done, ...(act||{}) });
 const plur = (n, one, many) => `${n} ${n===1 ? one : (many || one+'s')}`;
 /** Bring a control into view and flash it, so the eye lands on what the bar is talking about. */
@@ -4121,7 +4168,7 @@ function partsSetup(){
 function stepParts(){
   const C = CY.gym === STATE.sel ? CY.data : null, t = STATE.tab;
   if (onSetup()) return partsSetup();
-  return t==='results' ? partsResults(C) : t==='scenes' ? partsScenes(C) : t==='batch' ? partsBatch(C) : t==='generating' ? partsGenerating()
+  return t==='survey' ? partsSurvey(C) : t==='results' ? partsResults(C) : t==='scenes' ? partsScenes(C) : t==='batch' ? partsBatch(C) : t==='generating' ? partsGenerating()
     : t==='review' ? (STATE.batch ? partsReview() : partsReviewList(C)) : t==='exports' ? partsExports(C) : t==='publish' ? (STATE.batch ? partsPublish() : partsExports(C)) : null;
 }
 function paintStepper(){
@@ -4142,13 +4189,13 @@ function paintStepper(){
   const else_ = !act.cycle && n && !n.idle && n.step !== STEP_OF[STATE.tab] ? n : null;
   box.innerHTML = `<div class="stp" id="stp"><div class="stpparts" id="stpParts">${S.parts.map((p,k)=>`<span class="stpp ${p.opt?'opt':p.done?'done':k===i?'now':'later'} ${working&&k===i?'busy':''}" title="${esc(`${k+1}. ${p.name}${p.opt?' — optional, not set':p.done?' — done':k===i?' — now':''}`)}"><span class="n">${p.opt?'–':p.done?'✓':k+1}</span><span class="nm">${esc(p.name)}${p.opt?' · optional':''}</span></span>`).join('<i>›</i>')}</div>
     ${working
-      ? `<div class="stpdo working" id="stpDo"><span class="k"><span class="spin"></span>Working${i >= 0 ? ` · ${i+1} of ${S.parts.length}` : ''}</span><span class="t" title="${esc(working.text)}">${esc(working.text)}<span class="s">${waitSecs(working.secs)}</span></span>${label ? `<button class="primary" id="stpGo" disabled>Working…</button>` : ''}</div>`
+      ? `<div class="stpdo working" id="stpDo"><span class="k"><span class="spin"></span>Working${i >= 0 ? ` · ${i+1} of ${S.parts.length}` : ''}</span><span class="t" title="${esc(working.text)}">${esc(working.text)}<span class="s">${waitSecs(working.secs)}</span></span>${STATE.run && !STATE.run.done && STATE.run.id && STATE.run.kind !== 'batch-publish' ? `<button class="danger" id="stpStop" onclick="stopRunNow()" ${STATE.run.stopping?'disabled':''} title="Ends this run now. What it has finished is kept.">${STATE.run.stopping?'Stopping…':'Stop'}</button>` : ''}${label ? `<button class="primary" id="stpGo" disabled>Working…</button>` : ''}</div>`
       : `<div class="stpdo" id="stpDo"><span class="k">${S.idle ? 'Nothing to do here now' : i >= 0 ? `Do this now · ${i+1} of ${S.parts.length}` : 'This step is done'}</span><span class="t" title="${esc(text)}">${esc(text)}</span>${label ? `<button class="primary" id="stpGo" onclick="stpGo()">${esc(label)}</button>` : ''}</div>`}
     ${else_ ? `<div class="stpelse" id="stpElse">Elsewhere in the cycle — ${esc(else_.text)} <a href="#" onclick="cyGo();return false">${esc(else_.name)} →</a></div>` : ''}${setup ? '' : (()=>{ const M = setupModel(), k = M ? M.findIndex((s,i)=>i > 0 && i < 4 && !s.done) : -1; return k < 0 ? '' : `<div class="stpelse" id="stpSetup">This gym's setup is not finished — ${esc(M[k].name)} still needs ${esc(M[k].missing.map(x=>x.what).join(', '))}. <a href="#" onclick="setupGo(${k});return false">Set up the gym →</a></div>`; })()}</div>`;
 }
 function stpGo(){ const f = STP.go; if (f) f(); }
 // Every repaint of a step's screen repaints its indicator: the parts follow the form and the files, never a click here.
-for (const name of ['paintResults','paintScenes','paintSceneAsks','paintBatch','paintDerived','paintGenerating','paintReview','paintCounts','paintFoot','paintPublish','viewReviewList','viewExports']) {
+for (const name of ['paintSurvey','paintResults','paintScenes','paintSceneAsks','paintBatch','paintDerived','paintGenerating','paintReview','paintCounts','paintFoot','paintPublish','viewReviewList','viewExports']) {
   const f = window[name]; if (typeof f !== 'function') continue;
   window[name] = function(){ const r = f.apply(this, arguments); if (r && typeof r.then === 'function') r.then(()=>paintStepper(), ()=>{}); else { try { paintStepper(); } catch{} } return r; };
 }

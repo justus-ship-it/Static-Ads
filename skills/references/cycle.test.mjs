@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cycleFrom, STEPS, OPEN_DAYS, WAIT_DAYS, STALE_DAYS } from "./cycle.mjs";
+import { cycleFrom, STEPS, OPEN_DAYS, WAIT_DAYS, STALE_DAYS, STEP_ZERO, surveyStep } from "./cycle.mjs";
 
 const NOW = new Date("2026-11-11T08:00:00Z");
 const review = (over = {}) => ({ currency: "SGD", numbers: { running: { ads: 10, leads: 266, spend: 5242.11, cost_per_lead: 19.71 }, all_time: { ads: 151, leads: 1407 } }, data: { pulled: "2026-11-10T03:00:00Z", exports: [] }, last: { reviewed: "2026-11-10T03:05:00Z" }, scenes: [], scenes_waiting: 0, ...over });
@@ -81,4 +81,20 @@ test("CY4 back to the data: just published, the results are worth reading in a f
   c = cycleFrom({ review: review({ numbers: { running: { ads: 0, leads: 0 }, all_time: { ads: 0, leads: 0 } }, data: { pulled: null, exports: [] }, last: null }), batches: [], now: NOW });
   assert.deepEqual([c.steps[0].state, c.steps[0].text, c.steps[2].text, c.steps[4].text, c.next.step, c.next.text], ["todo", "No results on file yet", "No batch yet", "Nothing on Meta from this app", 1, "No results on file yet: review the account, or go straight to a first batch."]);
   assert.doesNotThrow(() => cycleFrom({}), "nothing given is a gym with nothing");
+});
+
+test("CY6 step 0, Survey Ad Library (2026-11-12): given the survey's status it leads the strip as step 0 and the five steps keep their numbers; to do while the country was never pulled or pictures wait to be read, going while its run works, done with its date once every picture is read; it is research — never the cycle's next thing; without the status the cycle is its five steps", () => {
+  const five = cycleFrom({ review: {}, batches: [] });
+  assert.deepEqual([five.steps.length, five.steps.map((s) => s.n), five.info.survey], [5, [1, 2, 3, 4, 5], undefined]);
+  const st = (over) => ({ country: "SG", name: "Singapore", never: false, unread: 0, pictures: 58, advertisers: 46, last_pull: "2026-11-12", age_days: 0, plan: { action: "none", pull: 0, reads: 0 }, running: null, ...over });
+  const C = cycleFrom({ review: {}, batches: [], survey: st() });
+  assert.deepEqual(C.steps.map((s) => [s.n, s.tab, s.name]), [[0, "survey", "Survey Ad Library"], [1, "results", "Review Data"], [2, "scenes", "Draft Scenes"], [3, "batch", "Generate Creatives"], [4, "review", "Pick Ads"], [5, "exports", "Publish Ads"]]);
+  assert.deepEqual([C.steps[0].id, C.steps[0].state, C.steps[0].text], [STEP_ZERO.id, "ok", "46 advertisers read · pulled 12 Nov"]);
+  assert.deepEqual(C.info.survey, { country: "SG", name: "Singapore", never: false, unread: 0, pictures: 58, last_pull: "2026-11-12", age_days: 0, running: null, plan: { action: "none", pull: 0, reads: 0 } });
+  assert.deepEqual(surveyStep(st({ never: true, last_pull: null })), { ...STEP_ZERO, n: 0, state: "todo", text: "Singapore not surveyed yet" });
+  assert.deepEqual([surveyStep(st({ unread: 32 })).state, surveyStep(st({ unread: 32 })).text, surveyStep(st({ unread: 1 })).text], ["todo", "32 pictures not read yet", "1 picture not read yet"]);
+  assert.deepEqual([surveyStep(st({ unread: 32, running: "r1" })).state, surveyStep(st({ unread: 32, running: "r1" })).text], ["going", "Surveying Singapore"]);
+  // Never the next thing: with the survey to do, the cycle still points where it did without it.
+  const a = cycleFrom({ review: {}, batches: [] }).next, b = cycleFrom({ review: {}, batches: [], survey: st({ never: true }) }).next;
+  assert.deepEqual([b.step, b.tab, b.text], [a.step, a.tab, a.text]); assert.notEqual(b.tab, "survey");
 });

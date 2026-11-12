@@ -50,7 +50,7 @@ import { renderCard, loadCards } from "../skills/references/render-cards.mjs";
 import { buildReview, reviewText, recordAction } from "../skills/references/account-review.mjs";
 import { cycleFrom } from "../skills/references/cycle.mjs";
 import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
-import { buildSurvey, PULL_MIN, PULL_MAX, PULL_DEFAULT, READ_DEFAULT } from "../skills/references/library-survey.mjs";
+import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -82,7 +82,12 @@ const SURVEY_SCRIPT = join(REPO_ROOT, "skills", "references", "library-survey.mj
 // Other operators' ads from the Ad Library (analysis only; gitignored). A test panel names its own clients folder and gets its own beside it.
 const SWIPE_DIR = resolve(process.env.PANEL_SWIPE_DIR || (process.env.PANEL_BRANDS_DIR ? join(dirname(BRANDS), "swipe", "gym") : join(REPO_ROOT, "swipe", "gym")));
 /** Whether an Apify token is set (the environment, else .env); its value is never read out. */
-const hasApify = () => { if (process.env.APIFY_TOKEN) return true; try { return /^APIFY_TOKEN=(?!your-)\S+/m.test(readFileSync(join(REPO_ROOT, ".env"), "utf-8")); } catch { return false; } };
+const hasApify = () => { if (process.env.APIFY_TOKEN) return true; if (process.env.PANEL_BRANDS_DIR) return false; /* a test panel never reads the real .env for this: it must not be able to start a billed pull */ try { return /^APIFY_TOKEN=(?!your-)\S+/m.test(readFileSync(join(REPO_ROOT, ".env"), "utf-8")); } catch { return false; } };
+/** Where a gym's country stands in the Ad Library survey, for step 0 of the cycle: the status, the plan, and the run if one is going. */
+function surveyFor(gym, { fresh = false } = {}) {
+  const country = readJsonFile(join(brandDir(gym), "gym-profile.json"))?.locale?.country || "SG", going = [...runs.values()].find((r) => !r.done && r.kind === "library-survey");
+  return { ...surveyStatus(SWIPE_DIR, { country, ours: ownNames(), fresh }), running: going ? going.id : null };
+}
 /** The names of this app's own gyms: their ads in the Ad Library are theirs, not another operator's. */
 const ownNames = () => listClients().flatMap((c) => { const p = readJsonFile(join(brandDir(c.gym), "gym-profile.json")) || {}; return [p.display_name, p.meta_assets?.labels?.page]; }).filter(Boolean);
 const REVIEW_SCRIPT = join(REPO_ROOT, "skills", "references", "account-review.mjs");
@@ -172,7 +177,7 @@ const RUNNABLE = {
   // All gyms (2026-11-12): every linked account's numbers day by day for the last 180 days (read-only on Meta, 8 calls a gym, no model call).
   "portfolio-numbers": { label: "Read every gym's numbers (read-only)", argv: () => [NUMBERS_SCRIPT, "--refresh", "--brands-dir", BRANDS] },
   // The Ad Library survey (2026-11-12): other operators' ads pulled through Apify (the owner's click, the scraper's notice agreed to) and their pictures read (one vision call each, under the cap). Analysis only.
-  "library-survey": { label: "Survey the Ad Library", argv: ({ country, pull, max }) => [SURVEY_SCRIPT, "--swipe-dir", SWIPE_DIR, "--country", country, ...(pull > 0 ? ["--pull", String(pull), "--i-understand-tos"] : []), ...(max > 0 ? ["--read", "--max", String(max)] : []), "--ours", ownNames().join("|")] },
+  "library-survey": { label: "Survey the Ad Library", argv: ({ country, fresh, pulls }) => [SURVEY_SCRIPT, "--swipe-dir", SWIPE_DIR, "--auto", "--country", country, ...(fresh ? ["--fresh"] : []), ...(pulls ? ["--i-understand-tos"] : []), "--ours", ownNames().join("|")] },
   "portfolio-read": { label: "Read every gym's creatives", argv: ({ max }) => [WINS_SCRIPT, "--read", "--max", String(max), "--brands-dir", BRANDS] },
   "photo-clean": { label: "Clean photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...(photos.some((p) => p.includes("/") && !p.startsWith("facility/")) ? ["--clean-dir", join(brandDir(gym), "brand-assets", "reference-clean")] : []), ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", p.includes("/") ? p : `facility/${p}`)])] },
 };
@@ -1491,7 +1496,7 @@ const server = createServer(async (req, res) => {
     if (cy && req.method === "GET") {
       const gym = cy[1];
       if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
-      try { const c = cycleFrom({ review: buildReview(brandDir(gym), { brandsDir: BRANDS }), batches: listBatches(gym) }); return json(res, 200, { ...c, info: { ...c.info, linked: !!metaConfig({ gym }).token } }); }
+      try { const c = cycleFrom({ review: buildReview(brandDir(gym), { brandsDir: BRANDS }), batches: listBatches(gym), survey: surveyFor(gym) }); return json(res, 200, { ...c, info: { ...c.info, linked: !!metaConfig({ gym }).token } }); }
       catch (e) { return json(res, 500, { error: scrubTokens(e.message) }); }
     }
     // /api/client/{gym}/account-review — the review, built from what is on disk (no Meta call, no model call): the numbers,
@@ -1567,7 +1572,7 @@ const server = createServer(async (req, res) => {
       const gym = url.searchParams.get("gym") || "", known = okSlug(gym) && existsSync(join(brandDir(gym), "gym-profile.json"));
       let ran = [], country = null;
       if (known) { country = readJsonFile(join(brandDir(gym), "gym-profile.json"))?.locale?.country || "SG"; try { ran = [...new Set(gymRowsRead(brandDir(gym)).map((r) => r.read?.format || (r.source === "app" ? r.format || "workout" : null)).filter(Boolean))]; } catch { ran = []; } }
-      return json(res, 200, { ...buildSurvey(SWIPE_DIR, { country, ours: ownNames(), ran }), has_apify: hasApify(), limits: { pull_min: PULL_MIN, pull_max: PULL_MAX, pull_default: PULL_DEFAULT, read_default: READ_DEFAULT, read_max: MAX_READ_CALLS } });
+      return json(res, 200, { ...buildSurvey(SWIPE_DIR, { country, ours: ownNames(), ran }), has_apify: hasApify(), status: known ? surveyFor(gym, { fresh: url.searchParams.get("fresh") === "1" }) : { ...surveyStatus(SWIPE_DIR, { country: "SG", ours: ownNames() }), running: null } });
     }
     // /api/portfolio — every gym's marketing numbers side by side (2026-11-12): spend, lead-form leads, cost per lead and
     // what moved it, for the last 7, 30 and 90 days against the days before, from what the last read put on disk
@@ -2208,15 +2213,18 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "library-survey") {
-        const country = String(body.country || "").toUpperCase(), pull = body.pull ?? 0, max = body.max ?? READ_DEFAULT;
+        // One button (2026-11-12): the app decides what the survey needs — read what is unread, or pull and read — and
+        // the owner confirms exactly that. What he confirmed must be what is true now, as for a create on Meta.
+        const country = String(body.country || "").toUpperCase(), fresh = body.fresh === true;
         if (!/^[A-Z]{2}$/.test(country)) return json(res, 400, { error: "the country is two letters, such as SG or TW" });
-        if (!Number.isInteger(pull) || (pull !== 0 && (pull < PULL_MIN || pull > PULL_MAX))) return json(res, 400, { error: `how many ads to pull must be 0 (none) or ${PULL_MIN} to ${PULL_MAX}` });
-        if (!Number.isInteger(max) || max < 0 || max > MAX_READ_CALLS) return json(res, 400, { error: `how many pictures to read must be 0 to ${MAX_READ_CALLS}` });
-        if (!pull && !max) return json(res, 400, { error: "nothing to do: no ads to pull and no pictures to read" });
-        if (pull > 0 && body.tos !== true) return json(res, 400, { error: "the pull scrapes Meta's Ad Library, a grey area under Meta's terms: it runs only once the notice is agreed to" });
-        if (pull > 0 && !hasApify()) return json(res, 409, { error: "no APIFY_TOKEN in .env: the Ad Library cannot be pulled (the pictures already on file can still be read)" });
-        const run = startRun(kind, { country, pull, max });
-        return json(res, 200, { id: run.id, label: run.label });
+        if ([...runs.values()].some((r) => !r.done && r.kind === "library-survey")) return json(res, 409, { error: "a survey is already running: stop it, or wait for it to end" });
+        const plan = surveyStatus(SWIPE_DIR, { country, ours: ownNames(), fresh }).plan, c = body.confirm || {};
+        if (plan.action === "none") return json(res, 400, { error: `nothing to do: ${plan.text}` });
+        if (c.action !== plan.action || c.pull !== plan.pull || c.reads !== plan.reads) return json(res, 409, { error: "what is on file changed since you looked: look again and confirm what it says now", plan });
+        if (plan.action === "pull" && body.tos !== true) return json(res, 400, { error: "the pull scrapes Meta's Ad Library, a grey area under Meta's terms: it runs only once the notice is agreed to" });
+        if (plan.action === "pull" && !hasApify()) return json(res, 409, { error: "no APIFY_TOKEN in .env: the Ad Library cannot be pulled" });
+        const run = startRun(kind, { country, fresh, pulls: plan.action === "pull" });
+        return json(res, 200, { id: run.id, label: run.label, plan });
       }
       if (kind === "portfolio-numbers") {
         if (!metaConfig().token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });

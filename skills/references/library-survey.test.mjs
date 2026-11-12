@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { scrapes, surveyAds, readSurvey, readSurveyReads, unreadSurvey, surveyFrom, candidatesFor, buildSurvey, SURVEY_READS, LONG_RUN_DAYS, MIN_ADVERTISERS, SOLID_ADVERTISERS, MAKE, FITNESS } from "./library-survey.mjs";
+import http from "node:http";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { scrapes, surveyAds, readSurvey, readSurveyReads, unreadSurvey, surveyFrom, candidatesFor, buildSurvey, SURVEY_READS, LONG_RUN_DAYS, MIN_ADVERTISERS, SOLID_ADVERTISERS, MAKE, FITNESS, surveyStatus, runSurvey, countryName, PROGRESS_FILE, PULL_DEFAULT, SURVEY_FRESH_DAYS, READ_RUN_MAX } from "./library-survey.mjs";
 import { FORMATS } from "./read-creatives.mjs";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
@@ -110,4 +113,79 @@ test("SV3 the survey, by rule: counted per advertiser (ten ads of one are one vo
     assert.deepEqual([B.ads, B.scope, B.asked, B.countries, B.unread, B.candidates, B.scrapes.map((x) => [x.date, x.country, x.ads])], [1, null, "SG", ["US"], 1, [], [["2026-11-01", "US", 1]]]);
     assert.equal(buildSurvey(dir, { country: "US" }).scope, "US");
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SV4 one button (2026-11-12): the app says what a country's survey needs, with its cost — read what is on file and unread (no pull), pull and read when the country was never pulled or its pull is over a month old, nothing when every picture is read — and runSurvey does exactly that: only that country's pictures, a pull only once the notice is agreed to, its progress written as it goes, and what was read kept when it stops part-way", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sv4-")), now = new Date("2026-11-12T04:00:00Z");
+  try {
+    let s = surveyStatus(dir, { country: "sg", now });
+    assert.deepEqual([s.country, s.name, s.never, s.last_pull, s.age_days, s.pictures, s.unread, s.plan.action, s.plan.pull, s.plan.reads], ["SG", "Singapore", true, null, null, 0, 0, "pull", PULL_DEFAULT, PULL_DEFAULT]);
+    assert.equal(s.plan.text, "Pull up to 80 gym and fitness ads running in Singapore from Meta's Ad Library, then read their pictures.");
+    assert.equal(s.plan.cost, "Apify bills the pull per ad it returns (up to 80). Then up to 80 Gemini calls, one per picture.");
+    // Pulled: three Singapore pictures (one shared by two ads), one not a fitness business; an older United States pull beside it.
+    scrape(dir, "2026-06-20", "US", [{ id: "u1", page: "Texas Gym", days: 400, img: "w91" }, { id: "u2", page: "Ohio Gym", days: 30, img: "w92" }]);
+    scrape(dir, "2026-11-12", "SG", [{ id: "1", page: "Iron Gym", days: 120, img: "w1" }, { id: "2", page: "Iron Gym", days: 30, img: "w1" }, { id: "3", page: "Core Pilates", days: 95, img: "p3" }, { id: "4", page: "Flow Yoga", days: 12, img: "g4" }, { id: "5", page: "Phone Shop", days: 500, img: "w9", text: "New phones" }]);
+    s = surveyStatus(dir, { country: "SG", now });
+    assert.deepEqual([s.never, s.last_pull, s.age_days, s.ads, s.advertisers, s.pictures, s.read, s.unread, s.plan.action, s.plan.pull, s.plan.reads], [false, "2026-11-12", 0, 4, 3, 3, 0, 3, "read", 0, 3]);
+    assert.equal(s.plan.text, "Read the 3 pictures from Singapore that are on file and not read yet."); assert.equal(s.plan.cost, "3 Gemini calls, one per picture. No Apify charge: nothing is pulled.");
+    // The run: reads Singapore's three and nothing of the United States; no pull is made; the progress file says where it is.
+    const calls = [], pulls = [], log = [];
+    const done = await runSurvey({ swipeDir: dir, country: "SG", ask: ask(calls), pull: (n) => pulls.push(n), log: (m) => log.push(m), now: () => now });
+    assert.deepEqual([done.action, done.pulled, done.read, done.calls, done.left, pulls], ["read", 0, 3, 3, 0, []]);
+    assert.deepEqual(calls.map((c) => c.file.split("/").pop()).sort(), ["g4.png", "p3.png", "w1.png"], "the United States pictures are not read by a Singapore survey");
+    assert.ok(log.some((l) => /reading picture 1 of 3: /.test(l)) && log.some((l) => /· 3 pictures read \(3 Gemini calls\)/.test(l)), log.join("\n"));
+    const prog = JSON.parse(readFileSync(join(dir, PROGRESS_FILE), "utf-8"));
+    assert.deepEqual([prog.country, prog.stage, prog.total, prog.done, prog.read, prog.failed, prog.pid], ["SG", "done", 3, 3, 3, 0, process.pid]);
+    // Every picture read and the pull is fresh: nothing to do, and a run makes no call.
+    s = surveyStatus(dir, { country: "SG", now });
+    assert.deepEqual([s.unread, s.plan.action, s.plan.text, s.plan.cost, s.progress.stage], [0, "none", "Singapore was surveyed today and every picture is read.", "Nothing to spend.", "done"]);
+    assert.deepEqual((await runSurvey({ swipeDir: dir, country: "SG", ask: ask(calls), pull: (n) => pulls.push(n), log: () => {}, now: () => now })).action, "none"); assert.equal(calls.length, 3);
+    // Over a month old: a fresh pull is due; he can also ask for one sooner; the United States, last pulled in June, is due too.
+    assert.equal(surveyStatus(dir, { country: "SG", now: new Date("2026-12-20T00:00:00Z") }).plan.action, "pull");
+    assert.deepEqual([surveyStatus(dir, { country: "SG", now, fresh: true }).plan.action, surveyStatus(dir, { country: "US", now }).plan.action, surveyStatus(dir, { country: "US", now }).unread], ["pull", "read", 2], "unread pictures are read before anything new is pulled");
+    // A pull runs only once the notice is agreed to; then the new ads are read.
+    await assert.rejects(runSurvey({ swipeDir: dir, country: "TW", ask: ask(calls), pull: (n) => pulls.push(n), log: () => {}, now: () => now }), /only once the notice is agreed to/); assert.deepEqual(pulls, []);
+    const tw = await runSurvey({ swipeDir: dir, country: "TW", tos: true, ask: ask(calls), log: () => {}, now: () => now, pull: (n) => { pulls.push(n); scrape(dir, "2026-11-13", "TW", [{ id: "t1", page: "健身工廠", days: 120, img: "g71", text: "六週計畫" }, { id: "t2", page: "瑜伽教室", days: 20, img: "p72", text: "體驗" }]); } });
+    assert.deepEqual([tw.action, tw.pulled, tw.read, tw.calls, pulls], ["pull", 2, 2, 2, [PULL_DEFAULT]]);
+    // Stopped part-way (the model fails from the second picture on, as a killed run would leave it): what was read stays read, and the next plan is the rest.
+    scrape(dir, "2026-11-14", "SG", [{ id: "8", page: "Lift Studio", days: 5, img: "w81" }, { id: "9", page: "Box Fitness", days: 5, img: "w82" }, { id: "10", page: "Spin Studio", days: 5, img: "w83" }]);
+    let n = 0; const part = await runSurvey({ swipeDir: dir, country: "SG", ask: async (f, q, sch) => { if (++n > 1) throw new Error("stopped"); return ask(calls)(f, q, sch); }, log: () => {}, now: () => now });
+    assert.deepEqual([part.read, part.calls, part.left], [1, 3, 2]);
+    assert.deepEqual([surveyStatus(dir, { country: "SG", now }).plan.action, surveyStatus(dir, { country: "SG", now }).plan.reads], ["read", 2]);
+    assert.deepEqual([countryName("tw"), countryName("US"), SURVEY_FRESH_DAYS, READ_RUN_MAX], ["Taiwan", "United States", 30, 150]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SV5 a stop cancels the pull on Apify (2026-11-12): the scraper starts the actor as a run with an id, waits for it, and on a stop aborts that run before it ends — so a stopped pull stops billing; a run that finishes has its results read from the run's dataset", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sv5-")), hits = [];
+  let status = "RUNNING";
+  const server = http.createServer(async (req, res) => {
+    const u = new URL(req.url, "http://x"); hits.push(`${req.method} ${u.pathname}`);
+    const ok = (body) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    if (u.searchParams.get("token") !== "fake-token") { res.writeHead(401); return res.end("{}"); }
+    if (req.method === "POST" && /\/acts\/[^/]+\/runs$/.test(u.pathname)) return ok({ data: { id: "run-1", status: "RUNNING", defaultDatasetId: "ds-1" } });
+    if (req.method === "POST" && u.pathname === "/actor-runs/run-1/abort") { status = "ABORTED"; return ok({ data: { id: "run-1", status } }); }
+    if (u.pathname === "/actor-runs/run-1") return ok({ data: { id: "run-1", status, defaultDatasetId: "ds-1" } });
+    if (u.pathname === "/datasets/ds-1/items") return ok([]);
+    res.writeHead(404); res.end("{}");
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const env = { ...process.env, APIFY_TOKEN: "fake-token", APIFY_BASE_URL: `http://127.0.0.1:${server.address().port}`, APIFY_POLL_MS: "100" };
+  const start = () => { const p = spawn(process.execPath, [fileURLToPath(new URL("./scrape-meta-ads.mjs", import.meta.url)), "--niche", "gym", "--country", "SG", "--limit", "20", "--out", dir, "--i-understand-tos"], { env }); let out = ""; p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (out += d)); return { p, text: () => out, end: new Promise((r) => p.on("exit", (code, sig) => r({ code, sig }))) }; };
+  try {
+    // Stopped while the actor is running: the run is aborted on Apify, and that is said.
+    const a = start(); const t0 = Date.now();
+    while (!/Apify run run-1 started/.test(a.text()) && Date.now() - t0 < 15000) await new Promise((r) => setTimeout(r, 50));
+    assert.match(a.text(), /Apify run run-1 started \(stopping this aborts it on Apify\)/);
+    a.p.kill("SIGTERM");
+    const ended = await a.end;
+    assert.equal(ended.code, 130, a.text()); assert.ok(hits.includes("POST /actor-runs/run-1/abort"), hits.join("\n"));
+    assert.match(a.text(), /Stopped: the Apify run was aborted, so nothing more is billed for it\./); assert.ok(!/fake-token/.test(a.text()), "the token is never printed");
+    assert.ok(!hits.some((h) => /run-sync/.test(h)), "never the call that cannot be cancelled");
+    // Left to finish: the results come from the run's own dataset.
+    hits.length = 0; status = "SUCCEEDED";
+    const b = start(); await b.end;
+    assert.deepEqual(hits.filter((h) => !/actor-runs\/run-1$/.test(h)), ["POST /acts/curious_coder~facebook-ads-library-scraper/runs", "GET /datasets/ds-1/items"], b.text());
+    assert.match(b.text(), /Actor returned 0 raw items/);
+  } finally { server.close(); rmSync(dir, { recursive: true, force: true }); }
 });

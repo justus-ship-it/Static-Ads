@@ -42,6 +42,7 @@ export const MAKE = {
   testimonial: { how: null, why: "not made here yet (a statement card comes closest)" }, lifestyle: { how: null, why: "not made here" },
   "person-talking": { how: null, why: "a video: this app makes stills" }, "before-after": { how: null, why: "never used here: before-and-after photos are a standing rule" }, other: { how: null, why: "not one kind" },
 };
+const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const SURVEY_QUESTION = READ_QUESTION.replace("from a gym's own ad account, to record HOW it was made so the account's results can be compared by kind", "that another fitness business is running, to record HOW it was made so kinds of advert can be compared");
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
@@ -82,20 +83,22 @@ export function unreadSurvey(swipeDir, opts = {}) { const store = readSurveyRead
  * another operator's ad are not. **The country asked for is read first, the newest pull first** (2026-11-12: the first
  * Singapore survey spent its cap on an older United States pull, read in the order the pulls were made).
  */
-export async function readSurvey({ swipeDir, ask = callVision, max = READ_DEFAULT, ours = [], country = null, log = () => {}, now = () => new Date().toISOString() }) {
+export async function readSurvey({ swipeDir, ask = callVision, max = READ_DEFAULT, ours = [], country = null, only = null, log = () => {}, onProgress = () => {}, now = () => new Date().toISOString() }) {
   const store = readSurveyReads(swipeDir), done = { read: 0, cached: 0, calls: 0, left: 0, failed: [] }, seen = new Set(), first = country ? String(country).toUpperCase() : null;
   const order = surveyAds(swipeDir, { ours }).map((a, i) => ({ a, i })).sort((x, y) => (y.a.country === first) - (x.a.country === first) || String(y.a.scraped).localeCompare(String(x.a.scraped)) || x.i - y.i).map((x) => x.a);
+  const just = only ? String(only).toUpperCase() : null; // one country's pictures only (the one-button survey), else every country's
   for (const a of order) {
-    if (a.left_out || seen.has(a.sha)) continue; seen.add(a.sha);
+    if (a.left_out || seen.has(a.sha) || (just && a.country !== just)) continue; seen.add(a.sha);
     if (store.reads[a.sha]?.format) { done.cached++; continue; }
     if (done.calls >= max) { done.left++; continue; }
-    done.calls++; log(`reading ${a.advertiser.slice(0, 50)} (${a.days} days)`);
+    done.calls++; log(`reading picture ${done.calls} of ${max}: ${a.advertiser.slice(0, 50)} (${a.days} days)`);
     let size = null; try { size = imageSize(readFileSync(a.file)); } catch { size = null; }
     try {
       const r = await ask(a.file, SURVEY_QUESTION, READ_SCHEMA);
       store.reads[a.sha] = { ratio: size ? ratioOf(size) : "other", read_on: now(), model: store.model || CHECK_MODEL, format: r.format, subject: r.subject, people: r.people, backdrop: r.backdrop, pose: r.pose, expression: r.expression, eye_contact: !!r.eye_contact, text_density: r.text_density, logo: !!r.logo };
       done.read++; writeWhole(join(swipeDir, SURVEY_READS), JSON.stringify(store, null, 2) + "\n");
     } catch (e) { done.failed.push(`${a.advertiser}: ${e.message}`); }
+    onProgress(done.calls);
   }
   return done;
 }
@@ -146,14 +149,65 @@ export function buildSurvey(swipeDir, { country = null, ours = [], ran = null } 
   return { ...s, scope: country && here.length ? String(country).toUpperCase() : null, asked: country ? String(country).toUpperCase() : null, scrapes: scrapes(swipeDir).map((x) => ({ date: x.date, country: x.country, ads: x.ads.length, terms: x.terms })), candidates: ran ? candidatesFor(s, { ran }) : [] };
 }
 
+// ── one button: what a survey of a country would do now (2026-11-12) ────────
+// The owner's first survey had two numbers to set and a second run to make ("This is so confusing"). Now the app
+// decides what is needed, by rule, and says it with its cost before anything runs:
+//   · pictures of that country on file and not read → READ them (no pull, no Apify charge)
+//   · never pulled, or the last pull is older than SURVEY_FRESH_DAYS → PULL PULL_DEFAULT ads, then read them
+//   · else → nothing to do (a fresh pull is still his to ask for)
+export const SURVEY_FRESH_DAYS = 30, READ_RUN_MAX = 150, PROGRESS_FILE = "survey-progress.json";
+export const countryName = (cc) => { try { return new Intl.DisplayNames(["en"], { type: "region" }).of(String(cc).toUpperCase()) || String(cc); } catch { return String(cc); } };
+/** Where a country's survey stands, from the files (no call), and the plan: { country, name, never, last_pull, age_days, ads, pictures, read, unread, plan{ action, pull, reads, text, cost }, progress }. */
+export function surveyStatus(swipeDir, { country = "SG", ours = [], now = new Date(), fresh = false } = {}) {
+  const cc = String(country).toUpperCase(), name = countryName(cc), reads = readSurveyReads(swipeDir).reads;
+  const ads = surveyAds(swipeDir, { country: cc, ours }).filter((a) => !a.left_out), pics = new Set(ads.map((a) => a.sha)), unread = [...pics].filter((s) => !reads[s]?.format).length;
+  const last = scrapes(swipeDir).filter((s) => s.country === cc).map((s) => s.date).sort().pop() || null, age = last ? Math.max(0, Math.round((Date.parse(now.toISOString().slice(0, 10)) - Date.parse(last)) / 86400000)) : null;
+  const s = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  let plan;
+  if (fresh || !last || (age > SURVEY_FRESH_DAYS && !unread)) { const reads_max = Math.min(READ_RUN_MAX, PULL_DEFAULT + unread);
+    plan = { action: "pull", pull: PULL_DEFAULT, reads: reads_max, text: `Pull up to ${PULL_DEFAULT} gym and fitness ads running in ${name} from Meta's Ad Library, then read their pictures.`, cost: `Apify bills the pull per ad it returns (up to ${PULL_DEFAULT}). Then up to ${s(reads_max, "Gemini call")}, one per picture.` }; }
+  else if (unread) { const n = Math.min(unread, READ_RUN_MAX);
+    plan = { action: "read", pull: 0, reads: n, text: `Read the ${s(n, "picture")} from ${name} that ${n === 1 ? "is" : "are"} on file and not read yet.`, cost: `${s(n, "Gemini call")}, one per picture. No Apify charge: nothing is pulled.` }; }
+  else plan = { action: "none", pull: 0, reads: 0, text: `${name} was surveyed ${age === 0 ? "today" : age === 1 ? "yesterday" : `${age} days ago`} and every picture is read.`, cost: "Nothing to spend." };
+  const progress = readJson(join(swipeDir, PROGRESS_FILE));
+  return { country: cc, name, never: !last, last_pull: last, age_days: age, ads: ads.length, advertisers: new Set(ads.map((a) => a.advertiser)).size, pictures: pics.size, read: pics.size - unread, unread, plan, progress: progress?.country === cc ? progress : null };
+}
+/**
+ * Do what the plan says (the run the panel starts). Progress is written as it goes, and a stop is kept: every picture
+ * read so far stays read, and a pull that is stopped is aborted on Apify by the scraper itself.
+ */
+export async function runSurvey({ swipeDir, country = "SG", ours = [], fresh = false, tos = false, ask = callVision, pull = null, log = console.log, now = () => new Date() }) {
+  const st = surveyStatus(swipeDir, { country, ours, now: now(), fresh }), cc = st.country;
+  const mark = (p) => writeWhole(join(swipeDir, PROGRESS_FILE), JSON.stringify({ country: cc, started: started, pid: process.pid, ...p, at: now().toISOString() }) + "\n"), started = now().toISOString();
+  if (st.plan.action === "none") { log(`· ${st.plan.text} Nothing to do.`); return { action: "none", pulled: 0, read: 0, calls: 0, left: 0 }; }
+  let pulled = 0;
+  if (st.plan.action === "pull") {
+    if (!tos) throw new Error("the pull scrapes Meta's Ad Library through Apify, a grey area under Meta's terms: it runs only once the notice is agreed to (--i-understand-tos)");
+    mark({ stage: "pull", pull: st.plan.pull }); log(`· pulling up to ${st.plan.pull} ads running in ${st.name} through Apify (billed per ad returned)`);
+    const before = surveyAds(swipeDir, { country: cc, ours }).length;
+    await (pull || ((n) => execFileSync(process.execPath, [join(REPO_ROOT, "skills", "references", "scrape-meta-ads.mjs"), "--niche", "gym", "--country", cc, "--limit", String(n), "--out", swipeDir, "--i-understand-tos"], { stdio: "inherit", cwd: REPO_ROOT })))(st.plan.pull);
+    pulled = surveyAds(swipeDir, { country: cc, ours }).length - before; log(`· ${pulled} new ad${pulled === 1 ? "" : "s"} on file`);
+  }
+  const total = Math.min(READ_RUN_MAX, surveyStatus(swipeDir, { country: cc, ours, now: now() }).unread);
+  mark({ stage: "read", total, done: 0 }); log(`· reading ${total} picture${total === 1 ? "" : "s"} from ${st.name}, one Gemini call each`);
+  const d = await readSurvey({ swipeDir, ask, max: total, ours, country: cc, only: cc, log: (m) => log(`  ${m}`), onProgress: (done) => mark({ stage: "read", total, done }) });
+  mark({ stage: "done", total, done: d.calls, read: d.read, failed: d.failed.length });
+  log(`· ${d.read} picture${d.read === 1 ? "" : "s"} read (${d.calls} Gemini call${d.calls === 1 ? "" : "s"})${d.failed.length ? `, ${d.failed.length} failed` : ""}`);
+  for (const f of d.failed.slice(0, 5)) log(`  ! ${f}`);
+  return { action: st.plan.action, pulled, read: d.read, calls: d.calls, left: surveyStatus(swipeDir, { country: cc, ours, now: now() }).unread, failed: d.failed };
+}
+
 // ── CLI ──────────────────────────────────────────────────────────────────────
-const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
-  const { values: v } = parseArgs({ options: { "swipe-dir": { type: "string" }, niche: { type: "string", default: "gym" }, pull: { type: "string" }, country: { type: "string", default: "SG" }, terms: { type: "string" }, read: { type: "boolean", default: false }, max: { type: "string", default: String(READ_DEFAULT) }, show: { type: "boolean", default: false }, "i-understand-tos": { type: "boolean", default: false }, ours: { type: "string", default: "" } } });
-  if (!(v.pull || v.read || v.show)) { console.error("Usage: library-survey.mjs [--pull <ads> --country SG [--terms a,b] --i-understand-tos] [--read --max 60] [--show]   [--swipe-dir swipe/gym]\n  --pull reads the Ad Library through Apify (billed to the Apify account). --read makes one vision call per unread picture. --show prints the survey from what is on disk (no call)."); process.exit(1); }
+  const { values: v } = parseArgs({ options: { "swipe-dir": { type: "string" }, niche: { type: "string", default: "gym" }, pull: { type: "string" }, country: { type: "string", default: "SG" }, terms: { type: "string" }, auto: { type: "boolean", default: false }, fresh: { type: "boolean", default: false }, read: { type: "boolean", default: false }, max: { type: "string", default: String(READ_DEFAULT) }, show: { type: "boolean", default: false }, "i-understand-tos": { type: "boolean", default: false }, ours: { type: "string", default: "" } } });
+  if (!(v.pull || v.read || v.show || v.auto)) { console.error("Usage: library-survey.mjs --auto --country SG [--fresh] [--i-understand-tos]   (what the panel's one button runs: reads what is unread, or pulls and reads)\n       library-survey.mjs [--pull <ads> --country SG [--terms a,b] --i-understand-tos] [--read --max 60] [--show]   [--swipe-dir swipe/gym]\n  --pull reads the Ad Library through Apify (billed to the Apify account). --read makes one vision call per unread picture. --show prints the survey from what is on disk (no call)."); process.exit(1); }
   const swipeDir = v["swipe-dir"] ? resolve(v["swipe-dir"]) : join(REPO_ROOT, "swipe", v.niche), ours = v.ours.split("|").map((x) => x.trim()).filter(Boolean);
+  // A stop: what was read stays read (it is saved picture by picture); the progress file says where it stopped.
+  const stopped = () => { try { const p = JSON.parse(readFileSync(join(swipeDir, PROGRESS_FILE), "utf-8")); if (p.stage !== "done") writeFileSync(join(swipeDir, PROGRESS_FILE), JSON.stringify({ ...p, stage: "stopped", stopped_at: new Date().toISOString() }) + "\n"); } catch { /* no progress yet */ } process.exit(130); };
+  process.on("SIGTERM", stopped); process.on("SIGINT", stopped);
   try {
+    if (v.auto) { await runSurvey({ swipeDir, country: v.country, ours, fresh: v.fresh, tos: v["i-understand-tos"] }); }
     if (v.pull) {
       const n = Math.max(PULL_MIN, Math.min(PULL_MAX, parseInt(v.pull, 10) || PULL_DEFAULT));
       if (!v["i-understand-tos"]) { console.error("The pull scrapes Meta's Ad Library through Apify, a grey area under Meta's terms; the creatives are other operators' and are used for analysis only. Run it again with --i-understand-tos to go on."); process.exit(1); }

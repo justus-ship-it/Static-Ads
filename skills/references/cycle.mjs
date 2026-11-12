@@ -4,7 +4,12 @@
  * on file: the account review (account-review.mjs → buildReview) and the gym's batches (the panel's listBatches).
  * No Meta call, no model call, nothing written. The steps never lock: this only ever nudges.
  *
- *   cycleFrom({ review, batches, now }) → { steps[5], next, counts }
+ *   cycleFrom({ review, batches, now, survey? }) → { steps[5 — or 6 with step 0], next, counts }
+ *
+ * Step 0, Survey Ad Library (2026-11-12, the owner: "separate this step into step 0 in the cycle"): what other
+ * operators run in the gym's country, from Meta's Ad Library. It leads the strip when the survey's status is given
+ * (`survey`: library-survey.mjs → surveyStatus, plus `running` while its run is going). It is research: it is never
+ * the cycle's "next thing", and it never holds anything else up.
  *
  * A step: { id, tab, n, name, state, text }.
  *   state  "todo"  — something here is waiting for the owner
@@ -23,6 +28,15 @@ export const STEPS = [
   { id: "pick-ads", tab: "review", name: "Pick Ads" },
   { id: "publish-ads", tab: "exports", name: "Publish Ads" },
 ];
+/** Step 0: research before the turn begins. Its number is 0; the five steps keep theirs. */
+export const STEP_ZERO = { id: "survey-ad-library", tab: "survey", name: "Survey Ad Library" };
+/** Step 0's line on the strip, from the survey's status: going while its run works, to do while it was never pulled or pictures wait to be read, else done with its date. */
+export function surveyStep(survey) {
+  const s = survey || {}, n = (k, w) => `${k} ${w}${k === 1 ? "" : "s"}`;
+  const state = s.running ? "going" : s.never || s.unread > 0 ? "todo" : "ok";
+  const text = s.running ? `Surveying ${s.name || s.country}` : s.never ? `${s.name || s.country} not surveyed yet` : s.unread > 0 ? `${n(s.unread, "picture")} not read yet` : `${n(s.advertisers || 0, "advertiser")} read${s.last_pull ? ` · pulled ${shortDate(s.last_pull)}` : ""}`;
+  return { ...STEP_ZERO, n: 0, state, text };
+}
 /** A finished batch that was never published stops nudging after this many days (an abandoned test is not a to-do). */
 export const OPEN_DAYS = 30;
 /** After publishing, the results are worth reading from this many days on; account data older than STALE_DAYS is read again first. */
@@ -39,7 +53,7 @@ const shortDate = (iso) => { const d = new Date(iso); return Number.isNaN(d.getT
  * `review`: buildReview's answer (numbers, data, last, scenes, scenes_waiting, currency). `batches`: the panel's
  * list — { id, made, ads, running, stopped, failed, review { kept, excluded, unreviewed }, published { ads, done, at, status, leads } }.
  */
-export function cycleFrom({ review, batches = [], now = new Date() } = {}) {
+export function cycleFrom({ review, batches = [], now = new Date(), survey = null } = {}) {
   const R = review || {}, cur = R.currency || "SGD", today = now.toISOString();
   const n = R.numbers || {}, running = n.running || { ads: 0, leads: 0 }, all = n.all_time || { ads: 0, leads: 0 };
   // When the account's data was last brought in: a pull from Meta, else the latest Ads Manager export.
@@ -93,5 +107,6 @@ export function cycleFrom({ review, batches = [], now = new Date() } = {}) {
   const info = { ads: all.ads || 0, running: running.ads || 0, data_age: dataAge, stale: !!(all.ads && running.ads > 0 && dataAge != null && dataAge > STALE_DAYS), unread: R.data?.unread || 0, pictures: R.data?.pictures || 0, account: !!R.data?.account, exports: (R.data?.exports || []).length };
   const hand = going || toPick || partly || ready || null; // the batch in hand: the current turn of the cycle
   const list = batches.slice(0, 12).map((b) => ({ id: b.id, offer: b.words?.offer || null, made: b.made || null, ads: b.ads || 0, running: !!b.running, stopped: !!b.stopped, failed: !!b.failed, kept: b.review?.kept ?? null, excluded: b.review?.excluded ?? null, unreviewed: b.review?.unreviewed ?? null, stories: b.stories || 0, published: b.published ? { done: !!b.published.done, ads: b.published.ads || 0, at: b.published.at || null } : null, open: open.includes(b) }));
+  if (survey) { steps.unshift(surveyStep(survey)); info.survey = { country: survey.country, name: survey.name, never: !!survey.never, unread: survey.unread || 0, pictures: survey.pictures || 0, last_pull: survey.last_pull || null, age_days: survey.age_days ?? null, running: survey.running || null, plan: survey.plan || null }; }
   return { steps, next, info, batches: list, current: hand ? hand.id : null, data_at: dataAt, reviewed_at: reviewedAt, counts: { scenes: needed.length + waiting, pick: open.filter((b) => (b.review?.unreviewed || 0) > 0).length, publish: (ready ? 1 : 0) + (partly ? 1 : 0) }, jobs, scenes_waiting: waiting, day: day(today) };
 }

@@ -3062,9 +3062,9 @@ test("U54 the cycle (2026-11-11): the panel opens on Review Data; the rail lists
     // Where the gym stands, from what is on file.
     assert.equal((await call("/api/client/nosuchgym/cycle")).status, 400);
     const C = await (await call(`/api/client/${GYM}/cycle`)).json();
-    assert.deepEqual(C.steps.map((s) => [s.n, s.name, s.tab]), [[1, "Review Data", "results"], [2, "Draft Scenes", "scenes"], [3, "Generate Creatives", "batch"], [4, "Pick Ads", "review"], [5, "Publish Ads", "exports"]]);
-    assert.match(C.steps[0].text, /^40 leads at SGD 17\.50 running · read \d+ \w{3}$/);
-    assert.deepEqual([C.steps[1].state, C.steps[1].text, C.counts.scenes, C.jobs.map((j) => [j.format, j.needed])], ["todo", "1 kind needs scenes", 1, [["studio-portrait", true]]]);
+    assert.deepEqual(C.steps.map((s) => [s.n, s.name, s.tab]), [[0, "Survey Ad Library", "survey"], [1, "Review Data", "results"], [2, "Draft Scenes", "scenes"], [3, "Generate Creatives", "batch"], [4, "Pick Ads", "review"], [5, "Publish Ads", "exports"]]);
+    assert.match(C.steps[1].text, /^40 leads at SGD 17\.50 running · read \d+ \w{3}$/);
+    assert.deepEqual([C.steps[2].state, C.steps[2].text, C.counts.scenes, C.jobs.map((j) => [j.format, j.needed])], ["todo", "1 kind needs scenes", 1, [["studio-portrait", true]]]);
     assert.ok(C.next && C.next.text && C.steps.some((s) => s.name === C.next.name) && typeof C.next.tab === "string", JSON.stringify(C.next));
     for (const s of C.steps) assert.ok(["ok", "todo", "going"].includes(s.state) && s.text, JSON.stringify(s));
     // The page: no screen in the address opens Review Data.
@@ -3078,20 +3078,20 @@ test("U54 the cycle (2026-11-11): the panel opens on Review Data; the rail lists
     assert.deepEqual(await ev("[STATE.tab, /\\/results$/.test(location.hash), document.querySelector('h1').textContent]"), ["results", true, "Review Data"]);
     // The rail: the cycle first, in order, numbered; Scenes is a step, not a library page; what is waiting is counted.
     const rail = await ev("[...document.querySelectorAll('#rail > *')].map(e => e.classList.contains('sec') ? '# ' + e.textContent : (e.querySelector('.ic')?.textContent||'') + '|' + [...e.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim() + '|' + (e.querySelector('.badge')?.textContent||''))");
-    assert.deepEqual(rail.slice(0, 9).map((x) => x.replace(/\|\d*$/, "")), ["# Portfolio", "▦|All gyms", "# The cycle", "1|Review Data", "2|Draft Scenes", "3|Generate Creatives", "4|Pick Ads", "5|Publish Ads", "# Library"]);
-    assert.equal(rail[4], "2|Draft Scenes|1", "one kind needs scenes: " + JSON.stringify(await ev("[CY.gym, CY.data.counts, CY.data.jobs, CY.data.scenes_waiting]")));
+    assert.deepEqual(rail.slice(0, 10).map((x) => x.replace(/\|\d*$/, "")), ["# Portfolio", "▦|All gyms", "# The cycle", "0|Survey Ad Library", "1|Review Data", "2|Draft Scenes", "3|Generate Creatives", "4|Pick Ads", "5|Publish Ads", "# Library"]);
+    assert.equal(rail[5], "2|Draft Scenes|1", "one kind needs scenes: " + JSON.stringify(await ev("[CY.gym, CY.data.counts, CY.data.jobs, CY.data.scenes_waiting]")));
     assert.ok(!rail.slice(7).some((x) => /Scenes/.test(x)), rail.join(" / "));
     assert.equal(await ev("document.querySelector('#rail .tab.sel').textContent.replace(/\\d+$/,'')"), "1Review Data");
     // The strip: five steps, this one marked, the scenes waiting, and the one thing to do next.
     const strip = await ev("({ steps: [...document.querySelectorAll('#cyc .cycstep')].map(b => [b.querySelector('.hd').textContent, b.querySelector('.tx').textContent, b.classList.contains('st-todo'), b.classList.contains('here')]) })");
     const now = await (await call(`/api/client/${GYM}/cycle`)).json();
-    assert.deepEqual(strip.steps.map((s) => s[0]), ["1Review Data", "2Draft Scenes", "3Generate Creatives", "4Pick Ads", "5Publish Ads"]);
-    assert.deepEqual([strip.steps[0][3], strip.steps[1].slice(1)], [true, ["1 kind needs scenes", true, false]]);
+    assert.deepEqual(strip.steps.map((s) => s[0]), ["0Survey Ad Library", "1Review Data", "2Draft Scenes", "3Generate Creatives", "4Pick Ads", "5Publish Ads"]);
+    assert.deepEqual([strip.steps[1][3], strip.steps[2].slice(1)], [true, ["1 kind needs scenes", true, false]]);
     // What to press is said once, by the step's own indicator (U55): here the review is read, then the cycle's next thing.
     const there = now.next.tab === "results" && !now.next.batch;
     assert.deepEqual(await ev("[!!document.querySelector('#cycNext'), !!document.querySelector('#stpDo')]"), [false, true]);
     // A step's box opens its screen; Draft Scenes says what the data asks for.
-    await ev("document.querySelectorAll('#cyc .cycstep')[1].click(); true");
+    await ev("document.querySelectorAll('#cyc .cycstep')[2].click(); true");
     await until("STATE.tab === 'scenes' && !!document.querySelector('#scAsksCard button') && document.querySelector('#cyc .cycstep.here .hd').textContent === '2Draft Scenes'");
     assert.equal(await ev("document.querySelector('h1').textContent"), "Draft Scenes");
     const asks = await ev("document.querySelector('#scAsksCard').innerText");
@@ -3577,7 +3577,7 @@ test("U61 all gyms (2026-11-12): GET /api/portfolio is every gym's marketing num
     const rows = `document.querySelectorAll('#pfTable tr.pfg').length === ${P.gyms.length}`;
     await until(`STATE.tab === 'portfolio' && ${rows}`);
     assert.deepEqual(await ev("[location.hash, document.querySelector('#crumb').innerText, document.querySelector('#cycle').innerHTML, document.querySelector('#stepper').innerHTML, [...document.querySelectorAll('#rail .tab')].slice(0, 2).map(b => b.innerText.replace(/\\s+/g, ' ').trim()), document.querySelector('#rail .tab.sel').innerText.replace(/\\s+/g, ' ').trim(), [...document.querySelectorAll('#rail .sec')].slice(0, 2).map(x => x.textContent)]"),
-      ["#/portfolio", "All gyms", "", "", ["▦ All gyms", "1 Review Data"], "▦ All gyms", ["Portfolio", "The cycle"]]);
+      ["#/portfolio", "All gyms", "", "", ["▦ All gyms", "0 Survey Ad Library"], "▦ All gyms", ["Portfolio", "The cycle"]]);
     await ev("pfPeriod('30'); true");
     const cells = `(()=>{ const r = document.querySelector('#pfTable tr.pfg[data-gym=${GYM}]'); return [[...r.querySelectorAll('td[data-col]')].map(td => td.innerText.replace(/\\s+/g, '')), [...r.querySelectorAll('[data-flag]')].map(x => x.dataset.flag), !!r.querySelector('svg.pfspark')]; })()`;
     assert.deepEqual(await ev("[[...document.querySelectorAll('#pfPeriods button')].map(b => b.innerText), document.querySelector('#pfPeriods button.sel').innerText, document.querySelector('#pfAgainst').innerText, document.querySelectorAll('#pfTiles .pftile').length, [...document.querySelectorAll('#pfTable th')].map(x => x.innerText.replace(/ [▾▴]$/, ''))]"),
@@ -3614,65 +3614,107 @@ test("U61 all gyms (2026-11-12): GET /api/portfolio is every gym's marketing num
   } finally { rmSync(made, { recursive: true, force: true }); rmSync(empty, { recursive: true, force: true }); if (had) writeFileSync(dailyFile, had); else rmSync(dailyFile, { force: true }); }
 });
 
-test("U62 the ledger across gyms and the Ad Library survey on Review Data (2026-11-12): the review's answer carries the pooled ledger and the page shows it as a card that says when nothing has been tested; GET /api/library/survey answers from what is on file — the advertisers per kind of picture, the ones running 90 days or more, what is left out, and for the gym each kind with whether it has run it and how it is made here; the run is checked server-side (the country, the caps, nothing to do, the notice before a pull) and a reading with nothing to read makes no call; the card and its confirmation say what it costs and carry the notice", async () => {
-  const swipe = join(dirname(brands), "swipe", "gym"), raw = join(swipe, "raw", "2026-11-01");
+test("U62 the ledger across gyms on Review Data, and step 0 — Survey Ad Library (2026-11-12): the review carries the pooled ledger and the page shows it as a card; the survey is step 0 of the cycle with its own screen, one button and no number to set — the app says what a country's survey needs (read what is unread, or pull and read) with its cost, and the run is started only when what was confirmed is what is true now; a pull needs the notice agreed to and an Apify token; a survey run can be stopped from its screen and from the step's bar, and every run's bar carries Stop; the screen shows what the survey found and says it is analysis only", async () => {
+  const swipe = join(dirname(brands), "swipe", "gym"), today = new Date().toISOString().slice(0, 10), raw = join(swipe, "raw", today);
   const PNG1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+  const survey = async (q = "") => (await call(`/api/library/survey?gym=${GYM}${q}`)).json();
   try {
-    // An empty folder first: nothing surveyed.
-    let S = await (await call(`/api/library/survey?gym=${GYM}`)).json();
-    assert.deepEqual([S.ads, S.read, S.candidates, S.scrapes, typeof S.has_apify, S.limits.pull_min, S.limits.pull_max, S.long_run_days], [0, 0, [], [], "boolean", 20, 300, 90]);
-    // A scrape and its readings on file: three studios run portraits (two for 90+ days), three run workout shots (one), a phone shop is left out.
+    // Nothing on file: never surveyed, and the plan is a pull — which a panel without an Apify token cannot run.
+    let S = await survey();
+    assert.deepEqual([S.ads, S.read, S.candidates, S.has_apify, S.status.country, S.status.name, S.status.never, S.status.plan.action, S.status.plan.pull, S.status.running, S.long_run_days], [0, 0, [], false, "SG", "Singapore", true, "pull", 80, null, 90]);
+    let C = await (await call(`/api/client/${GYM}/cycle`)).json();
+    assert.deepEqual([C.steps.length, C.steps[0].n, C.steps[0].tab, C.steps[0].name, C.steps[0].state, C.steps[0].text, C.steps[1].n, C.info.survey.never], [6, 0, "survey", "Survey Ad Library", "todo", "Singapore not surveyed yet", 1, true]);
+    assert.notEqual(C.next.tab, "survey", "research is never the cycle's next thing");
+    // A pull on file: three studios run portraits (two for 90+ days), three run workout shots (one), a phone shop is left out; two pictures are not read yet.
     mkdirSync(join(raw, "images"), { recursive: true });
     const ads = [["1", "Iron Gym", 200, "p1"], ["2", "Core Pilates", 120, "p2"], ["3", "Flow Yoga", 20, "p3"], ["4", "Iron Gym", 30, "w4"], ["5", "Lift Studio", 95, "w5"], ["6", "Box Fitness", 10, "w6"], ["7", "Phone Shop", 500, "w7"]];
     for (const a of ads) writeFileSync(join(raw, "images", `${a[3]}.png`), PNG1);
-    writeFileSync(join(raw, "ads-normalized.json"), JSON.stringify({ niche: "gym", country: "SG", scraped_at: "2026-11-01T02:00:00Z", terms: ["gym"], ads: ads.map(([id, page, days, img]) => ({ ad_id: id, page_name: page, start_date: "2026-01-01", days_active: days, variant_count: 1, primary_text: page === "Phone Shop" ? "New phones" : "Join us", image_files: [`images/${img}.png`] })) }));
-    writeFileSync(join(swipe, "survey-reads.json"), JSON.stringify({ schema: 1, reads: Object.fromEntries(ads.slice(0, 6).map((a) => [a[3], { ratio: "4:5", format: a[3][0] === "p" ? "studio-portrait" : "workout", subject: "woman", people: 1, backdrop: "gym-floor", pose: "easy-posed", expression: "smile", eye_contact: true, text_density: "light", logo: false }])) }));
-    S = await (await call(`/api/library/survey?gym=${GYM}`)).json();
-    assert.deepEqual([S.ads, S.kept, S.read, S.unread, S.advertisers, S.long_running, S.overall, S.left_out, S.scope, S.surveyed.last], [7, 6, 6, 0, 5, 3, 60, { not_fitness: 1 }, "SG", "2026-11-01"]);
-    assert.deepEqual(S.candidates.map((c) => [c.format, c.advertisers, c.long_running, c.share, c.makeable]), [["studio-portrait", 3, 2, 67, true], ["workout", 3, 1, 33, true]]);
-    assert.ok(S.candidates.every((c) => typeof c.tried === "boolean" && c.text.startsWith(c.format + ": 3 advertisers run it")));
-    // The run, checked before anything starts.
-    const bad = async (body, status, re) => { const r = await call("/api/run", { method: "POST", body: { kind: "library-survey", ...body } }); assert.equal(r.status, status, JSON.stringify(body)); assert.match((await r.json()).error, re); };
-    await bad({ country: "Singapore", pull: 0, max: 5 }, 400, /two letters/);
-    await bad({ country: "SG", pull: 5, max: 5, tos: true }, 400, /0 \(none\) or 20 to 300/);
-    await bad({ country: "SG", pull: 301, max: 5, tos: true }, 400, /20 to 300/);
-    await bad({ country: "SG", pull: 0, max: 801 }, 400, /0 to 800/);
-    await bad({ country: "SG", pull: 0, max: 0 }, 400, /nothing to do/);
-    await bad({ country: "SG", pull: 40, max: 5 }, 400, /only once the notice is agreed to/);
-    assert.equal((await call("/api/run", { method: "POST", body: { kind: "library-survey", country: "SG", pull: 0, max: 5 }, token: null })).status, 403);
-    // Reading with nothing left to read: the command is built server-side, never pulls, and makes no call.
-    const made = await runAndWait({ kind: "library-survey", country: "sg", pull: 0, max: 5 });
+    writeFileSync(join(raw, "ads-normalized.json"), JSON.stringify({ niche: "gym", country: "SG", scraped_at: `${today}T02:00:00Z`, terms: ["gym"], ads: ads.map(([id, page, days, img]) => ({ ad_id: id, page_name: page, start_date: "2026-01-01", days_active: days, variant_count: 1, primary_text: page === "Phone Shop" ? "New phones" : "Join us", image_files: [`images/${img}.png`] })) }));
+    const reads = (list) => writeFileSync(join(swipe, "survey-reads.json"), JSON.stringify({ schema: 1, reads: Object.fromEntries(list.map((a) => [a[3], { ratio: "4:5", format: a[3][0] === "p" ? "studio-portrait" : "workout", subject: "woman", people: 1, backdrop: "gym-floor", pose: "easy-posed", expression: "smile", eye_contact: true, text_density: "light", logo: false }])) }));
+    reads(ads.slice(0, 4));
+    S = await survey();
+    assert.deepEqual([S.status.never, S.status.last_pull, S.status.pictures, S.status.read, S.status.unread, S.status.plan], [false, today, 6, 4, 2, { action: "read", pull: 0, reads: 2, text: "Read the 2 pictures from Singapore that are on file and not read yet.", cost: "2 Gemini calls, one per picture. No Apify charge: nothing is pulled." }]);
+    assert.deepEqual([(await survey("&fresh=1")).status.plan.action, (await survey("&fresh=1")).status.plan.pull], ["pull", 80], "a fresh pull is planned only when asked for");
+    C = await (await call(`/api/client/${GYM}/cycle`)).json();
+    assert.deepEqual([C.steps[0].state, C.steps[0].text, C.info.survey.unread, C.info.survey.plan.action], ["todo", "2 pictures not read yet", 2, "read"]);
+    // The run: what was confirmed must be what is true now; a pull needs the notice and a token; nothing else is taken from the page.
+    const post = (body, token) => call("/api/run", { method: "POST", body: { kind: "library-survey", ...body }, ...(token === null ? { token: null } : {}) });
+    const bad = async (body, status, re) => { const r = await post(body); assert.equal(r.status, status, JSON.stringify(body)); const j = await r.json(); assert.match(j.error, re); return j; };
+    await bad({ country: "Singapore" }, 400, /two letters/);
+    const stale = await bad({ country: "SG", confirm: { action: "read", pull: 0, reads: 54 } }, 409, /changed since you looked/); assert.equal(stale.plan.reads, 2);
+    await bad({ country: "SG" }, 409, /changed since you looked/);
+    await bad({ country: "SG", fresh: true, confirm: { action: "pull", pull: 80, reads: 82 } }, 400, /only once the notice is agreed to/);
+    await bad({ country: "SG", fresh: true, tos: true, confirm: { action: "pull", pull: 80, reads: 82 } }, 409, /no APIFY_TOKEN/);
+    assert.equal((await post({ country: "SG", confirm: { action: "read", pull: 0, reads: 2 } }, null)).status, 403);
+    // Confirmed as it is: the run reads this country's unread pictures and nothing else (there is no model in the tests, so each reading fails and nothing is spent).
+    const made = await runAndWait({ kind: "library-survey", country: "sg", confirm: { action: "read", pull: 0, reads: 2 } });
     assert.equal(made.code, 0, made.lines.join("\n"));
-    assert.match(made.lines[0], /^\$ node skills\/references\/library-survey\.mjs --swipe-dir \S+swipe\/gym --country SG --read --max 5 --ours /); assert.ok(!/--pull|--i-understand-tos/.test(made.lines[0]));
-    assert.ok(made.lines.some((l) => /0 pictures read \(0 calls\), 6 read before/.test(l)), made.lines.join("\n"));
+    assert.match(made.lines[0], /^\$ node skills\/references\/library-survey\.mjs --swipe-dir \S+swipe\/gym --auto --country SG --ours /); assert.ok(!/--i-understand-tos|--fresh|--pull/.test(made.lines[0]));
+    assert.ok(made.lines.some((l) => /reading 2 pictures from Singapore, one Gemini call each/.test(l)) && made.lines.some((l) => /reading picture 2 of 2: /.test(l)) && made.lines.some((l) => /0 pictures read \(2 Gemini calls\), 2 failed/.test(l)), made.lines.join("\n"));
+    assert.deepEqual([JSON.parse(readFileSync(join(swipe, "survey-progress.json"), "utf-8")).stage, (await survey()).status.unread], ["done", 2]);
+    // Everything read: nothing to do, and a run is refused in words.
+    reads(ads.slice(0, 6));
+    await bad({ country: "SG", confirm: { action: "none", pull: 0, reads: 0 } }, 400, /nothing to do: Singapore was surveyed today and every picture is read/);
+    S = await survey();
+    assert.deepEqual([S.ads, S.kept, S.read, S.unread, S.advertisers, S.long_running, S.overall, S.left_out, S.scope, S.status.plan.action], [7, 6, 6, 0, 5, 3, 60, { not_fitness: 1 }, "SG", "none"]);
+    assert.deepEqual(S.candidates.map((c) => [c.format, c.advertisers, c.long_running, c.share, c.makeable]), [["studio-portrait", 3, 2, 67, true], ["workout", 3, 1, 33, true]]);
+    C = await (await call(`/api/client/${GYM}/cycle`)).json();
+    assert.deepEqual([C.steps[0].state, /^5 advertisers read · pulled \d+ \w+$/.test(C.steps[0].text)], ["ok", true]);
     // The review carries the pooled ledger.
     const R = await (await call(`/api/client/${GYM}/account-review`)).json();
     assert.ok(R.ledger && Array.isArray(R.ledger.entries) && R.ledger.gyms >= 1 && "untested" in R.ledger.counts);
-    // The page.
+    // ── The page ──
     const { cdp, sessionId } = browser;
     const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
     const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
-    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u62#/${GYM}/results` }, sessionId); await loaded;
-    await until("STATE.tab === 'results' && !!document.querySelector('#rsLedger') && !!document.querySelector('#rsSurveyKinds')");
-    assert.deepEqual(await ev("[...document.querySelectorAll('#view .card[id]')].map(c => c.id).filter(id => ['across', 'rsLedger', 'rsSurvey'].includes(id))"), ["across", "rsLedger", "rsSurvey"], "under Across every gym, in this order");
-    assert.match(await ev("document.querySelector('#rsLedger').innerText.replace(/\\s+/g, ' ')"), /^TESTED ACROSS EVERY GYM \d+ gyms? · \d+ tested in a batch · \d+ said by an account and never tested What each gym's own account says/i);
+    const txt = (sel) => ev(`document.querySelector(${JSON.stringify(sel)}).innerText.replace(/\\s+/g, ' ').trim()`);
+    // Review Data: the ledger card, and no survey card (it has its own step now).
+    let loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u62#/${GYM}/results` }, sessionId); await loaded;
+    await until("STATE.tab === 'results' && !!document.querySelector('#rsLedger')");
+    assert.deepEqual(await ev("[...document.querySelectorAll('#view .card[id]')].map(c => c.id).filter(id => ['across', 'rsLedger', 'rsSurvey'].includes(id))"), ["across", "rsLedger"]);
+    assert.match(await txt("#rsLedger"), /^TESTED ACROSS EVERY GYM \d+ gyms? · \d+ tested in a batch · \d+ said by an account and never tested What each gym's own account says/i);
     assert.equal(await ev("document.querySelectorAll('#rsLedger tbody tr').length"), R.ledger.entries.length);
-    if (!R.ledger.entries.some((e) => e.verdict !== "untested")) assert.equal(await ev("!!document.querySelector('#rsLedgerNone')"), true, "nothing tested yet is said");
-    const card = await ev("document.querySelector('#rsSurvey').innerText.replace(/\\s+/g, ' ')");
-    assert.match(card, /Meta's Ad Library in SG: 7 ads on file, last pulled 1 Nov 2026 · 6 read · left out: 1 not a fitness business/);
-    assert.match(card, /Analysis only\. The Ad Library shows no spend and no leads/); assert.match(card, /5 advertisers read; 3 of them \(60%\) have kept an ad running 90 days or more\./);
-    assert.deepEqual(await ev("[...document.querySelectorAll('#rsSurveyKinds tbody tr')].map(r => [r.dataset.format, ...[...r.querySelectorAll('td')].slice(1, 4).map(td => td.innerText.replace(/\\s+/g, ' ').trim())])"), [["studio-portrait", "3", "2", "67% · 1.12×"], ["workout", "3", "1", "33% · 0.55×"]]);
-    assert.match(card, /Longest running: Iron Gym \(200 days, studio portrait\) · Core Pilates \(120 days, studio portrait\)/);
-    // The confirmation: what it costs, the notice, and nothing runs until it makes sense.
-    await ev("document.querySelector('#rsSurveyGo').click(); true");
-    assert.deepEqual(await ev("[document.querySelector('#svCountry').value, document.querySelector('#svTos').checked, /billed to your Apify account/.test(document.querySelector('#gModal').innerText), /grey area under Meta's terms/.test(document.querySelector('#gModal').innerText), /never republished/.test(document.querySelector('#gModal').innerText)]"), ["SG", false, true, true, true]);
-    await ev("document.querySelector('#svPull').disabled = false; document.querySelector('#svPull').value = '40'; document.querySelector('#svGo').click(); true");
-    assert.match(await ev("document.querySelector('#svWhy').textContent"), /^Tick the box to run the pull/);
-    await ev("document.querySelector('#svPull').value = '0'; document.querySelector('#svRead').value = '0'; document.querySelector('#svGo').click(); true");
-    assert.match(await ev("document.querySelector('#svWhy').textContent"), /^Nothing to do/);
-    await ev("document.querySelector('#svCountry').value = 'Singapore'; document.querySelector('#svGo').click(); true");
-    assert.match(await ev("document.querySelector('#svWhy').textContent"), /two letters/);
-    assert.equal(await ev("!!(STATE.run && !STATE.run.done)"), false, "nothing was started");
+    // Step 0: in the rail and on the strip, with its own screen.
+    assert.deepEqual(await ev("[[...document.querySelectorAll('#rail .tab')].slice(1, 3).map(b => b.innerText.replace(/\\s+/g, ' ').trim()), [...document.querySelectorAll('#cyc .cycstep .hd')].map(x => x.textContent)]"), [["0 Survey Ad Library", "1 Review Data"], ["0Survey Ad Library", "1Review Data", "2Draft Scenes", "3Generate Creatives", "4Pick Ads", "5Publish Ads"]]);
+    await ev("document.querySelector('#cyc .cycstep').click(); true");
+    await until(`location.hash === '#/${GYM}/survey' && STATE.tab === 'survey' && !!document.querySelector('#svKinds')`);
+    assert.deepEqual(await ev("[document.querySelector('#crumb').innerText.includes('Survey Ad Library'), document.querySelector('#rail .tab.sel').innerText.replace(/\\s+/g, ' ').trim(), document.querySelector('#cyc .cycstep.here .hd').textContent, document.querySelector('#svStatus').dataset.state]"), [true, "0 Survey Ad Library", "0Survey Ad Library", "read"]);
+    assert.match(await txt("#svStands"), /^Singapore: 6 ads from 5 advertisers on file, pulled \d+ \w+ \d{4} · 6 pictures read\.$/);
+    assert.equal(await txt("#svPlan"), "Singapore was surveyed today and every picture is read.");
+    assert.match(await txt("#svFound"), /^WHAT THE SURVEY FOUND · Singapore 5 advertisers read; 3 of them \(60%\) have kept an ad running 90 days or more\. Left out: 1 not a fitness business\./i);
+    assert.deepEqual(await ev("[...document.querySelectorAll('#svKinds tbody tr')].map(r => [r.dataset.format, ...[...r.querySelectorAll('td')].slice(1, 4).map(td => td.innerText.replace(/\\s+/g, ' ').trim())])"), [["studio-portrait", "3", "2", "67% · 1.12×"], ["workout", "3", "1", "33% · 0.55×"]]);
+    assert.match(await txt("#svFound"), /Longest running: Iron Gym \(200 days, studio portrait\) · Core Pilates \(120 days, studio portrait\)/);
+    // The gym is named, in the column's heading and on every row: never "this gym".
+    const gymName = await ev("STATE.profile.display_name");
+    assert.deepEqual(await ev("[document.querySelector('#svGymCol').textContent, [...document.querySelectorAll('#svKinds tbody tr td:last-child')].every(td => td.innerText.startsWith(STATE.profile.display_name + ' has ')), /this gym/i.test(document.querySelector('#svFound').innerText)]"), [gymName, true, false]);
+    assert.match(await txt("#svNotice"), /^Analysis only\. The Ad Library shows no spend and no leads/);
+    // The step's own parts: done by what is on file; with every picture read the bar hands on to the cycle.
+    const parts = "[...document.querySelectorAll('#stpParts .stpp')].map(p => [p.querySelector('.nm').textContent, p.classList.contains('done')])";
+    assert.deepEqual(await ev(parts), [["Pull the ads", true], ["Read the pictures", true], ["Read the survey, then go on", false]]);
+    // Two pictures unread again: the one button says exactly what it will do, and its confirmation says what it costs — with no number to set and no notice, since nothing is pulled.
+    reads(ads.slice(0, 4));
+    await ev("svLoad().then(() => true)"); await until("document.querySelector('#svStatus').dataset.state === 'unread' && document.querySelector('#stpGo') && document.querySelector('#stpGo').textContent === 'Read 2 pictures…'");
+    assert.deepEqual(await ev(parts), [["Pull the ads", true], ["Read the pictures", false], ["Read the survey, then go on", false]]);
+    assert.equal(await txt("#svPlan"), "Next: Read the 2 pictures from Singapore that are on file and not read yet. 2 Gemini calls, one per picture. No Apify charge: nothing is pulled.");
+    assert.match(await txt("#stpDo"), /^DO THIS NOW · 2 OF 3 Read the 2 pictures from Singapore that are on file and not read yet\. 2 Gemini calls, one per picture\. No Apify charge: nothing is pulled\. Read 2 pictures…$/i);
+    await ev("document.querySelector('#stpGo').click(); true"); await until("!!document.querySelector('#svGo')");
+    assert.deepEqual(await ev("[document.querySelector('#svAskTitle').textContent, document.querySelector('#svAskText').textContent, document.querySelector('#svAskCost').textContent, !!document.querySelector('#svTos'), document.querySelectorAll('#gModal input').length, document.querySelector('#svGo').textContent, /You can stop it at any time/.test(document.querySelector('#gModal').innerText)]"),
+      ["Read 2 pictures", "Read the 2 pictures from Singapore that are on file and not read yet.", "What it costs: 2 Gemini calls, one per picture. No Apify charge: nothing is pulled.", false, 0, "Start reading", true]);
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // A fresh pull without an Apify token: said, and nothing opens.
+    await ev("document.querySelector('#svFresh').click(); true"); await new Promise((x) => setTimeout(x, 400));
+    assert.deepEqual(await ev("[document.querySelector('#gModal').innerHTML, !!(STATE.run && !STATE.run.done)]"), ["", false]);
+    // While a survey runs: the screen says so with Stop, and the step's bar carries Stop too; creating on Facebook is the one run with none.
+    await ev("STATE.run = { id: 'r-test', label: 'Survey the Ad Library', kind: 'library-survey', lines: [{ stream: 'out', line: '  reading picture 1 of 2: Lift Studio (95 days)' }], done: false, code: null, at: Date.now() }; paintSurvey(); paintStepper(); true");
+    assert.deepEqual(await ev("[document.querySelector('#svStatus').dataset.state, document.querySelector('#svStop').textContent, document.querySelector('#svNow').textContent, /Every picture read so far is kept/.test(document.querySelector('#svStatus').innerText), /cancelled on Apify, so it stops billing/.test(document.querySelector('#svStatus').innerText), document.querySelector('#stpStop')?.textContent, /Working/.test(document.querySelector('#stpDo').innerText)]"),
+      ["running", "Stop", "  reading picture 1 of 2: Lift Studio (95 days)", true, true, "Stop", true]);
+    await ev("STATE.run.kind = 'batch-publish'; STATE.run.label = 'Create on Facebook'; paintStepper(); true");
+    assert.equal(await ev("document.querySelector('#stpStop')"), null, "creating on Facebook is never stopped part-way");
+    await ev("STATE.run = null; paintWait(); paintSurvey(); paintStepper(); true");
+    assert.equal(await ev("document.querySelector('#svStatus').dataset.state"), "unread");
+    // A run that was stopped part-way says so, and what it had read is kept.
+    writeFileSync(join(swipe, "survey-progress.json"), JSON.stringify({ country: "SG", stage: "stopped", total: 2, done: 1 }));
+    await ev("svLoad().then(() => true)"); await until("!!document.querySelector('#svStopped')");
+    assert.equal(await txt("#svStopped"), "The last run was stopped after 1 of 2 pictures. What it had read is kept.");
   } finally { rmSync(join(dirname(brands), "swipe"), { recursive: true, force: true }); }
 });
