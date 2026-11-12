@@ -10,7 +10,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -1094,6 +1094,16 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     const r3 = await run(b2, videoModels({ say: (line) => (/Bishan/.test(line) ? "People in Bishan, hello." : line) }));
     assert.deepEqual([r3.batch.ads.map((a) => a.location), r3.batch.failed.map((f) => [f.candidate, f.location, f.failures[0]])], [["ANG MO KIO"], [["v01", "BISHAN", 'line 1 did not pass after 2 takes: it said "People in Bishan, hello."']]]);
     assert.ok(made.clip.slice(n0).reduce((t, x) => t + x, 0) <= b2.max_video_seconds, "never more seconds than the cap");
+    // No ad at all (2026-11-12, Aether Athletics: one video, one line refused, and the run ended "Command failed: … gallery-selector"): the run ends in words with what was refused and why, the gallery step is never reached, and what was made is kept — the same brief run again, with the line now heard as written, makes its video from the clips on disk.
+    const b5 = { ...brief, batch_id: "with-videos-5", locations: ["BISHAN"] }, n5 = made.clip.length; let galleries = 0;
+    const run5 = (models) => runBatch({ brandDir: dir, brief: b5, deps: { ...fakes(calls), gallery: () => { galleries++; }, browser, videoModels: models }, log: (m) => logs.push(m) });
+    await assert.rejects(run5(videoModels({ say: (line) => (/built for exactly that/.test(line) ? "Something else entirely was said here." : line) })), /^Error: no ad was made\. v01 \(BISHAN\): line 2 did not pass after 2 takes: it said "Something else entirely was said here\." Everything made so far is kept: Run again reuses it\.$/);
+    const p5 = JSON.parse(readFileSync(join(dir, "outputs", "with-videos-5", "progress.json"), "utf-8"));
+    assert.deepEqual([galleries, p5.stage, /^no ad was made\. v01 \(BISHAN\)/.test(p5.error), made.clip.length - n5], [0, "failed", true, 4], "three lines, the refused one twice");
+    // A name's possessive and spelling are not a different word: "Test Gym's" heard as "Test Gyms" and as "Tess Gym" passes; the saved checks are judged again, so nothing is filmed.
+    for (const f of readdirSync(join(dir, "outputs", "with-videos-5", "videos", script.id)).filter((x) => /^line-2.*check\.json$/.test(x))) { const p = join(dir, "outputs", "with-videos-5", "videos", script.id, f), c = JSON.parse(readFileSync(p, "utf-8")); writeFileSync(p, JSON.stringify({ ...c, spoken: /take2/.test(f) ? LINES[1].replace("Test Gym's", "Tess Gym") : LINES[1].replace("Test Gym's", "Test Gyms") })); }
+    const n6 = made.clip.length, r5 = await run5(videoModels());
+    assert.deepEqual([made.clip.length - n6, r5.batch.ads.length, r5.batch.ads[0].location, r5.batch.failed, galleries], [0, 1, "BISHAN", [], 1]);
     // With photo ads: the videos are numbered on after them; a square batch takes none; no presenter is refused in words.
     const r4 = await run({ ...brief, batch_id: "with-videos-3", generated: 1, max_calls: 2 });
     assert.ok(Math.min(...r4.batch.ads.filter((a) => a.video_file).map((a) => Number(a.folder.split("-")[0]))) > Math.max(...r4.batch.ads.filter((a) => !a.video_file).map((a) => Number(a.folder.split("-")[0]))));

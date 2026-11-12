@@ -3849,6 +3849,14 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await until("!!document.querySelector('#bVideoSum')");
     assert.match(await ev("document.querySelector('#bVideoSum').innerText"), /^1 presenter video × 2 locations: about \d+ s of video \(US\$\d+\.\d\d\), never more than \d+ s \(US\$\d+\.\d\d\)$/);
     assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "1 script kept for this offer · presented by a man");
+    // An offer nothing is written for (the owner, 2026-11-12: a sample on the screen, "no script is kept", and nothing to press): the count's own line says a sample is a template and gives the one thing to press — Draft Scenes opens on the scripts with the draft dialog up for that offer.
+    await ev("B.draft.offer = '6 Week Full Body Transformation'; bVideoSet(1); true");
+    assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "no script written for this offer yet (the 1 kept is for another offer: a script is written for one offer's exact words) · Draft scripts for it… · presented by a man");
+    await until(`/no script is kept for "6 Week Full Body Transformation": keep 1 more on Draft Scenes → Video scripts \\(the scripts kept there are for "${BRIEF.offer}": a script is written for one offer's exact words, so press Draft scripts… there for this one\\)/.test(document.querySelector('#bErrors').textContent)`);
+    await ev("document.querySelector('#bVideoDraft').click(); true");
+    await until("location.hash.endsWith('/scenes') && !!document.querySelector('#vsOfferIn')");
+    assert.deepEqual(await ev("[document.querySelector('#vsOfferIn').value, document.querySelector('#gModal h3').textContent, document.querySelector('#vsSampleGo').textContent, /Sample scripts · templates, never filmed/.test(document.querySelector('#vsCard').innerText), document.querySelector('#vsCard [data-script] .pill').textContent]"), ["6 Week Full Body Transformation", "Draft scripts", "Paste a sample script…", true, "kept · ready to film"]);
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
     // Pick Ads: the video plays where the picture would be, with what the check noticed.
     await open("review/u63-batch", "!!document.querySelector('#rvVideo')");
     await until("document.querySelector('#rvVideo').readyState >= 1");

@@ -81,9 +81,32 @@ export const hasFfmpeg = () => { try { sh("ffmpeg", ["-version"]); sh("ffprobe",
 
 // ── words spoken against words written ───────────────────────────────────────
 const NUMBER = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, ninety: 90 };
-const spoken = (s) => String(s).toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean).map((w) => (w in NUMBER ? String(NUMBER[w]) : w));
-/** The words said are the line's words, in order. Punctuation and case aside; a number may be said or written. */
-export function sameWords(said, line) { const a = spoken(said), b = spoken(line); return a.length === b.length && a.every((w, i) => w === b[i]); }
+/** A line as the words a listener hears: lower case, punctuation gone, a number as its figure; a possessive ending ("gym's", "Athletics'", "Athletics's") is the word itself, marked. */
+const spoken = (s) => String(s).toLowerCase().replace(/[’‘]/g, "'").replace(/[^a-z0-9' ]+/g, " ").split(/\s+/).filter(Boolean).map((raw) => {
+  const poss = /[a-z0-9]'s?$/.test(raw), w = (poss ? raw.replace(/'s?$/, "") : raw).replace(/'/g, "");
+  return { w: w in NUMBER ? String(NUMBER[w]) : w, poss };
+}).filter((t) => t.w);
+/** One letter added, dropped or changed at most. */
+const near = (a, b) => {
+  if (a === b) return true; if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return a.length === b.length ? a.slice(i + 1) === b.slice(i + 1) : a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+};
+/**
+ * The words said are the line's words, in order. Punctuation and case aside; a number may be said or written. Three
+ * things a listener cannot hear are not a difference (2026-11-12: a good take of "Aether Athletics's 6 Week…" was
+ * refused twice, heard as "Aether Athletics 6-week" and as "Ether Athletics'"): a possessive ("Athletics's" is said
+ * "Athletics"), the spelling of a NAME (`names`: the gym's own name — a word of it may be one letter off, "Ether"
+ * for "Aether"), and where a name's spaces fall ("F 45" for "F45"). Every other word must be the word.
+ */
+export function sameWords(said, line, { names = [] } = {}) {
+  const a = spoken(said), b = spoken(line);
+  const named = new Set(names.flatMap((n) => spoken(n).map((t) => t.w)).filter((w) => w.length >= 4));
+  const same = (x, y) => x.w === y.w || ((x.poss || y.poss) && (x.w + "s" === y.w || y.w + "s" === x.w)) || (named.has(y.w) && near(x.w, y.w));
+  if (a.length === b.length && a.every((t, i) => same(t, b[i]))) return true;
+  // The same letters with the spaces elsewhere (a name written as one word and heard as two) — only where a name is in the line.
+  return named.size + names.length > 0 && names.some((n) => spoken(n).some((t) => b.some((y) => y.w === t.w))) && a.map((t) => t.w).join("") === b.map((t) => t.w).join("");
+}
 export const wordCount = (line) => norm(line).split(" ").filter(Boolean).length;
 /** `{AREA}` filled the way the plan fills it in copy: "ANG MO KIO" → "Ang Mo Kio", "CBD" stays. */
 export const fillLine = (line, area) => norm(line).replace(/\{AREA\}/g, titleCase(String(area || "")));
@@ -230,10 +253,25 @@ export function videosProblems(videos) {
   if (videos.presenter != null && !(Number.isInteger(videos.presenter) && videos.presenter >= 0 && videos.presenter <= MAX_VIDEOS)) errs.push(`videos.presenter must be a whole number from 0 to ${MAX_VIDEOS}`);
   return errs;
 }
+/**
+ * Why an offer has no kept script, and what to press (2026-11-12: the owner pasted a sample, saw it on the screen and
+ * was told "no script is kept" — a sample is a template, not a script). `state`: `drafts` (drafts for this offer wait
+ * to be kept) · `other_offer` (scripts are kept, for other words) · `sample_only` (only a template is on file) · `none`.
+ */
+export function noScriptWhy(gymDir, offer, { libraryDir = VIDEO_LIBRARY_DIR } = {}) {
+  const all = readScripts(gymDir).scripts.filter((s) => s.status !== "retired"), key = norm(offer).toLowerCase();
+  const drafts = all.filter((s) => s.status === "draft" && norm(s.offer).toLowerCase() === key).length;
+  if (drafts) return { state: "drafts", drafts, text: `${drafts} draft${drafts === 1 ? " for this offer is" : "s for this offer are"} waiting there: read ${drafts === 1 ? "it" : "them"} and press Keep` };
+  const others = [...new Set(all.filter((s) => s.status === "kept").map((s) => s.offer))];
+  if (others.length) return { state: "other_offer", offers: others, text: `the scripts kept there are for ${others.map((o) => `"${o}"`).join(", ")}: a script is written for one offer's exact words, so press Draft scripts… there for this one` };
+  const samples = liveSamples(libraryDir).length;
+  if (samples) return { state: "sample_only", samples, text: `nothing is written for this offer yet. The sample script there is a template, not a script to film: press Draft scripts…, read the drafts and keep one` };
+  return { state: "none", text: "nothing is written for this offer yet: press Draft scripts… there, or write your own" };
+}
 /** The scripts a batch makes: that many of the ones kept for its offer, in an order the seed fixes (a re-run picks the same). Too few is refused by name. */
-export function pickScripts(gymDir, { count, offer, seed = "batch" } = {}) {
+export function pickScripts(gymDir, { count, offer, seed = "batch", libraryDir = VIDEO_LIBRARY_DIR } = {}) {
   const kept = keptScripts(gymDir, offer);
-  if (kept.length < count) throw new Error(`${count} presenter video${count === 1 ? "" : "s"} asked for, but ${kept.length ? `only ${kept.length} script${kept.length === 1 ? " is" : "s are"}` : "no script is"} kept for "${norm(offer)}": keep ${count - kept.length} more on Draft Scenes → Video scripts`);
+  if (kept.length < count) throw new Error(`${count} presenter video${count === 1 ? "" : "s"} asked for, but ${kept.length ? `only ${kept.length} script${kept.length === 1 ? " is" : "s are"}` : "no script is"} kept for "${norm(offer)}": keep ${count - kept.length} more on Draft Scenes → Video scripts${kept.length ? "" : ` (${noScriptWhy(gymDir, offer, { libraryDir }).text})`}`);
   return kept.map((s2) => ({ s: s2, k: sha(`${seed}|${s2.id}`) })).sort((a, b) => a.k.localeCompare(b.k)).slice(0, count).map((x) => x.s);
 }
 /** A script with what making it would take: its lines, each clip's length, and the seconds and image calls for a set of locations. */
@@ -246,6 +284,8 @@ export function scriptCost(script, areas = [""]) {
 const DRAFT_SCHEMA = { type: "OBJECT", properties: { scripts: { type: "ARRAY", items: { type: "OBJECT", properties: { lines: { type: "ARRAY", items: { type: "STRING" } } }, required: ["lines"] } } }, required: ["scripts"] };
 export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [] }) {
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean);
+  // "Aether Athletics' 6 Week…", never "Athletics's": the possessive as it is said and as the captions show it.
+  const gyms = /s$/i.test(gym) ? `${gym}'` : `${gym}'s`;
   // With the owner's samples or his facts for this offer a script may run longer: it follows the sample's beats, cut to what is relevant and true here.
   const long = samples.length > 0 || facts.length > 0;
   const lines = [
@@ -254,8 +294,8 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
       ? `A script is 3 to ${LINES[1]} lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`
       : `A script is exactly 3 lines. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`,
     long
-      ? `The first line says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. One of the first two lines names the programme in these exact words — "${gym}'s ${offer}" — and says what it is FOR in this person's life. The lines between are the beats worth keeping${samples.length ? " from the sample you follow" : ""}: each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. The last line tells them what to do and ends with "Tap below" and a few words (for example: "Tap below to see if this is a fit for you.").`
-      : `Line 1 says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. Line 2 names the programme in these exact words — "${gym}'s ${offer}" — and says what it is FOR in this person's life. Line 3 says one more thing they will get from it and ends with exactly: "Tap below to find out more."`,
+      ? `The first line says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. One of the first two lines names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. The lines between are the beats worth keeping${samples.length ? " from the sample you follow" : ""}: each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. The last line tells them what to do and ends with "Tap below" and a few words (for example: "Tap below to see if this is a fit for you.").`
+      : `Line 1 says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. Line 2 names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. Line 3 says one more thing they will get from it and ends with exactly: "Tap below to find out more."`,
     `Speak about BENEFITS, never features. A benefit is what changes for the person: feeling stronger, more energy for the day, clothes fitting better, confidence, keeping up with the children, a body that does what is asked of it. A feature is how the gym runs, and the script says NONE: nothing about how training is organised (no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size), because a wrong one is a false claim about this gym.${facts.length ? ` The only facts about the gym or the programme that may be stated are these, in the owner's words: ${facts.map((x) => `"${x}"`).join("; ")}. Say them as given, and nothing else about how the programme works.` : ""} A benefit is what the programme is built to help with, never a promised result.`,
     `The speaker is nobody in particular: NOT a coach, NOT a member, NOT the owner. So the script never says I, we, our, my or us, and never claims an experience ("I joined", "we built"): where a gym would say we, the script says "${gym}", "the coaches" or "the team".`,
     `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark; an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
@@ -304,9 +344,11 @@ export function realModels(profile = {}) {
       else throw new Error("the video part carried neither data nor a uri");
     },
     async watch(file) {
+      // A name is spelt the gym's way when it is heard ("Aether", not "Ether"; "F45", not "F forty-five"): nothing else about the line is told.
+      const question = profile.display_name ? `${WATCH_QUESTION} The business is called "${profile.display_name}": where that name is spoken, write it exactly that way.` : WATCH_QUESTION;
       const out = await whenGeminiFree(async () => {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHECK_MODEL}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": loadGeminiKey() }, signal: AbortSignal.timeout(240000),
-          body: JSON.stringify({ contents: [{ parts: [{ text: WATCH_QUESTION }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: WATCH_SCHEMA, temperature: 0 } }) });
+          body: JSON.stringify({ contents: [{ parts: [{ text: question }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: WATCH_SCHEMA, temperature: 0 } }) });
         if (!res.ok) throw new Error(`the video check failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
         return res.json();
       }, { label: "video check" });
@@ -469,7 +511,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
           await models.clip({ out: file, image: stills[i], prompt, seconds });
         }
         let seen = readJson(checkFile); if (!seen) { spent.checks++; seen = await models.watch(file); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
-        const said = sameWords(seen.spoken, line), alone = seen.people === 1, clean = !(seen.on_screen_text || []).length;
+        const said = sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean) }), alone = seen.people === 1, clean = !(seen.on_screen_text || []).length;
         r = { file, takes: take, passed: said && alone && clean, line, check: seen, why: !said ? `it said "${norm(seen.spoken)}"` : !alone ? `${seen.people} people are in it` : !clean ? `words appear in the picture: ${seen.on_screen_text.join(", ")}` : null };
         if (r.passed) passedTakes.push(r);
         log(`  ${basename(file)}: ${r.passed ? "said as written, one person, no lettering" : r.why}${(seen.faults || []).length ? ` · noted: ${seen.faults.join("; ")}${r.passed && take < takes ? " — made once more" : ""}` : ""}`);

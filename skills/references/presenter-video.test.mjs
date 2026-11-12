@@ -77,6 +77,18 @@ test("PV1 who presents, and the script's rules: the presenter is the gym's own c
     assert.equal(c.usd, Math.round(((S1 * 2 + S2 + S3) * USD_PER_SECOND + 3 * 0.15) * 100) / 100);
     assert.deepEqual([fillLine("People in {AREA}, hello", "ANG MO KIO"), fillLine("In {AREA} now", "CBD"), clipSeconds("one two three"), clipSeconds(Array(40).fill("word").join(" ")), CLIP_SECONDS, LINE_WORDS], ["People in Ang Mo Kio, hello", "In CBD now", 5, 12, [5, 12], [6, 26]]);
     assert.ok(sameWords("Test Gym’s 12-week Full Body Transformation is built for exactly that.", "Test Gym's twelve week full body transformation is built for exactly that") && !sameWords("a plan that fits your weak", "a plan that fits your week") && !sameWords("keep watching now", "keep watching"));
+    // What a listener cannot hear is not a difference (2026-11-12: a good take of "Aether Athletics's 6 Week…" was refused twice): a possessive, the spelling of the gym's own name, where a name's spaces fall. Every other word must be the word.
+    const AE = "Aether Athletics's 6 Week Full Body Transformation is designed to help you regain your daily energy and confidence.", NM = { names: ["Aether Athletics"] };
+    assert.deepEqual([
+      sameWords("Aether Athletics 6-week full body transformation is designed to help you regain your daily energy and confidence.", AE, NM),
+      sameWords("Ether Athletics' 6-week full body transformation is designed to help you regain your daily energy and confidence.", AE, NM),
+      sameWords("Ether Athletics 6-week full body transformation is designed to help you regain your daily energy and confidence.", AE),
+      sameWords("Aether Athletics 6-week full body transformation is designed to help you regain your daily energy.", AE, NM),
+      sameWords("F 45 Jurong West six week challenge starts now", "F45 Jurong West 6 Week Challenge starts now", { names: ["F45 Jurong West"] }),
+      sameWords("the gyms plan works", "the gym's plan works"), sameWords("built for weeks", "built for week"), sameWords("a plan that fits your weak", "a plan that fits your week", NM), sameWords("every one is welcome", "everyone is welcome", NM),
+    ], [true, true, false, false, true, true, false, false, false]);
+    // The drafter is given the possessive a person says: "Aether Athletics' 6 Week…", never "Athletics's".
+    assert.match(buildScriptPrompt({ profile: { display_name: "Aether Athletics" }, offer: "6 Week Full Body Transformation" }).prompt, /in these exact words — "Aether Athletics' 6 Week Full Body Transformation"/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -220,10 +232,17 @@ test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the 
     // A batch's videos: how many, and which scripts.
     assert.deepEqual([videosProblems(undefined), videosProblems({ presenter: 2 }), videoCount({ presenter: 2 }), videoCount(null), MAX_VIDEOS], [[], [], 2, 0, 3]);
     assert.deepEqual(videosProblems({ presenter: 4, talking: 1 }), ['videos: "talking" is not a kind of video (presenter)', "videos.presenter must be a whole number from 0 to 3"]);
-    assert.throws(() => pickScripts(g, { count: 1, offer: OFFER }), /1 presenter video asked for, but no script is kept for "12 Week Full Body Transformation": keep 1 more on Draft Scenes → Video scripts/);
+    // No script for the offer: the refusal says which case it is and what to press (2026-11-12: a sample on the screen was taken for a script).
+    const { noScriptWhy } = await import("./presenter-video.mjs");
+    assert.throws(() => pickScripts(g, { count: 1, offer: OFFER, libraryDir: L }), /1 presenter video asked for, but no script is kept for "12 Week Full Body Transformation": keep 1 more on Draft Scenes → Video scripts \(nothing is written for this offer yet\. The sample script there is a template, not a script to film: press Draft scripts…, read the drafts and keep one\)$/);
+    assert.deepEqual([noScriptWhy(g, OFFER, { libraryDir: L }).state, noScriptWhy(g, OFFER, { libraryDir: join(d, "empty-lib") }).state, noScriptWhy(g, OFFER, { libraryDir: join(d, "empty-lib") }).text], ["sample_only", "none", "nothing is written for this offer yet: press Draft scripts… there, or write your own"]);
     const a = addScript(g, { lines: GOOD, offer: OFFER }, { profile }), b = addScript(g, { lines: [GOOD[0], GOOD[1], "Feel stronger and have more energy for your day. Tap below to find out more."], offer: OFFER }, { profile });
     addScript(g, { lines: [GOOD[0], GOOD[1], "Walk into your week with more energy than last month. Tap below to find out more."], offer: OFFER, source: "drafted" }, { profile });
-    assert.throws(() => pickScripts(g, { count: 3, offer: OFFER }), /3 presenter videos asked for, but only 2 scripts are kept/);
+    assert.throws(() => pickScripts(g, { count: 3, offer: OFFER, libraryDir: L }), /3 presenter videos asked for, but only 2 scripts are kept for "12 Week Full Body Transformation": keep 1 more on Draft Scenes → Video scripts$/);
+    // Scripts kept for other words, and a draft waiting for these.
+    assert.deepEqual([noScriptWhy(g, "6 Week Reset", { libraryDir: L }).state, noScriptWhy(g, "6 Week Reset", { libraryDir: L }).text], ["other_offer", `the scripts kept there are for "${OFFER}": a script is written for one offer's exact words, so press Draft scripts… there for this one`]);
+    addScript(g, { lines: [GOOD[0], "Test Gym's 6 Week Reset is built for exactly that, with a coach beside you every week.", GOOD[2]], offer: "6 Week Reset", source: "drafted" }, { profile });
+    assert.deepEqual([noScriptWhy(g, "6 week reset", { libraryDir: L }).state, noScriptWhy(g, "6 Week Reset", { libraryDir: L }).text], ["drafts", "1 draft for this offer is waiting there: read it and press Keep"]);
     const one = pickScripts(g, { count: 1, offer: OFFER, seed: "s1" }), again = pickScripts(g, { count: 1, offer: OFFER, seed: "s1" });
     assert.deepEqual([one.length, one[0].id === again[0].id, [a.id, b.id].includes(one[0].id), pickScripts(g, { count: 2, offer: OFFER, seed: "s1" }).map((x) => x.id).sort()], [1, true, true, [a.id, b.id].sort()]);
   } finally { rmSync(d, { recursive: true, force: true }); }

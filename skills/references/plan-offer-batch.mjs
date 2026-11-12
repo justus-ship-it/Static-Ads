@@ -843,6 +843,10 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     const noteOf = (id) => (photos.find((p) => p.id === id)?.notes || []).map((n) => `${id}: ${n}`);
     const galleryNotes = Object.fromEntries(ads.map((a) => [a.folder, [...a.photos.flatMap(noteOf), ...(a.video?.notes || [])].join(" · ")]).filter(([, n]) => n));
     writeFileSync(join(out, "gallery-notes.json"), JSON.stringify(galleryNotes, null, 2) + "\n");
+    // No ad at all (2026-11-12: a batch of one video whose one line was refused ended "Command failed: … gallery-selector"):
+    // there is nothing for a gallery to show, so the run ends here, in words, with what was refused and why. What was
+    // made is on disk and is reused by Run again.
+    if (!ads.length) throw new Error(`no ad was made. ${failed.length ? failed.map((f) => `${f.candidate}${f.location ? ` (${f.location})` : ""}: ${[].concat(f.failures || []).join("; ")}`).join(" · ") : "Nothing in this batch passed its checks."} Everything made so far is kept: Run again reuses it.`);
     const gallery = deps.gallery || ((dir) => execFileSync(process.execPath, [join(HERE, "gallery-selector.mjs"), "--output-dir", dir], { stdio: "ignore" }));
     gallery(out);
     prog.set({ stage: "done", ads: ads.length, failed: failed.length, image_calls: spent });
