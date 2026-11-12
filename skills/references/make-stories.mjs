@@ -173,7 +173,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
   const catalogue = catalogueFor(profile, null, { look: batch.look }); // the feed ads' look family and palettes, brand ones included
   const T = catalogue.treatments;
   // A card is set at 9:16 with its feed ad (plan-offer-batch): it needs no Stories photo and is left alone here.
-  batch.ads = batch.ads.filter((a) => !a.card);
+  batch.ads = batch.ads.filter((a) => !a.card && !a.video_file); // and a video is 9:16 already
   const feed = batch.ratio || "1x1", feedName = feed.replace("x", ":"), feedCanvas = T.canvas[feed] || [1080, 1080]; // the feed ad's shape: its crop window is that shape, not always a square
   const photography = profile.brand_lock?.photography || {}, brandNames = [profile.display_name].filter(Boolean);
   const visualsById = Object.fromEntries((existsSync(join(out, "visuals.json")) ? JSON.parse(readFileSync(join(out, "visuals.json"), "utf-8")).visuals : []).map((v) => [v.id, v]));
@@ -181,7 +181,7 @@ export async function runStories({ brandDir, batchId, batchDir = null, maxCalls 
   const at = (p) => (existsSync(p) ? p : existsSync(join(brandDir, "brand-assets", p)) ? join(brandDir, "brand-assets", p) : resolve(p));
 
   // ── 1 plan ──
-  let chosen = resolveSelections(out).filter((a) => !a.card); // a card has its own 9:16 already
+  let chosen = resolveSelections(out).filter((a) => !a.card && !a.video_file); // a card has its own 9:16 already, and so has a video
   if (!chosen.length) throw new Error("selections.json chooses no ads");
   if (only) {
     const want = new Set(only);

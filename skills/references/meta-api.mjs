@@ -104,6 +104,8 @@ export function dateWindow(days, { timezone, now = new Date() } = {}) {
 /** The same window as Meta's `time_range` parameter. */
 export const timeRange = (days, opts) => JSON.stringify(dateWindow(days, opts));
 
+/** How long one video upload may take before it is given up (our videos are a few megabytes). */
+export const UPLOAD_TIMEOUT_MS = 300000;
 export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch, maxPages = 10 } = {}) {
   if (!config.token) throw new MetaError("no META_ACCESS_TOKEN in .env — the Meta link is not set up yet");
   const base = `${config.graphUrl.replace(/\/$/, "")}/${META_API_VERSION}`;
@@ -134,6 +136,25 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
     }
     return out;
   }
+  /**
+   * A file upload (2026-11-12: a video for an ad): multipart, the file as `source`, the token and proof as fields.
+   * Meta takes videos on its own host, graph-video.facebook.com; a test's fake answers on its one address. The
+   * upload has a deadline, so a stalled connection ends in words. Same errors as a write.
+   */
+  async function upload(path, params = {}, file, { token, timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries({ ...params, ...auth(token) })) if (v !== undefined && v !== null) fd.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
+    fd.set("source", new Blob([file.bytes], { type: file.type || "application/octet-stream" }), file.name);
+    let res, out;
+    try { res = await f(`${base.replace("://graph.facebook.com", "://graph-video.facebook.com")}/${path.replace(/^\//, "")}`, { method: "POST", headers: { accept: "application/json" }, body: fd, signal: AbortSignal.timeout(timeoutMs) }); }
+    catch (e) { throw new MetaError(e?.name === "TimeoutError" ? `the upload to Meta did not finish in ${Math.round(timeoutMs / 1000)} s` : `could not reach Meta (${scrubTokens(e.message)})`, { path }); }
+    try { out = await res.json(); } catch { throw new MetaError(`Meta answered ${res.status} with something that is not JSON`, { status: res.status, path }); }
+    if (!res.ok || out?.error) {
+      const e = out?.error || {};
+      throw new MetaError(explainError(e, path) + (e.error_user_msg ? ` — ${scrubTokens(e.error_user_msg)}` : ""), { code: e.code ?? null, subcode: e.error_subcode ?? null, type: e.type ?? null, status: res.status, trace: e.fbtrace_id ?? null, path });
+    }
+    return out;
+  }
   /** Every item of a paged edge, page after page (never more than maxPages). */
   async function list(path, params = {}, opts = {}) {
     const out = [];
@@ -148,7 +169,11 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
   }
   return {
     version: META_API_VERSION,
-    get, list, post,
+    get, list, post, upload,
+    /** A video into the ad account's library (for a video ad): its id. Meta then processes it; `videoStatus` says when it is ready. */
+    uploadVideo: (account, { bytes, name, title = null }) => upload(`${actId(account)}/advideos`, { name, ...(title ? { title } : {}) }, { bytes, name, type: "video/mp4" }),
+    /** Where an uploaded video stands: "ready", "processing" or "error" (Meta's own word), with the whole status beside it. */
+    videoStatus: async (id) => { const r = await get(id, { fields: "status" }); return { state: String(r?.status?.video_status || "processing").toLowerCase(), status: r?.status || null }; },
     me: () => get("me", { fields: "id,name" }),
     adAccounts: () => list("me/adaccounts", { fields: "id,account_id,name,currency,account_status,timezone_name,business{id,name}" }),
     pages: () => list("me/accounts", { fields: "id,name,category,instagram_business_account{id,username}" }),

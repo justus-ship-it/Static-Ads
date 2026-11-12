@@ -214,6 +214,7 @@ export function batchRows(gymDir, batchId) {
       // By record (2026-11-11): the room each photo was matched to, and how much of the picture the words cover, as the batch measured it.
       room: a.photos.map((id) => visuals[id]?.room).filter(Boolean).join("+") || null, text_cover: typeof a.text_cover === "number" ? a.text_cover : null,
       layout: a.treatment, style: a.style, palette: a.palette, has_story: !!entry.hashes?.story,
+      ...(a.video_file ? { media: "video" } : {}), // a video this app made is read on the video track, by record
       pin: sf.pin || null, radius_km: sf.radius_km ?? null, age_min: sf.age_min ?? null, age_max: sf.age_max ?? null, gender: sf.gender || null, preset: sf.preset || null, preset_id: sf.preset_id || null, daily_budget: sf.daily ?? null, budget_level: sf.level || null,
       form_id: af.form_id || null, cta: af.cta || null, headline: af.headline || null, primary_text: af.message || null, placeholder_words: af.placeholders ?? null,
       status: r?.words || (superseded ? "superseded" : "not pulled yet"), adset_status: s?.words || null,

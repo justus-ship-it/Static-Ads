@@ -27,6 +27,12 @@
  *     across the presenter's forehead.
  *   · A CLIP WITH A NOTED FAULT IS MADE ONCE MORE while takes are left (warped fingers, a hand that moves wrongly),
  *     and the cleaner take is kept: a fault is no refusal, but the owner's bar is that borderline-real fails.
+ *   · EACH CLIP IS CUT TO ITS SPEECH, AND THE CAPTIONS FOLLOW THE VOICE (the owner on the first real video: "subtitles
+ *     are late and not synced with his voice", "the delay between 'Keep watching' and the cut is too long"). A clip is
+ *     asked for with a second to spare so the sentence finishes, and the model leaves silence at both ends: that
+ *     video had 2.2 s of nothing after its first line and 2.7 s before its third. So where he actually speaks is
+ *     measured from the sound (`speechOf`), the clip is cut a breath either side of it, and the captions are timed
+ *     across the spoken time only, breaking where the sentence does.
  *   · A LINE WITHOUT THE AREA IS MADE ONCE and shared by every location's video; only the line that says the area is
  *     made per location.
  *   · SPEND IS COUNTED BEFORE EACH CALL, in seconds of video and image calls, against caps the run was given.
@@ -41,7 +47,7 @@ import { join, resolve, extname, basename } from "path";
 import { createHash } from "crypto";
 import { parseArgs } from "util";
 import { fileURLToPath } from "url";
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
 import { loadGeminiKey, generateImage } from "./generate_ads_gemini.mjs";
 import { whenGeminiFree } from "./gemini-busy.mjs";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
@@ -111,8 +117,8 @@ export function scriptProblems(lines, { offer = null, profile = {} } = {}) {
   for (const e of onAdProblems(fillLine(all, "Bishan"), profile)) if (!errs.includes(e)) errs.push(e);
   return errs;
 }
-export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [] }; };
-const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify(data, null, 2) + "\n");
+export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [], samples: Array.isArray(j?.samples) ? j.samples : [] }; };
+const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], samples: data.samples || [] }, null, 2) + "\n");
 const shape = (lines) => lines.map(norm).join(" ").toLowerCase().replace(/[^a-z0-9 ]/g, "");
 /** Add a script: the owner's own is kept at once, a drafted one waits for him. Never twice. */
 export function addScript(gymDir, { lines, offer, source = "owner" }, { profile = {} } = {}) {
@@ -138,6 +144,48 @@ export function decideScript(gymDir, id, { status, lines, reason } = {}, { profi
 }
 /** The scripts ready for an offer: kept, and written for these exact words. */
 export const keptScripts = (gymDir, offer = null) => readScripts(gymDir).scripts.filter((s) => s.status === "kept" && (!offer || norm(s.offer).toLowerCase() === norm(offer).toLowerCase()));
+/**
+ * Samples (2026-11-12, the owner: "we talk about BENEFITS not features … we have many [scripts] for you to use"): scripts
+ * of his that have worked, pasted as they are. They are reference, never made into a video and never changed: the
+ * drafter is shown them to follow how they are built, how they sound and what they choose to talk about — never to
+ * copy a sentence or carry over a fact. Retired with a reason, never deleted.
+ */
+export const SAMPLE_LIMIT = [40, 1500];
+export function addSample(gymDir, text, { note = null } = {}) {
+  const t = String(text || "").replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  if (t.length < SAMPLE_LIMIT[0] || t.length > SAMPLE_LIMIT[1]) throw new Error(`a sample script is ${SAMPLE_LIMIT[0]} to ${SAMPLE_LIMIT[1]} characters: paste one script at a time`);
+  const data = readScripts(gymDir), key = t.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (data.samples.some((x) => x.text.toLowerCase().replace(/[^a-z0-9]/g, "") === key)) throw Object.assign(new Error("this sample is already here"), { duplicate: true });
+  const row = { id: `vs-${sha(key).slice(0, 10)}`, text: t, ...(note ? { note: norm(note) } : {}), added: today() };
+  data.samples.push(row); writeScripts(gymDir, data); return row;
+}
+export function decideSample(gymDir, id, { retired, reason } = {}) {
+  const data = readScripts(gymDir), row = data.samples.find((x) => x.id === id);
+  if (!row) throw new Error(`no such sample: ${id}`);
+  if (retired === true) { if (typeof reason !== "string" || reason.trim().length < 3) throw new Error("retiring a sample needs a reason"); row.retired = today(); row.reason = reason.trim(); }
+  else if (retired === false) { delete row.retired; delete row.reason; }
+  writeScripts(gymDir, data); return row;
+}
+export const liveSamples = (gymDir) => readScripts(gymDir).samples.filter((x) => !x.retired);
+
+/** How many presenter videos a batch may ask for (each is one script, made once for every location). */
+export const MAX_VIDEOS = 3;
+export const videoCount = (videos) => (Number.isInteger(videos?.presenter) ? videos.presenter : 0);
+/** What is wrong with a brief's `videos`: { presenter: 0…MAX_VIDEOS }. */
+export function videosProblems(videos) {
+  if (videos == null) return [];
+  if (typeof videos !== "object" || Array.isArray(videos)) return ["videos must say how many of each kind: { presenter: 1 }"];
+  const errs = [];
+  for (const k of Object.keys(videos)) if (k !== "presenter") errs.push(`videos: "${k}" is not a kind of video (presenter)`);
+  if (videos.presenter != null && !(Number.isInteger(videos.presenter) && videos.presenter >= 0 && videos.presenter <= MAX_VIDEOS)) errs.push(`videos.presenter must be a whole number from 0 to ${MAX_VIDEOS}`);
+  return errs;
+}
+/** The scripts a batch makes: that many of the ones kept for its offer, in an order the seed fixes (a re-run picks the same). Too few is refused by name. */
+export function pickScripts(gymDir, { count, offer, seed = "batch" } = {}) {
+  const kept = keptScripts(gymDir, offer);
+  if (kept.length < count) throw new Error(`${count} presenter video${count === 1 ? "" : "s"} asked for, but ${kept.length ? `only ${kept.length} script${kept.length === 1 ? " is" : "s are"}` : "no script is"} kept for "${norm(offer)}": keep ${count - kept.length} more on Draft Scenes → Video scripts`);
+  return kept.map((s2) => ({ s: s2, k: sha(`${seed}|${s2.id}`) })).sort((a, b) => a.k.localeCompare(b.k)).slice(0, count).map((x) => x.s);
+}
 /** A script with what making it would take: its lines, each clip's length, and the seconds and image calls for a set of locations. */
 export function scriptCost(script, areas = [""]) {
   const n = Math.max(1, areas.length), clips = script.lines.map((l) => ({ line: l, per_area: /\{AREA\}/.test(l), seconds: clipSeconds(fillLine(l, areas[0] || "Ang Mo Kio")) }));
@@ -146,16 +194,19 @@ export function scriptCost(script, areas = [""]) {
 }
 
 const DRAFT_SCHEMA = { type: "OBJECT", properties: { scripts: { type: "ARRAY", items: { type: "OBJECT", properties: { lines: { type: "ARRAY", items: { type: "STRING" } } }, required: ["lines"] } } }, required: ["scripts"] };
-export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [] }) {
+export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [] }) {
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean);
   const lines = [
     `You write short scripts for a talking-to-camera video advert for ${gym}'s programme: "${offer}". ${audience ? `The advert is for: ${audience}.` : "The advert is for adults near the gym who are not training yet."} Someone stands in the gym, talks to a phone camera the way a friend would, and the video cuts to a new spot for each line.`,
     `A script is exactly 3 lines. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`,
-    `Line 1 says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. Line 2 names the programme in these exact words — "${gym}'s ${offer}" — and says what it is like to be in it: coaching, a plan, the people. Line 3 says one more true thing about how it works and ends with exactly: "Tap below to find out more."`,
+    `Line 1 says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. Line 2 names the programme in these exact words — "${gym}'s ${offer}" — and says what it is FOR in this person's life. Line 3 says one more thing they will get from it and ends with exactly: "Tap below to find out more."`,
+    `Speak about BENEFITS, never features. A benefit is what changes for the person: feeling stronger, more energy for the day, clothes fitting better, confidence, keeping up with the children, a body that does what is asked of it. A feature is how the gym runs, and the script says NONE: nothing about how training is organised (no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size), because a wrong one is a false claim about this gym.${facts.length ? ` The only facts about the gym that may be stated are these, in the owner's words: ${facts.map((x) => `"${x}"`).join("; ")}.` : ""} A benefit is what the programme is built to help with, never a promised result.`,
     `The speaker is nobody in particular: NOT a coach, NOT a member, NOT the owner. So the script never says I, we, our, my or us, and never claims an experience ("I joined", "we built").`,
     `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark; an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
     `Write ${count} scripts, each opening a different way (what they keep putting off, what they are unsure about, who they would be training with, how it fits a busy week).`,
   ];
+  // The owner's own proven scripts, when he has given some: their structure, rhythm and voice are followed; their sentences and their facts are not copied.
+  if (samples.length) lines.push(`These scripts have worked for this owner. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact (a place, a programme name, a number, how a gym runs):\n${samples.map((x, i) => `--- SAMPLE ${i + 1}\n${x}`).join("\n")}`);
   if (existing.length) lines.push(`Already written — do not repeat or closely rephrase:\n${existing.map((e) => `- ${e}`).join("\n")}`);
   return { prompt: lines.join("\n\n"), schema: DRAFT_SCHEMA };
 }
@@ -164,7 +215,7 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
   if (typeof offer !== "string" || offer.trim().length < 3) throw new Error("the offer's exact words are needed");
   if (!Number.isInteger(count) || count < 1 || count > 6) throw new Error("count must be 1 to 6");
   const profile = readJson(join(brandDir, "gym-profile.json")) || {};
-  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: readScripts(brandDir).scripts.map((s) => s.lines.join(" / ")) });
+  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: readScripts(brandDir).scripts.map((s) => s.lines.join(" / ")), samples: liveSamples(brandDir).map((x) => x.text) });
   const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [];
   for (const d of answer?.scripts || []) {
     try { added.push(addScript(brandDir, { lines: d.lines, offer: offer.trim(), source: "drafted" }, { profile })); }
@@ -247,21 +298,68 @@ async function overlay(browser, out, inner) {
 /** The live area for words on a 9:16 video (Meta's Stories and Reels zone). */
 export const LIVE = { left: 0.06, right: 0.94, top: 0.14, bottom: 0.65 };
 const inLive = (b) => b.left >= LIVE.left - 0.001 && b.right <= LIVE.right + 0.001 && b.top >= LIVE.top - 0.001 && b.bottom <= LIVE.bottom + 0.001;
-/** Caption chunks of a line, a few words at a time, timed across from…to by their share of the letters. */
-export function captions(text, from, to, per = 3) {
-  const ws = norm(text).split(" "), chunks = []; for (let i = 0; i < ws.length; i += per) chunks.push(ws.slice(i, i + per).join(" "));
-  const total = chunks.reduce((t, c) => t + c.length + 2, 0); let at = from;
-  return chunks.map((c) => { const d = ((c.length + 2) / total) * (to - from), x = { text: c, from: Math.round(at * 100) / 100, to: Math.round((at + d) * 100) / 100 }; at += d; return x; });
+/** Quieter than this for this long is a pause; a sound shorter than MIN_VOICED is a click, not speech; a clip is cut this far before the first word and after the last. */
+export const SILENCE_DB = -30, SILENCE_MIN = 0.2, MIN_VOICED = 0.25, LEAD = 0.12, TAIL = 0.25;
+/** From ffmpeg's silence report and the file's length: where there is sound — `spans` [[a, b], …], each MIN_VOICED or longer — and the first and last of it. No sound found reads as the whole file. */
+export function speechFrom(report, duration) {
+  const starts = [...String(report).matchAll(/silence_start: ([\d.]+)/g)].map((m) => Number(m[1])), ends = [...String(report).matchAll(/silence_end: ([\d.]+)/g)].map((m) => Number(m[1]));
+  const quiet = starts.map((a, i) => [a, ends[i] ?? duration]).sort((x, y) => x[0] - y[0]), spans = []; let at = 0;
+  for (const [a, b] of quiet) { if (a - at >= MIN_VOICED) spans.push([at, a]); at = Math.max(at, b); }
+  if (duration - at >= MIN_VOICED) spans.push([at, duration]);
+  const r2 = (x) => Math.round(x * 100) / 100;
+  return spans.length ? { start: r2(spans[0][0]), end: r2(spans[spans.length - 1][1]), spans: spans.map(([a, b]) => [r2(a), r2(b)]), duration } : { start: 0, end: duration, spans: [[0, duration]], duration };
+}
+/** Where someone speaks in a clip, measured from its sound (ffmpeg does the listening; no model call). */
+export function speechOf(file) {
+  const r = spawnSync("ffmpeg", ["-hide_banner", "-i", file, "-af", `silencedetect=noise=${SILENCE_DB}dB:d=${SILENCE_MIN}`, "-f", "null", "-"], { encoding: "utf-8" });
+  return speechFrom(r.stderr || "", durationOf(file));
+}
+/** A line in caption chunks: up to `per` words, and never across the end of a sentence or a clause. Each { text (trailing commas and stops not shown), ends: it closes a clause }. */
+export function captionChunks(text, per = 3) {
+  const out = []; let cur = [];
+  for (const w of norm(text).split(" ").filter(Boolean)) { cur.push(w); if (cur.length >= per || /[.,;:!?]$/.test(w)) { out.push(cur.join(" ")); cur = []; } }
+  if (cur.length) out.push(cur.join(" "));
+  return out.map((c) => ({ text: c.replace(/[.,;:]+$/, ""), ends: /[.,;:!?]$/.test(c) }));
+}
+/** A clause's end is tied to a pause when the two fall within this share of the line of each other. */
+export const SNAP = 0.15;
+/**
+ * Captions timed to the voice. The chunks share the SPOKEN time by their letters and the clock skips every pause, so
+ * no caption sits through a silence waiting for its words; and where a clause ends near a pause, the caption changes
+ * AT that pause — the next one starts with the next word spoken. `spans`: where there is speech, in the timeline
+ * the captions are for. Each { text, from, to }.
+ */
+export function captions(text, spans, per = 3) {
+  const chunks = captionChunks(text, per), n = chunks.length, r2 = (x) => Math.round(x * 100) / 100;
+  const len = chunks.map((c) => c.text.length + 1), letters = len.reduce((t, x) => t + x, 0), dur = spans.map(([a, b]) => b - a), voiced = dur.reduce((t, x) => t + x, 0);
+  // Voiced time → the clock: at a pause, the end of the span before it or (next) the start of the one after.
+  const clock = (v, next) => { let left = v; for (const [i, [a, b]] of spans.entries()) { const d = b - a; if (left < d - 1e-6 || (!next && left <= d + 1e-6) || i === spans.length - 1) return a + Math.min(left, d); left -= d; } return spans[spans.length - 1][1]; };
+  // Anchors (chunks done, voiced time used): the start, the end, and every clause end that falls near a pause.
+  const anchors = [[0, 0]]; let cl = 0, gap = 0, used = 0;
+  const gaps = []; for (const d of dur.slice(0, -1)) { used += d; gaps.push(used); }
+  for (let k = 0; k < n - 1; k++) {
+    cl += len[k]; if (!chunks[k].ends) continue;
+    const f = cl / letters; let best = -1;
+    for (let j = gap; j < gaps.length; j++) if (Math.abs(gaps[j] / voiced - f) < SNAP && (best < 0 || Math.abs(gaps[j] / voiced - f) < Math.abs(gaps[best] / voiced - f))) best = j;
+    if (best >= 0) { anchors.push([k + 1, gaps[best]]); gap = best + 1; }
+  }
+  anchors.push([n, voiced]);
+  const out = [];
+  for (let s = 0; s < anchors.length - 1; s++) {
+    const [i0, v0] = anchors[s], [i1, v1] = anchors[s + 1], share = len.slice(i0, i1).reduce((t, x) => t + x, 0); let v = v0;
+    for (let i = i0; i < i1; i++) { const d = (len[i] / share) * (v1 - v0); out.push({ text: chunks[i].text, from: r2(clock(v, true)), to: r2(clock(v + d, false)) }); v += d; }
+  }
+  return out;
 }
 /** The area, the audience and the offer as the end card sets them: the brief's own words. */
 export function lockWords({ offer, location, audience = null }) { const s = splitOffer(String(offer)); return { audience: audience || "", location: String(location), duration: (s.duration || "").toUpperCase(), rest: String(s.offer_name || offer).toUpperCase() }; }
 const lockHtml = (w) => `<div class="lock"><small>${esc(w.audience)}</small><div class="a">${esc(w.location)}</div><div class="d">${esc(w.duration)}</div><div class="o">${esc(w.rest)}</div></div>`;
 /** The end card's ground: a plain near-black — no gym's colour, and not the panel's own (no brand colour on an ad unless the gym asks). */
 export const CARD_COLOUR = "0x101114";
-/** Cut the clips together at one size and rate, end on a plain card of `tail` seconds, and lay the timed words over it all. */
+/** Cut the clips together — each { file, from, to }, its spoken part — at one size and rate, end on a plain card of `tail` seconds, and lay the timed words over it all. */
 function assemble({ clips, overlays, out, tail }) {
-  const inputs = clips.flatMap((f) => ["-i", f]), n = clips.length;
-  let chain = clips.map((_, i) => `[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1[c${i}];[${i}:a]aresample=48000,aformat=channel_layouts=stereo[a${i}]`).join(";")
+  const inputs = clips.flatMap((c) => ["-i", c.file]), n = clips.length;
+  let chain = clips.map((c, i) => `[${i}:v]trim=${c.from}:${c.to},setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1[c${i}];[${i}:a]atrim=${c.from}:${c.to},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a${i}]`).join(";")
     + `;color=c=${CARD_COLOUR}:s=${W}x${H}:r=${FPS}:d=${tail},setsar=1[card];anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${tail}[quiet];`
     + clips.map((_, i) => `[c${i}][a${i}]`).join("") + `[card][quiet]concat=n=${n + 1}:v=1:a=1[v0][a]`;
   let last = "[v0]";
@@ -290,11 +388,12 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
     // A still for each line: the first from the room, the rest from the first (the same person) and the room.
     const stills = [];
     for (const [i] of script.lines.entries()) {
-      const out = join(dir, `still-${i + 1}.jpg`);
+      const prompt = stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[i % FRAMINGS.length], first: i === 0 });
+      const out = join(dir, `still-${i + 1}-${sha(prompt + basename(room)).slice(0, 6)}.jpg`);
       if (!existsSync(out)) {
         if (!within("images", 1)) return { videos: areas.map((area) => ({ area, script_id: script.id, failed: `the cap of ${caps.images} image calls was reached before the presenter's stills were made` })), spent };
         spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`still ${i + 1} of ${script.lines.length}`);
-        const prompt = stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[i % FRAMINGS.length], first: i === 0 }); writeFileSync(out.replace(/\.jpg$/, ".prompt.txt"), prompt + "\n");
+        writeFileSync(out.replace(/\.jpg$/, ".prompt.txt"), prompt + "\n");
         await models.image({ out, prompt, refs: i === 0 ? [room] : [stills[0], room] });
       }
       stills.push(out);
@@ -303,7 +402,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
     const made = new Map(); // "i|area" or "i|" → { file, takes, passed, check, line, why }
     const clipFor = async (i, area) => {
       const perArea = /\{AREA\}/.test(script.lines[i]), key = `${i}|${perArea ? area : ""}`; if (made.has(key)) return made.get(key);
-      const line = fillLine(script.lines[i], area), seconds = clipSeconds(line), name = `line-${i + 1}${perArea ? `-${slug(area)}` : ""}`;
+      const line = fillLine(script.lines[i], area), seconds = clipSeconds(line), name = `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(line + basename(stills[i])).slice(0, 6)}`;
       let take = 0, r = null; const passedTakes = [];
       while (take < takes && !(r && r.passed && !(r.check?.faults || []).length)) {
         take++; const file = join(dir, `${name}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
@@ -330,11 +429,17 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       if (bad >= 0) { videos.push({ area, script_id: script.id, lines, failed: `line ${bad + 1} did not pass after ${lines[bad].takes} take${lines[bad].takes === 1 ? "" : "s"}: ${lines[bad].why}` }); continue; }
       onProgress({ stage: "cut", area });
       const overlays = [], blocks = []; let at = 0;
-      for (const [i, l] of lines.entries()) { const d = durationOf(l.file); for (const [k, c] of captions(l.line, at + 0.2, at + d - 0.5).entries()) { const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}.png`), `<div class="cap">${esc(c.text.toUpperCase())}</div>`); overlays.push({ png: o.png, from: c.from, to: c.to }); blocks.push(...o.blocks); } at += d; }
+      const cuts = [];
+      for (const [i, l] of lines.entries()) {
+        // Where he speaks, measured from the sound; the clip is kept from a breath before to a breath after, and the captions follow the voice inside it.
+        const sp = speechOf(l.file), from = Math.max(0, sp.start - LEAD), to = Math.min(sp.duration, sp.end + TAIL); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
+        for (const [k, c] of captions(l.line, sp.spans.map(([a, b]) => [at + a - from, at + b - from])).entries()) { const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}.png`), `<div class="cap">${esc(c.text.toUpperCase())}</div>`); overlays.push({ png: o.png, from: c.from, to: c.to }); blocks.push(...o.blocks); }
+        at += cuts[i].to - cuts[i].from;
+      }
       const lock = await overlay(browser, join(dir, `lock-${slug(area)}.png`), lockHtml(lockWords({ offer, location: area, audience }))); overlays.push({ png: lock.png, from: at + 0.1, to: at + END_CARD_SECONDS }); blocks.push(...lock.blocks);
       const outside = blocks.filter((b) => !inLive(b));
       if (outside.length) { videos.push({ area, script_id: script.id, lines, failed: `the words do not fit Meta's live area: "${outside[0].text}"` }); continue; }
-      const file = assemble({ clips: lines.map((l) => l.file), overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`), tail: END_CARD_SECONDS });
+      const file = assemble({ clips: cuts, overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`), tail: END_CARD_SECONDS });
       const poster = file.replace(/\.mp4$/, ".jpg"); ff(["-ss", "0.8", "-i", file, "-frames:v", "1", "-q:v", "3", poster]);
       videos.push({ area, script_id: script.id, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), notes: [...new Set(lines.flatMap((l) => l.check?.faults || []))] });
     }

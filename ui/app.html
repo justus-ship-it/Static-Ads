@@ -226,6 +226,7 @@
   .rv-stage figure img{max-height:calc(100% - 22px);max-width:100%;object-fit:contain;border-radius:6px;display:block;box-shadow:0 10px 30px rgba(0,0,0,.4)}
   .rv-stage figure.ex img{opacity:.35;filter:grayscale(.6)}
   .rv-stage figcaption{color:#9fb0d6;font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;margin-top:6px}
+  .rv-stage figure video{max-height:calc(100% - 22px);max-width:100%;border-radius:6px;display:block;background:#000;box-shadow:0 10px 30px rgba(0,0,0,.35)}
   .rv-stage .nostory{height:calc(100% - 22px);aspect-ratio:9/16;border:1px dashed #33406a;border-radius:6px;color:#8594bd;display:flex;align-items:center;justify-content:center;text-align:center;padding:14px;font-size:12.5px;line-height:1.5}
   .rv-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:22px;line-height:1;padding:0}
   .rv-nav:hover:not(:disabled){background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.3)}
@@ -360,6 +361,8 @@ const WAITS = [
   [/POST/, /\/batch\/check$|\/api\/preview$/, null], [/PUT/, /\/picks$/, null], [/GET/, /\/cycle$|\/progress$|\/api\/run\/|\/api\/status$|\/api\/token$|\/api\/enums$|\/api\/clients$|\/batch-setup$|\/api\/client\/[^/]+$/, null],
   [/GET/, /\/api\/portfolio$/, "Adding up every gym's numbers from what is on file."],
   [/GET/, /\/api\/library\/survey/, null],
+  [/POST/, /\/video\/draft$/, 'The agent is drafting video scripts and checking each one against the rules. About half a minute.'],
+  [/GET/, /\/api\/client\/[^/]+\/video$/, null],
   [/POST/, /\/ad\/\d+\/pause$/, 'Pausing the ad on Meta.'],
   [/POST/, /\/room-tag$/, 'Saving which room the photo shows.'],
   [/POST/, /\/copy\/draft$/, (b) => `The agent is drafting ${/"kind":"headline"/.test(b||'') ? 'headlines' : 'copies'} from the copy library, then judging each one for clarity. This takes about a minute.`],
@@ -962,6 +965,15 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     ${[['reference','The reference set','loud outlined type over the photo; eight layouts, nine type styles, ten pairings'],['formula','The formula','the area across the top, the duration and the offer low in the frame; plain type, a soft shadow, no outline; the words move clear of faces']].map(([m,l,d])=>`<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:6px"><input type="radio" name="cdLook" style="width:auto;margin:0" ${(D.look||'reference')===m?'checked':''} onchange="setP('creative_defaults.look','${m}')"> ${l} <span class="hint" style="font-weight:400">· ${d}</span></label>`).join('')}
     <p class="hint" id="cdShape" style="margin-top:10px"><b>Shape:</b> every feed ad is portrait 4:5 and its Stories and Reels version 9:16, made from the ad's own photo. The square (1:1) is no longer made; a batch made as a square before keeps its shape.</p>
   </div>
+  <div class="card" id="cdPresenter"><h3>Presenter · videos</h3>
+    <p class="hint">Who talks to the camera in this gym's videos. An invented person: nobody in particular, never called staff or a member. Choose what fits the gym — no video is made until this is set.</p>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div><label for="cdPresGender">Who presents</label><select id="cdPresGender"><option value="" ${D.presenter?'':'selected'}>— not set —</option><option value="woman" ${D.presenter?.gender==='woman'?'selected':''}>A woman</option><option value="man" ${D.presenter?.gender==='man'?'selected':''}>A man</option></select></div>
+      <div><label for="cdPresAge">About what age</label><input id="cdPresAge" type="number" min="20" max="65" style="width:90px" value="${esc(D.presenter?.age ?? 35)}"></div>
+      <div style="flex:1;min-width:240px"><label for="cdPresLook">Look <span class="n">· optional, in your words</span></label><input id="cdPresLook" value="${esc(D.presenter?.look || '')}" placeholder="e.g. short hair, a plain navy tee"></div>
+      <button class="primary" id="cdPresSave" onclick="cdPresenterSave()">Save presenter</button></div>
+    <p class="hint" id="cdPresWhy" style="color:var(--err);min-height:16px;margin:6px 0 0"></p>
+  </div>
   <div class="card"><h3>Image model</h3>
     <p class="hint">The model new photos are made with, for batches and Stories versions. Cleaning the gym's real photos keeps its own model.</p>
     ${[['pro','Pro (default)','sharper and better lit; passed the checks first time 5 of 5 in the test'],['flash','Flash','cheaper and faster; passed 3 of 5 first time in the test']].map(([m,l,d])=>`<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:6px"><input type="radio" name="cdModel" style="width:auto;margin:0" ${(D.image_model||'pro')===m?'checked':''} onchange="setP('creative_defaults.image_model','${m}')"> ${l} <span class="hint" style="font-weight:400">· ${d}</span></label>`).join('')}
@@ -1508,7 +1520,7 @@ function freshDraft(){
   const locs = (cd.locations||[]).filter(Boolean), real = (cd.real_photos||[]).filter(p=>clean.includes(p));
   return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 10, real: cd.real_photos?.length ? real : [], // no photo of the empty room becomes an ad unless the owner ticks one (2026-11-11: they were added to every batch by themselves)
     looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true,
-    cards: { review:0, statement:0, timeline:0 },
+    cards: { review:0, statement:0, timeline:0 }, videos: 0,
     look: cd.look || 'reference', mix: (()=>{ const m = allocMix(B.setup.mix || profileMix(cd), cd.generated ?? 10); delete m.workout; return m; })(),
     age_min: (B.setup.photo_ages||[25,60])[0], age_max: (B.setup.photo_ages||[25,60])[1] };
 }
@@ -1577,7 +1589,7 @@ function briefFromDraft(){
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
-    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(d.words_weight && generated>0 ? { words_weight: d.words_weight } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(),
+    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(d.words_weight && generated>0 ? { words_weight: d.words_weight } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(), ...(Number(d.videos) > 0 ? { videos: { presenter: Math.round(Number(d.videos)) } } : {}),
     // The photos per kind. An all-workout batch says nothing when that is the gym's own default — and says "workout" when the gym's default is a mix
     // (2026-11-11: a brief naming no kind takes the gym's mix, so the portraits set to 0 on this form came back and a gym without portrait scenes could not run a batch).
     ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m), gymMixed = Object.entries(B.setup.mix || profileMix(B.setup.creative_defaults || {})).some(([f,n])=>f!=='workout' && n>0); return !generated ? {} : live.length===1 && live[0]==='workout' ? (gymMixed ? { format:'workout' } : {}) : live.length===1 ? { format: live[0] } : { mix: m }; })(),
@@ -1621,6 +1633,7 @@ function paintBatch(v){
           <div><label for="bAgeMin" style="margin-top:0">Ages in the photos</label><div class="row" style="gap:6px;align-items:center"><input id="bAgeMin" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_min)}" oninput="bSet('age_min',this.value)"><span>to</span><input id="bAgeMax" type="number" min="18" max="75" style="width:64px" value="${esc(d.age_max)}" oninput="bSet('age_max',this.value)"></div><div class="hint" style="margin-top:2px">Most near ${esc(Math.round(((Number(d.age_min)||25)+(Number(d.age_max)||60))/2))}, fewer toward the ends</div></div>
           ${Object.keys(FORMAT_NAMES).filter(f=>f!=='workout').map(f=>`<div><label for="bMix-${f}" style="margin-top:0">Of which ${esc(FORMAT_PLURAL[f])}</label><div class="stepper"><button type="button" onclick="bMixStep('${f}',-1)">−</button><input id="bMix-${f}" type="number" min="0" max="12" value="${esc(d.mix?.[f]||0)}" oninput="bMixSet('${f}',this.value)"><button type="button" onclick="bMixStep('${f}',1)">+</button></div><div class="hint" id="bMixRest" style="margin-top:2px"></div></div>`).join('')}
           <div><label style="margin-top:0">Cards <span class="hint" style="font-weight:400">· no photo, no image call</span></label><div class="row" style="gap:10px">${Object.entries(CARD_NAMES).map(([k,l])=>`<label style="margin:0;font-weight:500;color:var(--text);display:flex;align-items:center;gap:5px"><input id="bCard-${k}" type="number" min="0" max="${B.setup.max_cards||6}" style="width:56px" value="${esc(d.cards?.[k]||0)}" oninput="bCardSet('${k}',this.value)"> ${esc(l)} <span class="hint" style="font-weight:400">(${B.setup.cards_ready?.[k]??0} ready)</span></label>`).join('')}<a href="#" onclick="go('cards');return false" style="align-self:center">manage</a></div></div>
+          <div><label for="bVideos" style="margin-top:0">Presenter videos <span class="hint" style="font-weight:400">· someone talking to camera, 9:16</span></label><div class="row" style="gap:10px"><input id="bVideos" type="number" min="0" max="${B.setup.videos?.max||3}" style="width:56px" value="${esc(d.videos||0)}" oninput="bVideoSet(this.value)"><span class="hint" id="bVideosHint" style="align-self:center">${bVideosHint()}</span><a href="#" onclick="go('scenes');return false" style="align-self:center">scripts</a></div></div>
           <div><label for="bLook" style="margin-top:0">Look</label><select id="bLook" onchange="bSet('look',this.value)"><option value="reference" ${d.look!=='formula'?'selected':''}>Reference set</option><option value="formula" ${d.look==='formula'?'selected':''}>Formula (callout top, offer low)</option></select></div>
           <div><label for="bWordsW" style="margin-top:0" title="Which layouts the ads get is weighted toward more room for the words, or less. The words themselves never change.">Size of the words</label><select id="bWordsW" onchange="bSet('words_weight',this.value)"><option value="" ${!d.words_weight?'selected':''}>As each layout sets them</option><option value="bolder" ${d.words_weight==='bolder'?'selected':''}>Larger where the photo allows</option><option value="quieter" ${d.words_weight==='quieter'?'selected':''}>Smaller where the photo allows</option></select></div>
           <div><label style="margin-top:0">Shape</label><div class="hint" id="bShape" style="margin-top:6px" title="Every feed ad is portrait 4:5; its Stories and Reels version is 9:16, made from the ad's own photo">4:5 feed · 9:16 Stories</div></div>
@@ -1686,6 +1699,10 @@ function paintAud(){
 }
 function bAudPick(a){ B.draft.audience = a; const i=$('#bAud'); if (i) i.value = a; B.touched=true; paintAud(); scheduleCheck(); schedulePreview(); }
 /** Create → how many cards of a kind the batch has (a Google review, a statement, a timeline). */
+function bVideoSet(v){ B.draft.videos = Math.max(0, Math.min(B.setup.videos?.max||3, Math.round(Number(v)||0))); B.touched = true; const h = $('#bVideosHint'); if (h) h.innerHTML = bVideosHint(); scheduleCheck(); }
+/** Under the videos count: who presents, and how many scripts are kept for the offer typed. */
+function bVideosHint(){ const V = B.setup.videos || {}, offer = (B.draft?.offer||'').replace(/\s+/g,' ').trim().toLowerCase(), n = (V.kept||[]).filter(x=>!offer || x.offer.toLowerCase()===offer).length;
+  return `${n} script${n===1?'':'s'} kept${offer?' for this offer':''} · ${V.presenter ? `presented by a ${esc(V.presenter.gender)}` : '<span style="color:var(--warn)">nobody set to present</span>'}`; }
 function bCardSet(k, v){ (B.draft.cards ||= {})[k] = Math.max(0, Math.min(B.setup.max_cards||6, Math.round(Number(v)||0))); B.touched = true; scheduleCheck(); }
 /** Create → how many of the new photos are of a kind; the rest are workout photos. */
 function bMixSet(f, v){ const g = Number(B.draft.generated)||0; (B.draft.mix ||= {})[f] = Math.max(0, Math.min(g, Math.round(Number(v)||0))); B.touched = true; paintMix(); scheduleCheck(); }
@@ -1724,7 +1741,7 @@ function paintDerived(){
   const sb = $('#bSummary');
   if (sb) sb.innerHTML = s ? (B.mode==='rerender'
       ? `${s.ads} ads re-rendered with these words · <b>0 image calls</b>`
-      : `<b>${s.photos} photo${s.photos===1?'':'s'}</b> × ${s.looks} look${s.looks===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'} = <b>${s.ads} ads</b><br>Up to <b>${s.max_calls} image call${s.max_calls===1?'':'s'}</b>${errs.length? '' : ' · <span class="pill on">brief valid</span>'}`) : '';
+      : `<b>${s.photos} photo${s.photos===1?'':'s'}</b> × ${s.looks} look${s.looks===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'} = <b>${s.ads} ads</b><br>Up to <b>${s.max_calls} image call${s.max_calls===1?'':'s'}</b>${s.videos ? `<br><span id="bVideoSum">${s.videos.count} presenter video${s.videos.count===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'}: about <b>${s.videos.seconds} s of video</b> (US$${s.videos.usd.toFixed(2)}), never more than ${s.videos.max_seconds} s (US$${s.videos.usd_max.toFixed(2)})</span>` : ''}${errs.length? '' : ' · <span class="pill on">brief valid</span>'}`) : '';
   const busy = STATE.run && !STATE.run.done;
   for (const id of ['bPlan','bRun','bRerender']) { const b=$('#'+id); if (b) b.disabled = !c || errs.length>0 || busy; }
   const run = $('#bRun'); if (run && s && !errs.length) run.textContent = `Generate ${s.ads} ads…`;
@@ -1852,7 +1869,7 @@ async function bConfirm(){
     <p class="hint">These words go on every ad exactly as shown. The run stops at the call limit, whatever happens.</p>
     <div class="words"><div><span>Offer</span>${esc(b.offer)}</div><div><span>Locations</span>${esc(b.locations.join(' / '))}</div><div><span>Audience</span>${b.audience?esc(b.audience):'<i style="color:var(--dim)">none</i>'}</div></div>
     ${scenes.length?`<div class="words"><div style="color:var(--dim)">Scenes for this batch${pending.length?' — confirming approves them into the library':''}</div>${scenes.map(x=>`<div style="margin:6px 0"><b class="mono">${esc(x.id)}</b>${x.draft?' <span class="pill">draft</span>':''}<br>${esc(x.scene)}</div>`).join('')}</div>`:''}
-    <div class="summary">${sm.photos} photos × ${sm.looks} looks × ${sm.locations} locations = <b>${sm.ads} ads</b><br>Up to <b>${b.max_calls} Gemini image call${b.max_calls===1?'':'s'}</b> for ${b.generated} new photo${b.generated===1?'':'s'}</div>
+    <div class="summary">${sm.photos} photos × ${sm.looks} looks × ${sm.locations} locations = <b>${sm.ads} ads</b><br>Up to <b>${b.max_calls} Gemini image call${b.max_calls===1?'':'s'}</b> for ${b.generated} new photo${b.generated===1?'':'s'}${sm.videos ? `<br><span id="bConfirmVideo">${sm.videos.count} presenter video${sm.videos.count===1?'':'s'} for ${sm.locations} location${sm.locations===1?'':'s'}: about ${sm.videos.seconds} s of video (US$${sm.videos.usd.toFixed(2)}), and never more than <b>${sm.videos.max_seconds} s (US$${sm.videos.usd_max.toFixed(2)})</b>. The scripts are spoken as you kept them.</span>` : ''}</div>
     <div class="row"><button onclick="bCancel()">Cancel</button><div class="spacer"></div>
       <button class="primary" id="bGo" onclick="bGo()">Yes, run — up to ${b.max_calls} image call${b.max_calls===1?'':'s'}</button></div></div></div>`;
   B.pending = b; B.pendingScenes = pending;
@@ -2047,6 +2064,10 @@ function paintStage(){
   if (R.mode==='photos'){
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${it.kind==='real'?'Real photo':'Generated photo'}</figcaption></figure>${STAMPS}</div>`;
     info.innerHTML = `<b>${esc(it.id)}</b>${it.scene_id?`<span>${esc(it.scene_id)}</span>`:''}<span>in ${it.ads} ad${it.ads===1?'':'s'}</span>${it.primary?`<span>made for ${esc(layoutName(it.primary))}</span>`:''}${it.scene?`<span class="scene">${esc(it.scene)}</span>`:''}${(it.notes||[]).length?`<span class="note" title="${esc(it.notes.join(' · '))}">${esc(it.notes.join(' · '))}</span>`:''}`;
+  } else if (it.video) {
+    // A video ad: it plays here, sound and all. Keep and Exclude work as for any ad; a video is 9:16 already, so it has no Stories version to make.
+    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · Presenter video${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${STAMPS}</div>`;
+    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>presenter video</span>${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
   } else {
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
       <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="" draggable="false">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>${STAMPS}</div>`;
@@ -2112,7 +2133,7 @@ function rvDeckEnd(){
   }
   if (d.run || (STATE.run && !STATE.run.done)) return; // a run is going: nothing more to start
   if (!c.kept){ toast('Every ad is excluded: there is nothing to make Stories versions of.', 'err'); return; }
-  const missing = d.ads.filter(a=>a.status === 'keep' && !a.story).length;
+  const missing = d.ads.filter(a=>a.status === 'keep' && !a.story && !a.video).length; // a video is 9:16 already
   if (missing) return rvStoriesConfirm();
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
     <h2>Every ad is picked</h2>
@@ -2223,7 +2244,9 @@ async function rvStoryOneGo(candidate){
 // run photo by photo), the calls used against the cap, then the ads. Reopening it mid-run picks the
 // run's log up again.
 const G = { timer:null, data:null };
-const STAGE_NOW = { photos:'Generating photos', fit:'Rendering ads', looks:'Rendering ads', render:'Rendering ads', gallery:'Rendering ads', done:'Done', failed:'Stopped', stopped:'Stopped' };
+const STAGE_NOW = { photos:'Generating photos', fit:'Rendering ads', looks:'Rendering ads', render:'Rendering ads', videos:'Making the videos', gallery:'Rendering ads', done:'Done', failed:'Stopped', stopped:'Stopped' };
+/** What a batch's video stage is doing now, in words: the presenter's still, a line being filmed, the cut. */
+function videoNow(p){ const v = p?.video; if (!v) return 'starting'; const where = v.area ? ` for ${v.area}` : ''; return v.stage === 'still' ? `the presenter's picture for line ${v.line}` : v.stage === 'clip' ? `filming line ${v.line}${where}${v.take > 1 ? `, take ${v.take}` : ''}` : v.stage === 'cut' ? `cutting the video${where}` : 'working'; }
 async function viewGenerating(v, seq=VIEW_SEQ){
   v.innerHTML = '<p class="sub">Loading…</p>';
   await genPoll(seq);
@@ -2256,18 +2279,18 @@ function paintGenerating(){
   const stage = p?.stage || (d.made ? 'done' : 'photos'), done = stage==='done' && !d.run, failed = stage==='failed', stopped = stage==='stopped';
   const live = !!(d.run || d.orphan), at = stopped ? (p.stopped_at || 'photos') : stage;
   const spent = (p?.spent_before||0) + (p?.calls||0);
-  const RENDER = { fit:74, looks:80, render:88, gallery:96 };
+  const RENDER = { fit:74, looks:80, render:88, videos:92, gallery:96 }, inVideos = at==='videos', vsec = p?.video_seconds;
   const pct = done ? 100 : stage==='photos' ? Math.round(70 * (photos.length ? settled/photos.length : 1)) : (RENDER[stage] || 70);
   const step = (label, state) => `<div class="${state}">${state==='done'?'✓ ':state==='now'?'● ':''}${label}</div>`;
   const inPhotos = at==='photos', inAds = !!RENDER[at];
-  const title = failed ? 'Stopped' : stopped ? 'Stopped by you' : done ? `Done · ${p?.ads ?? ''} ads` : inAds ? 'Rendering the ads' : `Generating · ${passed} of ${photos.length} photo${photos.length===1?'':'s'}`;
+  const title = failed ? 'Stopped' : stopped ? 'Stopped by you' : done ? `Done · ${p?.ads ?? ''} ads` : inVideos ? 'Making the videos' : inAds ? 'Rendering the ads' : `Generating · ${passed} of ${photos.length} photo${photos.length===1?'':'s'}`;
   const stale = !live && p && !done && !failed && !stopped;
   const mine = STATE.run?.batch === STATE.batch;
   const latest = mine ? STATE.run.lines.filter(l=>l.stream!=='meta').at(-1)?.line : null;
   const keepLog = $('#runbox')?.closest('details')?.open;
   v.innerHTML = `
   <h1>${esc(title)}</h1>
-  <p class="sub">${failed ? '' : inPhotos ? 'Each photo appears as it passes its checks. ' : ''}${spent} image call${spent===1?'':'s'} used of ${p?.max_calls ?? '—'}${p?.real?` · plus ${p.real} real photo${p.real===1?'':'s'}`:''}${inAds?' · no image calls while rendering':''}</p>
+  <p class="sub">${failed ? '' : inPhotos ? 'Each photo appears as it passes its checks. ' : ''}${spent} image call${spent===1?'':'s'} used of ${p?.max_calls ?? '—'}${p?.real?` · plus ${p.real} real photo${p.real===1?'':'s'}`:''}${inVideos ? ` · <span id="genVideo">videos: ${esc(videoNow(p))} · ${vsec ?? 0} s of video made${p?.video_max_seconds ? `, never more than ${p.video_max_seconds} s` : ''}</span>` : vsec ? ` · ${vsec} s of video made` : inAds ? ' · no image calls while rendering' : ''}</p>
   ${failed ? `<div class="msg err">${esc(p.error||'the run stopped')}</div>` : ''}
   ${stopped ? `<div class="msg warn">You stopped this run while it was ${esc((STAGE_NOW[at]||at).toLowerCase())}. ${passed} photo${passed===1?'':'s'} had passed and ${spent} image call${spent===1?'':'s'} had been used; both are kept. Finished photos are reused and the calls already used count toward the cap. <button class="sm primary" style="margin-left:8px" onclick="bRunAgain('${esc(STATE.batch)}')">Run again…</button></div>` : ''}
   ${d.orphan ? `<div class="msg">This run was started before the panel was last restarted, and it is still going. Its log is not shown here, but its progress is, and it can be stopped.</div>` : ''}
@@ -2727,6 +2750,60 @@ function ledgerCard(){
     ${L.entries.length && !tested.length ? '<p class="hint" id="rsLedgerNone" style="margin-top:8px">No batch on Meta has leaned on or tested any of these yet. The first verdicts appear once a batch that does has 10 leads on the ads that show it.</p>' : ''}
   </div>`;
 }
+// ── Video scripts (2026-11-12): on Draft Scenes, beside the scenes ───────────
+// A presenter video is made from a script the owner has kept — the words are baked into speech, so they are approved
+// before anything is made. His own script is kept at once; a drafted one waits. Samples are scripts of his that have
+// worked: the drafter follows how they are built and never copies them. No video is made on this screen.
+const VS = { data:null, error:null, gym:null };
+async function vsLoad(){ const gym = STATE.sel; try { const d = await api(`/api/client/${gym}/video`); if (gym !== STATE.sel) return; VS.data = d; VS.gym = gym; VS.error = null; } catch(e){ VS.error = e.message; } paintScripts(); }
+const vsOffer = () => (B.setup?.batches||[]).map(b=>b.words?.offer).find(Boolean) || B.setup?.wordings?.[0]?.text || '';
+function paintScripts(){
+  const box = $('#vsCard'); if (!box) return;
+  if (VS.gym !== STATE.sel || !VS.data){ box.innerHTML = `<h3 style="margin:0">Video scripts</h3><p class="hint">${VS.error ? esc(VS.error) : 'Loading…'}</p>`; return; }
+  const D = VS.data, P = D.presenter, live = D.scripts.filter(s=>s.status!=='retired'), gone = D.scripts.filter(s=>s.status==='retired'), samples = D.samples.filter(x=>!x.retired);
+  const who = P ? `Presented by a ${esc(P.gender)} of about ${P.age}${P.look ? `, ${esc(P.look)}` : ''} — nobody in particular, never staff or a member.` : '<b>Nobody is set to present yet.</b> Say who presents (a woman or a man) before a video can be made:';
+  const pill = { kept:'on', draft:'warn', retired:'' };
+  const row = (s) => `<div class="scene" data-script="${esc(s.id)}" data-status="${s.status}"><div class="body"><div class="row" style="gap:8px;flex-wrap:wrap"><span class="pill ${pill[s.status]}">${s.status==='kept'?'kept':s.status==='draft'?'draft':'retired'}</span><span class="hint">for “${esc(s.offer)}” · about ${s.cost.seconds} s of video a location, US$${s.cost.usd.toFixed(2)}${s.source==='drafted'?' · drafted':''}</span></div>
+      <ol style="margin:6px 0 0 18px;line-height:1.55">${s.lines.map(l=>`<li>${esc(l)}</li>`).join('')}</ol>${s.reason?`<div class="hint">Retired: ${esc(s.reason)}</div>`:''}</div>
+      <div class="row" style="gap:6px;align-items:flex-start">${s.status==='draft'?`<button class="sm primary" onclick="vsDecide('${s.id}','kept')">Keep</button>`:''}${s.status==='kept'?`<button class="sm" onclick="vsDecide('${s.id}','draft')">Put back</button>`:''}${s.status!=='retired'?`<button class="sm" onclick="vsEdit('${s.id}')">Edit…</button><button class="sm" onclick="vsRetire('${s.id}')">Retire…</button>`:`<button class="sm" onclick="vsDecide('${s.id}','draft')">Restore</button>`}</div></div>`;
+  box.innerHTML = `<div class="row" style="flex-wrap:wrap"><h3 style="margin:0">Video scripts</h3><span class="hint">${live.filter(s=>s.status==='kept').length} kept · ${live.filter(s=>s.status==='draft').length} to read</span><div class="spacer"></div>
+      <button class="sm" id="vsSampleGo" onclick="vsSample()">Paste a script that has worked…</button><button class="sm" id="vsOwnGo" onclick="vsOwn()">Write your own…</button><button class="sm primary" id="vsDraftGo" onclick="vsDraft()">Draft scripts…</button></div>
+    <p class="hint" style="margin:8px 0 6px">What the presenter says, one line a cut. A script names the offer in its exact words, says <span class="mono">{AREA}</span> where the location goes, and talks about what the person gets — never how the gym runs. <b>Nothing is filmed until you keep a script</b>: the words are spoken, so they cannot be changed afterwards.</p>
+    <p class="hint" id="vsWho" style="margin:0 0 10px">${who} ${P ? '' : ''}<a href="#" onclick="go('defaults');return false">${P ? 'change on Ad defaults' : 'Ad defaults → Presenter'}</a>${D.ffmpeg ? '' : ' · <span style="color:var(--warn)">ffmpeg is not installed on this Mac, so no video can be cut yet</span>'}</p>
+    <div id="vsList">${live.length ? live.map(row).join('') : '<p class="hint" id="vsNone">No script yet. Draft some, or write your own.</p>'}</div>
+    ${gone.length ? `<details><summary>${gone.length} retired</summary>${gone.map(row).join('')}</details>` : ''}
+    <div style="margin-top:12px"><div class="hint"><b>Scripts that have worked</b> · ${samples.length ? `${samples.length} on file: the drafter follows how they are built and what they talk about, and never copies a sentence or a fact.` : 'none yet. Paste yours and the drafts follow their shape and voice.'}</div>
+      ${samples.map(x=>`<div class="scene" data-sample="${esc(x.id)}"><div class="body" style="white-space:pre-wrap;font-size:13px">${esc(x.text)}</div><button class="sm" onclick="vsSampleRetire('${x.id}')">Retire…</button></div>`).join('')}</div>`;
+}
+const vsModal = (title, body, go, label) => { $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>${title}</h3>${body}<p class="hint" id="vsWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p><div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="vsGo" onclick="${go}">${label}</button></div></div></div>`; };
+async function vsSend(method, path, body){ try { const d = await api(`/api/client/${STATE.sel}/video${path}`, { method, body }); VS.data = d; $('#gModal').innerHTML = ''; paintScripts(); return d; } catch(e){ const w = $('#vsWhy'); if (w) w.textContent = e.message; else toast(e.message, 'err'); return null; } }
+function vsDraft(){
+  vsModal('Draft scripts', `<p class="hint">One text call, no video. The drafts arrive for you to read: nothing is filmed from a draft until you keep it.</p>
+    <label for="vsOfferIn">The offer, in its exact words</label><input id="vsOfferIn" value="${esc(vsOffer())}" placeholder="12 Week Full Body Transformation">
+    <label for="vsAudIn" style="margin-top:8px">Who it is for <span class="n">· optional, as on the ads</span></label><input id="vsAudIn" placeholder="e.g. busy professionals">
+    <label for="vsCountIn" style="margin-top:8px">How many</label><input id="vsCountIn" type="number" min="1" max="6" value="3" style="width:80px">`, 'vsDraftRun()', 'Draft');
+}
+async function vsDraftRun(){ const d = await vsSend('POST', '/draft', { offer: $('#vsOfferIn').value.trim(), audience: $('#vsAudIn').value.trim(), count: Number($('#vsCountIn').value)||3 }); if (d?.drafted) toast(`${d.drafted.added.length} draft${d.drafted.added.length===1?'':'s'} to read${d.drafted.dropped.length?` · ${d.drafted.dropped.length} dropped for breaking a rule`:''}`, d.drafted.added.length ? 'ok' : 'warn'); }
+const vsLinesForm = (lines) => [0,1,2,3].map(i=>`<label for="vsLine${i}" style="margin-top:8px">Line ${i+1}${i>1?' <span class="n">· optional</span>':''}</label><textarea id="vsLine${i}" rows="2" placeholder="${i===0?'If you live or work in {AREA} and …':i===1?'[The gym]’s [offer] is built for …':i===2?'… Tap below to find out more.':''}">${esc(lines[i]||'')}</textarea>`).join('');
+const vsLinesRead = () => [0,1,2,3].map(i=>$('#vsLine'+i).value.replace(/\s+/g,' ').trim()).filter(Boolean);
+function vsOwn(){ vsModal('Your own script', `<p class="hint">Two to four lines, one for each cut. Write <span class="mono">{AREA}</span> where the location is said. Yours is kept at once.</p><label for="vsOfferIn">The offer, in its exact words</label><input id="vsOfferIn" value="${esc(vsOffer())}">${vsLinesForm([])}`, 'vsOwnRun()', 'Keep this script'); }
+function vsOwnRun(){ vsSend('POST', '/script', { offer: $('#vsOfferIn').value.trim(), lines: vsLinesRead() }); }
+function vsEdit(id){ const s = VS.data.scripts.find(x=>x.id===id); if (!s) return; VS.editing = id; vsModal('Edit the script', `<p class="hint">For “${esc(s.offer)}”. It is checked again when you save.</p>${vsLinesForm(s.lines)}`, 'vsEditRun()', 'Save'); }
+function vsEditRun(){ vsSend('PUT', `/script/${VS.editing}`, { lines: vsLinesRead() }); }
+function vsDecide(id, status){ vsSend('PUT', `/script/${id}`, { status }); }
+function vsRetire(id){ VS.editing = id; vsModal('Retire this script', `<p class="hint">It is kept on file, never deleted, and is no longer made into videos.</p><label for="vsReason">Why</label><input id="vsReason" placeholder="e.g. the offer has changed">`, 'vsRetireRun()', 'Retire'); }
+function vsRetireRun(){ vsSend('PUT', `/script/${VS.editing}`, { status:'retired', reason: $('#vsReason').value.trim() }); }
+function vsSample(){ vsModal('A script that has worked', `<p class="hint">Paste one of your own scripts as it is. It is never filmed and never changed: the drafter reads it to learn how yours are built and what they talk about.</p><textarea id="vsSampleIn" rows="8" placeholder="Paste the script here"></textarea>`, 'vsSampleRun()', 'Add it'); }
+function vsSampleRun(){ vsSend('POST', '/sample', { text: $('#vsSampleIn').value }); }
+function vsSampleRetire(id){ VS.editing = id; vsModal('Retire this sample', `<p class="hint">The drafter stops following it. It is kept on file.</p><label for="vsReason">Why</label><input id="vsReason">`, 'vsSampleRetireRun()', 'Retire'); }
+function vsSampleRetireRun(){ vsSend('PUT', `/sample/${VS.editing}`, { retired:true, reason: $('#vsReason').value.trim() }); }
+/** Ad defaults → Presenter: who presents this gym's videos. The gym's own choice; nothing is assumed. */
+async function cdPresenterSave(){
+  const g = $('#cdPresGender').value, body = g ? { gender: g, age: $('#cdPresAge').value, look: $('#cdPresLook').value } : { clear: true };
+  try { const d = await api(`/api/client/${STATE.sel}/video/presenter`, { method:'POST', body }); VS.data = d; VS.gym = STATE.sel; (STATE.profile.creative_defaults ||= {}).presenter = d.presenter || undefined; toast(d.presenter ? `Presenter saved: a ${d.presenter.gender} of about ${d.presenter.age}` : 'No presenter set: no video will be made', 'ok'); const w = $('#cdPresWhy'); if (w) w.textContent = ''; }
+  catch(e){ const w = $('#cdPresWhy'); if (w) w.textContent = e.message; }
+}
+
 // ── Step 0 · Survey Ad Library (2026-11-12) ──────────────────────────────────
 // What other gyms run in this gym's country, from Meta's Ad Library — research before the cycle's turn. ONE button:
 // the app works out what the survey needs (read what is unread, or pull and read), says it with its cost, and runs
@@ -2921,7 +2998,7 @@ function paintPublish(v){
     </div>
     ${est?`<div class="msg ok" style="margin-top:10px">${est.error?esc(est.error):`Reach about ${Number(est.reach?.lower||0).toLocaleString()}–${Number(est.reach?.upper||0).toLocaleString()} people a month.${(est.sentences||[]).length?`<div class="hint" style="margin-top:4px">${est.sentences.map(esc).join('<br>')}</div>`:''}`}</div>`:''}
   </div>`; };
-  const adRow = (a) => { const t = D.thumbs[a.folder]||{}; return `<div style="text-align:center;width:118px"><img src="${esc(t.url||'')}" alt="" style="width:110px;height:110px;border-radius:8px;object-fit:cover;border:1px solid var(--line)"><div class="hint" style="font-size:11px;line-height:1.3;margin-top:3px">${esc(a.folder.replace(/^\d+-/,''))}${a.story?'':'<br><span style="color:var(--warn)">no 9:16</span>'}</div></div>`; };
+  const adRow = (a) => { const t = D.thumbs[a.folder]||{}; return `<div style="text-align:center;width:118px"><img src="${esc(t.url||'')}" alt="" style="width:110px;height:110px;border-radius:8px;object-fit:cover;border:1px solid var(--line)"><div class="hint" style="font-size:11px;line-height:1.3;margin-top:3px">${esc(a.folder.replace(/^\d+-/,''))}${a.video?`<br><span class="pbVideo" style="color:var(--navy);font-weight:600">▶ video${a.video.seconds?` · ${Math.round(a.video.seconds)} s`:''}</span>`:a.story?'':'<br><span style="color:var(--warn)">no 9:16</span>'}</div></div>`; };
   v.innerHTML = `
   <div class="row" style="margin-bottom:4px"><h1 style="margin:0">Publish ${esc(P.campaign.name)}</h1><div class="spacer"></div><button onclick="openReview('${esc(PB.id)}')">← Pick Ads</button></div>
   <p class="sub">What will be created in ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account, every object paused. Every field below is this campaign's own; the profile's defaults filled it in. Nothing is created until the last button.</p>
@@ -2943,7 +3020,7 @@ function paintPublish(v){
   </div><div class="hint" style="margin-top:8px">Objective ${esc(P.campaign.objective)} · ${money(P.budget.per_day_total,cur)} a day in all · Advantage+ audience never on · every enhancement opted out</div></div>
   <h2 style="margin:18px 0 8px">Ad sets · one per location callout</h2>
   ${P.adsets.map(adsetCard).join('')}
-  <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap"><h3 style="margin:0">Ads · ${P.counts.ads} kept, ${P.counts.with_story} with a Stories version</h3><div class="spacer"></div><button class="sm" id="pbZip" title="Every kept ad's feed image and its 9:16, one folder per ad set, named to pair in Ads Manager" onclick="location.href='/api/client/${esc(PB.gym)}/batch/${esc(PB.id)}/images.zip'">Download images (zip)</button></div><p class="hint">Each ad carries its 1:1 for feeds and its 9:16 for Stories and Reels (one creative, two images by placement). Building the ads by hand in Ads Manager? Download images gives every kept ad's pair, one folder per ad set.</p>
+  <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap"><h3 style="margin:0">Ads · ${P.counts.ads} kept, ${P.counts.with_story} with a Stories version${P.counts.videos?`, ${P.counts.videos} video${P.counts.videos===1?'':'s'}`:''}</h3><div class="spacer"></div><button class="sm" id="pbZip" title="Every kept ad's feed image and its 9:16, one folder per ad set, named to pair in Ads Manager" onclick="location.href='/api/client/${esc(PB.gym)}/batch/${esc(PB.id)}/images.zip'">Download images (zip)</button></div><p class="hint">Each ad carries its feed image and its 9:16 for Stories and Reels (one creative, two images by placement).${P.counts.videos?' <span id="pbVideoHint">A video ad is uploaded to the ad account when you create, with its first frame as the cover and the same copy and form as the rest; one 9:16 video runs on every placement.</span>':''} Building the ads by hand in Ads Manager? Download images gives every kept ad's files, one folder per ad set.</p>
     ${P.adsets.map(a=>`<div class="hint" style="margin:8px 0 4px"><b>${esc(a.callout)}</b> · ${a.ads.length}</div><div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-start">${P.ads.filter(x=>x.adset===a.callout).map(adRow).join('')}</div>`).join('')}</div>
   ${copyCard(D, P, sw)}
   <div class="card"><div class="row"><h3 style="margin:0">Destination and identity</h3><div class="spacer"></div><button class="sm" onclick="pbLoadLink()" ${PB.busy?'disabled':''}>${PB.link?'Reload the lists':'Load the Page\'s forms and Instagram accounts'}</button></div>
@@ -3112,7 +3189,7 @@ function pbCreateConfirm(){
   const P = PB.data.plan, cur = P.currency, made = Object.keys(PB.data.published?.ads||{}).length;
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card">
     <h2>${made?'Continue creating on Facebook?':'Create on Facebook?'}</h2>
-    <p class="hint">In ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account: the campaign, ${P.counts.adsets} ad set${P.counts.adsets===1?'':'s'} and ${P.counts.ads} ad${P.counts.ads===1?'':'s'} as shown on this screen — every object <b>paused</b>. Nothing runs or spends until you switch it on in Ads Manager. Made already: ${made} ad${made===1?'':'s'}, reused.</p>
+    <p class="hint">In ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account: the campaign, ${P.counts.adsets} ad set${P.counts.adsets===1?'':'s'} and ${P.counts.ads} ad${P.counts.ads===1?'':'s'} as shown on this screen — every object <b>paused</b>. Nothing runs or spends until you switch it on in Ads Manager. Made already: ${made} ad${made===1?'':'s'}, reused.${P.counts.videos?` <span id="pbCreateVideo">${P.counts.videos} of the ads ${P.counts.videos===1?'is a video':'are videos'}: each is uploaded to the ad account and Meta takes a minute or two to process it before its ad can be made, so this run takes longer.</span>`:''}</p>
     <div class="summary"><b>${esc(P.campaign.name)}</b> · ${money(P.budget.per_day_total,cur)} a day once switched on${P.words.placeholders.length?' · <span style="color:var(--warn)">placeholder words</span>':''}</div>
     <div class="summary" id="pbCreateForm" style="margin-top:-4px">Leads go to the form <b>${esc(PB.data.lead_form_name || P.lead_form_id || 'none')}</b> ${pbFormConfirmed() ? '<span class="pill on">confirmed</span>' : `<span class="pill warn">not confirmed yet</span> <a href="#" onclick="bClose();pbFormChoose();return false">choose and confirm it first</a>`}</div>
     <div class="row"><label for="pbFirst" style="margin:0">Only the first</label><input id="pbFirst" type="number" min="1" max="${P.counts.ads}" placeholder="all" style="width:80px"><span class="hint" style="margin:0">ads this run (leave empty for all ${P.counts.ads})</span></div>
@@ -3319,8 +3396,8 @@ async function viewScenes(v, seq=VIEW_SEQ){
   if (seq !== VIEW_SEQ) return;
   v.innerHTML = `<h1>Draft Scenes</h1><p class="sub">Step 2 of the cycle: the scenes the next batch photographs. The agent drafts new ones on request — from the account's results, the library's gaps, your words or a reference image; nothing is generated from a draft until you approve it. Rejecting asks why, and retires the scene rather than deleting it.</p>
     <div id="scAsks"></div>
-    <div class="card" id="bSceneCard"></div><div id="runbox"></div><div id="bModal"></div>`;
-  paintSceneAsks(); paintScenes(); renderRunBox();
+    <div class="card" id="bSceneCard"></div><div class="card" id="vsCard"></div><div id="runbox"></div><div id="bModal"></div>`;
+  paintSceneAsks(); paintScenes(); renderRunBox(); paintScripts(); vsLoad();
 }
 /** What the data asks of the scenes (2026-11-11), from the cycle's status: the review's drafting jobs — a kind in the mix with no
  *  approved scene, new versions of the gym's best pictures — each with its reason and its button. The drafts themselves are below. */
@@ -4033,6 +4110,7 @@ function partsGenerating(){
   return { parts: [ part(BRIEF_PARTS[0], true), part(BRIEF_PARTS[1], true),
     part(BRIEF_PARTS[2], done, bad
       ? { text: stage === 'stopped' ? 'You stopped this run. The photos it finished are kept and reused.' : 'This run did not finish. The photos that passed are kept and reused.', label:'Run again…', go:()=>bRunAgain(STATE.batch) }
+      : stage === 'videos' ? { text:`The photo ads are rendered. The agent is now making the presenter videos (${videoNow(p)}) and watching each clip: the words said, one person, no lettering. Nothing to press; a video takes a few minutes.` }
       : { text:`The agent is making the photos and checking each one${photos.length?`: ${passed} of ${photos.length} passed`:''}. Nothing to press: this screen updates by itself, and the ads render when the photos are in.` }),
     part(BRIEF_PARTS[3], false, { text:`Done: ${p?.ads ?? 'the'} ads are made. Now choose the ones to run.`, label:'Pick Ads →', go:()=>openReview(STATE.batch, 'ads') }),
   ] };

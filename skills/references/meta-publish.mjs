@@ -40,6 +40,10 @@ const CTA = "SIGN_UP";
  *  the blanket `standard_enhancements` switch was deprecated in v22, so each feature is opted out by name. */
 export const ENHANCEMENTS = ["image_touchups", "image_brightness_and_contrast", "enhance_cta", "text_optimizations", "image_templates", "inline_comment", "image_uncrop", "adapt_to_placement", "product_extensions", "description_automation", "add_text_overlay", "image_background_gen", "image_animation", "text_translation"];
 export const optOut = (features = ENHANCEMENTS) => ({ creative_features_spec: Object.fromEntries(features.map((k) => [k, { enroll_status: "OPT_OUT" }])) });
+/** A video creative's own enhancements, opted out by name as well (the names Meta itself lists on the gyms' video
+ *  creatives, read 2026-11-12): no added music, no dubbed or translated voice, no auto-subtitles over ours, no crop,
+ *  no highlight reel, no still made of it. One Meta refuses by name is dropped and the post retried, as for an image. */
+export const VIDEO_ENHANCEMENTS = [...ENHANCEMENTS, "audio", "video_voiceover", "translate_voiceover", "ig_video_native_subtitle", "video_auto_crop", "video_uncrop", "video_highlight", "video_highlights", "video_to_image", "video_filtering", "media_type_automation", "replace_media_text"];
 /** The gender Meta targets for an audience callout: men, women, or everyone. */
 export const genderFor = (audience, profile = null) => { const g = calloutGender(audience, profile); return g === "men" ? [1] : g === "women" ? [2] : null; };
 /** Never Advantage+ audience (the owner's rule): Meta may not widen the audience past what the ad set says. */
@@ -217,6 +221,28 @@ export function creativeFor({ name, page_id, instagram_user_id, website, form_id
   };
 }
 /**
+ * A video ad's creative (2026-11-12) — the shape the gyms' own video lead ads carry on Meta: the video with its
+ * poster image and the lead form in `object_story_spec.video_data`; one body and one title ride there, several
+ * (Meta's text options) ride beside it in `asset_feed_spec` with `optimization_type: DEGREES_OF_FREEDOM`. One 9:16
+ * video serves every placement, so there are no placement rules. The video's id and the poster's hash are filled in
+ * when they are uploaded.
+ */
+export function videoCreativeFor({ name, page_id, instagram_user_id, website, form_id, words, texts = null }) {
+  const cta = words.cta || CTA;
+  const uniq = (list) => [...new Set((list || []).filter((t) => t != null && t !== ""))];
+  const bodies = uniq(texts?.bodies?.length ? texts.bodies : [words.message]).slice(0, MAX_OPTIONS);
+  const titles = uniq(texts?.titles?.length ? texts.titles : [words.headline]).slice(0, MAX_OPTIONS);
+  const descriptions = uniq(texts ? texts.descriptions : [words.description]).slice(0, 1);
+  const many = bodies.length > 1 || titles.length > 1;
+  const video_data = { video_id: "(video id)", image_hash: "(poster hash)", call_to_action: { type: cta, value: { lead_gen_form_id: form_id, link: website } },
+    ...(many ? {} : { message: bodies[0] || "", title: titles[0] || "", ...(descriptions[0] ? { link_description: descriptions[0] } : {}) }) };
+  return {
+    name, object_story_spec: { page_id, ...(instagram_user_id ? { instagram_user_id } : {}), video_data },
+    ...(many ? { asset_feed_spec: { optimization_type: "DEGREES_OF_FREEDOM", bodies: bodies.map((text) => ({ text })), titles: titles.map((text) => ({ text })), ...(descriptions.length ? { descriptions: descriptions.map((text) => ({ text })) } : {}) } } : {}),
+    contextual_multi_ads: { ...NO_MULTI_ADVERTISER }, degrees_of_freedom_spec: optOut(VIDEO_ENHANCEMENTS),
+  };
+}
+/**
  * The whole plan for a batch, before anything is created: one campaign; one ad set per location callout
  * among the kept ads (its pin, ages, gender, detailed-targeting preset and budget — the profile's defaults
  * under the owner's `settings` for this batch); one ad per kept ad with its 1:1 for feed and its 9:16 for
@@ -226,6 +252,10 @@ export function creativeFor({ name, page_id, instagram_user_id, website, form_id
  */
 export function buildPlan({ profile, batch, kept, presets = { presets: [] }, settings = {}, copies = [], headlines = [], tag = today(), library = null }) {
   const problems = [], warnings = [];
+  // A video ad (2026-11-12) is an ad like any other: the same campaign, its location's ad set, the same copy and form.
+  // Its creative is the video with its poster frame; a video is 9:16 already, so it has no Stories version to miss.
+  kept = kept || [];
+  const videos = kept.filter((a) => a.video);
   const m = profile.meta_assets || {}, dest = settings.destination || {};
   const reg = regulatedFor(profile);
   const account = m.ad_account_id ? actId(m.ad_account_id) : null;
@@ -320,11 +350,11 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   if (withDesc > 1) warnings.push(`${withDesc} kept ${keptHead.length ? "headlines" : "copies"} have a description; Meta takes one description per placement rule, so each ad carries only the first of its options' descriptions`);
   if (keptCopy.length && !keptHead.length && !keptCopy.some((c) => c.headline)) warnings.push("no headline kept: draft and keep headlines on the Publish Ads screen; until then every ad carries a placeholder headline that says so");
   if (keptHead.length > maxHeadlines) warnings.push(`${keptHead.length} headlines kept, ${maxHeadlines} per ad: they rotate across the ads so every one runs`);
-  const noStory = kept.filter((a) => !a.story);
-  if (noStory.length) warnings.push(`${noStory.length} of ${kept.length} ads have no Stories version: on Stories and Reels Meta will show the feed image (Make Stories versions on the Pick Ads screen first)`);
+  const noStory = kept.filter((a) => !a.story && !a.video);
+  if (noStory.length) warnings.push(`${noStory.length} of ${kept.length - videos.length} ${videos.length ? "image " : ""}ads have no Stories version: on Stories and Reels Meta will show the feed image (Make Stories versions on the Pick Ads screen first)`);
   const ads = kept.map((a, i) => {
     const callout = String(a.location || a.words?.location || "ALL").toUpperCase();
-    const name = `${date} ${titleCase(callout)} | ${offer} | Image: ${a.folder}`;
+    const name = `${date} ${titleCase(callout)} | ${offer} | ${a.video ? "Video" : "Image"}: ${a.folder}`;
     const bodies = textOptionsFor(keptCopy, maxOptions, i), titles = keptHead.length ? textOptionsFor(keptHead, maxHeadlines, i) : [];
     const texts = bodies.length ? {
       bodies: bodies.map((b) => fillArea(b.message, callout)),
@@ -333,16 +363,19 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
     } : null;
     return {
       folder: a.folder, ...(a.format ? { format: a.format } : {}), adset: callout, name, copies: bodies.map((t) => t.id), headlines: titles.map((t) => t.id),
-      image: { file: a.file, name: `${batch.batch_id}__${basename(a.file)}` },
-      story: a.story ? { file: a.story, name: `${batch.batch_id}__${basename(a.story)}` } : null,
-      creative: creativeFor({ name: name.slice(0, 400), page_id, instagram_user_id, website: profile.website, form_id: lead_form_id, words, story: !!a.story, texts }),
+      image: { file: a.file, name: `${batch.batch_id}__${basename(a.file)}` }, // a video's poster frame
+      story: !a.video && a.story ? { file: a.story, name: `${batch.batch_id}__${basename(a.story)}` } : null,
+      ...(a.video ? { video: { file: a.video, name: `${batch.batch_id}__${basename(a.video)}`, seconds: a.seconds ?? null } } : {}),
+      creative: a.video
+        ? videoCreativeFor({ name: name.slice(0, 400), page_id, instagram_user_id, website: profile.website, form_id: lead_form_id, words, texts })
+        : creativeFor({ name: name.slice(0, 400), page_id, instagram_user_id, website: profile.website, form_id: lead_form_id, words, story: !!a.story, texts }),
       payload: { name: name.slice(0, 400), status: AD_STATUS },
     };
   });
   return {
     account, page_id, instagram_user_id, lead_form_id, website: profile.website || null, currency, offer,
     budget: { level, daily, bid_strategy: strategy, bid_cap: cap, per_day_total: level === "campaign" ? daily : adsets.reduce((t, s) => t + (s.budget?.daily || 0), 0) },
-    campaign, adsets, ads, words, copy: { kept: keptCopy.length, max_options: maxOptions, per_ad: Math.min(maxOptions, keptCopy.length) || 0, rotating: keptCopy.length > maxOptions, descriptions: withDesc, headlines: { kept: keptHead.length, max_options: maxHeadlines, per_ad: Math.min(maxHeadlines, keptHead.length) || 0, rotating: keptHead.length > maxHeadlines } }, counts: { adsets: adsets.length, ads: ads.length, with_story: kept.length - noStory.length },
+    campaign, adsets, ads, words, copy: { kept: keptCopy.length, max_options: maxOptions, per_ad: Math.min(maxOptions, keptCopy.length) || 0, rotating: keptCopy.length > maxOptions, descriptions: withDesc, headlines: { kept: keptHead.length, max_options: maxHeadlines, per_ad: Math.min(maxHeadlines, keptHead.length) || 0, rotating: keptHead.length > maxHeadlines } }, counts: { adsets: adsets.length, ads: ads.length, with_story: kept.length - videos.length - noStory.length, videos: videos.length },
     problems, warnings, ready: problems.length === 0,
   };
 }
@@ -415,7 +448,7 @@ export function keptAds(batchDir) {
   const storyOf = new Map((stories?.ads || []).filter((s) => existsSync(join(batchDir, s.file))).map((s) => [s.folder, s.file]));
   const excludedPhotos = new Set(Object.entries(review.photos || {}).filter(([, v]) => v === "exclude").map(([k]) => k));
   return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)))
-    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}) }));
+    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null } : {}) }));
 }
 
 /** POST a creative; a feature Meta refuses by name is dropped and the post retried; the opt-out as a whole refused → made without it, said so. */
@@ -441,7 +474,7 @@ export async function postCreative(client, account, spec, log = console.log) {
 export const freshRecord = (path, { batch_id, account }) => ({ path, batch_id, account, started: new Date().toISOString(), images: {}, campaign: null, adsets: {}, ads: {}, superseded: [], error: null, done: null, runs: [] });
 const sha16 = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);
 /** What makes a creative the creative it is: its images, words, form, identity and link. A change → a new creative and ad. */
-export const creativeKey = (creative, hashes) => sha16(JSON.stringify({ hashes, afs: creative.asset_feed_spec ? { b: creative.asset_feed_spec.bodies, t: creative.asset_feed_spec.titles, d: creative.asset_feed_spec.descriptions, l: creative.asset_feed_spec.link_urls, c: creative.asset_feed_spec.call_to_actions, r: creative.asset_feed_spec.asset_customization_rules } : creative.object_story_spec.link_data, oss: { page_id: creative.object_story_spec.page_id, instagram_user_id: creative.object_story_spec.instagram_user_id || null }, multi: creative.contextual_multi_ads || null }));
+export const creativeKey = (creative, hashes) => sha16(JSON.stringify({ hashes, afs: creative.asset_feed_spec ? { b: creative.asset_feed_spec.bodies, t: creative.asset_feed_spec.titles, d: creative.asset_feed_spec.descriptions, l: creative.asset_feed_spec.link_urls, c: creative.asset_feed_spec.call_to_actions, r: creative.asset_feed_spec.asset_customization_rules } : creative.object_story_spec.link_data, vd: creative.object_story_spec.video_data || undefined, oss: { page_id: creative.object_story_spec.page_id, instagram_user_id: creative.object_story_spec.instagram_user_id || null }, multi: creative.contextual_multi_ads || null }));
 const adsetKey = (payload) => sha16(JSON.stringify({ t: payload.targeting, b: payload.daily_budget ?? null, s: payload.bid_strategy ?? null, a: payload.bid_amount ?? null, n: payload.name }));
 /**
  * Create what the plan says, in order — images (once per file, by content), the campaign, the ad sets, then
@@ -451,11 +484,13 @@ const adsetKey = (payload) => sha16(JSON.stringify({ t: payload.targeting, b: pa
  * and a new ad, the old ones kept under `superseded` (still PAUSED on Meta, never deleted here).
  * `first` limits this run to the first N ads of the plan (the live proof), the rest another run.
  */
-export async function createPlan(plan, { client, batchDir, record, log = console.log, first = null }) {
+/** A video is asked about every few seconds until Meta has processed it, for this long at most. */
+export const VIDEO_POLL_MS = 4000, VIDEO_READY_MS = 6 * 60000;
+export async function createPlan(plan, { client, batchDir, record, log = console.log, first = null, wait = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   if (!plan.ready) throw new Error(`the plan has problems: ${plan.problems.join("; ")}`);
   const rec = record, account = plan.account;
   const save = () => writeWhole(rec.path, JSON.stringify({ ...rec, path: undefined }, null, 2) + "\n");
-  const run = { started: new Date().toISOString(), made: { images: 0, campaign: 0, adsets: 0, creatives: 0, ads: 0 }, reused: { images: 0, campaign: 0, adsets: 0, ads: 0 }, updated: { campaign: 0, adsets: 0 }, superseded: 0, first: first ?? null };
+  const run = { started: new Date().toISOString(), made: { images: 0, videos: 0, campaign: 0, adsets: 0, creatives: 0, ads: 0 }, reused: { images: 0, videos: 0, campaign: 0, adsets: 0, ads: 0 }, updated: { campaign: 0, adsets: 0 }, superseded: 0, first: first ?? null };
   rec.runs.push(run); rec.error = null; rec.done = null; save();
   const fail = (step, what, e) => { rec.error = { step, what, message: scrubTokens(e.message), code: e.code ?? null, trace: e.trace ?? null, at: new Date().toISOString() }; save(); throw e; };
   const image = async (img) => {
@@ -470,6 +505,38 @@ export async function createPlan(plan, { client, batchDir, record, log = console
       log(`· image ${img.file}: ${first.hash}`);
       return first.hash;
     } catch (e) { fail("image", img.file, e); }
+  };
+  /**
+   * A video: uploaded once per file, by content, into the ad account's library; then Meta processes it, and a creative
+   * cannot be made from it until it is ready — so its state is asked every few seconds (`wait`), for a few minutes at
+   * most. A video still processing after that stops the run in words, with its id on record: the next create asks
+   * again and uploads nothing twice.
+   */
+  const video = async (vid) => {
+    const bytes = readFileSync(join(batchDir, vid.file));
+    const key = sha16(bytes);
+    rec.videos ||= {};
+    try {
+      if (rec.videos[key]?.id) run.reused.videos++;
+      else {
+        const r = await client.uploadVideo(account, { bytes, name: vid.name });
+        if (!r?.id) throw new Error(`the video upload answered without an id: ${JSON.stringify(r).slice(0, 200)}`);
+        rec.videos[key] = { id: r.id, file: vid.file, name: vid.name, bytes: bytes.length, at: new Date().toISOString(), ready: null }; run.made.videos++; save();
+        log(`· video ${vid.file}: ${r.id} (${(bytes.length / 1e6).toFixed(1)} MB) — Meta is processing it`);
+      }
+      const had = rec.videos[key];
+      if (!had.ready) {
+        for (let i = 0; ; i++) {
+          const s = await client.videoStatus(had.id);
+          if (s.state === "ready") { had.ready = new Date().toISOString(); save(); log(`· video ${had.id}: ready`); break; }
+          if (s.state === "error") throw new Error(`Meta could not process the video ${vid.file} (${JSON.stringify(s.status).slice(0, 200)})`);
+          if (i >= Math.ceil(VIDEO_READY_MS / VIDEO_POLL_MS)) throw new Error(`Meta is still processing the video ${vid.file} after ${Math.round(VIDEO_READY_MS / 60000)} minutes: nothing is lost — press Continue creating in a few minutes`);
+          if (i === 0 || i % 5 === 4) log(`  video ${had.id}: ${s.state}…`);
+          await wait(VIDEO_POLL_MS);
+        }
+      }
+      return { id: had.id, key };
+    } catch (e) { fail("video", vid.file, e); }
   };
   /** Is a recorded object still usable on Meta? A campaign or ad set archived or deleted in Ads Manager cannot take new
    *  ads ("Archived ad sets may only contain archived or deleted ads", Aether Athletics 2026-10-10): it is set aside as
@@ -506,7 +573,7 @@ export async function createPlan(plan, { client, batchDir, record, log = console
   const adsToMake = first ? plan.ads.slice(0, first) : plan.ads;
   const callouts = [...new Set(adsToMake.map((a) => a.adset))];
   const setFacts = (set) => ({ callout: set.callout, audience: set.audience, pin: set.pin?.label || set.pin?.place_name || null, place_key: set.pin?.place_key || null, radius_km: set.pin?.radius_km ?? null, age_min: set.age_min, age_max: set.age_max, gender: set.gender, preset: set.preset?.name || null, preset_id: set.preset?.id || null, level: plan.budget.level, daily: set.budget?.daily ?? plan.budget.daily, bid_strategy: plan.budget.bid_strategy });
-  const adFacts = (ad) => ({ ...(ad.format ? { format: ad.format } : {}), has_story: !!ad.story, form_id: plan.lead_form_id, instagram_user_id: plan.instagram_user_id, cta: plan.words.cta, headline: plan.words.headline, message: plan.words.message, description: plan.words.description, placeholders: plan.words.placeholders.length > 0, copies: ad.copies || [], headlines: ad.headlines || [], text_options: (ad.copies || []).length || 1, title_options: (ad.headlines || []).length || 1, name: ad.name });
+  const adFacts = (ad) => ({ ...(ad.format ? { format: ad.format } : {}), ...(ad.video ? { video: true, seconds: ad.video.seconds ?? null } : {}), has_story: !!ad.story, form_id: plan.lead_form_id, instagram_user_id: plan.instagram_user_id, cta: plan.words.cta, headline: plan.words.headline, message: plan.words.message, description: plan.words.description, placeholders: plan.words.placeholders.length > 0, copies: ad.copies || [], headlines: ad.headlines || [], text_options: (ad.copies || []).length || 1, title_options: (ad.headlines || []).length || 1, name: ad.name });
   for (const callout of callouts) {
     const set = plan.adsets.find((x) => x.callout === callout);
     const key = adsetKey(set.payload);
@@ -536,18 +603,21 @@ export async function createPlan(plan, { client, batchDir, record, log = console
   }
   // Each ad: its images, its creative, the ad. A creative that changed means a new creative and ad.
   for (const ad of adsToMake) {
-    const hashes = { square: await image(ad.image), story: ad.story ? await image(ad.story) : null };
+    // A video ad: its poster frame as the image, the video itself by content. (An image ad's hashes are as they always were, so no key of an ad already on Meta changes.)
+    const up = ad.video ? await video(ad.video) : null;
+    const hashes = { square: await image(ad.image), story: ad.story ? await image(ad.story) : null, ...(up ? { video: up.key } : {}) };
     const key = creativeKey(ad.creative, hashes), had = rec.ads[ad.folder];
     if (had?.id && had.key === key) { had.facts = adFacts(ad); run.reused.ads++; save(); continue; }
     if (had?.id) { rec.superseded.push({ folder: ad.folder, ...had, why: "the creative changed (words, images, form or identity)", at: new Date().toISOString() }); delete rec.ads[ad.folder]; run.superseded++; save(); log(`· ad ${ad.folder}: ${had.id} no longer matches the plan — making a new creative and ad`); }
     const spec = structuredClone(ad.creative);
-    if (spec.asset_feed_spec) { spec.asset_feed_spec.images[0].hash = hashes.square; spec.asset_feed_spec.images[1].hash = hashes.story; }
+    if (up) { spec.object_story_spec.video_data.video_id = up.id; spec.object_story_spec.video_data.image_hash = hashes.square; }
+    else if (spec.asset_feed_spec) { spec.asset_feed_spec.images[0].hash = hashes.square; spec.asset_feed_spec.images[1].hash = hashes.story; }
     else spec.object_story_spec.link_data.image_hash = hashes.square;
     let creative;
     try { creative = await postCreative(client, account, spec, log); run.made.creatives++; } catch (e) { fail("creative", ad.folder, e); }
     try {
       const r = await client.post(`${account}/ads`, { ...ad.payload, adset_id: rec.adsets[ad.adset].id, creative: { creative_id: creative.id } });
-      rec.ads[ad.folder] = { id: r.id, creative_id: creative.id, adset: ad.adset, key, hashes, facts: adFacts(ad), enhancements: creative.enhancements, ...(creative.opt_out_refused ? { opt_out_refused: creative.opt_out_refused } : {}), at: new Date().toISOString() };
+      rec.ads[ad.folder] = { id: r.id, creative_id: creative.id, adset: ad.adset, key, hashes, ...(up ? { video_id: up.id } : {}), facts: adFacts(ad), enhancements: creative.enhancements, ...(creative.opt_out_refused ? { opt_out_refused: creative.opt_out_refused } : {}), at: new Date().toISOString() };
       run.made.ads++; save();
       log(`· ad ${ad.folder}: ${r.id} (creative ${creative.id}, ${creative.enhancements})`);
     } catch (e) { rec.orphan_creatives = [...(rec.orphan_creatives || []), { folder: ad.folder, creative_id: creative.id }]; fail("ad", ad.folder, e); }
@@ -595,9 +665,11 @@ export function publishReadiness(plan, { formName = null } = {}) {
   else check(true, `${c.kept} ${c.kept === 1 ? "copy" : "copies"} kept, ${c.per_ad} per ad`, "copy");
   if (!c.headlines?.kept) check(false, "no headline kept: the ads carry the copies' own headlines, or a placeholder — draft or add headlines below and keep some", "copy");
   else check(true, `${c.headlines.kept} headline${c.headlines.kept === 1 ? "" : "s"} kept, ${c.headlines.per_ad} per ad`, "copy");
-  const noStory = (plan.ads || []).filter((a) => !a.story).length;
-  if (noStory) check(false, `${noStory} of ${plan.ads.length} ads ${noStory === 1 ? "has" : "have"} no Stories version: they run the feed image on Stories and Reels too — make the Stories versions on Review`, "ads");
-  else if (plan.ads?.length) check(true, "every ad has a Stories version", "ads");
+  const stills = (plan.ads || []).filter((a) => !a.video), nVideo = (plan.ads || []).length - stills.length;
+  const noStory = stills.filter((a) => !a.story).length;
+  if (noStory) check(false, `${noStory} of ${stills.length} ${nVideo ? "image " : ""}ads ${noStory === 1 ? "has" : "have"} no Stories version: they run the feed image on Stories and Reels too — make the Stories versions on Pick Ads`, "ads");
+  else if (stills.length) check(true, `every ${nVideo ? "image " : ""}ad has a Stories version`, "ads");
+  if (nVideo) check(true, `${nVideo} video ad${nVideo === 1 ? "" : "s"}: 9:16 already, uploaded to the ad account when you create`, "ads");
   return { ready: plan.ready, blocking: plan.problems || [], checks, to_check: checks.filter((x) => x.ok !== true).length };
 }
 

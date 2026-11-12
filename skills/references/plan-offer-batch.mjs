@@ -31,7 +31,7 @@
  */
 
 import { generateImage } from "./generate_ads_gemini.mjs";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync, readdirSync, renameSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync, readdirSync, renameSync, copyFileSync } from "fs";
 import { join, resolve, basename, dirname, relative } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
@@ -45,6 +45,7 @@ import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from ".
 import { catalogueFor, imageModelFor, mixOf, FEED_RATIOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
 import { cardsProblems, cardCount, pickCards } from "./cards.mjs";
 import { renderCard, loadCards } from "./render-cards.mjs";
+import { videosProblems, videoCount, pickScripts, makePresenterVideos, scriptCost, USD_PER_SECOND } from "./presenter-video.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { ROOMS, SCENE_OPTIONAL_TAGS, SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
@@ -99,7 +100,10 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
   const g = brief.generated ?? 0, real = brief.real || [];
   if (!Number.isInteger(g) || g < 0 || g > 12) errs.push("generated must be a whole number from 0 to 12");
   if (!Array.isArray(real)) errs.push("real must be a list of photo paths");
-  else if (g + real.length + cardCount(brief.cards) < 1) errs.push("the batch has no photos: set generated, list real photos, or both");
+  else if (g + real.length + cardCount(brief.cards) + videoCount(brief.videos) < 1) errs.push("the batch has no photos: set generated, list real photos, or both");
+  // Videos (2026-11-12): a presenter talking to camera — how many (each is one kept script, made once for every location), and the most seconds of video the run may ask for.
+  errs.push(...videosProblems(brief.videos));
+  if (brief.max_video_seconds != null && !(Number.isInteger(brief.max_video_seconds) && brief.max_video_seconds >= 0 && brief.max_video_seconds <= MAX_VIDEO_SECONDS)) errs.push(`max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`);
   // Cards (Phase 5): text-led ads with no photograph — how many of each kind. No image call.
   errs.push(...cardsProblems(brief.cards));
   if (brandDir && Array.isArray(real)) for (const p of real) if (!existsSync(join(brandDir, "brand-assets", p)) && !existsSync(resolve(p))) errs.push(`real photo not found: ${p}`);
@@ -475,6 +479,37 @@ export async function renderBatchCards(browser, { brandDir, brief, profile, seed
   return out;
 }
 
+/** The most seconds of video one batch may ask for, whatever its brief says (about US$21 at the day's price). */
+export const MAX_VIDEO_SECONDS = 300;
+export const VIDEO_SPEND = "video-spend.json";
+/** What a batch's presenter videos would take: the scripts it would make, the seconds of one clean pass, and the cap a run is given (every take allowed). */
+export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id } = {}) {
+  const n = videoCount(brief.videos); if (!n) return null;
+  const scripts = pickScripts(brandDir, { count: n, offer: brief.offer, seed }), costs = scripts.map((x) => scriptCost(x, brief.locations)), takes = brief.attempts ?? 2;
+  const seconds = costs.reduce((t, c) => t + c.seconds, 0), images = costs.reduce((t, c) => t + c.images, 0), cap = Math.min(MAX_VIDEO_SECONDS, brief.max_video_seconds ?? seconds * takes);
+  return { scripts, count: n, videos: n * brief.locations.length, seconds, images, takes, max_seconds: cap, usd: Math.round((seconds * USD_PER_SECOND) * 100) / 100, usd_max: Math.round((cap * USD_PER_SECOND) * 100) / 100 };
+}
+/**
+ * A batch's presenter videos (presenter-video.mjs): each picked script made once for every location, in the gym's own
+ * room, under the batch's cap on seconds of video. What a run spends is added to video-spend.json, and everything
+ * already on disk is reused, so a re-run costs nothing. A video that is refused is a named failure of the batch.
+ */
+export async function renderBatchVideos(browser, { brandDir, out, brief, profile, seed, audience = null, log = console.log, prog = null, models = null }) {
+  const plan = videoPlan(brandDir, brief, { seed }), ref = brief.reference || brief.real?.[0] || null, room = ref ? (existsSync(join(brandDir, "brand-assets", ref)) ? join(brandDir, "brand-assets", ref) : resolve(ref)) : null;
+  const spendPath = join(out, VIDEO_SPEND), before = (() => { try { return JSON.parse(readFileSync(spendPath, "utf-8")); } catch { return { seconds: 0, images: 0, checks: 0 }; } })();
+  const spent = { seconds: 0, images: 0, checks: 0 }, save = () => writeFileSync(spendPath, JSON.stringify({ seconds: before.seconds + spent.seconds, images: before.images + spent.images, checks: before.checks + spent.checks, max_seconds: plan.max_seconds }, null, 2) + "\n");
+  const outVideos = [];
+  for (const [i, script] of plan.scripts.entries()) {
+    const id = `v${String(i + 1).padStart(2, "0")}`;
+    log(`· ${id}: presenter video from script ${script.id} (${brief.locations.length} location${brief.locations.length === 1 ? "" : "s"})`);
+    const r = await makePresenterVideos({ gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, audience, room, profile, caps: { seconds: Math.max(0, plan.max_seconds - before.seconds), images: plan.images + 2 }, spent, takes: plan.takes, browser, ...(models ? { models } : {}),
+      log: (m) => log(`  ${m}`), onProgress: (p) => { save(); prog?.set({ stage: "videos", video: { id, script: script.id, ...p }, video_seconds: before.seconds + spent.seconds, video_max_seconds: plan.max_seconds }); } });
+    save();
+    for (const v of r.videos) { if (v.failed) log(`⚑ ${id} ${v.area}: ${v.failed}`); outVideos.push({ id, script_id: script.id, ...v }); }
+  }
+  return { videos: outVideos, spent: { seconds: before.seconds + spent.seconds, images: before.images + spent.images, checks: before.checks + spent.checks }, this_run: spent, plan };
+}
+
 /** A batch's photos per format: the brief's own mix (counts), else all of its one format, else the gym's default shares
  *  (Ad defaults → mix, or its one format) turned into photos by `allocateMix`. No generated photos: {}. */
 export function batchMix(brief, profile = null) {
@@ -705,7 +740,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: a.own_layout_failed ? null : v.treatment, scene_id: v.scene_id, format: v.format || "workout", ...(v.room ? { room: v.room } : {}), notes: [...(a.notes || []), ...(a.own_layout_failed ? [`not used in its own layout: ${a.own_layout_failed.join("; ")}`] : [])], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
     }
     photos.sort((a, b) => a.id.localeCompare(b.id));
-    if (!photos.length && !cardCount(brief.cards)) throw new Error("no photos passed: nothing to render"); // a batch of cards alone has none to pass
+    if (!photos.length && !cardCount(brief.cards) && !videoCount(brief.videos)) throw new Error("no photos passed: nothing to render"); // a batch of cards or videos alone has none to pass
 
     // ── 3 fit ──
     prog.set({ stage: "fit", calls });
@@ -723,7 +758,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     // ── 4 looks ──
     prog.set({ stage: "looks" });
     const browser = deps.browser || await launchBrowser();
-    let results, cardRenders = [];
+    let results, cardRenders = [], videoRun = null;
     try {
       if (!photos.length) results = []; // cards alone: no photograph to look at or set words on
       else {
@@ -740,6 +775,12 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       if (cardCount(brief.cards)) {
         if (ratio !== "4x5") throw new Error("cards are made at 4:5 with a 9:16 for Stories: this batch was made as a square before, so it takes none");
         cardRenders = await renderBatchCards(browser, { brandDir, brief, profile, seed, audience, log });
+      }
+      // ── 5c videos ── a presenter talking to camera: one kept script each, made once for every location. The only step that makes video.
+      if (videoCount(brief.videos)) {
+        if (ratio !== "4x5") throw new Error("videos are made for a 4:5 batch (they are 9:16 themselves): this batch was made as a square before, so it takes none");
+        prog.set({ stage: "videos" });
+        videoRun = await renderBatchVideos(browser, { brandDir, out, brief, profile, seed, audience, log, prog, models: deps.videoModels || null });
       }
     } finally { if (!deps.browser) await browser.close(); }
 
@@ -778,18 +819,29 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
           card: { kind: c.kind, source_id: c.source_id }, ...(story ? { story_file: story } : { story_failure: r.story_failure }), crop: [], words: { location: loc, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
       }
     }
+    // The videos join after the cards, numbered on. A video is 9:16 and carries its own picture (a frame of it) as the
+    // ad's still, so every screen that shows an ad has something to show; `video_file` is the advert itself.
+    for (const v of videoRun?.videos || []) {
+      if (v.failed) { failed.push({ candidate: v.id, photo: null, video: v.script_id, location: v.area, failures: [v.failed] }); continue; }
+      const li = brief.locations.indexOf(v.area), folder = `${cardNo++}-${v.id}-${slug(v.area)}-presenter-video`, name = `${v.id}-${slug(v.area)}`;
+      const video = join(folder, "9x16", `${name}_9x16_v1.mp4`), poster = join(folder, "9x16", `${name}_9x16_v1.jpg`);
+      mkdirSync(dirname(join(out, video)), { recursive: true }); copyFileSync(v.file, join(out, video)); copyFileSync(v.poster, join(out, poster));
+      ads.push({ folder, file: poster, video_file: video, candidate: v.id, location: v.area, location_index: li, photos: [], photo_files: [], treatment: "video-presenter", style: "video", palette: null, ratio: "9x16", format: "presenter-video",
+        video: { kind: "presenter", script_id: v.script_id, seconds: v.seconds, words: v.words, notes: v.notes || [] }, crop: [], words: { location: v.area, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
+    }
     // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
     // record of the calls that made its photos (the panel showed "0 image calls" after one).
     const batch = {
       batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, ...(brief.words_weight ? { words_weight: brief.words_weight } : {}), ...(cardRenders.length ? { cards: Object.fromEntries(["review", "statement", "timeline"].map((k) => [k, cardRenders.filter((c) => c.kind === k && !c.failed).length]).filter(([, n]) => n > 0)) } : {}), format, mix: Object.fromEntries(Object.keys(SCENE_FORMATS).map((f) => [f, photos.filter((p) => p.format === f).length]).filter(([, n]) => n > 0)), ...(brief.lean?.length && !directed ? { lean: brief.lean } : {}), image_calls: spent, image_calls_this_run: calls,
       photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.format ? { format: p.format } : {}), ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
+      ...(videoRun ? { videos: { presenter: new Set(videoRun.videos.filter((v) => !v.failed).map((v) => v.id)).size }, video_seconds: videoRun.spent.seconds } : {}),
       ads, failed,
     };
     writeFileSync(join(out, "batch.json"), JSON.stringify(batch, null, 2) + "\n");
     // What the checks noticed about each ad's photos but did not reject, for the gallery's headings —
     // the owner picks with the notes in view (2026-09-12: "the selection step is an additional check").
     const noteOf = (id) => (photos.find((p) => p.id === id)?.notes || []).map((n) => `${id}: ${n}`);
-    const galleryNotes = Object.fromEntries(ads.map((a) => [a.folder, a.photos.flatMap(noteOf).join(" · ")]).filter(([, n]) => n));
+    const galleryNotes = Object.fromEntries(ads.map((a) => [a.folder, [...a.photos.flatMap(noteOf), ...(a.video?.notes || [])].join(" · ")]).filter(([, n]) => n));
     writeFileSync(join(out, "gallery-notes.json"), JSON.stringify(galleryNotes, null, 2) + "\n");
     const gallery = deps.gallery || ((dir) => execFileSync(process.execPath, [join(HERE, "gallery-selector.mjs"), "--output-dir", dir], { stdio: "ignore" }));
     gallery(out);

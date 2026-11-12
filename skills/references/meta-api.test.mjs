@@ -46,7 +46,18 @@ before(async () => {
   server = http.createServer(async (req, res) => {
     const u = new URL(req.url, "http://x");
     const path = u.pathname.replace(`/${META_API_VERSION}/`, "");
-    if (req.method === "POST") { let body = ""; for await (const chunk of req) body += chunk; for (const [k, v] of new URLSearchParams(body)) u.searchParams.set(k, v); }
+    if (req.method === "POST") {
+      const chunks = []; for await (const chunk of req) chunks.push(chunk);
+      const raw = Buffer.concat(chunks), type = req.headers["content-type"] || "", boundary = type.match(/^multipart\/form-data;\s*boundary=(.+)$/)?.[1];
+      if (boundary) {
+        // An upload (a video): each field as it is, the file as its size, name and type.
+        for (const part of raw.toString("latin1").split("--" + boundary).slice(1, -1)) {
+          const cut = part.indexOf("\r\n\r\n"), head = part.slice(0, cut), data = part.slice(cut + 4, -2), name = head.match(/name="([^"]+)"/)?.[1], file = head.match(/filename="([^"]*)"/);
+          if (file) { u.searchParams.set(name + "_bytes", String(data.length)); u.searchParams.set(name + "_name", file[1]); u.searchParams.set(name + "_type", head.match(/content-type:\s*(\S+)/i)?.[1] || ""); }
+          else u.searchParams.set(name, Buffer.from(data, "latin1").toString("utf8"));
+        }
+      } else for (const [k, v] of new URLSearchParams(raw.toString())) u.searchParams.set(k, v);
+    }
     calls.push({ path, q: u.searchParams, version: u.pathname.split("/")[1], method: req.method });
     const err = errorHook(path, u.searchParams);
     if (err) { res.writeHead(err.status || 400, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: err.error })); }
@@ -377,7 +388,7 @@ test("M6 the publish plan for a batch: the kept ads only (excluded ads and photo
     const presets = { presets: [{ id: "broad", name: "Broad", spec: {}, summary: ["Broad — no detailed targeting"], stats: { adsets: 14, leads: 1021, cost_per_lead: 5.43, genders: { men: 14, women: 0, all: 0 } } }, { id: "a97f701a193c", name: "Fitness+Fatherhood", spec: { flexible_spec: [{ interests: [{ id: "6003101323797", name: "Fatherhood" }] }] }, summary: ["Fatherhood (interests)"], stats: { adsets: 1, leads: 45, cost_per_lead: 56.24, genders: { men: 1, women: 0, all: 0 } } }] };
     const batch = { batch_id: "2026-09-13-men" };
     const p = buildPlan({ profile, batch, kept, presets });
-    assert.deepEqual([p.ready, p.problems, p.counts], [true, [], { adsets: 2, ads: 3, with_story: 1 }]);
+    assert.deepEqual([p.ready, p.problems, p.counts], [true, [], { adsets: 2, ads: 3, with_story: 1, videos: 0 }]);
     assert.deepEqual([p.account, p.page_id, p.instagram_user_id, p.lead_form_id, p.website], ["act_111", "77", "88", "4001", "https://sculptsociety.com.sg"]);
     assert.deepEqual(p.campaign, { name: "0913 12 Week Total Body Reset | SCS | Men Wanted", objective: "OUTCOME_LEADS", status: "PAUSED", special_ad_categories: [], buying_type: "AUCTION", is_adset_budget_sharing_enabled: false }, "an ad-set budget: none on the campaign, and no sharing between ad sets (Meta requires the answer)");
   assert.equal(buildPlan({ profile, batch, kept, presets, settings: { campaign: { level: "campaign" } } }).campaign.is_adset_budget_sharing_enabled, undefined, "not sent with a campaign budget");
@@ -507,7 +518,7 @@ test("M7 createPlan: images once per file by content, the campaign, the ad sets 
     const rec = freshRecord(path, { batch_id: batch.batch_id, account: "act_111" });
     const r1 = await createPlan(plan, { client: client(), batchDir: d, record: rec, first: 2, log: (m) => log.push(m) });
     assert.deepEqual(calls.map((c) => c[0]), ["campaigns", "adsets", "adimages", "adimages", "adcreatives", "ads", "adimages", "adcreatives", "ads"], "images on demand, once per content; only the ad set the run needs");
-    assert.deepEqual([r1.run.made, r1.run.reused, r1.ads, r1.of, r1.url], [{ images: 3, campaign: 1, adsets: 1, creatives: 2, ads: 2 }, { images: 1, campaign: 0, adsets: 0, ads: 0 }, 2, 3, "https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=111&selected_campaign_ids=c1"]);
+    assert.deepEqual([r1.run.made, r1.run.reused, r1.ads, r1.of, r1.url], [{ images: 3, videos: 0, campaign: 1, adsets: 1, creatives: 2, ads: 2 }, { images: 1, videos: 0, campaign: 0, adsets: 0, ads: 0 }, 2, 3, "https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=111&selected_campaign_ids=c1"]);
     const onDisk = JSON.parse(readFileSync(path, "utf-8"));
     assert.deepEqual([onDisk.campaign.id, Object.keys(onDisk.adsets), Object.keys(onDisk.ads), onDisk.done, onDisk.error, onDisk.runs.length, Object.keys(onDisk.images).length], ["c1", ["BISHAN"], [ads[0].folder, ads[1].folder], null, null, 1, 3]);
     assert.equal(calls.filter((c) => c[0] === "adcreatives")[0][1].length, 2, "the first creative carries the 1:1 and the 9:16");
@@ -517,7 +528,7 @@ test("M7 createPlan: images once per file by content, the campaign, the ad sets 
     const r2 = await createPlan(plan, { client: client(), batchDir: d, record: { ...JSON.parse(readFileSync(path, "utf-8")), path }, log: (m) => log.push(m) });
     assert.deepEqual(calls.map((c) => c[0]), ["adsets", "adimages", "adcreatives", "ads"]);
     assert.equal(typeof calls[2][1], "string", "the third ad's creative is the 1:1 alone");
-    assert.deepEqual([r2.run.made, r2.run.reused.ads, r2.run.reused.images, r2.ads, JSON.parse(readFileSync(path, "utf-8")).done != null], [{ images: 1, campaign: 0, adsets: 1, creatives: 1, ads: 1 }, 2, 4, 3, true], "the two done ads' four images are looked up and found, the third's uploaded");
+    assert.deepEqual([r2.run.made, r2.run.reused.ads, r2.run.reused.images, r2.ads, JSON.parse(readFileSync(path, "utf-8")).done != null], [{ images: 1, videos: 0, campaign: 0, adsets: 1, creatives: 1, ads: 1 }, 2, 4, 3, true], "the two done ads' four images are looked up and found, the third's uploaded");
     // 3. A re-run makes nothing at all.
     calls.length = 0;
     const r3 = await createPlan(plan, { client: client(), batchDir: d, record: { ...JSON.parse(readFileSync(path, "utf-8")), path }, log: () => {} });
@@ -898,4 +909,99 @@ test("M14 Taiwan's advertiser identity (2026-10-08, F45 Xinyi's first create): t
   const plan2 = buildPlan({ profile, batch: { batch_id: "b" }, kept: keptAds(d), presets: { presets: [] } });
   assert.deepEqual([plan2.problems, plan2.adsets[0].payload.regional_regulated_categories], [[], ["TAIWAN_UNIVERSAL"]]);
   assert.equal(Object.keys(REGULATED).length, 2);
+});
+
+test("M18 video ads on Meta (2026-11-12): a kept video is an ad of the plan like any other — its location's ad set, the same copy and form — with the creative the gyms' own video lead ads carry (the video, its poster frame and the lead form in video_data; several texts as text options beside it; a video's own enhancements opted out); creating uploads the video once by content to the ad account, waits until Meta has processed it, then makes the creative and the ad, every id recorded; a re-run uploads nothing and asks nothing; a video Meta is still processing stops the run in words and the next run goes on from its id; an image ad's key is what it was", async () => {
+  const { buildPlan, createPlan, freshRecord, publishReadiness, creativeKey, creativeFor, VIDEO_POLL_MS, VIDEO_READY_MS, VIDEO_ENHANCEMENTS } = await import("./meta-publish.mjs");
+  const { createHash } = await import("node:crypto");
+  const d = mkdtempSync(join(tmpdir(), "meta-video-"));
+  try {
+    const VF = "102-v01-bishan-presenter-video";
+    mkdirSync(join(d, "101-x", "4x5"), { recursive: true }); mkdirSync(join(d, "101-x", "9x16"), { recursive: true }); mkdirSync(join(d, VF, "9x16"), { recursive: true });
+    writeFileSync(join(d, "101-x", "4x5", "a.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1])); writeFileSync(join(d, "101-x", "9x16", "s.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 2]));
+    const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42"), Buffer.alloc(5000, 7)]);
+    writeFileSync(join(d, VF, "9x16", "v01-bishan_9x16_v1.mp4"), MP4); writeFileSync(join(d, VF, "9x16", "v01-bishan_9x16_v1.jpg"), Buffer.from([0xff, 0xd8, 0xff, 9]));
+    const W = { location: "BISHAN", audience: "MEN WANTED", offer: "12 Week Total Body Reset" };
+    const kept = [
+      { folder: "101-c-bishan", file: "101-x/4x5/a.png", location: "BISHAN", words: W, story: "101-x/9x16/s.png" },
+      { folder: VF, file: `${VF}/9x16/v01-bishan_9x16_v1.jpg`, location: "BISHAN", words: W, story: `${VF}/9x16/v01-bishan_9x16_v1.mp4`, format: "presenter-video", video: `${VF}/9x16/v01-bishan_9x16_v1.mp4`, seconds: 24.5 },
+    ];
+    const profile = { display_name: "Sculpt Society", gym_abbr: "SCS", website: "https://sculptsociety.com.sg", locale: { country: "SG", currency: "SGD" },
+      meta_assets: { ad_account_id: "act_111", page_id: "77", instagram_user_id: "88", lead_form_id: "4001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+      campaign_defaults: { budget: { level: "adset", amount: 50, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", radius_km: 5, callouts: ["BISHAN"] }] }, demographics: { age_min: 25, age_max: 60 } } };
+    const batch = { batch_id: "2026-09-13-men" };
+
+    // ── The plan ──
+    const plan = buildPlan({ profile, batch, kept, presets: { presets: [] } });
+    assert.deepEqual([plan.ready, plan.counts, plan.adsets[0].ads], [true, { adsets: 1, ads: 2, with_story: 1, videos: 1 }, ["101-c-bishan", VF]]);
+    assert.ok(!plan.warnings.some((w) => /Stories version|video/i.test(w)), plan.warnings.join(" | "));
+    const va = plan.ads[1], vd = va.creative.object_story_spec.video_data;
+    assert.deepEqual([va.name, va.video, va.image, va.story, va.format], ["0913 Bishan | 12 Week Total Body Reset | Video: " + VF, { file: kept[1].video, name: "2026-09-13-men__v01-bishan_9x16_v1.mp4", seconds: 24.5 }, { file: kept[1].file, name: "2026-09-13-men__v01-bishan_9x16_v1.jpg" }, null, "presenter-video"]);
+    assert.deepEqual([va.creative.object_story_spec.page_id, va.creative.object_story_spec.instagram_user_id, vd.video_id, vd.image_hash, vd.call_to_action, /^\[PLACEHOLDER primary text\]/.test(vd.message), /^\[PLACEHOLDER headline\]/.test(vd.title), va.creative.asset_feed_spec, va.creative.contextual_multi_ads],
+      ["77", "88", "(video id)", "(poster hash)", { type: "SIGN_UP", value: { lead_gen_form_id: "4001", link: "https://sculptsociety.com.sg" } }, true, true, undefined, { enroll_status: "OPT_OUT" }]);
+    const feats = va.creative.degrees_of_freedom_spec.creative_features_spec;
+    assert.deepEqual([Object.keys(feats).length, ["audio", "video_voiceover", "translate_voiceover", "ig_video_native_subtitle", "video_auto_crop", "text_optimizations"].map((k) => feats[k]?.enroll_status)], [VIDEO_ENHANCEMENTS.length, Array(6).fill("OPT_OUT")]);
+    assert.equal(plan.ads[0].creative.degrees_of_freedom_spec.creative_features_spec.audio, undefined, "an image creative's opt-outs are what they were");
+    const rd = publishReadiness(plan, { formName: "12 Week Total Body Reset" }).checks.map((c) => `${c.ok}: ${c.text}`).join(" · ");
+    assert.match(rd, /true: every image ad has a Stories version · true: 1 video ad: 9:16 already, uploaded to the ad account when you create/);
+    // Several kept copies and headlines: Meta's text options beside the video, the area filled, nothing in video_data.
+    const many = buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: [{ id: "c1", message: "Men in {AREA}, this is yours. Tap {BUTTON}." }, { id: "c2", message: "Stronger in twelve weeks, {AREA}." }], headlines: [{ id: "h1", headline: "For {AREA} men", description: "Train at Sculpt Society." }, { id: "h2", headline: "12 Week Total Body Reset" }] });
+    const mc = many.ads[1].creative;
+    assert.deepEqual([mc.asset_feed_spec, mc.object_story_spec.video_data.message, mc.object_story_spec.video_data.title, many.ads[1].copies, many.ads[1].headlines],
+      [{ optimization_type: "DEGREES_OF_FREEDOM", bodies: [{ text: "Men in Bishan, this is yours. Tap Sign up." }, { text: "Stronger in twelve weeks, Bishan." }], titles: [{ text: "For Bishan men" }, { text: "12 Week Total Body Reset" }], descriptions: [{ text: "Train at Sculpt Society." }] }, undefined, undefined, ["c1", "c2"], ["h1", "h2"]]);
+    // A plan of videos alone is a plan; an image ad's key is what it was before videos (nothing already on Meta is remade).
+    assert.deepEqual([buildPlan({ profile, batch, kept: [kept[1]], presets: { presets: [] } }).ready, buildPlan({ profile, batch, kept: [kept[1]], presets: { presets: [] } }).counts], [true, { adsets: 1, ads: 1, with_story: 0, videos: 1 }]);
+    { const c = plan.ads[0].creative, h = { square: "a", story: "b" }, afs = c.asset_feed_spec;
+      const old = createHash("sha256").update(JSON.stringify({ hashes: h, afs: { b: afs.bodies, t: afs.titles, d: afs.descriptions, l: afs.link_urls, c: afs.call_to_actions, r: afs.asset_customization_rules }, oss: { page_id: "77", instagram_user_id: "88" }, multi: c.contextual_multi_ads })).digest("hex").slice(0, 16);
+      assert.equal(creativeKey(c, h), old);
+      const plain = creativeFor({ name: "x", page_id: "77", instagram_user_id: null, website: "https://x.sg", form_id: "4001", words: { message: "m", headline: "h", description: "d" }, story: false });
+      assert.equal(creativeKey(plain, { square: "a", story: null }), createHash("sha256").update(JSON.stringify({ hashes: { square: "a", story: null }, afs: plain.object_story_spec.link_data, oss: { page_id: "77", instagram_user_id: null }, multi: plain.contextual_multi_ads })).digest("hex").slice(0, 16)); }
+
+    // ── Creating ──
+    let n = 0; const seen = []; let states = ["processing", "processing", "ready"];
+    Object.assign(answers, {
+      "act_111/adimages": (q) => { seen.push(["adimages", q.get("name")]); return { images: { [q.get("name")]: { hash: "h-" + q.get("name").slice(-9, -4) } } }; },
+      "act_111/advideos": (q) => { seen.push(["advideos", q.get("name"), Number(q.get("source_bytes")), q.get("source_name"), q.get("source_type"), q.get("appsecret_proof") === createHmac("sha256", SECRET).update(TOKEN).digest("hex")]); return { id: "vid" + ++n }; },
+      "vid3": (q) => { const s = states.length > 1 ? states.shift() : states[0]; seen.push(["status", q.get("fields"), s]); return { id: "vid3", status: { video_status: s, processing_phase: { status: s === "ready" ? "complete" : "in_progress" } } }; },
+      "act_111/campaigns": () => { seen.push(["campaigns"]); return { id: "c" + ++n }; },
+      "act_111/adsets": () => { seen.push(["adsets"]); return { id: "s" + ++n }; },
+      "act_111/adcreatives": (q) => { const oss = JSON.parse(q.get("object_story_spec")); seen.push(["adcreatives", oss.video_data ? { video_id: oss.video_data.video_id, image_hash: oss.video_data.image_hash, form: oss.video_data.call_to_action.value.lead_gen_form_id } : "image"]); return { id: "cr" + ++n }; },
+      "act_111/ads": (q) => { seen.push(["ads", q.get("status")]); return { id: "ad" + ++n }; },
+      "c1": () => ({ id: "c1", status: "PAUSED", effective_status: "PAUSED" }), "s2": () => ({ id: "s2", status: "PAUSED", effective_status: "PAUSED" }),
+    });
+    const path = join(d, "publish.json"), rec = freshRecord(path, { batch_id: batch.batch_id, account: "act_111" }), waits = [], log = [];
+    // The image ad is made first (n: c1, s2, then its creative and ad would take 3 and 4), so the fake names the video by the counter: make the video ad alone first.
+    const vplan = buildPlan({ profile, batch, kept: [kept[1], kept[0]], presets: { presets: [] } });
+    const r1 = await createPlan(vplan, { client: client(), batchDir: d, record: rec, wait: async (ms) => { waits.push(ms); }, log: (m) => log.push(m) });
+    assert.deepEqual(seen.map((c) => c[0]), ["campaigns", "adsets", "advideos", "status", "status", "status", "adimages", "adcreatives", "ads", "adimages", "adimages", "adcreatives", "ads"], "the video is uploaded, waited for, then its poster, creative and ad");
+    assert.deepEqual(seen[2], ["advideos", "2026-09-13-men__v01-bishan_9x16_v1.mp4", MP4.length, "2026-09-13-men__v01-bishan_9x16_v1.mp4", "video/mp4", true], "the whole file, as a file, with the token's proof");
+    assert.deepEqual([seen[3][1], waits, seen[7][1], seen[8][1]], ["status", [VIDEO_POLL_MS, VIDEO_POLL_MS], { video_id: "vid3", image_hash: "h-16_v1", form: "4001" }, "PAUSED"]);
+    const saved = JSON.parse(readFileSync(path, "utf-8")), vkey = Object.keys(saved.videos)[0];
+    assert.deepEqual([r1.ads, r1.run.made.videos, r1.run.made.ads, Object.keys(saved.videos).length, saved.videos[vkey].id, saved.videos[vkey].bytes, !!saved.videos[vkey].ready, saved.ads[VF].video_id, saved.ads[VF].hashes.video, saved.ads[VF].facts.video, saved.ads[VF].facts.seconds, saved.ads[VF].facts.format, Object.keys(saved.ads["101-c-bishan"].hashes), !!saved.done],
+      [2, 1, 2, 1, "vid3", MP4.length, true, "vid3", vkey, true, 24.5, "presenter-video", ["square", "story"], true]);
+    assert.ok(log.some((l) => /video .*: vid3 \(0\.0 MB\) — Meta is processing it/.test(l)) && log.some((l) => /video vid3: ready/.test(l)), log.join("\n"));
+    assert.ok(!readFileSync(path, "utf-8").includes(TOKEN));
+    // A re-run: nothing uploaded, nothing asked about the video, nothing made.
+    seen.length = 0;
+    const r2 = await createPlan(vplan, { client: client(), batchDir: d, record: rec, wait: async () => { throw new Error("no wait expected"); }, log: () => {} });
+    assert.deepEqual([seen.filter((c) => !["campaigns", "adsets"].includes(c[0])).map((c) => c[0]), r2.run.reused.videos, r2.run.reused.ads, r2.run.made.ads], [[], 1, 2, 0]);
+
+    // ── Meta still processing: the run stops in words, the video's id is kept, and the next run goes on from it ──
+    const path2 = join(d, "publish2.json"), rec2 = freshRecord(path2, { batch_id: batch.batch_id, account: "act_111" });
+    n = 0; seen.length = 0; states = ["processing"]; let polls = 0;
+    await assert.rejects(createPlan(buildPlan({ profile, batch, kept: [kept[1]], presets: { presets: [] } }), { client: client(), batchDir: d, record: rec2, wait: async () => { polls++; }, log: () => {} }), /Meta is still processing the video .*after 6 minutes: nothing is lost — press Continue creating in a few minutes/);
+    const s2 = JSON.parse(readFileSync(path2, "utf-8"));
+    assert.deepEqual([polls, Math.ceil(VIDEO_READY_MS / VIDEO_POLL_MS), s2.error.step, Object.values(s2.videos)[0].id, Object.values(s2.videos)[0].ready, Object.keys(s2.ads)], [90, 90, "video", "vid3", null, []]);
+    seen.length = 0; states = ["ready"];
+    const r3 = await createPlan(buildPlan({ profile, batch, kept: [kept[1]], presets: { presets: [] } }), { client: client(), batchDir: d, record: rec2, wait: async () => {}, log: () => {} });
+    assert.deepEqual([seen.filter((c) => c[0] === "advideos").length, seen.filter((c) => c[0] === "status").length, r3.ads, JSON.parse(readFileSync(path2, "utf-8")).error], [0, 1, 1, null], "not uploaded a second time");
+    // Meta cannot process it: said, with the step.
+    const path3 = join(d, "publish3.json"), rec3 = freshRecord(path3, { batch_id: batch.batch_id, account: "act_111" });
+    n = 0; states = ["error"];
+    await assert.rejects(createPlan(buildPlan({ profile, batch, kept: [kept[1]], presets: { presets: [] } }), { client: client(), batchDir: d, record: rec3, wait: async () => {}, log: () => {} }), /Meta could not process the video/);
+    assert.equal(JSON.parse(readFileSync(path3, "utf-8")).error.step, "video");
+  } finally {
+    for (const k of ["act_111/adimages", "act_111/advideos", "act_111/campaigns", "act_111/adsets", "act_111/adcreatives", "act_111/ads", "c1", "s2", "vid3"]) delete answers[k];
+    rmSync(d, { recursive: true, force: true });
+  }
 });

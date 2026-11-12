@@ -54,6 +54,8 @@ export function keptImagesZip(batchDir, { batchId = "batch" } = {}) {
   const kept = keptAds(batchDir), entries = [], rows = [["ad set", "ad", "feed image (1x1 or 4x5)", "9x16 (Stories and Reels)"]], missing = [];
   for (const a of kept) {
     const set = safe(titleCase(a.location || "All")), base = safe(a.folder);
+    // A video ad: the video itself, by ad set (its still is not an ad).
+    if (a.video) { const v = join(batchDir, a.video); if (!existsSync(v)) { missing.push(a.video); continue; } const fv = `${set}/${base}_9x16.mp4`; entries.push({ name: fv, data: readFileSync(v) }); rows.push([set, base, "", fv]); continue; }
     const one = join(batchDir, a.file);
     if (!existsSync(one)) { missing.push(a.file); continue; }
     const feed = a.ratio || (/[\\/]4x5[\\/]/.test(a.file) ? "4x5" : "1x1"); // the feed image's shape: square, or 4:5

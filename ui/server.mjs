@@ -23,7 +23,7 @@
  */
 
 import { createServer } from "http";
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, realpathSync, rmSync, renameSync, mkdtempSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, realpathSync, rmSync, renameSync, mkdtempSync, openSync, readSync, closeSync } from "fs";
 import { join, resolve, dirname, extname, basename, sep } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
@@ -51,12 +51,13 @@ import { buildReview, reviewText, recordAction } from "../skills/references/acco
 import { cycleFrom } from "../skills/references/cycle.mjs";
 import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
+import { readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
-import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, madeShape, batchMix } from "../skills/references/plan-offer-batch.mjs";
+import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, madeShape, batchMix, videoPlan } from "../skills/references/plan-offer-batch.mjs";
 import { ROOMS, libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs } from "../skills/references/render-composites.mjs";
@@ -795,7 +796,18 @@ function checkBrief(gym, raw) {
     if (cards.timeline && !durationOf(brief.offer)) errors.push("a timeline card needs an offer that names its length (6 Week …, 42 Day …)");
   }
   const photos = g + real.length, looks = brief?.looks_per_photo ?? 2, locs = Array.isArray(brief?.locations) ? brief.locations.length : 0;
-  return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs + cardCount(cards) * locs, cards, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format, mix } };
+  // Presenter videos (2026-11-12): the gym must have said who presents, that many scripts must be kept for this offer's
+  // exact words, the room needs a photo, and ffmpeg must be on this machine. What it would take is said: seconds, dollars, the cap.
+  const nv = videoCount(brief?.videos); let videos = null;
+  if (nv > 0) {
+    const profile = readJsonFile(join(brandDir(gym), "gym-profile.json")) || {};
+    if (!presenterOf(profile)) errors.push("say who presents the videos first: Ad defaults → Presenter (a woman or a man)");
+    if (!hasFfmpeg()) errors.push("videos need ffmpeg on this machine: run `brew install ffmpeg` once in Terminal");
+    if (!(brief.reference || real[0])) errors.push("a video is filmed in the gym's own room: clean a premises photo on Photos & assets first");
+    try { const vp = videoPlan(brandDir(gym), brief); videos = { count: vp.count, videos: vp.videos, seconds: vp.seconds, max_seconds: vp.max_seconds, usd: vp.usd, usd_max: vp.usd_max, images: vp.images, scripts: vp.scripts.map((x) => x.id) }; }
+    catch (e) { if (typeof brief.offer === "string" && brief.offer.trim() && locs) errors.push(scrubTokens(e.message)); }
+  }
+  return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs + cardCount(cards) * locs + nv * locs, cards, videos, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format, mix } };
 }
 
 // ── Review and picks (sub-step 2) ────────────────────────────────────────────
@@ -864,6 +876,7 @@ function reviewState(gym, id) {
     const s = storyOf.get(a.folder) || (a.story_file && existsSync(join(out, a.story_file)) ? { file: a.story_file } : null);
     return {
       folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, ratio: a.ratio || batch.ratio || "1x1", format: a.format || null, treatment: a.treatment, style: a.style, palette: a.palette,
+      ...(a.video_file && existsSync(join(out, a.video_file)) ? { video: fileUrl(gym, join(out, a.video_file)), video_seconds: a.video?.seconds ?? null, video_words: a.video?.words || [] } : {}),
       photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || a.story_failure || null, card: a.card || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
     };
   });
@@ -928,7 +941,7 @@ function savePicks(gym, id, change) {
     const stories = new Map((readJsonFile(join(out, "stories.json"))?.ads || []).filter((a) => existsSync(join(out, a.file))).map((a) => [a.folder, a.file]));
     const excluded = batch.ads.filter((a) => standing(a, d).status === "exclude").map((a) => a.folder).sort();
     const sel = { excluded };
-    for (const a of batch.ads) if (!excluded.includes(a.folder)) sel[a.folder] = { [a.ratio || batch.ratio || "1x1"]: a.file, ...(stories.has(a.folder) ? { "9x16": stories.get(a.folder) } : a.story_file && existsSync(join(out, a.story_file)) ? { "9x16": a.story_file } : {}) };
+    for (const a of batch.ads) if (!excluded.includes(a.folder)) sel[a.folder] = a.video_file ? { "9x16": a.video_file } : { [a.ratio || batch.ratio || "1x1"]: a.file, ...(stories.has(a.folder) ? { "9x16": stories.get(a.folder) } : a.story_file && existsSync(join(out, a.story_file)) ? { "9x16": a.story_file } : {}) };
     writeWhole(join(out, "selections.json"), JSON.stringify(sel, null, 2) + "\n");
   }
   return null;
@@ -1176,7 +1189,7 @@ function startRun(kind, params, hooks = {}) {
 
 // ── Static files ─────────────────────────────────────────────────────────────
 const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript",
-  ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml" };
+  ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml", ".mp4": "video/mp4" };
 
 /**
  * The only files /files/ will serve: generated outputs (galleries and their images), brand images,
@@ -1188,7 +1201,7 @@ function allowedFile(rel) {
   if (parts.some((p) => p === ".." || p === "." || p.startsWith("."))) return null;
   const ext = extname(rel).toLowerCase();
   let base = null;
-  if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "outputs" && (ext === ".html" || IMAGE_EXT.has(ext))) base = join(BRANDS, parts[1], "outputs");
+  if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "outputs" && (ext === ".html" || ext === ".mp4" || IMAGE_EXT.has(ext))) base = join(BRANDS, parts[1], "outputs"); // .mp4: a batch's video ads (2026-11-12)
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "brand-assets" && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "logo")) && parts[3] !== "_trash") base = join(BRANDS, parts[1], "brand-assets");
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === REFERENCES_DIR && parts.length === 4 && REFERENCE_NAME.test(parts[3])) base = join(BRANDS, parts[1], REFERENCES_DIR);
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "onboarding" && ["website", "instagram"].includes(parts[3]) && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "website" && parts[4] === "logos"))) base = join(BRANDS, parts[1], "onboarding", parts[3]);
@@ -1201,8 +1214,19 @@ function allowedFile(rel) {
   return real.startsWith(realBase + sep) ? real : null;
 }
 
-function sendFile(res, abs) {
+function sendFile(res, abs, req = null) {
   const ext = extname(abs).toLowerCase();
+  // A video is sent in the parts the player asks for (Range), so it can seek and Safari will play it at all.
+  if (ext === ".mp4") {
+    const size = statSync(abs).size, m = /^bytes=(\d*)-(\d*)$/.exec(req?.headers?.range || "");
+    if (m && (m[1] || m[2])) {
+      const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2])), end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+      if (!(start <= end && start < size)) { res.writeHead(416, { "content-range": `bytes */${size}` }); return res.end(); }
+      const fd = openSync(abs, "r"), buf = Buffer.alloc(end - start + 1); readSync(fd, buf, 0, buf.length, start); closeSync(fd);
+      res.writeHead(206, { "content-type": "video/mp4", "content-range": `bytes ${start}-${end}/${size}`, "accept-ranges": "bytes", "content-length": buf.length, "cache-control": "no-store" }); return res.end(buf);
+    }
+    res.writeHead(200, { "content-type": "video/mp4", "accept-ranges": "bytes", "content-length": size, "cache-control": "no-store" }); return res.end(readFileSync(abs));
+  }
   // An SVG logo is a picture here, never a page: no scripts, no fetches, even if one slipped through.
   res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-store", ...(ext === ".svg" ? { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'", "x-content-type-options": "nosniff" } : {}) });
   res.end(readFileSync(abs));
@@ -1738,6 +1762,41 @@ const server = createServer(async (req, res) => {
       writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
       return json(res, 200, { ok: true, room_reference: profile.creative_defaults.room_reference });
     }
+    // /api/client/{gym}/video… — presenter videos (presenter-video.mjs): who presents (the gym's own choice; nothing is made
+    // until it is set), the scripts — the owner's own is kept at once, a drafted one waits for him — and his sample
+    // scripts, which the drafter follows. GET the lot; POST /presenter { gender, age?, look? } | { clear: true };
+    // POST /script { lines, offer }; PUT /script/{id} { status, lines, reason }; POST /draft { offer, audience?, count }
+    // (one text call: the owner's click); POST /sample { text, note? }; PUT /sample/{id} { retired, reason }. No video is made here.
+    const vdm = p.match(/^\/api\/client\/([^/]+)\/video(?:\/(presenter|script|draft|sample)(?:\/([\w-]+))?)?$/);
+    if (vdm) {
+      const [, gym, what, x1] = vdm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym), pf = join(dir, "gym-profile.json"), profile = readJsonFile(pf) || {};
+      const view = () => { const d = readScripts(dir), prof = readJsonFile(pf) || {}, areas = prof.creative_defaults?.locations?.length ? prof.creative_defaults.locations : [""];
+        return { presenter: presenterOf(prof), genders: PRESENTER_GENDERS, scripts: d.scripts.map((x) => ({ ...x, cost: (({ seconds, images, usd }) => ({ seconds, images, usd }))(scriptCost(x, areas)) })), samples: d.samples, ffmpeg: hasFfmpeg(), room: !!(prof.creative_defaults?.room_reference || cleanPhotos(gym).some((x) => !x.people)), limits: { lines: SCRIPT_LINES, words: SCRIPT_LINE_WORDS, max_videos: MAX_VIDEOS }, usd_per_second: USD_PER_SECOND, locations: areas.filter(Boolean) }; };
+      try {
+        if (!what && req.method === "GET") return json(res, 200, view());
+        if (req.method !== "POST" && req.method !== "PUT") return json(res, 405, { error: "method not allowed" });
+        const body = await readBody(req);
+        if (what === "presenter" && req.method === "POST") {
+          const next = body.clear === true ? null : { gender: body.gender, ...(body.age != null && body.age !== "" ? { age: Number(body.age) } : {}), ...(typeof body.look === "string" && body.look.trim() ? { look: body.look.trim() } : {}) };
+          const errs = presenterProblems(next); if (errs.length) return json(res, 400, { error: errs[0] });
+          if (next) (profile.creative_defaults ||= {}).presenter = next; else if (profile.creative_defaults) delete profile.creative_defaults.presenter;
+          const { errors } = validateProfile(profile, { gymDir: dir }); if (errors.length) return json(res, 400, { error: errors[0] });
+          writeWhole(pf, JSON.stringify(profile, null, 2) + "\n"); return json(res, 200, view());
+        }
+        if (what === "script" && req.method === "POST" && !x1) { addScript(dir, { lines: body.lines, offer: body.offer, source: "owner" }, { profile }); return json(res, 200, view()); }
+        if (what === "script" && req.method === "PUT" && x1) { decideScript(dir, x1, { status: body.status, lines: body.lines, reason: body.reason }, { profile }); return json(res, 200, view()); }
+        if (what === "draft" && req.method === "POST") {
+          const count = body.count ?? 3; if (!Number.isInteger(count) || count < 1 || count > 6) return json(res, 400, { error: "how many scripts to draft must be 1 to 6" });
+          const d = await draftScripts({ brandDir: dir, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count });
+          return json(res, 200, { ...view(), drafted: { added: d.added.map((x) => x.id), dropped: d.dropped } });
+        }
+        if (what === "sample" && req.method === "POST" && !x1) { addSample(dir, body.text, { note: body.note || null }); return json(res, 200, view()); }
+        if (what === "sample" && req.method === "PUT" && x1) { decideSample(dir, x1, { retired: body.retired, reason: body.reason }); return json(res, 200, view()); }
+        return json(res, 404, { error: "not found" });
+      } catch (e) { return json(res, e.duplicate ? 409 : 400, { error: scrubTokens(e.message) }); }
+    }
     // /api/client/{gym}/cards… — what goes on a text-led card (cards.mjs): the gym's Google reviews, word for word, and the
     // statements and timelines the owner has kept. GET the lot; POST /review a pasted one; PUT /review/{id} its excerpt
     // (whole sentences only) or retire it; POST /google/find and /google/pull (the Places key in .env; Google returns five
@@ -2063,7 +2122,7 @@ const server = createServer(async (req, res) => {
     if (bm) {
       const [, gym, what, id] = bm;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym).filter((x) => !x.people), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, cards_ready: cardsAvailable(brandDir(gym), { profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {} }), max_cards: MAX_CARDS, mix: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), formats: Object.keys(SCENE_FORMATS), photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
+      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym).filter((x) => !x.people), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, cards_ready: cardsAvailable(brandDir(gym), { profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {} }), max_cards: MAX_CARDS, videos: { presenter: presenterOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), kept: keptScripts(brandDir(gym)).map((x) => ({ id: x.id, offer: x.offer })), max: MAX_VIDEOS, ffmpeg: hasFfmpeg(), usd_per_second: USD_PER_SECOND }, mix: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), formats: Object.keys(SCENE_FORMATS), photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
       if (what === "batch/check" && req.method === "POST") { const { brief } = await readBody(req); return json(res, 200, checkBrief(gym, brief)); }
       if (what === "batch" && req.method === "POST") {
         const { brief: raw, replace = false } = await readBody(req);
@@ -2354,7 +2413,7 @@ const server = createServer(async (req, res) => {
       try { rel = decodeURIComponent(p.slice("/files/".length)); } catch { return json(res, 400, { error: "bad path" }); }
       const abs = allowedFile(rel);
       if (!abs) return json(res, 404, { error: "not found" });
-      return sendFile(res, abs);
+      return sendFile(res, abs, req);
     }
 
     if (p === "/api/artifacts") {

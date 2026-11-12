@@ -200,7 +200,7 @@ test("U3 the panel refuses exactly what Step 6 refuses, and saves the words exac
   writeFileSync(join(bd, "scenes.json"), JSON.stringify({ approved: true, scenes: [{ id: "m1", audience: "men", pose: "low", people: 1, scene: "A man holding a plank." }] }));
   const ok = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u3-gen", generated: 1, max_calls: 2 } } })).json();
   assert.deepEqual(ok.errors, []);
-  assert.deepEqual(ok.summary, { photos: 3, generated: 1, real: 2, looks: 2, locations: 2, ads: 12, cards: {}, max_calls: 2, scenes_for: "men", format: "workout", mix: { workout: 1 } });
+  assert.deepEqual(ok.summary, { photos: 3, generated: 1, real: 2, looks: 2, locations: 2, ads: 12, cards: {}, videos: null, max_calls: 2, scenes_for: "men", format: "workout", mix: { workout: 1 } }); // videos: null — a batch with no presenter video says nothing about video spend
 });
 
 // ── U4 preview ──────────────────────────────────────────────────────────
@@ -3717,4 +3717,130 @@ test("U62 the ledger across gyms on Review Data, and step 0 — Survey Ad Librar
     await ev("svLoad().then(() => true)"); await until("!!document.querySelector('#svStopped')");
     assert.equal(await txt("#svStopped"), "The last run was stopped after 1 of 2 pictures. What it had read is kept.");
   } finally { rmSync(join(dirname(brands), "swipe"), { recursive: true, force: true }); }
+});
+
+const HAS_FFMPEG = (() => { try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); return true; } catch { return false; } })();
+test("U63 presenter videos through the panel (2026-11-12): who presents is the gym's own setting, saved on Ad defaults and refused when it is not a woman or a man; a script is the owner's — his own kept at once, checked by the rules (the offer's exact words, no I / we / our), edited, put back, retired with a reason, never twice — and a sample of his is kept for the drafter; a brief may ask for videos only once someone presents and that many scripts are kept for its offer, and the check says what they take in seconds and dollars; a video ad plays on Pick Ads, is served in parts, goes into the picks file and the zip as the 9:16 it is, and is left out of the Facebook plan with the reason; the scripts sit on Draft Scenes and the count on Generate Creatives", { skip: !HAS_FFMPEG && "ffmpeg is not installed" }, async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8"), scriptsFile = join(g, "video-scripts.json"), out = join(g, "outputs", "u63-batch");
+  const V = async (path = "", opts) => { const r = await call(`/api/client/${GYM}/video${path}`, opts); return [r.status, await r.json()]; };
+  const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", `Test Gym's ${BRIEF.offer} is built for exactly that. A coach beside you, and a plan that fits your week.`, "Feel stronger and have more energy for your day. Tap below to find out more."];
+  try {
+    rmSync(scriptsFile, { force: true });
+    { const p = JSON.parse(before); if (p.creative_defaults) delete p.creative_defaults.presenter; writeFileSync(pf, JSON.stringify(p, null, 2)); }
+    // Nothing yet: nobody presents, no script, no sample.
+    let [st, D] = await V();
+    assert.deepEqual([st, D.presenter, D.scripts, D.samples, D.genders, D.limits.max_videos, D.ffmpeg], [200, null, [], [], ["woman", "man"], 3, true]);
+    // Who presents.
+    assert.equal((await V("/presenter", { method: "POST", body: { gender: "coach" } }))[0], 400);
+    assert.equal((await V("/presenter", { method: "POST", body: { gender: "man", age: 12 } }))[0], 400);
+    assert.equal((await call(`/api/client/${GYM}/video/presenter`, { method: "POST", body: { gender: "man" }, token: null })).status, 403);
+    [st, D] = await V("/presenter", { method: "POST", body: { gender: "man", age: 36, look: "short hair, a navy tee" } });
+    assert.deepEqual([st, D.presenter, JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.presenter], [200, { gender: "man", age: 36, look: "short hair, a navy tee" }, { gender: "man", age: 36, look: "short hair, a navy tee" }]);
+    // The scripts: the rules, in words; the owner's own is kept at once.
+    [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0], `We built the ${BRIEF.offer} for exactly that, with a coach beside you every week.`, LINES[2]] } });
+    assert.equal(st, 400); assert.match(D.error, /line 2 speaks as the gym or a member \("We"\)/);
+    [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0], "The programme is built for exactly that, with a coach beside you and a plan.", LINES[2]] } });
+    assert.equal(st, 400); assert.match(D.error, /must name the offer in its exact words/);
+    [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: LINES } });
+    assert.deepEqual([st, D.scripts.length, D.scripts[0].status, D.scripts[0].source, D.scripts[0].lines, D.scripts[0].cost.images, D.scripts[0].cost.seconds > 20, D.scripts[0].cost.usd > 1], [200, 1, "kept", "owner", LINES, 3, true, true]);
+    const id = D.scripts[0].id;
+    assert.equal((await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: LINES } }))[0], 409, "never twice");
+    [st, D] = await V(`/script/${id}`, { method: "PUT", body: { lines: [LINES[0], "Our plan.", LINES[2]] } }); assert.equal(st, 400); assert.match(D.error, /speaks as the gym|one breath/);
+    assert.equal((await V(`/script/${id}`, { method: "PUT", body: { status: "retired" } }))[0], 400, "retiring needs a reason");
+    [st, D] = await V(`/script/${id}`, { method: "PUT", body: { status: "draft" } }); assert.deepEqual([st, D.scripts[0].status], [200, "draft"]);
+    [st, D] = await V(`/script/${id}`, { method: "PUT", body: { status: "kept" } }); assert.equal(D.scripts[0].status, "kept");
+    // Drafting is the text model's: there is none in the tests, and that is said (nothing is added).
+    [st, D] = await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 2 } }); assert.equal(st, 400); assert.match(D.error, /network blocked|GEMINI_KEY/);
+    assert.equal((await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 9 } }))[0], 400);
+    // A sample of the owner's: kept as pasted, retired with a reason.
+    assert.equal((await V("/sample", { method: "POST", body: { text: "too short" } }))[0], 400);
+    const SAMPLE = "Hey, if you live in Katong and you are tired of starting over every January, listen up.\n\nThis is about feeling strong in your own body again, and having the energy to keep up with your kids.\n\nTap below and tell us about you.";
+    [st, D] = await V("/sample", { method: "POST", body: { text: SAMPLE } }); assert.deepEqual([st, D.samples.length, D.samples[0].text], [200, 1, SAMPLE]);
+    assert.equal((await V(`/sample/${D.samples[0].id}`, { method: "PUT", body: { retired: true } }))[0], 400);
+    // The brief: videos need a presenter and that many scripts kept for this offer; the check says what they take.
+    const check = async (over) => (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u63-new", ...over } } })).json();
+    let c = await check({ videos: { presenter: 1 } });
+    assert.deepEqual(c.errors, []); assert.deepEqual([c.summary.videos.count, c.summary.videos.videos, c.summary.videos.scripts, c.summary.videos.images, c.summary.videos.max_seconds, c.summary.videos.usd > 2], [1, 2, [id], 3, c.summary.videos.seconds * BRIEF.attempts, true]);
+    assert.equal(c.summary.ads, (await check({})).summary.ads + 2, "one video for each location is one more ad each");
+    c = await check({ videos: { presenter: 2 } }); assert.ok(c.errors.some((e) => /2 presenter videos asked for, but only 1 script is kept for "12 Week Total Body Reset": keep 1 more on Draft Scenes → Video scripts/.test(e)), c.errors.join(" | "));
+    c = await check({ videos: { presenter: 9 } }); assert.ok(c.errors.some((e) => /videos\.presenter must be a whole number from 0 to 3/.test(e)));
+    const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
+    assert.deepEqual([setup.videos.presenter.gender, setup.videos.kept, setup.videos.max, setup.videos.ffmpeg], ["man", [{ id, offer: BRIEF.offer }], 3, true]);
+    await V("/presenter", { method: "POST", body: { clear: true } });
+    c = await check({ videos: { presenter: 1 } }); assert.ok(c.errors.some((e) => /say who presents the videos first: Ad defaults → Presenter/.test(e)));
+    await V("/presenter", { method: "POST", body: { gender: "man", age: 36 } });
+    // A batch with a video ad on disk, as the runner leaves it.
+    const folder = "101-v01-bishan-presenter-video", mp4 = join(folder, "9x16", "v01-bishan_9x16_v1.mp4"), jpg = mp4.replace(/\.mp4$/, ".jpg");
+    mkdirSync(join(out, folder, "9x16"), { recursive: true }); mkdirSync(join(g, "batches", "u63-batch"), { recursive: true });
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=360x640:r=24:d=3", "-f", "lavfi", "-i", "sine=frequency=330:duration=3", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", join(out, mp4)]);
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", join(out, mp4), "-frames:v", "1", join(out, jpg)]);
+    const brief = { ...BRIEF, batch_id: "u63-batch", real: [], generated: 0, locations: ["BISHAN"], videos: { presenter: 1 } };
+    writeFileSync(join(g, "batches", "u63-batch", "brief.json"), JSON.stringify(brief)); writeFileSync(join(out, "brief.json"), JSON.stringify(brief));
+    writeFileSync(join(out, "batch.json"), JSON.stringify({ batch_id: "u63-batch", made: new Date().toISOString(), ratio: "4x5", look: "reference", videos: { presenter: 1 }, video_seconds: 27, image_calls: 0, photos: [], failed: [],
+      ads: [{ folder, file: jpg, video_file: mp4, candidate: "v01", location: "BISHAN", location_index: 0, photos: [], photo_files: [], treatment: "video-presenter", style: "video", palette: null, ratio: "9x16", format: "presenter-video", video: { kind: "presenter", script_id: id, seconds: 3, words: LINES.map((l) => l.replace("{AREA}", "Bishan")), notes: ["warped fingers"] }, crop: [], words: { location: "BISHAN", audience: null, offer: BRIEF.offer, free: false }, replaced: null }] }));
+    writeFileSync(join(out, "gallery-notes.json"), JSON.stringify({ [folder]: "warped fingers" }));
+    const rv = await (await call(`/api/client/${GYM}/batch/u63-batch/review`)).json(), ad = rv.ads[0];
+    assert.deepEqual([rv.ads.length, ad.format, ad.video.endsWith("/v01-bishan_9x16_v1.mp4"), ad.url.endsWith("/v01-bishan_9x16_v1.jpg"), ad.video_seconds, ad.video_words.length, ad.notes, ad.photos], [1, "presenter-video", true, true, 3, 3, "warped fingers", []]);
+    // The video is served, whole and in the parts a player asks for.
+    const size = readFileSync(join(out, mp4)).length;
+    let r = await fetch(panel.url + ad.video); assert.deepEqual([r.status, r.headers.get("content-type"), r.headers.get("accept-ranges"), (await r.arrayBuffer()).byteLength], [200, "video/mp4", "bytes", size]);
+    r = await fetch(panel.url + ad.video, { headers: { range: "bytes=0-99" } }); assert.deepEqual([r.status, r.headers.get("content-range"), (await r.arrayBuffer()).byteLength], [206, `bytes 0-99/${size}`, 100]);
+    r = await fetch(panel.url + ad.video, { headers: { range: `bytes=${size - 10}-` } }); assert.deepEqual([r.status, r.headers.get("content-range")], [206, `bytes ${size - 10}-${size - 1}/${size}`]); await r.arrayBuffer();
+    r = await fetch(panel.url + ad.video, { headers: { range: `bytes=${size + 5}-` } }); assert.equal(r.status, 416); await r.arrayBuffer();
+    // Kept: the picks file names the video, the zip carries it by ad set, and the Facebook plan leaves it out and says so.
+    assert.equal((await call(`/api/client/${GYM}/batch/u63-batch/picks`, { method: "PUT", body: { ads: { [folder]: "keep" } } })).status, 200);
+    assert.deepEqual(JSON.parse(readFileSync(join(out, "selections.json"), "utf-8"))[folder], { "9x16": mp4 });
+    const zip = await call(`/api/client/${GYM}/batch/u63-batch/images.zip`); assert.equal(zip.status, 200);
+    const zb = Buffer.from(await zip.arrayBuffer()); assert.ok(zb.includes(Buffer.from(`Bishan/${folder}_9x16.mp4`)) && zb.length > size, "the video itself is in the zip");
+    const plan = (await (await call(`/api/client/${GYM}/batch/u63-batch/publish`)).json()).plan;
+    // …and it is an ad of the Facebook plan like any other: its location's ad set, the video with its first frame as the cover, the lead form.
+    const pa = plan.ads[0], vdata = pa.creative.object_story_spec.video_data;
+    assert.deepEqual([plan.counts.ads, plan.counts.videos, plan.counts.with_story, pa.folder, pa.adset, pa.video.file, pa.video.seconds, pa.image.file, pa.story, vdata.video_id, vdata.image_hash, vdata.call_to_action.type, / \| Video: 101-v01-bishan-presenter-video$/.test(pa.name)],
+      [1, 1, 0, folder, "BISHAN", mp4, 3, jpg, null, "(video id)", "(poster hash)", "SIGN_UP", true]);
+    assert.ok(![...plan.problems, ...plan.warnings].some((x) => /video|Stories version/i.test(x)), [...plan.problems, ...plan.warnings].join(" | "));
+    // ── The page ──
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u63${Math.random()}#/${GYM}/${hash}` }, sessionId); await loaded; await until(ready); };
+    // Draft Scenes: the scripts, who presents, the sample; writing your own asks for the offer and the lines.
+    await open("scenes", "!!document.querySelector('#vsCard [data-script]')");
+    assert.deepEqual(await ev("[document.querySelectorAll('#vsCard [data-script]').length, document.querySelector('#vsCard [data-script]').dataset.status, [...document.querySelectorAll('#vsCard [data-script] ol li')].map(li => li.textContent), document.querySelectorAll('#vsCard [data-sample]').length, document.querySelector('#vsWho').innerText.startsWith('Presented by a man of about 36')]"), [1, "kept", LINES, 1, true]);
+    assert.match(await ev("document.querySelector('#vsCard').innerText.replace(/\\s+/g, ' ')"), /^VIDEO SCRIPTS 1 kept · 0 to read .* Nothing is filmed until you keep a script/i);
+    await ev("document.querySelector('#vsOwnGo').click(); true");
+    assert.deepEqual(await ev("[document.querySelectorAll('#gModal textarea').length, document.querySelector('#vsOfferIn').value !== undefined, document.querySelector('#vsGo').textContent]"), [4, true, "Keep this script"]);
+    await ev("document.querySelector('#vsLine0').value = 'We do it all.'; document.querySelector('#vsLine1').value = 'Our way.'; document.querySelector('#vsGo').click(); true");
+    await until("document.querySelector('#vsWhy') && document.querySelector('#vsWhy').textContent.length > 5");
+    assert.match(await ev("document.querySelector('#vsWhy').textContent"), /line 1/); assert.equal(await ev("document.querySelectorAll('#gModal textarea').length"), 4, "a refused script keeps what was typed");
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // Ad defaults: who presents, saved by its own button.
+    await open("defaults", "!!document.querySelector('#cdPresGender')");
+    assert.deepEqual(await ev("[document.querySelector('#cdPresGender').value, document.querySelector('#cdPresAge').value]"), ["man", "36"]);
+    await ev("document.querySelector('#cdPresGender').value = 'woman'; document.querySelector('#cdPresAge').value = '31'; document.querySelector('#cdPresSave').click(); true");
+    { const t0 = Date.now(); while (Date.now() - t0 < 8000 && JSON.parse(readFileSync(pf, "utf-8")).creative_defaults?.presenter?.gender !== "woman") await new Promise((x) => setTimeout(x, 100)); }
+    assert.deepEqual(JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.presenter, { gender: "woman", age: 31 });
+    await V("/presenter", { method: "POST", body: { gender: "man", age: 36 } });
+    // Generate Creatives: the count, who presents and how many scripts are kept for the offer; the summary says the seconds and the dollars.
+    await open("batch", "!!document.querySelector('#bVideos')");
+    assert.match(await ev("document.querySelector('#bVideosHint').innerText"), /^1 script kept · presented by a man$/);
+    await ev(`B.draft.offer = ${JSON.stringify(BRIEF.offer)}; B.draft.locations = ["BISHAN", "ANG MO KIO"]; B.draft.generated = 0; B.draft.real = ${JSON.stringify(BRIEF.real)}; B.touched = true; document.querySelector('#bVideos').value = '1'; bVideoSet(1); true`);
+    await until("!!document.querySelector('#bVideoSum')");
+    assert.match(await ev("document.querySelector('#bVideoSum').innerText"), /^1 presenter video × 2 locations: about \d+ s of video \(US\$\d+\.\d\d\), never more than \d+ s \(US\$\d+\.\d\d\)$/);
+    assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "1 script kept for this offer · presented by a man");
+    // Pick Ads: the video plays where the picture would be, with what the check noticed.
+    await open("review/u63-batch", "!!document.querySelector('#rvVideo')");
+    await until("document.querySelector('#rvVideo').readyState >= 1");
+    assert.deepEqual(await ev("[document.querySelector('#rvVideo').getAttribute('src').endsWith('v01-bishan_9x16_v1.mp4'), Math.round(document.querySelector('#rvVideo').duration), document.querySelector('#rvVideo').controls, document.querySelector('#rvCards figcaption').innerText, !!document.querySelector('#rvKeep'), document.querySelectorAll('#rvCards img').length]"), [true, 3, true, "9:16 · PRESENTER VIDEO · 3 S · REELS, STORIES AND FEED", true, 0]);
+    assert.match(await ev("document.querySelector('#rvInfo').innerText.replace(/\\s+/g, ' ')"), /101 BISHAN presenter video People in Bishan, this one is for you\..* the check noticed: warped fingers/);
+    // Publish Ads: the video's tile says it is a video, and the card says how it goes up.
+    await open("publish/u63-batch", "!!document.querySelector('.pbVideo')");
+    assert.deepEqual(await ev("[document.querySelector('.pbVideo').innerText, /A video ad is uploaded to the ad account when you create, with its first frame as the cover/.test(document.querySelector('#pbVideoHint').innerText), [...document.querySelectorAll('#view h3')].some(h => /^Ads · 1 kept, 0 with a Stories version, 1 video$/.test(h.textContent.trim()))]"), ["▶ video · 3 s", true, true]);
+    // The Generating screen while the videos are made: it says so, what it is doing and how much video it has made of how much it may.
+    mkdirSync(join(g, "batches", "u63-gen"), { recursive: true }); mkdirSync(join(g, "outputs", "u63-gen"), { recursive: true });
+    writeFileSync(join(g, "batches", "u63-gen", "brief.json"), JSON.stringify({ ...brief, batch_id: "u63-gen" }));
+    writeFileSync(join(g, "outputs", "u63-gen", "progress.json"), JSON.stringify({ batch_id: "u63-gen", stage: "videos", max_calls: 0, attempts: 2, spent_before: 0, calls: 0, real: 0, ads: null, photos: {}, video: { id: "v01", script: id, stage: "clip", line: 2, area: null, take: 2 }, video_seconds: 17, video_max_seconds: 54 }));
+    await ev("openGenerating('u63-gen'); true"); await until("!!document.querySelector('#genVideo')");
+    assert.deepEqual(await ev("[document.querySelector('h1').textContent, document.querySelector('#genVideo').innerText]"), ["Making the videos", "videos: filming line 2, take 2 · 17 s of video made, never more than 54 s"]);
+    assert.match(await ev("document.querySelector('#view').innerText.replace(/\\s+/g, ' ')"), /it stopped while making the videos/, "a run that is no longer going says which stage it was in, in words");
+  } finally { writeFileSync(pf, before); rmSync(scriptsFile, { force: true }); rmSync(out, { recursive: true, force: true }); rmSync(join(g, "batches", "u63-batch"), { recursive: true, force: true }); rmSync(join(g, "batches", "u63-gen"), { recursive: true, force: true }); rmSync(join(g, "outputs", "u63-gen"), { recursive: true, force: true }); }
 });

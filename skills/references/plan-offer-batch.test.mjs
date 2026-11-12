@@ -1043,3 +1043,61 @@ test("B15 cards in a batch (Phase 5, 2026-11-11): the gym's usable reviews and k
     await assert.rejects(runBatch({ brandDir: dir, brief: { ...brief, batch_id: "wrong-length", offer: "6 Week Total Body Reset", cards: { timeline: 1 } }, deps, log: () => {} }), /1 timeline card asked for, 0 ready: draft some for a 6 week offer/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to three — each one a script the owner kept for this offer, made once for every location, after the photo and card ads, as 9:16 video ads that carry a frame of themselves as their still; a batch may be videos alone; what it would take is said before it runs and the run never asks for more seconds than its cap; a second run reuses everything; too few kept scripts, no presenter and a square batch are refused in words; a video that is refused is a named failure and the others are still made", { skip: !(await import("./presenter-video.mjs")).hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    const { addScript, clipSeconds, fillLine, END_CARD_SECONDS } = await import("./presenter-video.mjs");
+    const { execFileSync } = await import("node:child_process");
+    const { videoPlan, VIDEO_SPEND, MAX_VIDEO_SECONDS } = await import("./plan-offer-batch.mjs");
+    const profile = { ...JSON.parse(readFileSync(join(dir, "gym-profile.json"), "utf-8")), creative_defaults: { presenter: { gender: "man", age: 36 } } };
+    writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(profile));
+    const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "Feel stronger and have more energy for your day. Tap below to find out more."];
+    const brief = { ...BRIEF, batch_id: "with-videos", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN", "ANG MO KIO"], videos: { presenter: 1 } };
+    // The brief's own rules.
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 9, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter)', "videos.presenter must be a whole number from 0 to 3", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
+    assert.deepEqual(validateBrief(brief, { brandDir: dir }), [], "videos alone are a batch");
+    // The models: a still is a small picture; a clip is real video with a tone for speech between two silences; the watching pass hears the line.
+    const made = { image: 0, clip: [], watch: 0 }, said = new Map();
+    const videoModels = (over = {}) => ({
+      async image({ out }) { made.image++; writeFileSync(out, readFileSync(join(dir, "brand-assets", "real", "r1.png"))); },
+      async clip({ out, prompt, seconds }) { made.clip.push(seconds); said.set(out, prompt.match(/pace: "([^"]+)"/)[1]);
+        execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `color=c=gray:s=180x320:r=24:d=${seconds}`, "-f", "lavfi", "-i", `sine=frequency=330:duration=${seconds - 2}`, "-af", `adelay=700|700,apad=whole_dur=${seconds}`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", String(seconds), out]); },
+      async watch(file) { made.watch++; const line = said.get(file); return { spoken: over.say ? over.say(line) : line, on_screen_text: [], people: 1, lips_match_speech: true, faults: [], looks_real: 9 }; },
+    });
+    const calls = [], logs = [], run = (b, models = videoModels()) => runBatch({ brandDir: dir, brief: b, deps: { ...fakes(calls), browser, videoModels: models }, log: (m) => logs.push(m) });
+    // No script kept for this offer yet: refused by name, before any call.
+    await assert.rejects(run(brief), /1 presenter video asked for, but no script is kept for "12 Week Total Body Reset": keep 1 more on Draft Scenes → Video scripts/);
+    const script = addScript(dir, { lines: LINES, offer: brief.offer }, { profile });
+    addScript(dir, { lines: [LINES[0], LINES[1], "Walk into your week with more energy than you have had in years. Tap below to find out more."], offer: "6 Week Other Thing".length ? brief.offer : "", source: "drafted" }, { profile }); // a draft is not made
+    const S = (i, area) => clipSeconds(fillLine(LINES[i], area)), pass = S(0, "BISHAN") + S(0, "ANG MO KIO") + S(1, "") + S(2, "");
+    const plan = videoPlan(dir, brief);
+    assert.deepEqual([plan.count, plan.videos, plan.seconds, plan.images, plan.takes, plan.max_seconds, plan.scripts.map((x) => x.id), plan.usd], [1, 2, pass, 3, 2, pass * 2, [script.id], Math.round(pass * 0.07 * 100) / 100]);
+    const r = await run(brief);
+    assert.deepEqual([calls.length, made.image, made.clip.length, made.watch, r.batch.videos, r.batch.video_seconds, r.batch.failed], [0, 3, 4, 4, { presenter: 1 }, pass, []], logs.join(" | "));
+    const ads = r.batch.ads;
+    assert.deepEqual(ads.map((a) => [a.candidate, a.location, a.location_index, a.format, a.treatment, a.ratio, a.photos.length, a.video.script_id, a.words.offer]), [["v01", "BISHAN", 0, "presenter-video", "video-presenter", "9x16", 0, script.id, brief.offer], ["v01", "ANG MO KIO", 1, "presenter-video", "video-presenter", "9x16", 0, script.id, brief.offer]]);
+    for (const a of ads) {
+      assert.match(a.video_file, /^10\d-v01-(bishan|ang-mo-kio)-presenter-video\/9x16\/v01-(bishan|ang-mo-kio)_9x16_v1\.mp4$/); assert.equal(a.file, a.video_file.replace(/\.mp4$/, ".jpg"), "the ad's still is a frame of its own video");
+      assert.ok(existsSync(join(r.out, a.video_file)) && existsSync(join(r.out, a.file)));
+      assert.equal(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", join(r.out, a.video_file)]).toString().trim(), "720,1280");
+      assert.ok(a.video.seconds > END_CARD_SECONDS && a.video.words[0].includes(a.location === "BISHAN" ? "Bishan" : "Ang Mo Kio"));
+    }
+    assert.deepEqual(JSON.parse(readFileSync(join(r.out, VIDEO_SPEND), "utf-8")), { seconds: pass, images: 3, checks: 4, max_seconds: pass * 2 });
+    assert.ok(logs.some((l) => /· v01: presenter video from script v-[0-9a-f]{10} \(2 locations\)/.test(l)));
+    // Again: everything is on disk, so nothing is made and nothing more is spent.
+    const before = { ...made, clips: made.clip.length }, r2 = await run(brief);
+    assert.deepEqual([made.image - before.image, made.clip.length - before.clips, r2.batch.ads.length, r2.batch.video_seconds], [0, 0, 2, pass]);
+    // A line that never comes out as written at one location: that video is a named failure, the other is made; and the cap is never passed.
+    const b2 = { ...brief, batch_id: "with-videos-2", max_video_seconds: pass + S(0, "BISHAN") }, n0 = made.clip.length;
+    const r3 = await run(b2, videoModels({ say: (line) => (/Bishan/.test(line) ? "People in Bishan, hello." : line) }));
+    assert.deepEqual([r3.batch.ads.map((a) => a.location), r3.batch.failed.map((f) => [f.candidate, f.location, f.failures[0]])], [["ANG MO KIO"], [["v01", "BISHAN", 'line 1 did not pass after 2 takes: it said "People in Bishan, hello."']]]);
+    assert.ok(made.clip.slice(n0).reduce((t, x) => t + x, 0) <= b2.max_video_seconds, "never more seconds than the cap");
+    // With photo ads: the videos are numbered on after them; a square batch takes none; no presenter is refused in words.
+    const r4 = await run({ ...brief, batch_id: "with-videos-3", generated: 1, max_calls: 2 });
+    assert.ok(Math.min(...r4.batch.ads.filter((a) => a.video_file).map((a) => Number(a.folder.split("-")[0]))) > Math.max(...r4.batch.ads.filter((a) => !a.video_file).map((a) => Number(a.folder.split("-")[0]))));
+    writeFileSync(join(dir, "gym-profile.json"), JSON.stringify({ ...profile, creative_defaults: {} }));
+    await assert.rejects(run({ ...brief, batch_id: "with-videos-4" }), /say who presents first \(Ad defaults → Presenter\)/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
