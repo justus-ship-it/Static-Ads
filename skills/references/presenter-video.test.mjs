@@ -90,11 +90,11 @@ test("PV2 scripts drafted for the owner: one text call that is told the shape, t
     assert.equal(schema.properties.scripts.items.properties.lines.type, "ARRAY");
     const asked = [];
     const ask = async (img, p, s, o) => { asked.push({ img, p, model: o.model }); return { scripts: [{ lines: GOOD }, { lines: [GOOD[0], "We built the 12 Week Full Body Transformation for exactly that, with a coach beside you.", GOOD[2]] }, { lines: [GOOD[0], "The programme is built for exactly that, with a coach beside you and a plan for the week.", GOOD[2]] }, { lines: GOOD }] }; };
-    const r = await draftScripts({ brandDir: g, offer: OFFER, audience: "LADIES WANTED", count: 4, ask });
+    const r = await draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, audience: "LADIES WANTED", count: 4, ask });
     assert.deepEqual([asked.length, asked[0].img, r.calls, r.added.length, r.added[0].status, r.added[0].source], [1, null, 1, 1, "draft", "drafted"]);
     assert.deepEqual(r.dropped.map((x) => x.reason.slice(0, 36)), ["line 2 speaks as the gym or a member", "the script must name the offer in it", "this script is already here"]);
     assert.deepEqual(keptScripts(g, OFFER), [], "a draft is not made into a video until the owner keeps it");
-    await assert.rejects(draftScripts({ brandDir: g, offer: "", ask }), /exact words are needed/); await assert.rejects(draftScripts({ brandDir: g, offer: OFFER, count: 9, ask }), /count must be 1 to 6/);
+    await assert.rejects(draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: "", ask }), /exact words are needed/); await assert.rejects(draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, count: 9, ask }), /count must be 1 to 6/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -192,29 +192,31 @@ test("PV4 what is refused, and why: nothing is made until the gym says who prese
 });
 
 test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the drafter is told to speak about what changes for the person and to say nothing about how the gym runs (a wrong feature is a false claim: \"small groups\" in a personal-training gym), and is shown the scripts the owner says have worked — to follow how they are built, never to copy; a sample is kept as pasted, never twice, retired with a reason; a batch picks that many kept scripts for its offer in an order its seed fixes, and too few is refused by name", async () => {
-  const { addSample, decideSample, liveSamples, pickScripts, videosProblems, videoCount, MAX_VIDEOS, SAMPLE_LIMIT } = await import("./presenter-video.mjs");
-  const { d, g, profile } = gym();
+  const { addSample, decideSample, liveSamples, readSamples, pickScripts, videosProblems, videoCount, MAX_VIDEOS, SAMPLE_LIMIT } = await import("./presenter-video.mjs");
+  const { d, g, profile } = gym(), L = join(d, "lib");
   try {
     // The prompt.
     const { prompt } = buildScriptPrompt({ profile, offer: OFFER, count: 3, facts: ["Every session is one to one with a coach"], samples: ["Hey Katong.\nTired of starting over?\nTap below."] });
     assert.match(prompt, /Speak about BENEFITS, never features\. A benefit is what changes for the person/); assert.match(prompt, /nothing about how training is organised \(no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size\), because a wrong one is a false claim about this gym/);
-    assert.match(prompt, /The only facts about the gym that may be stated are these, in the owner's words: "Every session is one to one with a coach"\./); assert.match(prompt, /A benefit is what the programme is built to help with, never a promised result\./);
+    assert.match(prompt, /The only facts about the gym or the programme that may be stated are these, in the owner's words: "Every session is one to one with a coach"\. Say them as given, and nothing else about how the programme works\./); assert.match(prompt, /A benefit is what the programme is built to help with, never a promised result\./);
     assert.match(prompt, /These scripts have worked for this owner\. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact[^\n]*\n--- SAMPLE 1\nHey Katong\.\nTired of starting over\?\nTap below\./);
+    // The owner's samples mark what changes from gym to gym in braces (2026-11-12: "area and challenge name, as well as gym name must be custom"): the drafter is told what each becomes for this gym.
+    assert.match(prompt, new RegExp(`where it marks the place, write \\{AREA\\}; where it marks the programme, write its exact words, "${OFFER}"; where it marks the gym, or where the sample says we or our, write "${profile.display_name}"\\. No other braces may appear in a script:`));
     assert.ok(!/SAMPLE 1/.test(buildScriptPrompt({ profile, offer: OFFER }).prompt) && !/The only facts about the gym/.test(buildScriptPrompt({ profile, offer: OFFER }).prompt), "no samples and no facts: neither is mentioned");
     // Samples.
-    assert.throws(() => addSample(g, "too short"), new RegExp(`a sample script is ${SAMPLE_LIMIT[0]} to ${SAMPLE_LIMIT[1]} characters`));
+    assert.throws(() => addSample(L, "too short"), new RegExp(`a sample script is ${SAMPLE_LIMIT[0]} to ${SAMPLE_LIMIT[1]} characters`));
     const text = "Hey, if you live in Katong and you are tired of starting over every January, listen up.\n\n\n\nThis is about feeling strong in your own body again.";
-    const s1 = addSample(g, text, { note: "the best one" });
+    const s1 = addSample(L, text, { note: "the best one" });
     assert.deepEqual([/^vs-[0-9a-f]{10}$/.test(s1.id), s1.text, s1.note], [true, text.replace(/\n{3,}/, "\n\n"), "the best one"], "kept as pasted: its line breaks stay, a wall of blank lines does not");
-    assert.throws(() => addSample(g, text.toUpperCase()), /already here/);
-    assert.throws(() => decideSample(g, s1.id, { retired: true }), /needs a reason/);
+    assert.throws(() => addSample(L, text.toUpperCase()), /already here/);
+    assert.throws(() => decideSample(L, s1.id, { retired: true }), /needs a reason/);
     // The drafter is shown the live samples, and no retired one.
-    const seen = []; await draftScripts({ brandDir: g, offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
+    const seen = []; await draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
     assert.match(seen[0], /--- SAMPLE 1\nHey, if you live in Katong/);
-    decideSample(g, s1.id, { retired: true, reason: "an old offer" }); assert.deepEqual(liveSamples(g), []);
-    await draftScripts({ brandDir: g, offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
-    assert.ok(!/SAMPLE 1/.test(seen[1])); assert.equal(readScripts(g).samples.length, 1, "retired, never deleted");
-    assert.equal(decideSample(g, s1.id, { retired: false }).retired, undefined);
+    decideSample(L, s1.id, { retired: true, reason: "an old offer" }); assert.deepEqual(liveSamples(L), []);
+    await draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
+    assert.ok(!/SAMPLE 1/.test(seen[1])); assert.equal(readSamples(L).samples.length, 1, "retired, never deleted");
+    assert.equal(decideSample(L, s1.id, { retired: false }).retired, undefined);
     // A batch's videos: how many, and which scripts.
     assert.deepEqual([videosProblems(undefined), videosProblems({ presenter: 2 }), videoCount({ presenter: 2 }), videoCount(null), MAX_VIDEOS], [[], [], 2, 0, 3]);
     assert.deepEqual(videosProblems({ presenter: 4, talking: 1 }), ['videos: "talking" is not a kind of video (presenter)', "videos.presenter must be a whole number from 0 to 3"]);
@@ -225,4 +227,48 @@ test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the 
     const one = pickScripts(g, { count: 1, offer: OFFER, seed: "s1" }), again = pickScripts(g, { count: 1, offer: OFFER, seed: "s1" });
     assert.deepEqual([one.length, one[0].id === again[0].id, [a.id, b.id].includes(one[0].id), pickScripts(g, { count: 2, offer: OFFER, seed: "s1" }).map((x) => x.id).sort()], [1, true, true, [a.id, b.id].sort()]);
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("PV6 the owner's template for every gym (2026-11-12: share samples across gyms; up to seven lines, shortened to what is relevant; a list of what the challenge includes that only he types; the gym's name where a gym would say we): samples are one library every gym drafts from, and one pasted under a gym before joins it once with the gym's file left as it was; a script may be two to seven lines; the facts for an offer are kept per gym, checked by the rules an ad is held to, and are the only things about the programme the drafter may state — with a sample or facts it is asked for three to seven lines, a beat without a given fact left out", async () => {
+  const { addSample, liveSamples, readSamples, adoptSamples, setFacts, factsFor, factsProblems, FACT_LIMITS, LINES, SPOTS, SAMPLES_FILE } = await import("./presenter-video.mjs");
+  const a = gym(), b = gym();
+  const L = join(a.d, "lib");
+  try {
+    // One library: a sample pasted under one gym is what the other gym's drafter is shown.
+    const T = "If you are in the {AREA} area, we have just launched our {CHALLENGE NAME} to help you feel healthy, strong, and confident again.\n\nHere's the catch. We're only taking on 10 people.";
+    const row = addSample(L, T, { gym: "gym-a" });
+    assert.deepEqual([row.from, existsSync(join(L, SAMPLES_FILE)), liveSamples(L).length], ["gym-a", true, 1]);
+    const seen = []; await draftScripts({ brandDir: b.g, libraryDir: L, offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
+    assert.match(seen[0], /--- SAMPLE 1\nIf you are in the \{AREA\} area, we have just launched our \{CHALLENGE NAME\}/);
+    // A sample from before, in a gym's own file: it joins the library once, as it is; the gym's file is untouched.
+    const legacy = join(b.g, SCRIPTS_FILE), old = { schema: 1, scripts: [], samples: [{ id: "vs-old0000001", text: "Hey Katong, tired of starting over every January? This one is about feeling strong again.", added: "2026-11-12" }, { id: row.id, text: T, added: "2026-11-12" }] };
+    writeFileSync(legacy, JSON.stringify(old));
+    assert.deepEqual([adoptSamples(L, [a.g, b.g]), adoptSamples(L, [a.g, b.g]), readSamples(L).samples.map((x) => [x.id, x.from]), JSON.parse(readFileSync(legacy, "utf-8")).samples.length], [1, 0, [[row.id, "gym-a"], ["vs-old0000001", "testgym"]], 2]);
+    // Two to seven lines.
+    const seven = [GOOD[0], GOOD[1], "The coaches start with a full body scan, so the plan is built on what is really there.", "Then the food side is sorted, with recipes, shopping lists and a guide for eating out.", "Only ten places are open, so every person gets real attention from a coach.", "If feeling strong and confident again is what you want, now is the time.", "Tap below to see if this is a fit for you."];
+    assert.deepEqual([LINES, scriptProblems(seven, { offer: OFFER, profile: a.profile }), scriptProblems([...seven, "One line more than a script may have, to be refused."], { offer: OFFER, profile: a.profile }), SPOTS.length >= 7], [[2, 7], [], ["a script is 2 to 7 lines, one for each cut"], true]);
+    assert.equal(addScript(a.g, { lines: seven, offer: OFFER }, { profile: a.profile }).lines.length, 7);
+    assert.deepEqual([scriptCost({ lines: seven }, ["BISHAN"]).images, scriptCost({ lines: seven }, ["BISHAN"]).seconds > 50], [7, true], "seven cuts, about a minute");
+    // What the challenge includes: the owner's list, per offer, held to the rules an ad is held to.
+    assert.deepEqual(factsFor(a.g, OFFER), []);
+    assert.deepEqual(setFacts(a.g, OFFER, [" A full body scan assessment at the start ", "Only 10 places", "", "Only 10 places"], { profile: a.profile }), ["A full body scan assessment at the start", "Only 10 places"]);
+    assert.deepEqual([factsFor(a.g, OFFER.toUpperCase()), factsFor(a.g, "6 Week Reset"), factsFor(b.g, OFFER), readScripts(a.g).scripts.length], [["A full body scan assessment at the start", "Only 10 places"], [], [], 1], "by the offer's words, case aside; this gym's alone; the scripts untouched");
+    assert.throws(() => setFacts(a.g, OFFER, ["A free trial week first"], { profile: a.profile }), /fact 1: /);
+    assert.throws(() => setFacts(a.g, OFFER, ["ok"], { profile: a.profile }), /fact 1 is 2 characters: 3 to 140/);
+    assert.throws(() => setFacts(a.g, OFFER, Array.from({ length: FACT_LIMITS.items + 1 }, (_, i) => `Fact number ${i + 1} of the list`), { profile: a.profile }), /at most 8 facts/);
+    assert.throws(() => setFacts(a.g, "", ["A full body scan"], { profile: a.profile }), /exact words are needed/);
+    assert.deepEqual(factsProblems("x"), ["the facts are a list, one to a line"]);
+    // The drafter: with a sample or facts, three to seven lines, the facts and nothing else, the gym's name where a gym says we.
+    await draftScripts({ brandDir: a.g, libraryDir: L, offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
+    const P = seen[1];
+    assert.match(P, /A script is 3 to 7 lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better\./);
+    assert.match(P, /each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given \(an assessment, a number of places, how many people were helped\) is left out, never invented\. The last line tells them what to do and ends with "Tap below" and a few words/);
+    assert.match(P, /may be stated are these, in the owner's words: "A full body scan assessment at the start"; "Only 10 places"\. Say them as given, and nothing else about how the programme works\./);
+    assert.match(P, /where a gym would say we, the script says "Test Gym", "the coaches" or "the team"\./);
+    assert.ok(!/may be stated are these/.test(seen[0]), "the other gym gave no facts, so its drafter is given none");
+    // No sample and no facts: the three-line script, as it was.
+    const plain = buildScriptPrompt({ profile: a.profile, offer: OFFER }).prompt;
+    assert.match(plain, /A script is exactly 3 lines\./); assert.match(plain, /Line 3 says one more thing they will get from it and ends with exactly: "Tap below to find out more\."/);
+    setFacts(a.g, OFFER, [], { profile: a.profile }); assert.deepEqual([factsFor(a.g, OFFER), Object.keys(readScripts(a.g).facts)], [[], []], "an empty list clears it");
+  } finally { rmSync(a.d, { recursive: true, force: true }); rmSync(b.d, { recursive: true, force: true }); }
 });

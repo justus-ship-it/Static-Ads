@@ -51,7 +51,7 @@ import { buildReview, reviewText, recordAction } from "../skills/references/acco
 import { cycleFrom } from "../skills/references/cycle.mjs";
 import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
-import { readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
+import { readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -1767,13 +1767,16 @@ const server = createServer(async (req, res) => {
     // scripts, which the drafter follows. GET the lot; POST /presenter { gender, age?, look? } | { clear: true };
     // POST /script { lines, offer }; PUT /script/{id} { status, lines, reason }; POST /draft { offer, audience?, count }
     // (one text call: the owner's click); POST /sample { text, note? }; PUT /sample/{id} { retired, reason }. No video is made here.
-    const vdm = p.match(/^\/api\/client\/([^/]+)\/video(?:\/(presenter|script|draft|sample)(?:\/([\w-]+))?)?$/);
+    const vdm = p.match(/^\/api\/client\/([^/]+)\/video(?:\/(presenter|script|draft|sample|facts)(?:\/([\w-]+))?)?$/);
     if (vdm) {
       const [, gym, what, x1] = vdm;
       if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
       const dir = brandDir(gym), pf = join(dir, "gym-profile.json"), profile = readJsonFile(pf) || {};
+      // Samples are one library for every gym (2026-11-12); one pasted under a gym before joins it the first time it is looked at.
+      // What an offer includes (the facts a script may state) is this gym's own, by the offer's words.
       const view = () => { const d = readScripts(dir), prof = readJsonFile(pf) || {}, areas = prof.creative_defaults?.locations?.length ? prof.creative_defaults.locations : [""];
-        return { presenter: presenterOf(prof), genders: PRESENTER_GENDERS, scripts: d.scripts.map((x) => ({ ...x, cost: (({ seconds, images, usd }) => ({ seconds, images, usd }))(scriptCost(x, areas)) })), samples: d.samples, ffmpeg: hasFfmpeg(), room: !!(prof.creative_defaults?.room_reference || cleanPhotos(gym).some((x) => !x.people)), limits: { lines: SCRIPT_LINES, words: SCRIPT_LINE_WORDS, max_videos: MAX_VIDEOS }, usd_per_second: USD_PER_SECOND, locations: areas.filter(Boolean) }; };
+        adoptSamples(VIDEO_LIBRARY_DIR, listClients().map((c) => brandDir(c.gym)));
+        return { presenter: presenterOf(prof), genders: PRESENTER_GENDERS, scripts: d.scripts.map((x) => ({ ...x, cost: (({ seconds, images, usd }) => ({ seconds, images, usd }))(scriptCost(x, areas)) })), samples: readSamples(VIDEO_LIBRARY_DIR).samples, facts: Object.values(d.facts), ffmpeg: hasFfmpeg(), room: !!(prof.creative_defaults?.room_reference || cleanPhotos(gym).some((x) => !x.people)), limits: { lines: SCRIPT_LINES, words: SCRIPT_LINE_WORDS, max_videos: MAX_VIDEOS, facts: FACT_LIMITS }, usd_per_second: USD_PER_SECOND, locations: areas.filter(Boolean) }; };
       try {
         if (!what && req.method === "GET") return json(res, 200, view());
         if (req.method !== "POST" && req.method !== "PUT") return json(res, 405, { error: "method not allowed" });
@@ -1789,11 +1792,14 @@ const server = createServer(async (req, res) => {
         if (what === "script" && req.method === "PUT" && x1) { decideScript(dir, x1, { status: body.status, lines: body.lines, reason: body.reason }, { profile }); return json(res, 200, view()); }
         if (what === "draft" && req.method === "POST") {
           const count = body.count ?? 3; if (!Number.isInteger(count) || count < 1 || count > 6) return json(res, 400, { error: "how many scripts to draft must be 1 to 6" });
-          const d = await draftScripts({ brandDir: dir, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count });
+          // The facts typed with the request are saved for this offer first (checked; a refusal drafts nothing), then the drafter is given them.
+          if (body.facts != null) { if (!Array.isArray(body.facts)) return json(res, 400, { error: "the facts are a list, one to a line" }); setFacts(dir, body.offer, body.facts, { profile }); }
+          const d = await draftScripts({ brandDir: dir, libraryDir: VIDEO_LIBRARY_DIR, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count });
           return json(res, 200, { ...view(), drafted: { added: d.added.map((x) => x.id), dropped: d.dropped } });
         }
-        if (what === "sample" && req.method === "POST" && !x1) { addSample(dir, body.text, { note: body.note || null }); return json(res, 200, view()); }
-        if (what === "sample" && req.method === "PUT" && x1) { decideSample(dir, x1, { retired: body.retired, reason: body.reason }); return json(res, 200, view()); }
+        if (what === "sample" && req.method === "POST" && !x1) { adoptSamples(VIDEO_LIBRARY_DIR, listClients().map((c) => brandDir(c.gym))); addSample(VIDEO_LIBRARY_DIR, body.text, { note: body.note || null, gym }); return json(res, 200, view()); }
+        if (what === "sample" && req.method === "PUT" && x1) { decideSample(VIDEO_LIBRARY_DIR, x1, { retired: body.retired, reason: body.reason }); return json(res, 200, view()); }
+        if (what === "facts" && req.method === "POST" && !x1) { setFacts(dir, body.offer, body.items, { profile }); return json(res, 200, view()); }
         return json(res, 404, { error: "not found" });
       } catch (e) { return json(res, e.duplicate ? 409 : 400, { error: scrubTokens(e.message) }); }
     }

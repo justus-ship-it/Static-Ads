@@ -61,7 +61,7 @@ const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 export const OMNI = "gemini-omni-1.2-flash", INTERACTIONS = "https://generativelanguage.googleapis.com/v1beta/interactions";
 export const SCRIPTS_FILE = "video-scripts.json";
 /** A script is 2 to 4 lines; a line is one breath (6 to 26 words) and becomes one clip of 5 to 12 seconds. */
-export const LINES = [2, 4], LINE_WORDS = [6, 26], CLIP_SECONDS = [5, 12], WORDS_PER_SECOND = 2.8, END_CARD_SECONDS = 2.2;
+export const LINES = [2, 7], LINE_WORDS = [6, 26], CLIP_SECONDS = [5, 12], WORDS_PER_SECOND = 2.8, END_CARD_SECONDS = 2.2;
 /** What a second of 720p video costs (Google's pricing page, 2026-11-12) and an image call, for the estimate shown before a run. */
 export const USD_PER_SECOND = 0.07, USD_PER_IMAGE = 0.15;
 /** A presenter who is nobody in particular never speaks as the gym or as a member. */
@@ -117,8 +117,8 @@ export function scriptProblems(lines, { offer = null, profile = {} } = {}) {
   for (const e of onAdProblems(fillLine(all, "Bishan"), profile)) if (!errs.includes(e)) errs.push(e);
   return errs;
 }
-export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [], samples: Array.isArray(j?.samples) ? j.samples : [] }; };
-const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], samples: data.samples || [] }, null, 2) + "\n");
+export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [], samples: Array.isArray(j?.samples) ? j.samples : [], facts: j?.facts && typeof j.facts === "object" && !Array.isArray(j.facts) ? j.facts : {} }; };
+const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], samples: data.samples || [], facts: data.facts || {} }, null, 2) + "\n");
 const shape = (lines) => lines.map(norm).join(" ").toLowerCase().replace(/[^a-z0-9 ]/g, "");
 /** Add a script: the owner's own is kept at once, a drafted one waits for him. Never twice. */
 export function addScript(gymDir, { lines, offer, source = "owner" }, { profile = {} } = {}) {
@@ -151,22 +151,72 @@ export const keptScripts = (gymDir, offer = null) => readScripts(gymDir).scripts
  * copy a sentence or carry over a fact. Retired with a reason, never deleted.
  */
 export const SAMPLE_LIMIT = [40, 1500];
-export function addSample(gymDir, text, { note = null } = {}) {
+/**
+ * One library for every gym (2026-11-12, the owner: share samples across every gym, like the copy library — "area and
+ * challenge name, as well as gym name must be custom"): `library/video-samples.json` (gitignored with the other
+ * libraries; `VIDEO_LIBRARY_DIR`, else `COPY_LIBRARY_DIR`, points tests elsewhere). A sample marks what changes from
+ * gym to gym in braces — {AREA}, {CHALLENGE NAME}, {GYM NAME} — and the drafter is told what each becomes.
+ */
+export const VIDEO_LIBRARY_DIR = resolve(process.env.VIDEO_LIBRARY_DIR || process.env.COPY_LIBRARY_DIR || join(REPO_ROOT, "library"));
+export const SAMPLES_FILE = "video-samples.json";
+export const readSamples = (libDir = VIDEO_LIBRARY_DIR) => { const j = readJson(join(libDir, SAMPLES_FILE)); return { schema: 1, samples: Array.isArray(j?.samples) ? j.samples : [] }; };
+const writeSamples = (libDir, data) => { mkdirSync(libDir, { recursive: true }); writeFileSync(join(libDir, SAMPLES_FILE), JSON.stringify({ schema: 1, samples: data.samples }, null, 2) + "\n"); };
+const sampleKey = (t) => String(t).toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Add a sample to the shared library, exactly as pasted. `gym`: where it was pasted (for the record only). Never twice. */
+export function addSample(libDir, text, { note = null, gym = null } = {}) {
   const t = String(text || "").replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   if (t.length < SAMPLE_LIMIT[0] || t.length > SAMPLE_LIMIT[1]) throw new Error(`a sample script is ${SAMPLE_LIMIT[0]} to ${SAMPLE_LIMIT[1]} characters: paste one script at a time`);
-  const data = readScripts(gymDir), key = t.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (data.samples.some((x) => x.text.toLowerCase().replace(/[^a-z0-9]/g, "") === key)) throw Object.assign(new Error("this sample is already here"), { duplicate: true });
-  const row = { id: `vs-${sha(key).slice(0, 10)}`, text: t, ...(note ? { note: norm(note) } : {}), added: today() };
-  data.samples.push(row); writeScripts(gymDir, data); return row;
+  const data = readSamples(libDir), key = sampleKey(t);
+  if (data.samples.some((x) => sampleKey(x.text) === key)) throw Object.assign(new Error("this sample is already here"), { duplicate: true });
+  const row = { id: `vs-${sha(key).slice(0, 10)}`, text: t, ...(note ? { note: norm(note) } : {}), ...(gym ? { from: gym } : {}), added: today() };
+  data.samples.push(row); writeSamples(libDir, data); return row;
 }
-export function decideSample(gymDir, id, { retired, reason } = {}) {
-  const data = readScripts(gymDir), row = data.samples.find((x) => x.id === id);
+export function decideSample(libDir, id, { retired, reason } = {}) {
+  const data = readSamples(libDir), row = data.samples.find((x) => x.id === id);
   if (!row) throw new Error(`no such sample: ${id}`);
   if (retired === true) { if (typeof reason !== "string" || reason.trim().length < 3) throw new Error("retiring a sample needs a reason"); row.retired = today(); row.reason = reason.trim(); }
   else if (retired === false) { delete row.retired; delete row.reason; }
-  writeScripts(gymDir, data); return row;
+  writeSamples(libDir, data); return row;
 }
-export const liveSamples = (gymDir) => readScripts(gymDir).samples.filter((x) => !x.retired);
+export const liveSamples = (libDir = VIDEO_LIBRARY_DIR) => readSamples(libDir).samples.filter((x) => !x.retired);
+/** Samples pasted before the library was shared sit in a gym's own file: each joins the library once, as it is (its id,
+ *  its date, retired or not), with the gym it came from. The gym's file is left as it was. Returns how many joined. */
+export function adoptSamples(libDir, gymDirs = []) {
+  const data = readSamples(libDir); let n = 0;
+  for (const g of gymDirs) for (const x of readScripts(g).samples) {
+    if (!x?.text || data.samples.some((y) => y.id === x.id || sampleKey(y.text) === sampleKey(x.text))) continue;
+    data.samples.push({ ...x, from: x.from || basename(g) }); n++;
+  }
+  if (n) writeSamples(libDir, data);
+  return n;
+}
+/**
+ * What a programme includes (2026-11-12): the facts a script may state about one offer — its inclusions, how many
+ * places — typed by the owner, per gym. The drafter may say these and nothing else about how the programme works;
+ * a sample's own facts are never carried over. Kept beside the gym's scripts, keyed by the offer's words.
+ */
+export const FACT_LIMITS = { items: 8, chars: [3, 140] };
+const offerKey = (offer) => norm(offer).toLowerCase();
+export function factsProblems(items, profile = {}) {
+  if (!Array.isArray(items)) return ["the facts are a list, one to a line"];
+  const errs = [];
+  if (items.length > FACT_LIMITS.items) errs.push(`at most ${FACT_LIMITS.items} facts: keep the ones worth saying out loud`);
+  items.forEach((x, i) => {
+    const t = norm(x);
+    if (t.length < FACT_LIMITS.chars[0] || t.length > FACT_LIMITS.chars[1]) errs.push(`fact ${i + 1} is ${t.length} characters: ${FACT_LIMITS.chars[0]} to ${FACT_LIMITS.chars[1]}`);
+    for (const e of onAdProblems(t, profile)) errs.push(`fact ${i + 1}: ${e}`);
+  });
+  return errs;
+}
+export function setFacts(gymDir, offer, items, { profile = {} } = {}) {
+  if (typeof offer !== "string" || norm(offer).length < 3) throw new Error("the offer's exact words are needed");
+  const list = [...new Set((items || []).map((x) => plainDashes(norm(x))).filter(Boolean))], errs = factsProblems(list, profile);
+  if (errs.length) throw new Error(errs.join("; "));
+  const data = readScripts(gymDir);
+  if (list.length) data.facts[offerKey(offer)] = { offer: norm(offer), items: list, updated: today() }; else delete data.facts[offerKey(offer)];
+  writeScripts(gymDir, data); return list;
+}
+export const factsFor = (gymDir, offer) => readScripts(gymDir).facts[offerKey(offer)]?.items || [];
 
 /** How many presenter videos a batch may ask for (each is one script, made once for every location). */
 export const MAX_VIDEOS = 3;
@@ -196,26 +246,32 @@ export function scriptCost(script, areas = [""]) {
 const DRAFT_SCHEMA = { type: "OBJECT", properties: { scripts: { type: "ARRAY", items: { type: "OBJECT", properties: { lines: { type: "ARRAY", items: { type: "STRING" } } }, required: ["lines"] } } }, required: ["scripts"] };
 export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [] }) {
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean);
+  // With the owner's samples or his facts for this offer a script may run longer: it follows the sample's beats, cut to what is relevant and true here.
+  const long = samples.length > 0 || facts.length > 0;
   const lines = [
     `You write short scripts for a talking-to-camera video advert for ${gym}'s programme: "${offer}". ${audience ? `The advert is for: ${audience}.` : "The advert is for adults near the gym who are not training yet."} Someone stands in the gym, talks to a phone camera the way a friend would, and the video cuts to a new spot for each line.`,
-    `A script is exactly 3 lines. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`,
-    `Line 1 says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. Line 2 names the programme in these exact words — "${gym}'s ${offer}" — and says what it is FOR in this person's life. Line 3 says one more thing they will get from it and ends with exactly: "Tap below to find out more."`,
-    `Speak about BENEFITS, never features. A benefit is what changes for the person: feeling stronger, more energy for the day, clothes fitting better, confidence, keeping up with the children, a body that does what is asked of it. A feature is how the gym runs, and the script says NONE: nothing about how training is organised (no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size), because a wrong one is a false claim about this gym.${facts.length ? ` The only facts about the gym that may be stated are these, in the owner's words: ${facts.map((x) => `"${x}"`).join("; ")}.` : ""} A benefit is what the programme is built to help with, never a promised result.`,
-    `The speaker is nobody in particular: NOT a coach, NOT a member, NOT the owner. So the script never says I, we, our, my or us, and never claims an experience ("I joined", "we built").`,
+    long
+      ? `A script is 3 to ${LINES[1]} lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`
+      : `A script is exactly 3 lines. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`,
+    long
+      ? `The first line says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. One of the first two lines names the programme in these exact words — "${gym}'s ${offer}" — and says what it is FOR in this person's life. The lines between are the beats worth keeping${samples.length ? " from the sample you follow" : ""}: each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. The last line tells them what to do and ends with "Tap below" and a few words (for example: "Tap below to see if this is a fit for you.").`
+      : `Line 1 says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. Line 2 names the programme in these exact words — "${gym}'s ${offer}" — and says what it is FOR in this person's life. Line 3 says one more thing they will get from it and ends with exactly: "Tap below to find out more."`,
+    `Speak about BENEFITS, never features. A benefit is what changes for the person: feeling stronger, more energy for the day, clothes fitting better, confidence, keeping up with the children, a body that does what is asked of it. A feature is how the gym runs, and the script says NONE: nothing about how training is organised (no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size), because a wrong one is a false claim about this gym.${facts.length ? ` The only facts about the gym or the programme that may be stated are these, in the owner's words: ${facts.map((x) => `"${x}"`).join("; ")}. Say them as given, and nothing else about how the programme works.` : ""} A benefit is what the programme is built to help with, never a promised result.`,
+    `The speaker is nobody in particular: NOT a coach, NOT a member, NOT the owner. So the script never says I, we, our, my or us, and never claims an experience ("I joined", "we built"): where a gym would say we, the script says "${gym}", "the coaches" or "the team".`,
     `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark; an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
     `Write ${count} scripts, each opening a different way (what they keep putting off, what they are unsure about, who they would be training with, how it fits a busy week).`,
   ];
   // The owner's own proven scripts, when he has given some: their structure, rhythm and voice are followed; their sentences and their facts are not copied.
-  if (samples.length) lines.push(`These scripts have worked for this owner. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact (a place, a programme name, a number, how a gym runs):\n${samples.map((x, i) => `--- SAMPLE ${i + 1}\n${x}`).join("\n")}`);
+  if (samples.length) lines.push(`These scripts have worked for this owner. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact (a place, a programme name, a number, how a gym runs). A sample may mark in braces what changes from gym to gym ({AREA}, {CHALLENGE NAME}, {GYM NAME} and the like): where it marks the place, write {AREA}; where it marks the programme, write its exact words, "${offer}"; where it marks the gym, or where the sample says we or our, write "${gym}". No other braces may appear in a script:\n${samples.map((x, i) => `--- SAMPLE ${i + 1}\n${x}`).join("\n")}`);
   if (existing.length) lines.push(`Already written — do not repeat or closely rephrase:\n${existing.map((e) => `- ${e}`).join("\n")}`);
   return { prompt: lines.join("\n\n"), schema: DRAFT_SCHEMA };
 }
 /** Draft scripts for an offer: one text call, every draft checked in code, a broken or repeated one dropped with the reason. Drafts wait for the owner. */
-export async function draftScripts({ brandDir, offer, audience = null, count = 3, ask = callVision, model = COPY_MODEL, log = () => {} }) {
+export async function draftScripts({ brandDir, offer, audience = null, count = 3, libraryDir = VIDEO_LIBRARY_DIR, ask = callVision, model = COPY_MODEL, log = () => {} }) {
   if (typeof offer !== "string" || offer.trim().length < 3) throw new Error("the offer's exact words are needed");
   if (!Number.isInteger(count) || count < 1 || count > 6) throw new Error("count must be 1 to 6");
   const profile = readJson(join(brandDir, "gym-profile.json")) || {};
-  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: readScripts(brandDir).scripts.map((s) => s.lines.join(" / ")), samples: liveSamples(brandDir).map((x) => x.text) });
+  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: readScripts(brandDir).scripts.map((s) => s.lines.join(" / ")), samples: liveSamples(libraryDir).map((x) => x.text), facts: factsFor(brandDir, offer) });
   const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [];
   for (const d of answer?.scripts || []) {
     try { added.push(addScript(brandDir, { lines: d.lines, offer: offer.trim(), source: "drafted" }, { profile })); }
@@ -263,7 +319,7 @@ export function realModels(profile = {}) {
 const NO_WORDS = "There is no text of any kind anywhere in the picture: no captions, no subtitles, no titles, no logos, no watermark, no lettering on walls, screens or clothing.";
 const PHONE = "It looks like real footage shot on a phone held upright by a friend: natural indoor light, slight handheld sway, real skin, nothing glossy or cinematic. One continuous shot with no scene cuts.";
 /** Where the presenter stands for each line, in order: a new spot a line, the way the reference videos cut. */
-export const SPOTS = ["beside the dumbbell rack", "in front of a rack or rig", "on the open floor with the machines behind", "next to a bench"];
+export const SPOTS = ["beside the dumbbell rack", "in front of a rack or rig", "on the open floor with the machines behind", "next to a bench", "beside the cardio machines", "in front of a plain stretch of wall, the gym floor to one side", "at the edge of the open floor, the room stretching out behind"];
 /** How each line is framed: the first real video's three stills were one spot at one distance, so its cuts hardly read. A different part of the room and a different distance for each. */
 export const FRAMINGS = ["framed from the waist up", "a step closer, framed from the chest up, the camera a little to one side", "a few steps back, framed from the thighs up, more of the room showing", "framed from the waist up, from the other side of the room"];
 export function stillPrompt({ presenter, profile, spot, first, framing = FRAMINGS[0] }) {

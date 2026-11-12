@@ -3721,11 +3721,11 @@ test("U62 the ledger across gyms on Review Data, and step 0 — Survey Ad Librar
 
 const HAS_FFMPEG = (() => { try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); return true; } catch { return false; } })();
 test("U63 presenter videos through the panel (2026-11-12): who presents is the gym's own setting, saved on Ad defaults and refused when it is not a woman or a man; a script is the owner's — his own kept at once, checked by the rules (the offer's exact words, no I / we / our), edited, put back, retired with a reason, never twice — and a sample of his is kept for the drafter; a brief may ask for videos only once someone presents and that many scripts are kept for its offer, and the check says what they take in seconds and dollars; a video ad plays on Pick Ads, is served in parts, goes into the picks file and the zip as the 9:16 it is, and is left out of the Facebook plan with the reason; the scripts sit on Draft Scenes and the count on Generate Creatives", { skip: !HAS_FFMPEG && "ffmpeg is not installed" }, async () => {
-  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8"), scriptsFile = join(g, "video-scripts.json"), out = join(g, "outputs", "u63-batch");
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8"), scriptsFile = join(g, "video-scripts.json"), out = join(g, "outputs", "u63-batch"), samplesFile = join(dirname(brands), "library", "video-samples.json"), other = join(brands, "u63-other");
   const V = async (path = "", opts) => { const r = await call(`/api/client/${GYM}/video${path}`, opts); return [r.status, await r.json()]; };
   const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", `Test Gym's ${BRIEF.offer} is built for exactly that. A coach beside you, and a plan that fits your week.`, "Feel stronger and have more energy for your day. Tap below to find out more."];
   try {
-    rmSync(scriptsFile, { force: true });
+    rmSync(scriptsFile, { force: true }); rmSync(samplesFile, { force: true });
     { const p = JSON.parse(before); if (p.creative_defaults) delete p.creative_defaults.presenter; writeFileSync(pf, JSON.stringify(p, null, 2)); }
     // Nothing yet: nobody presents, no script, no sample.
     let [st, D] = await V();
@@ -3757,6 +3757,21 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     const SAMPLE = "Hey, if you live in Katong and you are tired of starting over every January, listen up.\n\nThis is about feeling strong in your own body again, and having the energy to keep up with your kids.\n\nTap below and tell us about you.";
     [st, D] = await V("/sample", { method: "POST", body: { text: SAMPLE } }); assert.deepEqual([st, D.samples.length, D.samples[0].text], [200, 1, SAMPLE]);
     assert.equal((await V(`/sample/${D.samples[0].id}`, { method: "PUT", body: { retired: true } }))[0], 400);
+    // Samples are one library for every gym (2026-11-12): another gym sees this one, and a sample that sat in a gym's own file joins the library as it is.
+    assert.deepEqual([D.samples[0].from, JSON.parse(readFileSync(samplesFile, "utf-8")).samples.length, JSON.parse(readFileSync(scriptsFile, "utf-8")).samples], [GYM, 1, []]);
+    mkdirSync(other, { recursive: true }); writeFileSync(join(other, "gym-profile.json"), before);
+    writeFileSync(join(other, "video-scripts.json"), JSON.stringify({ schema: 1, scripts: [], samples: [{ id: "vs-legacy00001", text: "If you are in the {AREA} area, we have just launched our {CHALLENGE NAME} to help you feel strong again.", added: "2026-11-12" }] }));
+    { const r = await (await call("/api/client/u63-other/video")).json();
+      assert.deepEqual([r.samples.map((x) => [x.id.slice(0, 3), x.from]), r.scripts, r.facts, JSON.parse(readFileSync(join(other, "video-scripts.json"), "utf-8")).samples.length], [[["vs-", GYM], ["vs-", "u63-other"]], [], [], 1], "both gyms' samples, for both gyms; the old file left as it was");
+      assert.equal((await V())[1].samples.length, 2); }
+    // What the challenge includes: this gym's list for this offer, held to an ad's rules; typed with a draft request it is saved even when the drafter cannot be reached.
+    assert.equal((await V("/facts", { method: "POST", body: { offer: BRIEF.offer, items: ["A free trial week first"] } }))[0], 400);
+    [st, D] = await V("/facts", { method: "POST", body: { offer: BRIEF.offer, items: ["A full body scan assessment at the start", "Only 10 places"] } });
+    assert.deepEqual([st, D.facts.map((f) => [f.offer, f.items]), D.limits.facts.items, D.limits.lines], [200, [[BRIEF.offer, ["A full body scan assessment at the start", "Only 10 places"]]], 8, [2, 7]]);
+    [st] = await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 1, facts: ["A full body scan assessment at the start"] } }); assert.equal(st, 400);
+    assert.deepEqual((await V())[1].facts[0].items, ["A full body scan assessment at the start"]);
+    assert.equal((await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 1, facts: "a scan" } }))[0], 400);
+    assert.equal((await (await call("/api/client/u63-other/video")).json()).facts.length, 0, "another gym's programme is its own");
     // The brief: videos need a presenter and that many scripts kept for this offer; the check says what they take.
     const check = async (over) => (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u63-new", ...over } } })).json();
     let c = await check({ videos: { presenter: 1 } });
@@ -3805,13 +3820,20 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u63${Math.random()}#/${GYM}/${hash}` }, sessionId); await loaded; await until(ready); };
     // Draft Scenes: the scripts, who presents, the sample; writing your own asks for the offer and the lines.
     await open("scenes", "!!document.querySelector('#vsCard [data-script]')");
-    assert.deepEqual(await ev("[document.querySelectorAll('#vsCard [data-script]').length, document.querySelector('#vsCard [data-script]').dataset.status, [...document.querySelectorAll('#vsCard [data-script] ol li')].map(li => li.textContent), document.querySelectorAll('#vsCard [data-sample]').length, document.querySelector('#vsWho').innerText.startsWith('Presented by a man of about 36')]"), [1, "kept", LINES, 1, true]);
+    assert.deepEqual(await ev("[document.querySelectorAll('#vsCard [data-script]').length, document.querySelector('#vsCard [data-script]').dataset.status, [...document.querySelectorAll('#vsCard [data-script] ol li')].map(li => li.textContent), document.querySelectorAll('#vsCard [data-sample]').length, document.querySelector('#vsWho').innerText.startsWith('Presented by a man of about 36')]"), [1, "kept", LINES, 2, true]);
     assert.match(await ev("document.querySelector('#vsCard').innerText.replace(/\\s+/g, ' ')"), /^VIDEO SCRIPTS 1 kept · 0 to read .* Nothing is filmed until you keep a script/i);
     await ev("document.querySelector('#vsOwnGo').click(); true");
-    assert.deepEqual(await ev("[document.querySelectorAll('#gModal textarea').length, document.querySelector('#vsOfferIn').value !== undefined, document.querySelector('#vsGo').textContent]"), [4, true, "Keep this script"]);
+    assert.deepEqual(await ev("[document.querySelectorAll('#gModal textarea').length, document.querySelector('#vsOfferIn').value !== undefined, document.querySelector('#vsGo').textContent]"), [7, true, "Keep this script"]);
     await ev("document.querySelector('#vsLine0').value = 'We do it all.'; document.querySelector('#vsLine1').value = 'Our way.'; document.querySelector('#vsGo').click(); true");
     await until("document.querySelector('#vsWhy') && document.querySelector('#vsWhy').textContent.length > 5");
-    assert.match(await ev("document.querySelector('#vsWhy').textContent"), /line 1/); assert.equal(await ev("document.querySelectorAll('#gModal textarea').length"), 4, "a refused script keeps what was typed");
+    assert.match(await ev("document.querySelector('#vsWhy').textContent"), /line 1/); assert.equal(await ev("document.querySelectorAll('#gModal textarea').length"), 7, "a refused script keeps what was typed");
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // The samples say they are shared; the offer's facts are listed and come up in the draft dialog, where another offer shows its own (none).
+    assert.deepEqual(await ev("[document.querySelector('#vsShared').textContent, document.querySelectorAll('#vsFacts [data-facts]').length, [...document.querySelectorAll('#vsFacts [data-facts] li')].map(li => li.textContent)]"), ["shared by every gym", 1, ["A full body scan assessment at the start"]]);
+    await ev(`document.querySelector('#vsDraftGo').click(); document.querySelector('#vsOfferIn').value = ${JSON.stringify(BRIEF.offer)}; document.querySelector('#vsOfferIn').oninput(); true`);
+    assert.equal(await ev("document.querySelector('#vsFactsIn').value"), "A full body scan assessment at the start");
+    await ev("document.querySelector('#vsOfferIn').value = '6 Week Something Else'; document.querySelector('#vsOfferIn').oninput(); true");
+    assert.equal(await ev("document.querySelector('#vsFactsIn').value"), "");
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
     // Ad defaults: who presents, saved by its own button.
     await open("defaults", "!!document.querySelector('#cdPresGender')");
@@ -3842,5 +3864,5 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await ev("openGenerating('u63-gen'); true"); await until("!!document.querySelector('#genVideo')");
     assert.deepEqual(await ev("[document.querySelector('h1').textContent, document.querySelector('#genVideo').innerText]"), ["Making the videos", "videos: filming line 2, take 2 · 17 s of video made, never more than 54 s"]);
     assert.match(await ev("document.querySelector('#view').innerText.replace(/\\s+/g, ' ')"), /it stopped while making the videos/, "a run that is no longer going says which stage it was in, in words");
-  } finally { writeFileSync(pf, before); rmSync(scriptsFile, { force: true }); rmSync(out, { recursive: true, force: true }); rmSync(join(g, "batches", "u63-batch"), { recursive: true, force: true }); rmSync(join(g, "batches", "u63-gen"), { recursive: true, force: true }); rmSync(join(g, "outputs", "u63-gen"), { recursive: true, force: true }); }
+  } finally { writeFileSync(pf, before); rmSync(scriptsFile, { force: true }); rmSync(samplesFile, { force: true }); rmSync(other, { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); rmSync(join(g, "batches", "u63-batch"), { recursive: true, force: true }); rmSync(join(g, "batches", "u63-gen"), { recursive: true, force: true }); rmSync(join(g, "outputs", "u63-gen"), { recursive: true, force: true }); }
 });
