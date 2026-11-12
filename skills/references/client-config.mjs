@@ -292,6 +292,21 @@ export const LEGACY_RATIOS = ["1x1"];
  * Flash is cheaper and faster. The clean-up edit of real photos keeps its own model.
  */
 export const IMAGE_MODELS = Object.freeze({ pro: "gemini-3-pro-image-preview", flash: "gemini-3.1-flash-image-preview" });
+/**
+ * Who presents a gym's talking-to-camera videos (2026-11-12): an invented person who never claims to be staff or a
+ * member — a woman or a man, about what age, and any look the owner writes. A gym's own choice, and nothing is made
+ * until it is set (Sculpt Society has no female coaches: a woman presenting there would mislead).
+ */
+export const PRESENTER_GENDERS = ["woman", "man"];
+export function presenterProblems(p) {
+  if (p == null) return [];
+  if (typeof p !== "object" || Array.isArray(p)) return ["presenter must say who presents: a gender, and optionally an age and a look"];
+  const errs = [];
+  if (!PRESENTER_GENDERS.includes(p.gender)) errs.push(`presenter.gender must be ${PRESENTER_GENDERS.join(" or ")}`);
+  if (p.age != null && !(Number.isInteger(p.age) && p.age >= 20 && p.age <= 65)) errs.push("presenter.age must be a whole number from 20 to 65");
+  if (p.look != null && (typeof p.look !== "string" || p.look.length > 200)) errs.push("presenter.look is a few words, up to 200 characters");
+  return errs;
+}
 export const imageModelFor = (profile) => IMAGE_MODELS[profile?.creative_defaults?.image_model] || IMAGE_MODELS[CREATIVE_DEFAULTS.image_model];
 /** Which colour pairings a gym's ads draw from: the reference catalogue (the loud pairings the
  *  high-performing ads use), the gym's own brand colours, or both in the same spread. */
@@ -503,6 +518,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       if (cd.palettes != null && !PALETTE_MODES.includes(cd.palettes)) errors.push(`creative_defaults.palettes must be one of ${PALETTE_MODES.join(", ")}`);
       if (cd.image_model != null && !IMAGE_MODELS[cd.image_model]) errors.push(`creative_defaults.image_model must be one of ${Object.keys(IMAGE_MODELS).join(", ")}`);
       if (cd.look != null && !LOOKS.includes(cd.look)) errors.push(`creative_defaults.look must be one of ${LOOKS.join(", ")}`);
+      for (const e of presenterProblems(cd.presenter)) errors.push(`creative_defaults.${e}`);
       if (cd.format != null && !SCENE_FORMATS[cd.format]) errors.push(`creative_defaults.format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
       if (cd.mix != null) for (const e of mixProblems(cd.mix)) errors.push(`creative_defaults.${e.replace(/^the mix's/, "mix:")}`);
       if (cd.ratio != null && !FEED_RATIOS.includes(cd.ratio)) errors.push(`creative_defaults.ratio must be ${FEED_RATIOS.join(", ")}: feed ads are made at 4:5 and Stories at 9:16 (the square is no longer made)`);
