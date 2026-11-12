@@ -56,6 +56,14 @@
   .rail .tab.sel{background:var(--accent-soft);color:var(--navy);font-weight:600}
   .rail .tab .ic{width:18px;text-align:center;color:var(--faint)} .rail .tab.sel .ic{color:var(--navy)}
   .rail .tab .ic.num{width:18px;height:18px;line-height:18px;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:11px;font-weight:700;color:var(--dim)} .rail .tab.sel .ic.num{background:var(--navy);border-color:var(--navy);color:#fff}
+  .pfbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px} .pfbar .seg button{padding:6px 13px}
+  .pftiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px} .pftile{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px} .pftile .l{font-size:12px;color:var(--dim)} .pftile .v{font-size:21px;font-weight:700;color:var(--navy);line-height:1.35} .pftile .v small{font-size:11.5px;font-weight:600;color:var(--dim)} .pftile .s{font-size:12px;color:var(--dim);margin-top:2px}
+  table.pft th,table.pft td{text-align:right;white-space:nowrap} table.pft th:first-child,table.pft td:first-child{text-align:left;white-space:normal} table.pft th{cursor:pointer;user-select:none} table.pft td{padding-top:9px;padding-bottom:9px}
+  table.pft tr.pfg{cursor:pointer} table.pft tr.pfg:hover td{background:var(--bg)} table.pft tr.pfsub td{font-size:12.5px;color:var(--dim);background:var(--bg)} table.pft tr.pfsub td:first-child{padding-left:26px} table.pft tr.pfdet td{text-align:left;white-space:normal;font-size:12.5px;color:var(--dim);background:var(--bg);padding-left:26px;line-height:1.6}
+  table.pft th:last-child,table.pft td:last-child{text-align:left;width:132px;padding-left:22px} table.pft tr.pfdet td:last-child{width:auto;padding-left:26px} .pfspark{display:block}
+  .pfcar{display:inline-block;width:12px;color:var(--faint)} .pfnone{color:var(--faint);font-size:12.5px} .pfspark{color:var(--navy);vertical-align:middle}
+  .chg{font-size:11.5px;margin-left:5px;color:var(--faint);font-weight:600} .chg.bad{color:var(--err)} .chg.good{color:var(--ok)} .pill.bad{background:var(--err-soft);border-color:#f0c2c2;color:var(--err)}
+  @media (max-width:900px){ .pftiles{grid-template-columns:repeat(2,minmax(0,1fr))} }
   .cyc{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:16px}
   .cycsteps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
   .cycstep{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);min-width:0;height:auto}
@@ -350,6 +358,7 @@ const WAIT = { items:new Map(), seq:0, tick:null, was:null };
 /** What a request is, in plain words: [method, path, sentence | (body) => sentence]. The first match wins; `null` never shows. */
 const WAITS = [
   [/POST/, /\/batch\/check$|\/api\/preview$/, null], [/PUT/, /\/picks$/, null], [/GET/, /\/cycle$|\/progress$|\/api\/run\/|\/api\/status$|\/api\/token$|\/api\/enums$|\/api\/clients$|\/batch-setup$|\/api\/client\/[^/]+$/, null],
+  [/GET/, /\/api\/portfolio$/, "Adding up every gym's numbers from what is on file."],
   [/POST/, /\/ad\/\d+\/pause$/, 'Pausing the ad on Meta.'],
   [/POST/, /\/room-tag$/, 'Saving which room the photo shows.'],
   [/POST/, /\/copy\/draft$/, (b) => `The agent is drafting ${/"kind":"headline"/.test(b||'') ? 'headlines' : 'copies'} from the copy library, then judging each one for clarity. This takes about a minute.`],
@@ -447,19 +456,21 @@ let STATE = { clients:[], sel:null, offer:null, tab:'results', batch:null, rmode
 // Publish Ads, and round again — each numbered; the library next, the client's setup last. The screens' ids are what they
 // were (results, scenes, batch, review, exports), so every old address still opens its screen.
 const NAV = [
+  ['sec','Portfolio'], ['portfolio','All gyms','▦'],
   ['sec','The cycle'], ['results','Review Data','1'], ['scenes','Draft Scenes','2'], ['batch','Generate Creatives','3'], ['review','Pick Ads','4'], ['exports','Publish Ads','5'],
   ['sec','Library'], ['photos','Photos & assets','▣'], ['references','References','◈'], ['copy','Copy','❝'], ['cards','Cards','▭'], ['leadforms','Lead forms','▤'],
   ['sec','Profile'], ['overview','Overview','◎'], ['import','Import from Meta','⇣'], ['metafacts','From the ad account','◆'], ['website','From the website','⌕'], ['instagram','From Instagram','◉'], ['identity','Identity & locations','●'], ['brand','Brand & photography','●'], ['offer','Offer wording','●'], ['defaults','Ad defaults','●'], ['targeting','Targeting & budget','●'], ['meta','Meta link','●'],
   ['sec','System'], ['setup','Setup','⚙'],
 ];
 const CYCLE_TABS = ['results','scenes','batch','generating','review','exports','publish'];
-const TITLES = { batch:'Generate Creatives', generating:'Generate Creatives', review:'Pick Ads', exports:'Publish Ads', publish:'Publish Ads', results:'Review Data', copy:'Copy', cards:'Cards', leadforms:'Lead forms', import:'Import from Meta', scenes:'Draft Scenes', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
+const TITLES = { portfolio:'All gyms', batch:'Generate Creatives', generating:'Generate Creatives', review:'Pick Ads', exports:'Publish Ads', publish:'Publish Ads', results:'Review Data', copy:'Copy', cards:'Cards', leadforms:'Lead forms', import:'Import from Meta', scenes:'Draft Scenes', photos:'Photos & brand assets', references:'Reference images', overview:'Overview', metafacts:'From the ad account', website:'From the website', instagram:'From Instagram', identity:'Identity & locations', brand:'Brand & photography', offer:'Offer wording', defaults:'Ad defaults', targeting:'Targeting & budget', meta:'Meta link', setup:'Setup' };
 let VIEW_SEQ = 0;
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 // The address follows the screen, so Back and Forward move between screens and a reload stays put:
 //   #/{gym}/{tab} · #/{gym}/review/{batch}[/photos] · #/{gym}/generating/{batch}
 function routeHash(){
+  if (STATE.tab==='portfolio') return '#/portfolio'; // every gym: no gym in the address
   const parts = [STATE.sel || '', STATE.tab];
   if (STATE.batch) parts.push(STATE.batch);
   if (STATE.batch && STATE.tab==='review' && STATE.rmode==='photos') parts.push('photos');
@@ -467,6 +478,7 @@ function routeHash(){
 }
 function setHash(replace=false){ const h = routeHash(); if (location.hash !== h) history[replace?'replaceState':'pushState'](null, '', h); }
 function parseHash(){
+  if (location.hash === '#/portfolio') return { gym:'', tab:'portfolio', batch:null, rmode:'ads' };
   const m = location.hash.match(/^#\/([a-z0-9-]*)\/([a-z]+)(?:\/([a-z0-9-]+))?(?:\/(photos|ads))?$/);
   return m ? { gym:m[1], tab:m[2], batch:m[3]||null, rmode:m[4]||'ads' } : null;
 }
@@ -498,6 +510,7 @@ function openWords(id){ B.pendingWords = id; go('batch'); }
 function paintCrumb(extra){
   const client = STATE.clients.find(c=>c.gym===STATE.sel);
   const tab = TITLES[STATE.tab] || '';
+  if (STATE.tab==='portfolio'){ $('#crumb').innerHTML = '<b>All gyms</b>'; return; }
   const up = STATE.batch ? `<a href="#" onclick="go('${STATE.tab==='generating'?'batch':STATE.tab==='publish'?'exports':STATE.tab}');return false" style="color:inherit">${esc(tab)}</a>` : esc(tab);
   $('#crumb').innerHTML = `<b>${esc(client?.display_name||'')}</b><span class="sep">›</span>${up}${extra?`<span class="sep">›</span><span>${esc(extra)}</span>`:''}`;
 }
@@ -520,6 +533,7 @@ async function loadClients(){
 async function selectClient(gym, doRender=true, route=true){
   if (gym !== STATE.sel && (DIRTY.profile || DIRTY.offer) && !confirm('This profile has unsaved changes. Switch gym and discard them?')){ const s=$('#clientSel'); if (s) s.value = STATE.sel; return; }
   if (gym !== STATE.sel) DIRTY = {};
+  if (route && doRender && STATE.tab==='portfolio') STATE.tab = 'results'; // a gym picked from the top bar while every gym is listed: that gym's own first screen
   if (route && gym !== STATE.sel && STATE.batch){ STATE.batch = null; if (STATE.tab==='generating') STATE.tab = 'batch'; }
   STATE.sel = gym;
   const c = STATE.clients.find(x=>x.gym===gym);
@@ -579,6 +593,122 @@ function paintCycle(){
 /** The strip's Next button: the step's screen, on its batch when it names one. */
 function cyGo(){ const n = CY.data?.next; if (!n) return; if (n.batch && n.tab==='review') return openReview(n.batch); if (n.batch && n.tab==='publish') return openPublish(n.batch); if (n.batch && n.tab==='generating') return openGenerating(n.batch); go(n.tab); }
 
+// ── All gyms (2026-11-12) ────────────────────────────────────────────────────
+// Every gym's marketing numbers side by side, for the period picked, against the period before (GET /api/portfolio:
+// from what the last read put on file — no Meta call when this opens). A result is a lead-form lead; hiring ads,
+// campaigns that were not after leads and ad sets abroad are left out; money is never added across currencies.
+const PF = { data:null, error:null, period:(()=>{ try { return localStorage.getItem('pfPeriod') || '30'; } catch { return '30'; } })(), sort:{ key:'spend', dir:-1 }, open:new Set() };
+const PF_COLS = [['spend','Spent','Amount spent on lead ads in the period'],['leads','Leads','Lead-form leads, as Meta counts them'],['cost_per_lead','Cost per lead','Spent ÷ leads, with the change from the period before'],
+  ['cpm','CPM','Cost of 1,000 impressions: what the audience costs to reach'],['ctr','CTR','Link clicks ÷ impressions: how well the ads stop the scroll'],['click_to_lead','Click → lead','Leads ÷ link clicks: how well the form converts'],['frequency','Freq.','Impressions ÷ people reached, per ad set: how often the same person saw the ads']];
+const PF_WHOLE = new Set(['TWD','JPY','KRW','VND','IDR']);
+const pfDay = (iso) => iso ? new Date(iso.length===10 ? iso+'T12:00:00' : iso).toLocaleDateString('en-GB', { day:'numeric', month:'short' }) : '';
+const pfWhen = (iso) => { if (!iso) return ''; const d = new Date(iso), today = new Date().toDateString()===d.toDateString(); return `${today ? 'today' : pfDay(iso)} ${d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}`; };
+const pfN = (n, dp=0) => n==null ? '<span class="pfnone">—</span>' : Number(n).toLocaleString(undefined, { minimumFractionDigits:dp, maximumFractionDigits:dp });
+const pfMoney = (n, cur) => pfN(n, PF_WHOLE.has(cur) ? 0 : 2);
+/** A change from the period before: red when it went the wrong way, green the right way, grey under 5%. */
+const pfChg = (v, downIsGood) => v==null ? '' : `<span class="chg ${Math.abs(v)<5 ? '' : (v<0)===downIsGood ? 'good' : 'bad'}">${v>0?'+':''}${Math.round(v)}%</span>`;
+function pfCell(key, f, cur){
+  if (!f) return '<span class="pfnone">—</span>';
+  if (key==='spend') return pfN(f.spend, 0);
+  if (key==='leads') return pfN(f.leads, 0) + pfChg(f.change?.leads, false);
+  if (key==='cost_per_lead') return pfMoney(f.cost_per_lead, cur) + pfChg(f.change?.cost_per_lead, true);
+  if (key==='cpm') return pfMoney(f.cpm, cur);
+  if (key==='ctr') return f.ctr==null ? pfN(null) : pfN(f.ctr, 2) + '%';
+  if (key==='click_to_lead') return f.click_to_lead==null ? pfN(null) : pfN(f.click_to_lead, 1) + '%';
+  return pfN(f.frequency, f.frequency==null ? 0 : 1);
+}
+/** The figures a gym shows for the period: its own period when its account was read day by day, an export's own period, or all time. */
+function pfFig(g, p){ return p==='all' ? g.all : g.source==='meta' ? g.periods[p] : g.source==='export' ? g.fixed : null; }
+/** Leads a day as a small line (a week a point over 90 days). */
+function pfSpark(series, days){
+  let s = series.slice(-days).map(x=>x.leads);
+  if (days > 30){ const w = []; for (let i = s.length; i > 0; i -= 7) w.unshift(s.slice(Math.max(0, i-7), i).reduce((a,b)=>a+b, 0)); s = w; }
+  const max = Math.max(1, ...s), W = 96, H = 22, total = s.reduce((a,b)=>a+b, 0);
+  const pts = s.map((v,i)=>`${(i*W/Math.max(1, s.length-1)).toFixed(1)},${(H-2-(v/max)*(H-4)).toFixed(1)}`).join(' ');
+  return `<svg class="pfspark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"><title>${total} lead${total===1?'':'s'} over ${days} days, ${days>30?'a week':'a day'} a point; the most ${max}</title><polyline fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" points="${pts}"/></svg>`;
+}
+async function viewPortfolio(v, seq=VIEW_SEQ){
+  v.innerHTML = `<h1>All gyms</h1><p class="sub" id="pfSub">Every gym's lead ads for the period you pick, against the period before. A result is a lead-form lead; hiring ads, campaigns that were not after leads and ad sets abroad are left out.</p><div id="pfBody"></div>`;
+  if (PF.data) paintPortfolio();
+  await pfReload(seq);
+}
+async function pfReload(seq=VIEW_SEQ){
+  try { PF.data = await api('/api/portfolio'); PF.error = null; } catch(e){ PF.error = e.message; }
+  if (seq !== VIEW_SEQ || STATE.tab !== 'portfolio') return;
+  paintPortfolio();
+  // A read that is going (the day's own, or one started elsewhere) is followed here, and the numbers are read again when it ends.
+  if (PF.data?.reading && !(STATE.run && !STATE.run.done)) attachRun(PF.data.reading, "Read every gym's numbers (read-only)", ()=>pfReload());
+}
+function pfPeriod(p){ PF.period = String(p); try { localStorage.setItem('pfPeriod', PF.period); } catch {} paintPortfolio(); }
+function pfSort(key){ PF.sort = { key, dir: PF.sort.key===key ? -PF.sort.dir : (key==='name' ? 1 : -1) }; paintPortfolio(); }
+function pfToggle(gym){ PF.open.has(gym) ? PF.open.delete(gym) : PF.open.add(gym); paintPortfolio(); }
+function pfRefresh(){
+  const D = PF.data || {}, n = (D.gyms||[]).filter(g=>g.account).length;
+  if (!D.linked) return toast('The Meta link is not set up yet (Meta link page), so there is nothing to read.');
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Refresh the numbers</h3>
+    <p class="hint">Reads ${n} gym${n===1?"'s":"s'"} ad account${n===1?'':'s'} again: each ad set's spend, impressions, link clicks and leads day by day for the last 180 days, its reach over the last 7, 30 and 90 days, each ad's totals, and the ads running now with their budgets. Read-only on Meta, 8 calls a gym. No model call, nothing is changed on any account. A gym whose numbers came as an Ads Manager export keeps them; export it again to refresh them.</p>
+    <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="pfRefreshGo" onclick="$('#gModal').innerHTML='';run({ kind:'portfolio-numbers' }, ()=>pfReload())">Read the numbers</button></div></div></div>`;
+}
+function paintPortfolio(){
+  const box = $('#pfBody'); if (!box) return;
+  if (PF.error && !PF.data){ box.innerHTML = `<div class="empty">The gyms' numbers could not be read: ${esc(PF.error)}</div>`; return; }
+  const D = PF.data, p = PF.period, days = p==='all' ? null : Number(p), T = D.totals[p] || { by_currency:{} }, q = (s) => esc(JSON.stringify(s));
+  if (!D.gyms.length){ box.innerHTML = '<div class="empty">No gym yet.<br><br><button class="primary" onclick="newClient()">Create your first gym</button></div>'; return; }
+  const curs = Object.keys(T.by_currency).sort((a,b)=>T.by_currency[b].gyms-T.by_currency[a].gyms || a.localeCompare(b));
+  const tile = (l, v, s='') => `<div class="pftile"><div class="l">${l}</div><div class="v">${v}</div>${s?`<div class="s">${s}</div>`:''}</div>`;
+  const out = [...(days && D.outside.length ? [`${D.outside.join(', ')}: an export, not in these totals`] : []), ...(days && D.unread.length ? [`${D.unread.join(', ')}: not read yet`] : [])];
+  const tiles = `<div class="pftiles" id="pfTiles">
+    ${tile(days ? `Leads, last ${days} days` : 'Leads, all time', `${pfN(T.leads||0)}${pfChg(T.leads_change, false)}`, `${T.gyms||0} gym${T.gyms===1?'':'s'}${out.length ? ' · ' + esc(out.join('; ')) : ''}`)}
+    ${tile('Spent', curs.length ? curs.map(c=>`<div><small>${esc(c)}</small> ${pfN(T.by_currency[c].spend, 0)}</div>`).join('') : pfN(null), curs.length > 1 ? 'never added across currencies' : '')}
+    ${tile('Cost per lead', curs.length ? curs.map(c=>`<div><small>${esc(c)}</small> ${pfMoney(T.by_currency[c].cost_per_lead, c)}${pfChg(T.by_currency[c].change, true)}</div>`).join('') : pfN(null), curs.map(c=>`${T.by_currency[c].gyms} ${esc(c)} gym${T.by_currency[c].gyms===1?'':'s'}`).join(' · '))}
+    ${tile('Ads running', pfN(D.running.ads), `in ${D.running.gyms} of ${D.running.of} gyms${(D.elsewhere||[]).map(e=>` · ${e.ads} more in ${esc(e.name)}'s export, in an account not linked`).join('')}`)}</div>`;
+  // The rows, sorted on the column picked; a gym with no figure for the period goes last.
+  const val = (g) => { if (PF.sort.key==='name') return g.name.toLowerCase(); const f = pfFig(g, p); return f ? f[PF.sort.key] : null; };
+  const gyms = [...D.gyms].sort((a,b)=>{ const x = val(a), y = val(b); if (x==null && y==null) return a.name.localeCompare(b.name); if (x==null) return 1; if (y==null) return -1; return (x<y?-1:x>y?1:0)*PF.sort.dir || a.name.localeCompare(b.name); });
+  const th = (key, label, tip) => `<th onclick="pfSort('${key}')" title="${esc(tip||'')}" data-key="${key}">${esc(label)}${PF.sort.key===key ? (PF.sort.dir<0 ? ' ▾' : ' ▴') : ''}</th>`;
+  const flagsOf = (g) => g.source==='meta' ? (g.flags[days||30]||[]) : g.source==='export' ? (g.flags||[]) : [];
+  const trend = (g) => {
+    if (g.source==='export') return p==='all' ? `<span class="pfnone">as of ${esc(pfDay(g.all?.as_of))}</span>` : `<span class="pfnone">export to ${esc(pfDay(g.export.to))}</span>`;
+    if (g.source==='meta') return !g.running.ads && !g.periods[days||90].leads ? `<span class="pfnone">${g.days_since_lead==null ? 'no lead in 180 days' : g.days_since_lead===0 ? 'last lead today' : `last lead ${g.days_since_lead} day${g.days_since_lead===1?'':'s'} ago`}</span>` : pfSpark(g.series, days||90);
+    return `<span class="pfnone">${g.source==='file' ? (p==='all' ? `as of ${esc(pfDay(g.all?.as_of))}` : 'not read yet') : 'nothing on file'}</span>`;
+  };
+  const ad = (a, cur) => a ? `${esc(a.name||a.ad_id)} ${a.leads ? `at ${pfMoney(a.cost_per_lead, cur)} (${a.leads} lead${a.leads===1?'':'s'})` : `${pfN(a.spend, 0)} spent, no lead`}` : null;
+  const detail = (g) => {
+    const cur = g.currency, bits = [], L = g.left_out || {}, lo = Object.entries({ recruitment:'hiring', objective:'not after leads', abroad:'abroad' }).filter(([k])=>L[k]).map(([k,w])=>`${L[k]} ${w}`);
+    let camps = [], ex = null;
+    if (p==='all'){ camps = (g.all?.campaigns||[]).map(c=>({ ...c, f:c.figures })); ex = g.all?.best_dearest; }
+    else if (g.source==='meta'){ camps = g.campaigns.filter(c=>c.running || c.periods[days].spend > 0).map(c=>({ ...c, f:c.periods[days] })); ex = g.ads[days];
+      if (g.running.budget != null) bits.push(`Budget ${esc(cur)} ${pfN(g.running.budget, 0)} a day${g.running.pace != null ? `, spending ${Math.round(g.running.pace*100)}% of it` : ''}`);
+      if (g.newest_ad_days != null) bits.push(`newest ad ${g.newest_ad_days===0 ? 'made today' : `${g.newest_ad_days} day${g.newest_ad_days===1?'':'s'} old`}`);
+      if (g.last_lead) bits.push(`last lead ${g.days_since_lead===0 ? 'today' : g.days_since_lead===1 ? 'yesterday' : `${g.days_since_lead} days ago`}`);
+      if (g.other[days] > 0) bits.push(`also ${esc(cur)} ${pfN(g.other[days], 0)} on ad sets that are not counted (${esc(lo.join(', '))})`);
+      if (g.errors?.length) bits.push(`not read: ${esc(g.errors.join('; '))}`);
+      if (g.export_also){ const e = g.export_also; bits.push(`<b>Not in the figures above</b>: an Ads Manager export on file${e.label ? ` (${esc(e.label)})` : ''}, up to ${esc(pfDay(e.to))}, shows ${e.ads} ad${e.ads===1?'':'s'} running in an account this link cannot read — ${esc(cur)} ${pfN(e.spend, 0)} spent, ${pfN(e.leads)} leads${e.cost_per_lead != null ? ` at ${pfMoney(e.cost_per_lead, cur)}` : ''}${e.tiring ? `, ${e.tiring} tiring` : ''}. Share that account with the Strategym portfolio to read it here`); }
+    } else if (g.source==='export'){ camps = g.fixed.campaigns.map(c=>({ ...c, f:c.figures })); ex = g.fixed.ads; bits.push(`From the Ads Manager export${g.export.label ? ` (${esc(g.export.label)})` : ''}, up to ${esc(pfDay(g.export.to))}: the figures are that export's own period, whatever period is picked`); }
+    else bits.push(g.source==='file' ? 'Only the account\'s history is on file: Refresh the numbers reads the periods' : g.account ? 'Nothing on file yet: Refresh the numbers reads this account' : 'No ad account on this gym\'s profile yet');
+    if (ex?.best) bits.unshift(`Best ad ${ad(ex.best, cur)}`); if (ex?.dearest) bits.splice(ex?.best ? 1 : 0, 0, `dearest ${ad(ex.dearest, cur)}`);
+    const rows = camps.map(c=>`<tr class="pfsub" data-campaign="${esc(c.id)}"><td>${esc(c.name)}</td>${PF_COLS.map(([k])=>`<td>${pfCell(k, c.f, cur)}</td>`).join('')}<td>${c.running ? `${c.ads_running} ad${c.ads_running===1?'':'s'} running` : 'not running'}</td></tr>`).join('');
+    return rows + `<tr class="pfdet" data-detail="${esc(g.gym)}"><td colspan="${PF_COLS.length+2}">${bits.join(' · ')}${bits.length?' · ':''}<a href="#" onclick="pfOpen(${q(g.gym)},'results',null);return false">Open Review Data →</a></td></tr>`;
+  };
+  const row = (g) => { const f = pfFig(g, p), open = PF.open.has(g.gym), old = g.source==='meta' && g.stale;
+    return `<tr class="pfg" data-gym="${esc(g.gym)}" data-source="${g.source}" onclick="pfToggle(${q(g.gym)})"><td><span class="pfcar">${open?'▾':'▸'}</span> <b>${esc(g.name)}</b>${g.currency!=='SGD'?` <span class="pfnone">${esc(g.currency)}</span>`:''}${flagsOf(g).map(x=>` <span class="pill ${x.tone==='bad'?'bad':x.tone==='note'?'':'warn'}" data-flag="${x.kind}">${esc(x.text)}</span>`).join('')}${old?` <span class="pill" data-flag="old">numbers ${Math.round(g.age_hours/24)} days old</span>`:''}${g.error?` <span class="pill bad">${esc(g.error)}</span>`:''}</td>${PF_COLS.map(([k])=>`<td data-col="${k}">${pfCell(k, f, g.currency)}</td>`).join('')}<td>${trend(g)}</td></tr>${open ? detail(g) : ''}`; };
+  const sch = D.schedule || {}, read = D.read.oldest;
+  box.innerHTML = `<div class="pfbar"><span class="seg" id="pfPeriods">${[['7','7 days'],['30','30 days'],['90','90 days'],['all','All time']].map(([k,l])=>`<button class="${p===k?'sel':''}" onclick="pfPeriod('${k}')">${l}</button>`).join('')}</span>
+      <span class="hint" id="pfAgainst">${days ? `against the ${days} days before` : 'everything on file for each gym, as of its last account read'}</span><div class="spacer"></div>
+      <span class="hint" id="pfRead">${read ? `Numbers read ${esc(pfWhen(read))}` : 'Numbers not read yet'}</span><button class="${read ? '' : 'primary'}" id="pfRefresh" onclick="pfRefresh()">Refresh the numbers…</button></div>
+    ${tiles}
+    <div class="card" style="padding:6px 10px"><table class="tbl pft" id="pfTable"><thead><tr>${th('name','Gym','')}${PF_COLS.map(([k,l,t])=>th(k,l,t)).join('')}<th style="cursor:default" title="Lead-form leads a day over the period">${days && days > 30 ? 'Leads a week' : 'Leads a day'}</th></tr></thead><tbody>${gyms.map(row).join('')}</tbody></table></div>
+    <p class="hint" id="pfFoot" style="margin-top:14px">Click a gym for its campaigns, its best and dearest ad and its budget. Nothing is read from Meta when this screen opens${sch.daily ? `: the numbers are read once a day while the panel is running${sch.last_started ? ` (last ${esc(pfWhen(sch.last_started))}${sch.last_result ? `, ${esc(sch.last_result)}` : ''})` : ''}, or when you press Refresh the numbers` : ', only when you press Refresh the numbers'}.</p>`;
+}
+/** Open a gym on a screen (and on a batch when one is named), from its row. */
+async function pfOpen(gym, tab, batch){
+  if (gym !== STATE.sel){ await selectClient(gym, false, false); if (STATE.sel !== gym) return; }
+  if (batch && tab==='review') return openReview(batch);
+  if (batch && tab==='publish') return openPublish(batch);
+  if (batch && tab==='generating') return openGenerating(batch);
+  go(tab);
+}
+
 function render(){
   const seq = ++VIEW_SEQ;
   clearTimeout(G.timer);
@@ -592,6 +722,7 @@ function render(){
 
   const v = $('#view');
   if (STATE.tab==='setup') return viewSetup(v);
+  if (STATE.tab==='portfolio') return viewPortfolio(v, seq);
   if (!STATE.sel) { v.innerHTML = `<div class="empty">No client selected.<br><br><button class="primary" onclick="newClient()">Create your first gym</button></div>`; return; }
   if (STATE.tab==='overview') return viewOverview(v, seq);
   if (STATE.tab==='website') return viewWebsite(v, seq);

@@ -20,6 +20,7 @@ import { launchBrowser } from "../skills/references/render-composites.mjs";
 import { cropImage } from "../skills/references/clean-photo.mjs";
 import { validateBrief, runBatch, resolveSelections, MAX_CALLS_CAP } from "../skills/references/plan-offer-batch.mjs";
 import { approveScenes, rejectScene } from "../skills/references/scene-library.mjs";
+import { pullDaily } from "../skills/references/portfolio-numbers.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const svg = (w, h, body) => "data:image/svg+xml;base64," + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${body}</svg>`).toString("base64");
@@ -1059,6 +1060,9 @@ function fakeGraph() {
     if (/^ca\d+\/ads$/.test(path)) return ok({ data: [{ id: made.ads, name: "one", status: "PAUSED", effective_status: "PAUSED", adset_id: made.adsets }] });
     if (/^ca\d+\/insights$/.test(path)) return ok({ data: u.searchParams.get("level") === "ad" ? [{ ad_id: made.ads, adset_id: made.adsets, spend: "12.5", impressions: "800", inline_link_clicks: "20", clicks: "22", reach: "700", actions: [{ action_type: "lead", value: "2" }], date_start: "2026-09-17", date_stop: "2026-09-18" }] : [] });
     if (path === "act_111000000001/campaigns" && req.method === "GET") return ok({ data: [{ id: "cx1", name: "0331 Their campaign", status: "ACTIVE", effective_status: "ACTIVE", objective: "OUTCOME_LEADS", created_time: "2026-03-31T10:00:00+0800" }] });
+    if (path === "act_111000000001/insights" && u.searchParams.get("time_increment")) { const end = JSON.parse(u.searchParams.get("time_range")).until; return ok({ data: Array.from({ length: 14 }, (_, i) => ({ adset_id: "s1", adset_name: "0715 Thomson | Fit Fathers", campaign_id: "cx1", campaign_name: "0331 Their campaign", objective: "OUTCOME_LEADS", date_start: new Date(Date.parse(end + "T00:00:00Z") - i * 86400000).toISOString().slice(0, 10), spend: "50", impressions: "2000", inline_link_clicks: "30", actions: [{ action_type: "lead", value: i < 7 ? "2" : "5" }] })) }); }
+    if (path === "act_111000000001/insights" && u.searchParams.get("level") === "adset" && /reach/.test(u.searchParams.get("fields") || "")) return ok({ data: [{ adset_id: "s1", impressions: "14000", reach: "7000", frequency: "2" }] });
+    if (path === "act_111000000001/ads" && req.method === "GET" && u.searchParams.get("effective_status")) return ok({ data: [{ id: "900000000001", name: "0331 Their image ad", adset_id: "s1", campaign_id: "cx1", created_time: "2026-03-31T11:00:00+0800", adset: { id: "s1", name: "0715 Thomson | Fit Fathers", daily_budget: "5000" }, campaign: { id: "cx1", name: "0331 Their campaign", objective: "OUTCOME_LEADS" } }] });
     if (path === "act_111000000001/ads" && req.method === "GET") return ok({ data: [
       { id: "900000000001", name: "0331 Their image ad", adset_id: "s1", campaign_id: "cx1", status: "ACTIVE", effective_status: "ACTIVE", created_time: "2026-03-31T11:00:00+0800", creative: { id: "tc1", thumbnail_url: `${u.origin}/thumb.jpg`, asset_feed_spec: { images: [{ hash: "th1" }], bodies: [{ text: "Their primary text" }], titles: [{ text: "Their headline" }] } } },
       { id: "900000000002", name: "0331 Their video ad", adset_id: "s1", campaign_id: "cx1", status: "PAUSED", effective_status: "PAUSED", created_time: "2026-04-01T11:00:00+0800", creative: { id: "tc2", object_type: "VIDEO", object_story_spec: { page_id: "770000000007", video_data: { video_id: "v1", message: "Video words", title: "Video title", image_hash: "th2" } } } },
@@ -2646,17 +2650,30 @@ test("U47 once a week, by itself (2026-11-10): a panel with the weekly refresh o
     assert.equal(sch.last_result, "refreshed and read");
     let A = await (await call("/api/wins")).json();
     assert.deepEqual([A.schedule.weekly, A.schedule.last_started, A.schedule.read_cap, Math.round((Date.parse(A.schedule.next_due) - Date.parse(sch.last_started)) / 86400000)], [true, sch.last_started, 150, 7]);
+    assert.equal(sch.numbers_started, undefined, "the day's read never starts beside the week's refresh");
+    await linkTestGym();
     await panel.stop();
     // Inside the week: nothing starts.
     panel = await startPanel(env);
     await new Promise((x) => setTimeout(x, 1500));
     assert.equal(JSON.parse(readFileSync(file, "utf-8")).last_started, sch.last_started, "not due: left alone");
+    // Once a day, by itself (2026-11-12): the weekly refresh was not due, so the day's read of the numbers started — read-only, into the gym's own file.
+    let day = null; t0 = Date.now();
+    while (Date.now() - t0 < 60000) { day = JSON.parse(readFileSync(file, "utf-8")); if (day.numbers_finished) break; await new Promise((x) => setTimeout(x, 200)); }
+    assert.equal(day.numbers_result, "read", JSON.stringify(day));
+    assert.equal(JSON.parse(readFileSync(join(brands, GYM, "account-daily.json"), "utf-8")).days.length, 14);
+    const PN = await (await call("/api/portfolio")).json(), mineN = PN.gyms.find((g) => g.gym === GYM);
+    assert.deepEqual([mineN.source, mineN.periods[7].spend, mineN.periods[7].leads, mineN.periods[7].cost_per_lead, mineN.periods[7].change.cost_per_lead, mineN.periods[7].frequency, mineN.running.ads, mineN.running.budget, mineN.flags[7].map((f) => f.kind)], ["meta", 350, 14, 25, 150, 2, 1, 50, ["cost_up"]]);
+    assert.deepEqual([PN.schedule.daily, PN.schedule.last_started, PN.schedule.last_result, PN.linked, PN.reading, Math.round((Date.parse(PN.schedule.next_due) - Date.parse(day.numbers_started)) / 3600000)], [true, day.numbers_started, "read", true, null, 20]);
+    const byHand = await runAndWait({ kind: "portfolio-numbers" });
+    assert.equal(byHand.code, 0, byHand.lines.join("\n")); assert.match(byHand.lines[0], /^\$ node skills\/references\/portfolio-numbers\.mjs --refresh --brands-dir \S+$/, "built server-side");
+    assert.equal(JSON.parse(readFileSync(file, "utf-8")).numbers_result, "read by you");
     // By hand: it counts as the week's.
     const made = await runAndWait({ kind: "portfolio-refresh" });
     assert.equal(made.code, 0, made.lines.join("\n"));
     const after = JSON.parse(readFileSync(file, "utf-8"));
     assert.ok(after.last_started > sch.last_started && after.last_result === "refreshed by you", JSON.stringify(after));
-  } finally { await panel.stop(); panel = main; graph.server.close(); rmSync(file, { force: true }); }
+  } finally { await panel.stop(); panel = main; graph.server.close(); rmSync(file, { force: true }); rmSync(join(brands, GYM, "account-daily.json"), { force: true }); }
 });
 
 test("U48 the look, and 4:5 as the only feed shape (2026-11-10): a gym's Ad defaults take a look family (one that is not is refused) and no shape but 4:5 — the square is refused on a profile and on a new brief, and allowed only for a batch already made as a square; a brief checked for that gym carries its look; the Create preview renders at 4:5 whatever is asked; Ad defaults and Create show the look as a choice and the shape as a fact", async () => {
@@ -3061,8 +3078,8 @@ test("U54 the cycle (2026-11-11): the panel opens on Review Data; the rail lists
     assert.deepEqual(await ev("[STATE.tab, /\\/results$/.test(location.hash), document.querySelector('h1').textContent]"), ["results", true, "Review Data"]);
     // The rail: the cycle first, in order, numbered; Scenes is a step, not a library page; what is waiting is counted.
     const rail = await ev("[...document.querySelectorAll('#rail > *')].map(e => e.classList.contains('sec') ? '# ' + e.textContent : (e.querySelector('.ic')?.textContent||'') + '|' + [...e.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim() + '|' + (e.querySelector('.badge')?.textContent||''))");
-    assert.deepEqual(rail.slice(0, 7).map((x) => x.replace(/\|\d*$/, "")), ["# The cycle", "1|Review Data", "2|Draft Scenes", "3|Generate Creatives", "4|Pick Ads", "5|Publish Ads", "# Library"]);
-    assert.equal(rail[2], "2|Draft Scenes|1", "one kind needs scenes: " + JSON.stringify(await ev("[CY.gym, CY.data.counts, CY.data.jobs, CY.data.scenes_waiting]")));
+    assert.deepEqual(rail.slice(0, 9).map((x) => x.replace(/\|\d*$/, "")), ["# Portfolio", "▦|All gyms", "# The cycle", "1|Review Data", "2|Draft Scenes", "3|Generate Creatives", "4|Pick Ads", "5|Publish Ads", "# Library"]);
+    assert.equal(rail[4], "2|Draft Scenes|1", "one kind needs scenes: " + JSON.stringify(await ev("[CY.gym, CY.data.counts, CY.data.jobs, CY.data.scenes_waiting]")));
     assert.ok(!rail.slice(7).some((x) => /Scenes/.test(x)), rail.join(" / "));
     assert.equal(await ev("document.querySelector('#rail .tab.sel').textContent.replace(/\\d+$/,'')"), "1Review Data");
     // The strip: five steps, this one marked, the scenes waiting, and the one thing to do next.
@@ -3518,4 +3535,80 @@ test("U60 which room a premises photo shows (2026-11-11): said with one click un
     assert.deepEqual(JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.room_references, { "studio-room": photo });
     await until("(()=>{ const M = setupModel(); return !!M && M[2].items.some(x => x.what === 'which room a premises photo shows' && x.ok); })()");
   } finally { writeFileSync(pf, saved); }
+});
+
+test("U61 all gyms (2026-11-12): GET /api/portfolio is every gym's marketing numbers side by side — spend, lead-form leads, cost per lead with its change from the period before, CPM, click rate, clicks that became leads, frequency, the marks by rule, the totals with money per currency — from what the last read put on file (no Meta call), a folder without a profile left out; the read is refused without the Meta link and without the panel's token; the rail opens All gyms above the cycle at an address with no gym in it, with no gym's strip or indicator; the period switch, a column's sort and a gym's campaigns, best and dearest ad work; Open Review Data and the top bar open that gym", async () => {
+  const made = join(brands, "u61-gym"), empty = join(brands, "u61-empty"), dailyFile = join(brands, GYM, "account-daily.json"), had = existsSync(dailyFile) ? readFileSync(dailyFile) : null;
+  try {
+    assert.equal((await call("/api/clients", { method: "POST", body: { gym: "u61-gym", display_name: "Sixty Gym" } })).status, 200);
+    mkdirSync(empty, { recursive: true });
+    // The test gym's numbers as a read leaves them: one lead ad set running, 50 a day for 40 days, 1 lead a day this week and 4 a day before.
+    const lead = (n) => (n ? [{ action_type: "lead", value: String(n) }] : []), day = (until, i) => new Date(Date.parse(until + "T00:00:00Z") - i * 86400000).toISOString().slice(0, 10);
+    const client = { list: async (path, q) => {
+      if (/\/ads$/.test(path)) return [{ id: "A1", name: "c01", adset_id: "S1", campaign_id: "C1", created_time: new Date(Date.now() - 3 * 86400000).toISOString(), adset: { id: "S1", name: "BISHAN set", daily_budget: "5000" }, campaign: { id: "C1", name: "1101 6 Week Challenge", objective: "OUTCOME_LEADS" } }];
+      const range = JSON.parse(q.time_range);
+      if (q.time_increment) return Array.from({ length: 40 }, (_, i) => ({ adset_id: "S1", adset_name: "BISHAN set", campaign_id: "C1", campaign_name: "1101 6 Week Challenge", objective: "OUTCOME_LEADS", date_start: day(range.until, i), spend: "50", impressions: "2000", inline_link_clicks: "40", actions: lead(i < 7 ? 1 : 4) }));
+      if (q.level === "adset") return [{ adset_id: "S1", impressions: "14000", reach: "4000", frequency: "3.5" }];
+      return [{ ad_id: "A1", ad_name: "c01", adset_id: "S1", campaign_id: "C1", spend: "200", impressions: "8000", inline_link_clicks: "160", actions: lead(8) }, { ad_id: "A2", ad_name: "c02", adset_id: "S1", campaign_id: "C1", spend: "150", impressions: "6000", inline_link_clicks: "120", actions: [] }];
+    } };
+    await pullDaily({ client, accountId: "111000000001", gymDir: join(brands, GYM) });
+    const P = await (await call("/api/portfolio")).json(), mine = P.gyms.find((g) => g.gym === GYM), fresh = P.gyms.find((g) => g.gym === "u61-gym");
+    assert.ok(mine && fresh && !P.gyms.some((g) => g.gym === "u61-empty"), "every gym with a profile, and only those");
+    assert.deepEqual(P.periods, [7, 30, 90]);
+    assert.deepEqual([mine.source, mine.currency, mine.periods[7].spend, mine.periods[7].leads, mine.periods[7].cost_per_lead, mine.periods[7].prev.cost_per_lead, mine.periods[7].change.cost_per_lead], ["meta", "SGD", 350, 7, 50, 12.5, 300]);
+    assert.deepEqual([mine.periods[30].spend, mine.periods[30].leads, mine.periods[30].cost_per_lead, mine.periods[30].cpm, mine.periods[30].ctr, mine.periods[30].click_to_lead, mine.periods[30].frequency, mine.periods[30].change.cost_per_lead], [1500, 99, 15.15, 25, 2, 8.3, 3.5, 21.2]);
+    assert.deepEqual([mine.flags[7].map((f) => f.kind), mine.flags[30].map((f) => f.kind)], [["cost_up", "tiring"], ["tiring"]], "the marks come from the numbers alone");
+    assert.deepEqual([mine.running.ads, mine.running.budget, mine.running.pace, mine.ads[7].best.name, mine.ads[7].dearest.name, mine.campaigns.length, mine.series.length], [1, 50, 1, "c01", "c02", 1, 90]);
+    assert.deepEqual([fresh.source, fresh.running.ads, fresh.all], ["none", 0, null]);
+    // The totals: leads summed over the gyms read day by day (another test's gym in another currency may be among them); money per currency, never across.
+    const read = P.gyms.filter((g) => g.source === "meta"), sgd = read.filter((g) => g.currency === "SGD");
+    assert.equal(P.totals[7].leads, read.reduce((t, g) => t + g.periods[7].leads, 0)); assert.equal(P.totals[7].gyms, read.length);
+    assert.deepEqual([P.totals[7].by_currency.SGD.spend, P.totals[7].by_currency.SGD.gyms, Object.keys(P.totals[7].by_currency).sort()], [sgd.reduce((t, g) => t + g.periods[7].spend, 0), sgd.length, [...new Set(read.map((g) => g.currency))].sort()]);
+    assert.deepEqual([sgd.length, P.totals[7].by_currency.SGD.cost_per_lead], [1, 50]);
+    assert.deepEqual([P.schedule.daily, P.linked, P.reading, P.running.ads], [false, false, null, read.reduce((t, g) => t + g.running.ads, 0)], "no read by itself in a test panel, and no Meta link here");
+    let r = await call("/api/run", { method: "POST", body: { kind: "portfolio-numbers" } }); assert.equal(r.status, 409); assert.match((await r.json()).error, /Meta link is not set up/);
+    r = await call("/api/run", { method: "POST", body: { kind: "portfolio-numbers" }, token: null }); assert.equal(r.status, 403);
+    // The page.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u61#/portfolio` }, sessionId); await loaded;
+    const rows = `document.querySelectorAll('#pfTable tr.pfg').length === ${P.gyms.length}`;
+    await until(`STATE.tab === 'portfolio' && ${rows}`);
+    assert.deepEqual(await ev("[location.hash, document.querySelector('#crumb').innerText, document.querySelector('#cycle').innerHTML, document.querySelector('#stepper').innerHTML, [...document.querySelectorAll('#rail .tab')].slice(0, 2).map(b => b.innerText.replace(/\\s+/g, ' ').trim()), document.querySelector('#rail .tab.sel').innerText.replace(/\\s+/g, ' ').trim(), [...document.querySelectorAll('#rail .sec')].slice(0, 2).map(x => x.textContent)]"),
+      ["#/portfolio", "All gyms", "", "", ["▦ All gyms", "1 Review Data"], "▦ All gyms", ["Portfolio", "The cycle"]]);
+    await ev("pfPeriod('30'); true");
+    const cells = `(()=>{ const r = document.querySelector('#pfTable tr.pfg[data-gym=${GYM}]'); return [[...r.querySelectorAll('td[data-col]')].map(td => td.innerText.replace(/\\s+/g, '')), [...r.querySelectorAll('[data-flag]')].map(x => x.dataset.flag), !!r.querySelector('svg.pfspark')]; })()`;
+    assert.deepEqual(await ev("[[...document.querySelectorAll('#pfPeriods button')].map(b => b.innerText), document.querySelector('#pfPeriods button.sel').innerText, document.querySelector('#pfAgainst').innerText, document.querySelectorAll('#pfTiles .pftile').length, [...document.querySelectorAll('#pfTable th')].map(x => x.innerText.replace(/ [▾▴]$/, ''))]"),
+      [["7 days", "30 days", "90 days", "All time"], "30 days", "against the 30 days before", 4, ["Gym", "Spent", "Leads", "Cost per lead", "CPM", "CTR", "Click → lead", "Freq.", "Leads a day"]]);
+    assert.deepEqual(await ev(cells), [["1,500", "99+148%", "15.15+21%", "25.00", "2.00%", "8.3%", "3.5"], ["tiring"], true]);
+    assert.match(await ev("document.querySelector('#pfTiles .pftile').innerText.replace(/\\s+/g, ' ')"), new RegExp("^Leads, last 30 days " + P.totals[30].leads));
+    assert.deepEqual(await ev("[document.querySelector('#pfTable tr.pfg[data-gym=u61-gym]').dataset.source, document.querySelector('#pfTable tr.pfg[data-gym=u61-gym] td:last-child').innerText, document.querySelector('#pfRead').innerText.startsWith('Numbers read today')]"), ["none", "nothing on file", true]);
+    // Another period: the same row, that period's figures and marks.
+    await ev("document.querySelector('#pfPeriods button').click(); true");
+    assert.deepEqual(await ev(cells), [["350", "7-75%", "50.00+300%", "25.00", "2.00%", "2.5%", "3.5"], ["cost_up", "tiring"], true]);
+    assert.deepEqual(await ev("[document.querySelector('#pfAgainst').innerText, document.querySelector('#pfTable tr.pfg[data-gym=" + GYM + "] td[data-col=cost_per_lead] .chg').className, document.querySelector('#pfTable tr.pfg[data-gym=" + GYM + "] td[data-col=leads] .chg').className]"), ["against the 7 days before", "chg bad", "chg bad"]);
+    // A column sorts; the gym with the figures stays above the ones with none.
+    await ev("document.querySelector('#pfTable th[data-key=name]').click(); true");
+    assert.deepEqual(await ev("[...document.querySelectorAll('#pfTable tr.pfg td:first-child b')].map(b => b.innerText)"), P.gyms.map((g) => g.name).sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : 1));
+    await ev("document.querySelector('#pfTable th[data-key=spend]').click(); true");
+    assert.deepEqual((await ev("[...document.querySelectorAll('#pfTable tr.pfg')].map(r => r.dataset.source)")).map((x) => x === "meta"), P.gyms.map((_, i) => i < read.length), "the gyms with figures stay above the ones with none");
+    // A gym opens to its campaigns, its best and dearest ad, its budget.
+    await ev(`document.querySelector('#pfTable tr.pfg[data-gym=${GYM}]').click(); true`);
+    assert.deepEqual(await ev("(()=>{ const c = document.querySelector('#pfTable tr.pfsub[data-campaign=C1]'); return [c.querySelector('td').innerText, c.querySelector('td:last-child').innerText, c.querySelectorAll('td').length]; })()"), ["1101 6 Week Challenge", "1 ad running", 9]);
+    assert.match(await ev(`document.querySelector('#pfTable tr.pfdet[data-detail=${GYM}]').innerText.replace(/\\s+/g, ' ')`), /^Best ad c01 at 25\.00 \(8 leads\) · dearest c02 150 spent, no lead · Budget SGD 50 a day, spending 100% of it · newest ad \d days old · last lead today · Open Review Data →$/);
+    // All time: what is on file, said as such; nothing to compare with.
+    await ev("document.querySelector('#pfPeriods button:last-child').click(); true");
+    assert.match(await ev("document.querySelector('#pfAgainst').innerText"), /^everything on file/);
+    // Refresh the numbers without the Meta link: said, nothing started.
+    await ev("document.querySelector('#pfRefresh').click(); true");
+    assert.deepEqual(await ev("[document.querySelector('#gModal').innerHTML, !!(STATE.run && !STATE.run.done)]"), ["", false]);
+    // Open Review Data opens that gym; Back returns; a gym picked from the top bar while every gym is listed opens its Review Data.
+    await ev(`document.querySelector('#pfTable tr.pfdet[data-detail=${GYM}] a').click(); true`);
+    await until(`location.hash === '#/${GYM}/results' && STATE.sel === ${JSON.stringify(GYM)} && STATE.tab === 'results'`);
+    await ev("history.back(); true"); await until(`location.hash === '#/portfolio' && STATE.tab === 'portfolio' && ${rows}`);
+    await ev("document.querySelector('#rail .tab').click(); true"); await until(`location.hash === '#/portfolio' && ${rows}`);
+    await ev(`(()=>{ const s = document.querySelector('#clientSel'); s.value = 'u61-gym'; s.onchange(); return true; })()`);
+    await until("location.hash === '#/u61-gym/results' && STATE.sel === 'u61-gym' && STATE.tab === 'results'");
+  } finally { rmSync(made, { recursive: true, force: true }); rmSync(empty, { recursive: true, force: true }); if (had) writeFileSync(dailyFile, had); else rmSync(dailyFile, { force: true }); }
 });

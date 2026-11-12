@@ -49,6 +49,7 @@ import { readReviews, reviewView, addReview, editReview, findPlace, pullGoogleRe
 import { renderCard, loadCards } from "../skills/references/render-cards.mjs";
 import { buildReview, reviewText, recordAction } from "../skills/references/account-review.mjs";
 import { cycleFrom } from "../skills/references/cycle.mjs";
+import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -75,6 +76,7 @@ const READ_SCRIPT = join(REPO_ROOT, "skills", "references", "read-website.mjs");
 const IG_SCRIPT = join(REPO_ROOT, "skills", "references", "read-instagram.mjs");
 const CREATIVES_SCRIPT = join(REPO_ROOT, "skills", "references", "read-creatives.mjs");
 const WINS_SCRIPT = join(REPO_ROOT, "skills", "references", "what-wins.mjs");
+const NUMBERS_SCRIPT = join(REPO_ROOT, "skills", "references", "portfolio-numbers.mjs");
 const REVIEW_SCRIPT = join(REPO_ROOT, "skills", "references", "account-review.mjs");
 /** A reading run's cap: one vision call per picture, a portfolio holds a few hundred. */
 const MAX_READ_CALLS = 800;
@@ -159,6 +161,8 @@ const RUNNABLE = {
   // Review the account (Phase 6, 2026-11-11): this gym's account read again (read-only on Meta), up to `max` new pictures read (one vision call each), the review built.
   "account-review": { label: "Review the account (read-only)", argv: ({ gym, max }) => [REVIEW_SCRIPT, "--brand-dir", brandDir(gym), "--read-max", String(max)] },
   "portfolio-refresh": { label: "Refresh every gym's account (read-only)", argv: () => [WINS_SCRIPT, "--refresh", "--brands-dir", BRANDS] },
+  // All gyms (2026-11-12): every linked account's numbers day by day for the last 180 days (read-only on Meta, 8 calls a gym, no model call).
+  "portfolio-numbers": { label: "Read every gym's numbers (read-only)", argv: () => [NUMBERS_SCRIPT, "--refresh", "--brands-dir", BRANDS] },
   "portfolio-read": { label: "Read every gym's creatives", argv: ({ max }) => [WINS_SCRIPT, "--read", "--max", String(max), "--brands-dir", BRANDS] },
   "photo-clean": { label: "Clean photos", spends: "clean", argv: ({ gym, photos, confirm }) => [CLEAN_SCRIPT, "--brand-dir", brandDir(gym), "--max-calls", String(confirm.max_calls), "--attempts", "2", ...(photos.some((p) => p.includes("/") && !p.startsWith("facility/")) ? ["--clean-dir", join(brandDir(gym), "brand-assets", "reference-clean")] : []), ...photos.flatMap((p) => ["--photo", join(brandDir(gym), "brand-assets", p.includes("/") ? p : `facility/${p}`)])] },
 };
@@ -190,6 +194,26 @@ function weeklyTick(now = Date.now()) {
     if (r1.code !== 0) return saveSchedule({ last_finished: new Date().toISOString(), last_result: `the refresh ended with code ${r1.code}` });
     startRun("portfolio-read", { max: WEEKLY_READ_CAP }, { onDone: (r2) => saveSchedule({ last_finished: new Date().toISOString(), last_result: r2.code === 0 ? "refreshed and read" : `refreshed; the reading ended with code ${r2.code}` }) });
   } });
+  return "started";
+}
+
+// ── Once a day, by itself: the numbers for the All gyms screen (the owner's yes, 2026-11-12) ──
+// Every linked account's numbers are read again (read-only on Meta, no model call, 8 calls a gym) when the last read
+// on record is 20 hours old — checked with the weekly refresh, under the same switch, never beside another run and
+// never without the Meta link. A read started by hand ("Refresh the numbers") counts as the day's.
+const NUMBERS_MS = 20 * 3600000;
+function numbersState() {
+  const s = readSchedule(), last = s.numbers_started ? Date.parse(s.numbers_started) : null;
+  return { daily: WEEKLY_ON, last_started: s.numbers_started || null, last_finished: s.numbers_finished || null, last_result: s.numbers_result || null, next_due: last ? new Date(last + NUMBERS_MS).toISOString() : null };
+}
+function numbersTick(now = Date.now()) {
+  if (!WEEKLY_ON) return "off";
+  const s = readSchedule();
+  if (s.numbers_started && now - Date.parse(s.numbers_started) < NUMBERS_MS) return "not due";
+  if (!metaConfig().token) return "no Meta link";
+  if ([...runs.values()].some((r) => !r.done)) return "a run is going";
+  saveSchedule({ numbers_started: new Date(now).toISOString(), numbers_finished: null, numbers_result: "running" });
+  startRun("portfolio-numbers", {}, { onDone: (r) => saveSchedule({ numbers_finished: new Date().toISOString(), numbers_result: r.code === 0 ? "read" : `the read ended with code ${r.code}` }) });
   return "started";
 }
 
@@ -1527,6 +1551,13 @@ const server = createServer(async (req, res) => {
     }
     if (p === "/api/enums") return json(res, 200, { cta: CTA_ENUM, offerTypes: OFFER_TYPES, priceQualifiers: PRICE_QUALIFIERS, maxLocations: MAX_LOCATIONS });
     if (p === "/api/clients" && req.method === "GET") return json(res, 200, { clients: listClients() });
+    // /api/portfolio — every gym's marketing numbers side by side (2026-11-12): spend, lead-form leads, cost per lead and
+    // what moved it, for the last 7, 30 and 90 days against the days before, from what the last read put on disk
+    // (portfolio-numbers.mjs). No Meta call, no model call: the read is the owner's click or the day's own.
+    if (p === "/api/portfolio" && req.method === "GET") {
+      const run = [...runs.values()].find((r) => !r.done && r.kind === "portfolio-numbers");
+      return json(res, 200, { ...portfolioNumbers(BRANDS), schedule: numbersState(), linked: !!metaConfig().token, reading: run ? run.id : null });
+    }
 
     if (p === "/api/clients" && req.method === "POST") {
       const { gym, offer, display_name = "", country = "SG", meta = null } = await readBody(req);
@@ -2158,6 +2189,12 @@ const server = createServer(async (req, res) => {
         const run = startRun(kind, {}, { onDone: (r) => saveSchedule({ last_finished: new Date().toISOString(), last_result: r.code === 0 ? "refreshed by you" : `the refresh ended with code ${r.code}` }) });
         return json(res, 200, { id: run.id, label: run.label });
       }
+      if (kind === "portfolio-numbers") {
+        if (!metaConfig().token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+        saveSchedule({ numbers_started: new Date().toISOString(), numbers_finished: null, numbers_result: "running (started by you)" });
+        const run = startRun(kind, {}, { onDone: (r) => saveSchedule({ numbers_finished: new Date().toISOString(), numbers_result: r.code === 0 ? "read by you" : `the read ended with code ${r.code}` }) });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
       if (kind === "portfolio-read") {
         const max = body.max ?? 100;
         if (!Number.isInteger(max) || max < 1 || max > MAX_READ_CALLS) return json(res, 400, { error: `how many pictures to read must be 1 to ${MAX_READ_CALLS}` });
@@ -2309,7 +2346,8 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 // Local only. This exposes the filesystem and can spawn processes — it must never bind publicly.
-if (WEEKLY_ON) { setTimeout(() => { try { weeklyTick(); } catch {} }, Number(process.env.PANEL_WEEKLY_FIRST_MS) || 90000).unref(); setInterval(() => { try { weeklyTick(); } catch {} }, 3600000).unref(); }
+const scheduleTick = () => { try { if (weeklyTick() !== "started") numbersTick(); } catch {} };
+if (WEEKLY_ON) { setTimeout(scheduleTick, Number(process.env.PANEL_WEEKLY_FIRST_MS) || 90000).unref(); setInterval(scheduleTick, 3600000).unref(); }
 server.listen(PORT, "127.0.0.1", () => {
   PORT = server.address().port; // --port 0 picks a free port (tests); the Host and Origin checks use the real one
   console.log(`Gym Ads control panel → http://localhost:${PORT}`);
