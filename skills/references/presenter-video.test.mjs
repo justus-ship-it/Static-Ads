@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { presenterOf, presenterWords, presenterProblems, PRESENTER_GENDERS, scriptProblems, addScript, decideScript, readScripts, keptScripts, scriptCost, buildScriptPrompt, draftScripts, sameWords, fillLine, clipSeconds, captions, captionChunks, speechFrom, speechOf, LEAD, TAIL, END_HOLD, captionWords, CAPTION_ACCENT, addPain, stillPrompt, clipPrompt, makePresenterVideos, durationOf, hasFfmpeg, SCRIPTS_FILE, LINES, LINE_WORDS, CLIP_SECONDS, FIRST_PERSON, LIVE, USD_PER_SECOND } from "./presenter-video.mjs";
+import { presenterOf, presenterWords, presenterProblems, PRESENTER_GENDERS, scriptProblems, addScript, decideScript, readScripts, keptScripts, scriptCost, buildScriptPrompt, draftScripts, sameWords, fillLine, clipSeconds, captions, captionChunks, speechFrom, speechOf, LEAD, TAIL, END_HOLD, captionWords, CAPTION_ACCENT, addPain, stillPrompt, clipPrompt, makePresenterVideos, durationOf, hasFfmpeg, SCRIPTS_FILE, LINES, LINE_WORDS, CLIP_SECONDS, FIRST_PERSON, LIVE, USD_PER_SECOND, videoNeeds, setAside, keepTake, ownerKeptClip, judgeClip, letteringOf, spokenLine } from "./presenter-video.mjs";
 import { PROFILE_STARTER, validateProfile } from "./client-config.mjs";
 
 // The shared library (the samples and the closing line) is never the real one in a test.
@@ -28,13 +28,13 @@ function gym({ presenter = { gender: "man", age: 36 } } = {}) {
   return { d, g, profile, room: join(g, "brand-assets", "facility-clean", "room.png") };
 }
 /** Fake models: a still is a tiny picture; a clip is real video of the length asked for (grey, a tone), so the cut is real; the watching pass answers from `say`. */
-function fakes({ say = (line) => line, people = () => 1, text = () => [], faults = () => [] } = {}) {
+function fakes({ say = (line) => line, people = () => 1, text = () => [], faults = () => [], lettering = null } = {}) {
   const calls = { image: [], clip: [], watch: [] }, lineOf = new Map();
   return { calls, models: {
     async image({ out, prompt, refs }) { calls.image.push({ out, prompt, refs }); writeFileSync(out, PNG); },
     async clip({ out, image, prompt, seconds }) { calls.clip.push({ out, image, prompt, seconds }); lineOf.set(out, prompt.match(/pace: "([^"]+)"/)[1]);
       execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `color=c=gray:s=180x320:r=24:d=${seconds}`, "-f", "lavfi", "-i", `sine=frequency=330:duration=${seconds - QUIET_START - QUIET_END}`, "-af", `adelay=${QUIET_START * 1000}|${QUIET_START * 1000},apad=whole_dur=${seconds}`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", String(seconds), out]); },
-    async watch(file) { const n = calls.watch.push(file), line = lineOf.get(file); return { spoken: say(line, n, file), on_screen_text: text(line, n), people: people(line, n), lips_match_speech: true, faults: faults(line, n, file), looks_real: 9 }; },
+    async watch(file) { const n = calls.watch.push(file), line = lineOf.get(file); return { spoken: say(line, n, file), ...(lettering ? { lettering: lettering(line, n) } : { on_screen_text: text(line, n) }), people: people(line, n), lips_match_speech: true, faults: faults(line, n, file), looks_real: 9 }; },
   } };
 }
 
@@ -184,10 +184,35 @@ test("PV4 what is refused, and why: nothing is made until the gym says who prese
     await assert.rejects(makePresenterVideos({ ...base, outDir: join(g, "o0"), store: join(g, "o0", "clips"), areas: [], models: none.models }), /needs a location/);
     await assert.rejects(makePresenterVideos({ ...base, outDir: join(g, "o0"), store: join(g, "o0", "clips"), room: join(g, "nope.png"), models: none.models }), /a photo of the gym's room is needed/);
     assert.deepEqual([none.calls.image.length, none.calls.clip.length], [0, 0], "refused before any call");
-    // A line that never comes out as written: both takes are spent, the video is refused with what was said.
-    const A = fakes({ say: (line) => (/small groups/.test(line) ? "You train in small groups. Tap below." : line) });
-    let r = await makePresenterVideos({ ...base, outDir: join(g, "o1"), store: join(g, "o1", "clips"), models: A.models });
-    assert.equal(r.videos[0].failed, 'line 3 did not pass after 2 takes: it said "You train in small groups. Tap below."'); assert.equal(r.videos[0].file, undefined); assert.equal(A.calls.clip.length, 4);
+    // A line that never comes out as written: both takes are spent — and the video is cut all the same, with that line flagged, for the owner to watch and decide (2026-11-15: "I don't even see the final output").
+    const WRONG = 'it said "You train in small groups. Tap below."', sayA = (line) => (/small groups/.test(line) ? "You train in small groups. Tap below." : line);
+    const A = fakes({ say: sayA }), logA = [];
+    let r = await makePresenterVideos({ ...base, outDir: join(g, "o1"), store: join(g, "o1", "clips"), models: A.models, log: (m) => logA.push(m) });
+    assert.deepEqual([r.videos[0].failed, r.videos[0].flags, existsSync(r.videos[0].file), A.calls.clip.length], [undefined, [{ line: 3, label: "line 3", why: WRONG, kind: "words" }], true, 4]);
+    assert.deepEqual(r.videos[0].parts.map((p) => [p.line, p.text === r.videos[0].words[p.line - 1], p.takes.length, p.seconds, !!p.flag, p.at >= 0]), [[1, true, 1, S1, false, true], [2, true, 1, S2, false, true], [3, true, 2, S3, true, true]], "every line of the cut: its words, its takes on file, what a fresh take takes, where it starts");
+    assert.ok(r.videos[0].parts[1].at > r.videos[0].parts[0].at && r.videos[0].parts[2].at > r.videos[0].parts[1].at);
+    assert.deepEqual(r.tally, { filmed: S1 + S2 + 2 * S3, in_videos: S1 + S2 + S3, replaced: 0, failed: S3, waiting: 0 }, "what the run filmed and what became of it");
+    // Run again as it is: the takes are used up, so nothing is filmed and it is flagged as before.
+    const A2 = fakes({ say: sayA }); r = await makePresenterVideos({ ...base, outDir: join(g, "o1"), store: join(g, "o1", "clips"), models: A2.models });
+    assert.deepEqual([A2.calls.clip.length, A2.calls.watch.length, r.videos[0].flags.length, r.tally.filmed], [0, 0, 1, 0]);
+    assert.deepEqual(videoNeeds({ gymDir: g, script, areas: ["BISHAN"], room, profile, store: join(g, "o1", "clips"), takes: 2 }).clips.map((c) => [c.on_file, c.flagged]), [[true, false], [true, false], [false, true]], "known before a run: that line waits for the owner, and a run films nothing for it");
+    assert.equal(videoNeeds({ gymDir: g, script, areas: ["BISHAN"], room, profile, store: join(g, "o1", "clips"), takes: 2 }).seconds, 0);
+    // Film this line again: its takes are set aside (kept on disk, never used) and two fresh ones may be filmed.
+    const flaggedClip = r.videos[0].parts[2].clip, takesOnFile = r.videos[0].parts[2].takes;
+    assert.throws(() => setAside(join(g, "o1", "clips"), ["../x.mp4"]), /which take\?/); assert.throws(() => setAside(join(g, "o1", "clips"), ["line-9-nope.mp4"]), /no such take on file/);
+    assert.equal(setAside(join(g, "o1", "clips"), takesOnFile, "the owner asked"), 2);
+    assert.equal(videoNeeds({ gymDir: g, script, areas: ["BISHAN"], room, profile, store: join(g, "o1", "clips"), takes: 2 }).seconds, S3, "now it is to film");
+    const A3 = fakes({ say: (line, n) => (/small groups/.test(line) && n === 1 ? "You train in small groups. Tap below." : line) });
+    r = await makePresenterVideos({ ...base, outDir: join(g, "o1"), store: join(g, "o1", "clips"), models: A3.models });
+    assert.deepEqual([A3.calls.clip.map((c) => plain(c.out)), r.videos[0].flags, r.videos[0].parts[2].clip !== flaggedClip, takesOnFile.every((f) => existsSync(join(g, "o1", "clips", f)))], [["line-3-take3.mp4", "line-3-take4.mp4"], undefined, true, true]);
+    // Use this take anyway: on the owner's word that file passes — nothing is filmed, and the video says so.
+    const K = fakes({ say: sayA }); r = await makePresenterVideos({ ...base, outDir: join(g, "o1k"), store: join(g, "o1k", "clips"), models: K.models });
+    const keptClip = r.videos[0].parts[2].clip; assert.throws(() => keepTake(join(g, "o1k", "clips"), "line-9-nope.mp4"), /no such take on file/);
+    assert.equal(keepTake(join(g, "o1k", "clips"), keptClip, WRONG).left, WRONG); assert.ok(ownerKeptClip(join(g, "o1k", "clips"), join(g, "o1k", "clips", keptClip)));
+    const K2 = fakes({ say: sayA }); r = await makePresenterVideos({ ...base, outDir: join(g, "o1k"), store: join(g, "o1k", "clips"), takes: 3, models: K2.models });
+    assert.deepEqual([K2.calls.clip.length, r.videos[0].flags, r.videos[0].parts[2].kept, r.videos[0].notes], [0, undefined, WRONG, [`line 3 kept on your word (${WRONG})`]], "kept on his word: never filmed again, not even where more takes are allowed");
+    assert.equal(videoNeeds({ gymDir: g, script, areas: ["BISHAN"], room, profile, store: join(g, "o1k", "clips") }).clips[2].on_file, true);
+    writeFileSync(join(g, "o1k", "clips", keptClip), "changed"); assert.equal(ownerKeptClip(join(g, "o1k", "clips"), join(g, "o1k", "clips", keptClip)), null, "a file changed since is checked like any other");
     // A fault on the only take the cap allows: the take stands (a fault is a note), and nothing beyond the cap is asked for.
     const Ft = fakes({ faults: (line) => (/small groups/.test(line) ? ["warped fingers"] : []) });
     r = await makePresenterVideos({ ...base, outDir: join(g, "o1b"), store: join(g, "o1b", "clips"), caps: { seconds: S1 + S2 + S3, images: 5 }, models: Ft.models });
@@ -195,15 +220,38 @@ test("PV4 what is refused, and why: nothing is made until the gym says who prese
     // A second person in the area's own line: that location is refused, the other is made.
     const B = fakes({ people: (line) => (/Bishan/.test(line) ? 2 : 1) });
     r = await makePresenterVideos({ ...base, outDir: join(g, "o2"), store: join(g, "o2", "clips"), areas: ["BISHAN", "KATONG"], models: B.models });
-    assert.deepEqual(r.videos.map((v) => [v.area, v.failed || "made"]), [["BISHAN", "line 1 did not pass after 2 takes: 2 people are in it"], ["KATONG", "made"]]);
-    // Lettering in the picture.
+    assert.deepEqual(r.videos.map((v) => [v.area, v.failed, v.flags ? v.flags.map((f) => `${f.label}: ${f.why}`).join() : "made"]), [["BISHAN", undefined, "line 1: 2 people are in it"], ["KATONG", undefined, "made"]]);
+    // Lettering in the picture, by what it is on (2026-11-15: two takes were refused for "Life Fitness", the maker's name on the gym's own cross-trainer).
+    // Lettering the check cannot place fails the take; it may be in the picture itself, so the second take is filmed from a fresh picture of the presenter.
     const C = fakes({ text: (line) => (/built for exactly/.test(line) ? ["GYM"] : []) });
     r = await makePresenterVideos({ ...base, outDir: join(g, "o3"), store: join(g, "o3", "clips"), models: C.models });
-    assert.equal(r.videos[0].failed, "line 2 did not pass after 2 takes: words appear in the picture: GYM");
+    assert.deepEqual([r.videos[0].failed, r.videos[0].flags.map((f) => [f.line, f.why, f.kind]), C.calls.image.length, C.calls.clip.map((c) => /-b\.jpg$/.test(c.image))], [undefined, [[2, "words appear in the picture: GYM", "lettering"]], 4, [false, false, true, false]]);
+    // A maker's name on a machine, a machine's display: the room's own — a note, never a failure and never a retake.
+    const Ce = fakes({ lettering: (line) => (/built for exactly/.test(line) ? [{ text: "Life Fitness", on: "equipment" }, { text: "12:40", on: "screen" }] : []) }), logE = [];
+    r = await makePresenterVideos({ ...base, outDir: join(g, "o3e"), store: join(g, "o3e", "clips"), models: Ce.models, log: (m) => logE.push(m) });
+    assert.deepEqual([r.videos[0].failed, r.videos[0].flags, r.videos[0].notes, Ce.calls.clip.length, Ce.calls.image.length], [undefined, undefined, ["the maker's name on the equipment: Life Fitness", "on a screen in the room: 12:40"], 3, 3]);
+    assert.ok(logE.some((l) => /line-2-[a-f0-9]{6}\.mp4: said as written, one person, no lettering · in the room: the maker's name on the equipment: Life Fitness; on a screen in the room: 12:40$/.test(l)), logE.join("\n"));
+    // A caption the video model laid over the picture, writing on clothes, a sign: each still fails; a caption is not the picture's fault, so no fresh picture is made for it.
+    const Co = fakes({ lettering: (line) => (/built for exactly/.test(line) ? [{ text: "SUBSCRIBE", on: "overlay" }] : []) });
+    r = await makePresenterVideos({ ...base, outDir: join(g, "o3o"), store: join(g, "o3o", "clips"), models: Co.models });
+    assert.deepEqual([r.videos[0].flags.map((f) => f.why), Co.calls.image.length, Co.calls.clip.length], [["words appear in the picture: SUBSCRIBE (a caption or watermark over the picture)"], 3, 4]);
+    assert.deepEqual([judgeClip({ spoken: "Hi there", people: 1, lettering: [{ text: "NIKE", on: "clothing" }] }, "Hi there").why, judgeClip({ spoken: "Hi there", people: 1, lettering: [{ text: "SALE", on: "sign" }] }, "Hi there").why, judgeClip({ spoken: "Hi there", people: 1, lettering: [{ text: "x", on: "nonsense" }] }, "Hi there").kind, judgeClip({ spoken: "Hi there", people: 1, lettering: [] }, "Hi there").passed], ["words appear in the picture: NIKE (on clothing)", "words appear in the picture: SALE (a sign or writing in the room)", "lettering", true]);
+    assert.deepEqual(letteringOf({ on_screen_text: ["LifeFitness"] }), { fails: [{ text: "LifeFitness", on: "other" }], notes: [] }, "a check from before lettering said what it is on cannot be placed");
+    // …so such a check is watched again once, at no filming: the clip that was refused for the maker's name passes.
+    const Cs = fakes(); r = await makePresenterVideos({ ...base, outDir: join(g, "o3s"), store: join(g, "o3s", "clips"), takes: 1, models: Cs.models });
+    const oldCheck = join(g, "o3s", "clips", r.videos[0].parts[1].clip.replace(/\.mp4$/, ".check.json")), was = JSON.parse(readFileSync(oldCheck, "utf-8"));
+    writeFileSync(oldCheck, JSON.stringify({ spoken: was.spoken, on_screen_text: ["Life Fitness"], people: 1, lips_match_speech: true, faults: [], looks_real: 7 }));
+    assert.equal(videoNeeds({ gymDir: g, script, areas: ["BISHAN"], room, profile, store: join(g, "o3s", "clips"), takes: 1 }).seconds, 0, "nothing to film for it");
+    const Cs2 = fakes({ say: () => was.spoken, lettering: () => [{ text: "Life Fitness", on: "equipment" }] }); r = await makePresenterVideos({ ...base, outDir: join(g, "o3s"), store: join(g, "o3s", "clips"), takes: 1, models: Cs2.models });
+    assert.deepEqual([Cs2.calls.clip.length, Cs2.calls.watch.length, r.spent, r.videos[0].flags, r.videos[0].notes], [0, 1, { seconds: 0, images: 0, checks: 1 }, undefined, ["the maker's name on the equipment: Life Fitness"]]);
+    // One automatic retake for small notes, never two (the owner's choice, 2026-11-15), however many takes a failure is allowed.
+    const N = fakes({ faults: (line) => (/built for exactly/.test(line) ? ["warped fingers"] : []) });
+    r = await makePresenterVideos({ ...base, outDir: join(g, "o3n"), store: join(g, "o3n", "clips"), takes: 4, models: N.models });
+    assert.deepEqual([N.calls.clip.length, r.videos[0].lines[1].takes, r.videos[0].notes, r.tally.replaced], [4, 2, ["warped fingers"], S2]);
     // The cap: 20 seconds covers lines 1 and 2; line 3's clip is never asked for.
     const D = fakes();
     r = await makePresenterVideos({ ...base, outDir: join(g, "o4"), store: join(g, "o4", "clips"), caps: { seconds: 20, images: 5 }, models: D.models });
-    assert.deepEqual([r.videos[0].failed, D.calls.clip.length, r.spent.seconds], ["line 3 did not pass after 0 takes: the cap of 20 seconds of video was reached", 2, S1 + S2]);
+    assert.deepEqual([r.videos[0].failed, D.calls.clip.length, r.spent.seconds], ["line 3: the cap of 20 seconds of video was reached", 2, S1 + S2]);
     const E = fakes();
     r = await makePresenterVideos({ ...base, outDir: join(g, "o5"), store: join(g, "o5", "clips"), caps: { seconds: 80, images: 2 }, models: E.models });
     assert.deepEqual([r.videos[0].failed, E.calls.image.length, E.calls.clip.length], ["the cap of 2 image calls was reached before the presenter's stills were made", 2, 0]);
@@ -501,14 +549,14 @@ test("PV9 what is filmed is kept per gym and script, not per batch, and the agen
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
-test("PV10 how a word is said, and an ending in two beats (2026-11-14, the owner on Aether's finished video: \"'Quay' is pronounced 'Kee' in Singapore. Edge case but let's account for it too\"; \"it's too abrupt when we transition into 'Click the link below and we'll be in touch'\", with the end of his own sample as the model): a short list for every gym says how a word is said — the presenter is told with a line that has the word, the check takes the word as said for the word as written, a word heard said another way is a noted fault and the clip is made once more, and adding a word films again only the lines that say it; a script's closing line follows a sentence of its own that turns to the viewer — a bare lead-in or none needs an edit — and an ideal body is never promised", { skip: !hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+test("PV10 how a word is said, and an ending in two beats (2026-11-14, the owner on Aether's finished video: \"'Quay' is pronounced 'Kee' in Singapore. Edge case but let's account for it too\"; \"it's too abrupt when we transition into 'Click the link below and we'll be in touch'\", with the end of his own sample as the model): a short list for every gym says how a word is said — the presenter is GIVEN the word written the way it sounds (Boat Key: told that Quay is pronounced kee, the video model still said kway, 2026-11-15), the captions keep the word as written, the check takes either spelling and is no judge of the sound (the owner's ear is: the line names the word to listen for), and adding a word films again only the lines that say it; a script's closing line follows a sentence of its own that turns to the viewer — a bare lead-in or none needs an edit — and an ideal body is never promised", { skip: !hasFfmpeg() && "ffmpeg is not installed" }, async () => {
   const { SAID_AS, saidAs, setSaid, saidProblems, saidIn, videoNeeds, bridgeOf, isBridge, BRIDGE_WHY, BRIDGE_WORDS, CLOSING_LINE } = await import("./presenter-video.mjs");
   const { d, g, profile, room } = gym(), L = join(d, "lib"), C = CLOSING_LINE;
   try {
     // The list: the standing entry, the owner's own beside it, a change, a removal that stays removed.
-    assert.deepEqual([SAID_AS, saidAs(L)], [[{ word: "Quay", say: "kee", heard: ["key"] }], [{ word: "Quay", say: "kee", heard: ["key"] }]]);
+    assert.deepEqual([SAID_AS, saidAs(L)], [[{ word: "Quay", say: "Key", heard: ["kee"] }], [{ word: "Quay", say: "Key", heard: ["kee"] }]]);
     assert.deepEqual([saidProblems("Quay", "kee"), saidProblems("Boat Quay", "kee").length, saidProblems("Quay", "k33").length, saidProblems("", "").length], [[], 1, 1, 2]);
-    assert.deepEqual(setSaid(L, "Yishun", "ee-shoon").map((x) => [x.word, x.say]), [["Quay", "kee"], ["Yishun", "ee-shoon"]]);
+    assert.deepEqual(setSaid(L, "Yishun", "ee-shoon").map((x) => [x.word, x.say]), [["Quay", "Key"], ["Yishun", "ee-shoon"]]);
     assert.throws(() => setSaid(L, "Boat Quay", "kee"), /the word is one word as it is written/);
     assert.deepEqual(setSaid(L, "Quay", "").map((x) => x.word), ["Yishun"], "a standing word taken off stays off");
     assert.deepEqual(setSaid(L, "quay", "kee").map((x) => [x.word, x.say]), [["quay", "kee"], ["Yishun", "ee-shoon"]]);
@@ -518,25 +566,27 @@ test("PV10 how a word is said, and an ending in two beats (2026-11-14, the owner
     // The word as said is the word as written.
     const SOUNDS = [["quay", "kee", "key"]];
     assert.deepEqual([sameWords("People in Boat Key, hello", "People in Boat Quay, hello", { sounds: SOUNDS }), sameWords("People in Boat Kee, hello", "People in Boat Quay, hello", { sounds: SOUNDS }), sameWords("People in Boat Key, hello", "People in Boat Quay, hello"), sameWords("People in Boat Tree, hello", "People in Boat Quay, hello", { sounds: SOUNDS })], [true, true, false, false]);
-    // The presenter is told; a line without the word is asked for as it always was.
-    assert.match(clipPrompt({ presenter: { gender: "man", age: 36, look: "" }, profile, line: "People in Boat Quay, hello.", seconds: 6, said: LIST }), /at an easy conversational pace: "People in Boat Quay, hello\." "Quay" is pronounced "kee": he says it that way\. His mouth forms exactly these words/);
+    // The presenter is given the word the way it sounds, capitalised as the line has it, and is told nothing about pronunciation; a line without the word is asked for as it always was.
+    assert.match(clipPrompt({ presenter: { gender: "man", age: 36, look: "" }, profile, line: "People in Boat Quay, hello.", seconds: 6, said: LIST }), /at an easy conversational pace: "People in Boat Key, hello\." His mouth forms exactly these words/);
+    assert.deepEqual([spokenLine("Boat Quay and CLARKE QUAY, by the quay; the quayside.", LIST), spokenLine("People in Bishan.", LIST), spokenLine("In Yishun today.", [{ word: "Yishun", say: "ee shoon" }])], ["Boat Key and CLARKE Key, by the key; the quayside.", "People in Bishan.", "In Ee shoon today."]);
     assert.equal(clipPrompt({ presenter: { gender: "man", age: 36, look: "" }, profile, line: "Hello there.", seconds: 6, said: [] }), clipPrompt({ presenter: { gender: "man", age: 36, look: "" }, profile, line: "Hello there.", seconds: 6 }));
     // Filmed with no list, then with it: only the line that says the word is filmed again; the check is told the word, takes "Key" for it, and a take heard as "kway" is made once more.
     const script = addScript(g, { lines: GOOD, offer: OFFER }, { profile, closing: C }), store = join(g, "clips");
     const base = { gymDir: g, outDir: join(g, "o1"), store, script, areas: ["BOAT QUAY"], offer: OFFER, room, profile, closing: C, caps: { seconds: 120, images: 5 } };
     const A = fakes(), ra = await makePresenterVideos({ ...base, takes: 1, saidList: [], models: A.models });
     assert.deepEqual([ra.videos[0].failed, A.calls.clip.length, /is pronounced/.test(A.calls.clip[0].prompt)], [undefined, 3, false]);
+    assert.match(A.calls.clip[0].prompt, /"People in Boat Quay, this one is for you\./, "with no list the line is read as written");
     assert.deepEqual([videoNeeds({ gymDir: g, script, areas: ["BOAT QUAY"], room, profile, closing: C, store, saidList: [] }).seconds, videoNeeds({ gymDir: g, script, areas: ["BOAT QUAY"], room, profile, closing: C, store, saidList: LIST }).clips.map((c) => c.on_file)], [0, [false, true, true]], "known before the run: the one line with the word");
-    const B = fakes(), told = []; let n = 0; const watchB = B.models.watch;
-    B.models.watch = async (file, opts = {}) => { told.push((opts.said || []).map((x) => x.word)); const seen = await watchB(file); n++; return { ...seen, spoken: seen.spoken.replace("Boat Quay", "Boat Key"), pronounced: [{ word: "Quay", sounded_like: n === 1 ? "kway" : "kee" }] }; };
-    const logB = [], rb = await makePresenterVideos({ ...base, takes: 2, saidList: LIST, models: B.models, log: (m) => logB.push(m) });
-    assert.deepEqual([rb.videos[0].failed, B.calls.clip.map((c) => plain(c.out)), B.calls.image.length, told, rb.videos[0].lines[0].takes, rb.videos[0].notes, rb.spent.seconds], [undefined, ["line-1-boat-quay.mp4", "line-1-boat-quay-take2.mp4"], 0, [["Quay"], ["Quay"]], 2, [], 2 * S(GOOD[0], "BOAT QUAY")]);
-    assert.ok(B.calls.clip.every((c) => /"Quay" is pronounced "kee": he says it that way\./.test(c.prompt)) && logB.some((l) => /noted: "Quay" sounded like "kway" \(it is said "kee"\) — made once more$/.test(l)), logB.join("\n"));
+    // The fake hears what the presenter was given ("Boat Key"): the check takes it for the word as written, one take is enough, and the line names the word for the owner's ear.
+    const B = fakes(), rb = await makePresenterVideos({ ...base, takes: 2, saidList: LIST, models: B.models });
+    assert.deepEqual([rb.videos[0].failed, rb.videos[0].flags, B.calls.clip.map((c) => plain(c.out)), B.calls.image.length, rb.videos[0].lines[0].takes, rb.videos[0].notes, rb.spent.seconds], [undefined, undefined, ["line-1-boat-quay.mp4"], 0, 1, [], S(GOOD[0], "BOAT QUAY")]);
+    assert.ok(/"People in Boat Key, this one is for you\./.test(B.calls.clip[0].prompt) && !/is pronounced/.test(B.calls.clip[0].prompt), B.calls.clip[0].prompt);
     assert.deepEqual(rb.videos[0].words[0], GOOD[0].replace("{AREA}", "Boat Quay"), "the words on screen are the words as written");
-    // Heard as "kway" on every take: a note for the owner on the kept take, never a refusal.
+    assert.deepEqual(rb.videos[0].parts.map((p) => p.listen), [[{ word: "Quay", say: "Key" }], undefined, undefined], "which word to listen for, and on which line");
+    // How it sounded is not the check's to say (it wrote "kee" for a clip the owner heard as "kway"): whatever an old check says about it is no fault and no retake.
     const Cc = fakes(), watchC = Cc.models.watch; Cc.models.watch = async (file) => ({ ...(await watchC(file)), pronounced: [{ word: "Quay", sounded_like: "kway" }] });
     const rc = await makePresenterVideos({ ...base, outDir: join(g, "o2"), store: join(g, "clips2"), takes: 2, saidList: LIST, models: Cc.models });
-    assert.deepEqual([rc.videos[0].failed, rc.videos[0].notes, existsSync(rc.videos[0].file)], [undefined, ['"Quay" sounded like "kway" (it is said "kee")'], true]);
+    assert.deepEqual([rc.videos[0].failed, rc.videos[0].notes, Cc.calls.clip.length, existsSync(rc.videos[0].file)], [undefined, [], 3, true]);
     // ── The ending ──
     const end = (last, before = GOOD[1]) => scriptProblems([GOOD[0], before, last], { offer: OFFER, profile, closing: C });
     assert.deepEqual([BRIDGE_WORDS, end(GOOD[2])], [8, []]);

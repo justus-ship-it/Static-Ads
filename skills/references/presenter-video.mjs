@@ -22,9 +22,16 @@
  *     (captions a few words at a time, the word being said in a warm yellow), inside Meta's 9:16 live area.
  *   · EVERY SPOKEN LINE IS CHECKED. One call watches each clip: the words said must be the line's words, in order
  *     (a number may be said or written: "12 week" is "twelve week"); exactly one person is in it (the model walks
- *     people into empty space); no lettering appears. A clip that fails is made again (`takes`), then the video is
- *     refused and the reason said. The check's "looks real" score is NOT a gate — it scored a clip with an extra
- *     person 10 of 10 in the test — its faults are shown to the owner, whose pick is the final check.
+ *     people into empty space); no lettering appears but the room's own (a maker's name on a machine is a note).
+ *     What a listener cannot hear is no difference (a spelling, a contraction, where the spaces fall). A clip that
+ *     fails is made again (`takes`); a clip that passes with a small note is made once more, never twice. The
+ *     check's "looks real" score is NOT a gate — it scored a clip with an extra person 10 of 10 in the test — its
+ *     faults are shown to the owner, whose pick is the final check.
+ *   · THE OWNER ALWAYS SEES THE VIDEO (2026-11-15: two of three videos were refused over a spelling and a maker's
+ *     logo, and "I don't even see the final output"). A line no take passed for goes into the cut all the same,
+ *     FLAGGED with why (`flags`, `parts`): on Pick Ads he films it again (the takes on file are set aside:
+ *     `setAside`), uses the take anyway (his word, recorded: `keepTake`) or edits the line. A flagged video is never
+ *     kept or published until then. Only a line with no take at all (refused by Google, the cap) leaves no video.
  *   · NO END CARD (the owner, 2026-11-14: "Don't need the black screen … at the end"): the video ends on the
  *     presenter's last word, held a moment (`END_HOLD`). The offer and the area are said, and so shown in the captions.
  *   · A SCRIPT OPENS ON A PAIN POINT AND ENDS ON ONE CLOSING LINE (the owner, 2026-11-14: "'Keep putting off getting
@@ -48,8 +55,9 @@
  *   · A SCRIPT THAT NEEDS AN EDIT IS EDITED BY THE AGENT FOR HIM TO APPROVE (`proposeEdit`, his word the same day:
  *     "have the agent propose any edits required for me to approve, but I can also manually edit it").
  *   · A WORD IS SAID THE WAY IT IS SAID HERE (the owner, 2026-11-14: "'Quay' is pronounced 'Kee' in Singapore"): a
- *     short list, shared by every gym and his to add to (`saidAs`), is told to the presenter with the line, and a
- *     clip is named for it too, so adding a word films again only the lines that say it.
+ *     short list, shared by every gym and his to add to (`saidAs`). The presenter is GIVEN the word written the way
+ *     it sounds ("Boat Key" — told "Quay is pronounced kee" the video model still said "kway", 2026-11-15); the
+ *     captions keep the spelling; a clip is named for it too, so adding a word films again only the lines that say it.
  *   · THE ENDING IS TWO BEATS (the same day: "it's too abrupt when we transition into 'Click the link below…'", with
  *     the end of his own sample as the model): one sentence that turns to the viewer and names what they want — "If
  *     you're ready to …, now is your time." — and then the closing line. What they will feel or be able to do, never
@@ -122,10 +130,25 @@ export const hasFfmpeg = () => { try { sh("ffmpeg", ["-version"]); sh("ffprobe",
 
 // ── words spoken against words written ───────────────────────────────────────
 const NUMBER = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, ninety: 90 };
-/** A line as the words a listener hears: lower case, punctuation gone, a number as its figure; a possessive ending ("gym's", "Athletics'", "Athletics's") is the word itself, marked. */
-const spoken = (s) => String(s).toLowerCase().replace(/[’‘]/g, "'").replace(/[^a-z0-9' ]+/g, " ").split(/\s+/).filter(Boolean).map((raw) => {
+/**
+ * A contraction written out, so "you're" and "you are" are the same words (2026-11-15). It also keeps "we're" from
+ * reading as "were" and "we'll" as "well" once the apostrophe is gone.
+ */
+const expand = (s) => s.replace(/\bcannot\b/g, "can not").replace(/\bwon't\b/g, "will not").replace(/\bcan't\b/g, "can not").replace(/\bshan't\b/g, "shall not").replace(/\b([a-z]+)n't\b/g, "$1 not")
+  .replace(/\bi'm\b/g, "i am").replace(/\b([a-z]+)'re\b/g, "$1 are").replace(/\b([a-z]+)'ll\b/g, "$1 will").replace(/\b([a-z]+)'ve\b/g, "$1 have").replace(/\b([a-z]+)'d\b/g, "$1 would")
+  .replace(/\blet's\b/g, "let us").replace(/\b(it|that|there|here|what|who|he|she|where|how)'s\b/g, "$1 is");
+/**
+ * One spelling for a word that has two (2026-11-15: both takes of a line were refused because the script said
+ * "energised" and the check wrote "energized"). British and American endings by rule (-ise/-ize, -yse/-yze, -our/-or,
+ * -tre/-ter), the rest by name; and the pairs a listener takes for one word ("toward", "towards").
+ */
+const SPELT = { programme: "program", programmes: "programs", practise: "practice", practised: "practiced", practising: "practicing", defence: "defense", licence: "license", offence: "offense", fulfil: "fulfill", fulfilment: "fulfillment", enrol: "enroll", enrolment: "enrollment", skilful: "skillful", grey: "gray", cosy: "cozy", ageing: "aging", judgement: "judgment", focussed: "focused", focussing: "focusing", fuelled: "fueled", fuelling: "fueling", travelled: "traveled", travelling: "traveling", traveller: "traveler", modelled: "modeled", modelling: "modeling", cancelled: "canceled", cancelling: "canceling", labelled: "labeled", levelled: "leveled", totalled: "totaled", counsellor: "counselor", jewellery: "jewelry", tyre: "tire", tyres: "tires", mould: "mold", catalogue: "catalog", dialogue: "dialog", okay: "ok",
+  towards: "toward", forwards: "forward", afterwards: "afterward", backwards: "backward", upwards: "upward", downwards: "downward", onwards: "onward", inwards: "inward", outwards: "outward" };
+const ear = (w) => SPELT[w] || w.replace(/is(e|es|ed|ing|er|ers|ation|ations)$/, "iz$1").replace(/ys(e|es|ed|ing)$/, "yz$1").replace(/^([a-z]{2,})our(s|ed|ing|ite|ites|ful|able|hood|hoods|ly|less)?$/, (m, a, b = "") => `${a}or${b}`).replace(/([bt])re(s?)$/, "$1er$2");
+/** A line as the words a listener hears: lower case, punctuation gone, a contraction written out, a number as its figure, one spelling for a word that has two; a possessive ending ("gym's", "Athletics'", "Athletics's") is the word itself, marked. */
+const spoken = (s) => expand(String(s).toLowerCase().replace(/[’‘]/g, "'")).replace(/[^a-z0-9' ]+/g, " ").split(/\s+/).filter(Boolean).map((raw) => {
   const poss = /[a-z0-9]'s?$/.test(raw), w = (poss ? raw.replace(/'s?$/, "") : raw).replace(/'/g, "");
-  return { w: w in NUMBER ? String(NUMBER[w]) : w, poss };
+  return { w: w in NUMBER ? String(NUMBER[w]) : ear(w), poss };
 }).filter((t) => t.w);
 /** One letter added, dropped or changed at most. */
 const near = (a, b) => {
@@ -134,20 +157,28 @@ const near = (a, b) => {
   return a.length === b.length ? a.slice(i + 1) === b.slice(i + 1) : a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
 };
 /**
- * The words said are the line's words, in order. Punctuation and case aside; a number may be said or written. Three
- * things a listener cannot hear are not a difference (2026-11-12: a good take of "Aether Athletics's 6 Week…" was
- * refused twice, heard as "Aether Athletics 6-week" and as "Ether Athletics'"): a possessive ("Athletics's" is said
- * "Athletics"), the spelling of a NAME (`names`: the gym's own name — a word of it may be one letter off, "Ether"
- * for "Aether"), and where a name's spaces fall ("F 45" for "F45"). Every other word must be the word.
+ * The words said are the line's words, in order. Punctuation and case aside; a number may be said or written. What a
+ * listener cannot hear is not a difference (2026-11-12: a good take of "Aether Athletics's 6 Week…" was refused twice,
+ * heard as "Aether Athletics 6-week" and as "Ether Athletics'"; 2026-11-15: "energised" written "energized"): a
+ * possessive ("Athletics's" is said "Athletics"), the spelling of a NAME (`names`: the gym's own name — a word of
+ * it may be one letter off, "Ether" for "Aether"), a word with two spellings, a contraction and its two words, and
+ * where the spaces fall ("every day" for "everyday", "F 45" for "F45"). Every other word must be the word: one
+ * added, dropped or changed is a difference.
  */
 export function sameWords(said, line, { names = [], sounds = [] } = {}) {
   const a = spoken(said), b = spoken(line);
   const named = new Set(names.flatMap((n) => spoken(n).map((t) => t.w)).filter((w) => w.length >= 4));
-  // `sounds`: words that are one word to the ear — a word and the way it is said here ("quay", "kee", "key").
+  // `sounds`: words that are one word to the ear — a word and the way it is said here ("quay", "key", "kee").
   const same = (x, y) => x.w === y.w || ((x.poss || y.poss) && (x.w + "s" === y.w || y.w + "s" === x.w)) || (named.has(y.w) && near(x.w, y.w)) || sounds.some((grp) => grp.includes(x.w) && grp.includes(y.w));
-  if (a.length === b.length && a.every((t, i) => same(t, b[i]))) return true;
-  // The same letters with the spaces elsewhere (a name written as one word and heard as two) — only where a name is in the line.
-  return named.size + names.length > 0 && names.some((n) => spoken(n).some((t) => b.some((y) => y.w === t.w))) && a.map((t) => t.w).join("") === b.map((t) => t.w).join("");
+  let i = 0, j = 0;
+  while (i < a.length && j < b.length) {
+    if (same(a[i], b[j])) { i++; j++; continue; }
+    // The same letters with the spaces elsewhere: up to three words on a side.
+    let hit = null;
+    for (let p = 1; p <= 3 && !hit; p++) for (let q = 1; q <= 3 && !hit; q++) { if ((p === 1 && q === 1) || i + p > a.length || j + q > b.length) continue; if (a.slice(i, i + p).map((t) => t.w).join("") === b.slice(j, j + q).map((t) => t.w).join("")) hit = [p, q]; }
+    if (!hit) return false; i += hit[0]; j += hit[1];
+  }
+  return i === a.length && j === b.length;
 }
 export const wordCount = (line) => norm(line).split(" ").filter(Boolean).length;
 /** `{AREA}` filled the way the plan fills it in copy: "ANG MO KIO" → "Ang Mo Kio", "CBD" stays. */
@@ -325,11 +356,13 @@ const writeSamples = (libDir, data) => { mkdirSync(libDir, { recursive: true });
 /**
  * How a word is said (2026-11-14, the owner: "'Quay' is pronounced 'Kee' in Singapore. Edge case but let's account for
  * it too"). A short list for every gym — the standing entries here, and the owner's own in the shared library
- * (`said`), which win and may take a standing one out. The presenter is told it with a line that has the word; the
- * check takes the word as said for the word as written ("key" for "Quay"), and is asked how it sounded: said another
- * way is a noted fault (the clip is made once more while takes are left), never a refusal — his ear is the last check.
+ * (`said`), which win and may take a standing one out. **The presenter is given the word written the way it sounds**
+ * (2026-11-15: told "Quay is pronounced kee", the video model still said "kway"; given "Boat Key" to read it said
+ * "kee" — the owner's ear on a test clip), so `say` is a real word with that sound where there is one. The check
+ * takes either spelling for the word; how it sounded is the owner's to judge — the check's ear called "kway" "kee" —
+ * so Pick Ads names the word to listen for, with Film this line again beside it.
  */
-export const SAID_AS = [{ word: "Quay", say: "kee", heard: ["key"] }];
+export const SAID_AS = [{ word: "Quay", say: "Key", heard: ["kee"] }];
 const letters = (w) => String(w).toLowerCase().replace(/[^a-z0-9]/g, "");
 export function saidAs(libDir = videoLibraryDir()) {
   const out = new Map(SAID_AS.map((x) => [letters(x.word), { ...x }]));
@@ -339,7 +372,7 @@ export function saidAs(libDir = videoLibraryDir()) {
 export function saidProblems(word, say) {
   const errs = [];
   if (!/^[A-Za-z][A-Za-z'-]{1,29}$/.test(String(word || "").trim())) errs.push("the word is one word as it is written, 2 to 30 letters (\"Quay\")");
-  if (!/^[A-Za-z][A-Za-z '-]{0,39}$/.test(String(say || "").trim())) errs.push("how it is said is written the way it sounds, in letters (\"kee\")");
+  if (!/^[A-Za-z][A-Za-z '-]{0,39}$/.test(String(say || "").trim())) errs.push("how it is said is written the way it sounds, in letters, as a real word where there is one (\"Key\"): the presenter reads exactly this");
   return errs;
 }
 /** Add or change how a word is said, for every gym; an empty `say` takes the word off the list. */
@@ -353,13 +386,8 @@ export function setSaid(libDir, word, say) {
 export const saidIn = (line, list = []) => list.filter((x) => new RegExp(`(?<![A-Za-z])${x.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`, "i").test(String(line)));
 /** What names a clip beside its words and its picture: a changed way of saying a word films that line again, and no other. */
 const saidNote = (entries) => entries.map((x) => `${letters(x.word)}=${letters(x.say)}`).sort().join("|");
-const soundsOf = (entries) => entries.map((x) => [x.word, x.say, ...(x.heard || [])].map(letters));
-/** From a clip's check: the listed words that were heard said another way, each as a noted fault. */
-function saidWrong(seen, entries) {
-  const out = [];
-  for (const x of entries) { const p = (seen?.pronounced || []).find((q) => letters(q.word) === letters(x.word)), how = letters(p?.sounded_like || ""); if (how && how !== letters(x.word) && !soundsOf([x])[0].includes(how)) out.push(`"${x.word}" sounded like "${norm(p.sounded_like)}" (it is said "${x.say}")`); }
-  return out;
-}
+/** Words that are one word to the ear: the word, the way it is written for the presenter, and other ways the check may spell that sound. */
+const soundsOf = (entries) => entries.map((x) => [x.word, ...String(x.say).split(/\s+/), ...(x.heard || [])].map(letters));
 /** The closing line every script ends on: the owner's own when he has changed it, else the standing sentence. */
 export function closingLine(libDir = videoLibraryDir()) { return norm(readSamples(libDir).closing?.text) || CLOSING_LINE; }
 export function closingProblems(text, profile = {}) {
@@ -726,8 +754,36 @@ async function interact(body, { label, timeoutMs = 600000 } = {}) {
     return res.json();
   }, { label });
 }
-const WATCH_SCHEMA = { type: "OBJECT", properties: { spoken: { type: "STRING" }, on_screen_text: { type: "ARRAY", items: { type: "STRING" } }, people: { type: "INTEGER" }, lips_match_speech: { type: "BOOLEAN" }, faults: { type: "ARRAY", items: { type: "STRING" } }, looks_real: { type: "INTEGER" } }, required: ["spoken", "on_screen_text", "people", "lips_match_speech", "faults", "looks_real"] };
-const WATCH_QUESTION = "Watch and listen to this short video. spoken: transcribe exactly every word spoken, in order, with nothing added; an empty string if nobody speaks. on_screen_text: every word or letter visible anywhere in the picture (signs, clothing, captions, watermarks), one entry each; empty if none. people: how many people are visible at any point. lips_match_speech: true only if the visible person's mouth moves in time with the spoken words. faults: every visible fault that would make a viewer think this is not real footage — warped hands or faces, objects that melt or pass through each other, impossible movement, a face that changes — each as a short phrase; empty if none. looks_real: 1 to 10, how convincingly this passes as phone footage shot in a real gym.";
+/**
+ * Lettering in a clip, by what it is on (2026-11-15: a clip was refused twice for "Life Fitness", the maker's name on
+ * the gym's own cross-trainer, which was in the presenter's picture before a second was filmed). One rule with the
+ * photos' (a small mark on equipment is a note): a maker's name on a machine or a machine's display is the room's own
+ * and is noted; a caption or watermark laid over the picture, writing on clothes, a sign — and anything the check
+ * cannot place — still fails the take.
+ */
+export const LETTERING_ON = ["equipment", "screen", "clothing", "sign", "overlay", "other"];
+const LETTER_NOTED = new Set(["equipment", "screen"]), LETTER_WHERE = { clothing: "on clothing", sign: "a sign or writing in the room", overlay: "a caption or watermark over the picture" };
+export function letteringOf(seen) {
+  const all = Array.isArray(seen?.lettering) ? seen.lettering.filter((x) => norm(x?.text)).map((x) => ({ text: norm(x.text), on: LETTERING_ON.includes(x.on) ? x.on : "other" })) : (seen?.on_screen_text || []).filter((t) => norm(t)).map((t) => ({ text: norm(t), on: "other" }));
+  return { fails: all.filter((x) => !LETTER_NOTED.has(x.on)), notes: all.filter((x) => LETTER_NOTED.has(x.on)) };
+}
+/** A check as it is kept: the lettering always listed with what it is on (a check that only listed words reads as "cannot place"). */
+const normalSeen = (seen) => { const L = letteringOf(seen), lettering = [...L.fails, ...L.notes]; return { ...seen, lettering, on_screen_text: lettering.map((x) => x.text) }; };
+/** A check from before lettering said what it is on, that saw some: watched again once (a check call, no filming). */
+const staleCheck = (seen) => !Array.isArray(seen?.lettering) && (seen?.on_screen_text || []).length > 0;
+/**
+ * One clip judged from its check: { passed, why, kind: words | people | lettering | null, faults (what the check noticed
+ * that a viewer might: a note, and the reason for the one retake), marks (lettering that is the room's own: a note,
+ * never a retake), lettering }. Pure: the same check is judged again by today's rules on every run.
+ */
+export function judgeClip(seen, line, { profile = {}, say = [] } = {}) {
+  const heard = sameWords(seen?.spoken || "", line, { names: [profile.display_name].filter(Boolean), sounds: soundsOf(say) }), alone = seen?.people === 1, L = letteringOf(seen);
+  const kind = !heard ? "words" : !alone ? "people" : L.fails.length ? "lettering" : null;
+  const why = kind === "words" ? `it said "${norm(seen?.spoken)}"` : kind === "people" ? `${seen?.people} people are in it` : kind === "lettering" ? `words appear in the picture: ${L.fails.map((x) => `${x.text}${LETTER_WHERE[x.on] ? ` (${LETTER_WHERE[x.on]})` : ""}`).join(", ")}` : null;
+  return { passed: !kind, why, kind, faults: (seen?.faults || []).filter(Boolean), marks: L.notes.map((x) => `${x.on === "screen" ? "on a screen in the room" : "the maker's name on the equipment"}: ${x.text}`), lettering: L };
+}
+const WATCH_SCHEMA = { type: "OBJECT", properties: { spoken: { type: "STRING" }, lettering: { type: "ARRAY", items: { type: "OBJECT", properties: { text: { type: "STRING" }, on: { type: "STRING", enum: LETTERING_ON } }, required: ["text", "on"] } }, people: { type: "INTEGER" }, lips_match_speech: { type: "BOOLEAN" }, faults: { type: "ARRAY", items: { type: "STRING" } }, looks_real: { type: "INTEGER" } }, required: ["spoken", "lettering", "people", "lips_match_speech", "faults", "looks_real"] };
+const WATCH_QUESTION = "Watch and listen to this short video. spoken: transcribe exactly every word spoken, in order, with nothing added; an empty string if nobody speaks. lettering: every word, name, logo, number or letter visible anywhere in the picture at any point, one entry each, empty if none — text: what it says; on: what it is on: \"equipment\" (a maker's name, model or number printed on a machine, rack, weight, bench or mat), \"screen\" (the display of a machine, or a television or clock in the room), \"clothing\" (anything a person is wearing), \"sign\" (a sign, poster, board, or writing on a wall, door, window or mirror), \"overlay\" (a caption, subtitle, title, watermark or logo laid over the picture rather than part of the room), \"other\" (none of these, or you cannot tell). people: how many people are visible at any point. lips_match_speech: true only if the visible person's mouth moves in time with the spoken words. faults: every visible fault that would make a viewer think this is not real footage — warped hands or faces, objects that melt or pass through each other, impossible movement, a face that changes — each as a short phrase; empty if none. looks_real: 1 to 10, how convincingly this passes as phone footage shot in a real gym.";
 /** The real models: a still from the gym's image model, a clip from Omni, a watching pass by the check model. */
 export function realModels(profile = {}) {
   return {
@@ -740,14 +796,13 @@ export function realModels(profile = {}) {
       else if (v.uri) { const res = await fetch(v.uri.includes("alt=media") ? v.uri : `${v.uri}${v.uri.includes("?") ? "&" : "?"}alt=media`, { headers: { "x-goog-api-key": loadGeminiKey() } }); if (!res.ok) throw new Error(`the video could not be downloaded (${res.status})`); writeFileSync(out, Buffer.from(await res.arrayBuffer())); }
       else throw new Error("the video part carried neither data nor a uri");
     },
-    async watch(file, { said = [] } = {}) {
-      // A name is spelt the gym's way when it is heard ("Aether", not "Ether"; "F45", not "F forty-five"), and so is a word on the said-as list ("Quay", however it sounds): nothing else about the line is told.
+    async watch(file) {
+      // A name is spelt the gym's way when it is heard ("Aether", not "Ether"; "F45", not "F forty-five"): nothing else about the line is told.
+      // How a listed word sounded is not asked (2026-11-15): the check wrote "kee" for a clip the owner heard as "kway", so its ear is no judge of that.
       const named = profile.display_name ? ` The business is called "${profile.display_name}": where that name is spoken, write it exactly that way.` : "";
-      const words = said.length ? ` ${said.map((x) => `"${x.word}"`).join(", ")} ${said.length === 1 ? "is a word" : "are words"} in what is spoken: write ${said.length === 1 ? "it" : "each"} as spelt here, however it sounds. pronounced: for ${said.length === 1 ? "that word" : "each of them"}, how the speaker said it, written the way it sounded (for example "kee" or "kway").` : "";
-      const question = WATCH_QUESTION + named + words, schema = said.length ? { ...WATCH_SCHEMA, properties: { ...WATCH_SCHEMA.properties, pronounced: { type: "ARRAY", items: { type: "OBJECT", properties: { word: { type: "STRING" }, sounded_like: { type: "STRING" } }, required: ["word", "sounded_like"] } } } } : WATCH_SCHEMA;
       const out = await whenGeminiFree(async () => {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHECK_MODEL}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": loadGeminiKey() }, signal: AbortSignal.timeout(240000),
-          body: JSON.stringify({ contents: [{ parts: [{ text: question }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0 } }) });
+          body: JSON.stringify({ contents: [{ parts: [{ text: WATCH_QUESTION + named }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: WATCH_SCHEMA, temperature: 0 } }) });
         if (!res.ok) throw new Error(`the video check failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
         return res.json();
       }, { label: "video check" });
@@ -767,10 +822,14 @@ export function stillPrompt({ presenter, profile, spot, first, framing = FRAMING
   const she = presenter.gender === "man" ? "He" : "She", pron = presenter.gender === "man" ? "his" : "her";
   return `A real photograph taken on a phone held upright, 9:16. ${first ? "" : `The person is the SAME person as in the first image: the same face, hair and clothes. `}${she} is ${presenterWords(presenter, profile)}, standing ${spot}${first ? "" : " — a different part of the room from the first image, with a different background behind"}. ${she} faces the camera, ${framing}, mid-sentence with one hand slightly raised as if explaining something to a friend, looking straight into the lens, relaxed and friendly. The room is the gym in the ${first ? "first" : "second"} image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, and ${she.toLowerCase()} is alone. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; ${pron} hands are relaxed and natural. ${NO_WORDS}`;
 }
+/**
+ * The words the presenter is given to read: a word on the said-as list is written the way it sounds ("Boat Key" for
+ * "Boat Quay"), capitalised as the line has it. The captions keep the word as written — software sets them from the script.
+ */
+export const spokenLine = (line, said = []) => said.reduce((s, x) => s.replace(new RegExp(`(?<![A-Za-z])${x.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`, "gi"), (m) => (/^[A-Z]/.test(m) ? x.say.charAt(0).toUpperCase() + x.say.slice(1) : x.say.toLowerCase())), String(line));
 export function clipPrompt({ presenter, profile, line, seconds, said = [] }) {
-  const how = said.length ? ` ${said.map((x) => `"${x.word}" is pronounced "${x.say}"`).join("; ")}: ${presenter.gender === "man" ? "he" : "she"} says it that way.` : "";
   const she = presenter.gender === "man" ? "The man" : "The woman", pron = presenter.gender === "man" ? "His" : "Her", their = presenter.gender === "man" ? "his" : "her", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`;
-  return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${line}"${how} ${pron} mouth forms exactly these words, in time with ${their} voice, and says nothing else; the sentence is finished before the clip ends. ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
+  return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${pron} mouth forms exactly these words, in time with ${their} voice, and says nothing else; the sentence is finished before the clip ends. ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
 }
 
 // ── the text layer and the cut (software: no model) ──────────────────────────
@@ -904,26 +963,56 @@ const stillPromptFor = (i, presenter, profile) => stillPrompt({ presenter, profi
 const stillName = (i, prompt, room) => `still-${i + 1}-${sha(prompt + basename(room)).slice(0, 6)}.jpg`;
 const altOf = (still) => still.replace(/\.jpg$/, "-b.jpg");
 const clipName = (i, line, still, area, perArea, note = "") => `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(line + basename(still) + (note ? `|said:${note}` : "")).slice(0, 6)}`;
-const passedCheck = (seen, line, profile, sounds = []) => !!seen && sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean), sounds }) && seen.people === 1 && !(seen.on_screen_text || []).length;
+/** A clip's saved check passes by today's rules. */
+const passedCheck = (seen, line, profile, say = []) => !!seen && judgeClip(seen, line, { profile, say }).passed;
 /**
- * What a script still needs filmed for these locations, by what is on file: { clips[{ line, area, seconds, on_file }],
- * seconds (to film, one clean pass), reused (seconds already filmed), images (pictures still to make) }. No call, and
- * nothing is written: before a script's first use of the store it looks where `adoptClips` would bring files from.
+ * What a script still needs filmed for these locations, by what is on file: { clips[{ line, area, seconds, on_file,
+ * flagged }], seconds (to film, one clean pass), reused (seconds already filmed), flagged (lines whose takes are used
+ * up without one passing: they wait for the owner on Pick Ads, and a run films nothing for them), images (pictures
+ * still to make) }. No call, and nothing is written: before a script's first use of the store it looks where
+ * `adoptClips` would bring files from. A take set aside is not on file; one kept on the owner's word is.
  */
-export function videoNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [], saidList = saidAs() }) {
+export function videoNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [], saidList = saidAs(), takes = 2 }) {
   const presenter = presenterOf(profile), said = filmedLines(script.lines, closing), where = existsSync(store) ? store : legacy.find(hasStills) || store;
-  const files = existsSync(where) ? readdirSync(where) : [], clips = []; let images = 0;
+  const files = existsSync(where) ? readdirSync(where) : [], aside = asideOf(where), clips = []; let images = 0;
   for (const [i, raw] of said.entries()) {
     const still = presenter && room ? stillName(i, stillPromptFor(i, presenter, profile), room) : null, perArea = /\{AREA\}/.test(raw);
     if (!still || !files.includes(still)) images++;
     for (const area of perArea ? (areas.length ? areas : [""]) : [null]) {
       const line = fillLine(raw, area || ""), say = saidIn(line, saidList), note = saidNote(say), names = still ? [clipName(i, line, still, area, perArea, note), clipName(i, line, altOf(still), area, perArea, note)] : [];
-      const on_file = files.some((f) => /\.mp4$/.test(f) && names.some((nm) => f === `${nm}.mp4` || (f.startsWith(`${nm}-take`))) && passedCheck(readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), line, profile, soundsOf(say)));
-      clips.push({ line, area, seconds: clipSeconds(line), on_file });
+      const mine = files.filter((f) => /\.mp4$/.test(f) && names.some((nm) => f === `${nm}.mp4` || f.startsWith(`${nm}-take`))), live = mine.filter((f) => !aside.has(f));
+      const on_file = live.some((f) => passedCheck(readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), line, profile, say) || !!ownerKeptClip(where, join(where, f)));
+      clips.push({ line, area, seconds: clipSeconds(line), on_file, flagged: !on_file && live.length > 0 && mine.length >= takes + (mine.length - live.length) });
     }
   }
   const sum = (xs) => xs.reduce((t, c) => t + c.seconds, 0);
-  return { clips, seconds: sum(clips.filter((c) => !c.on_file)), reused: sum(clips.filter((c) => c.on_file)), images };
+  return { clips, seconds: sum(clips.filter((c) => !c.on_file && !c.flagged)), reused: sum(clips.filter((c) => c.on_file)), flagged: clips.filter((c) => c.flagged).length, images };
+}
+
+// ── the owner's word on a take ───────────────────────────────────────────────
+/**
+ * Two small files beside a script's clips (2026-11-15). `set-aside.json`: takes the owner asked to be filmed again
+ * (Film this line again) — kept on disk, never used, and each makes room for a fresh take. `owner-kept.json`: a
+ * take that failed its check and that he kept anyway (Use this take anyway) — that file, unchanged since, passes on
+ * his word, as a flagged premises photo does.
+ */
+const ASIDE_FILE = "set-aside.json", KEPT_FILE = "owner-kept.json";
+const asideOf = (store) => new Set(Object.keys(readJson(join(store, ASIDE_FILE))?.clips || {}));
+const fileSha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
+export const ownerKeptClip = (store, file) => { const e = readJson(join(store, KEPT_FILE))?.clips?.[basename(file)]; return e && existsSync(file) && e.sha256 === fileSha(file) ? e : null; };
+const clipNames = (names) => { const out = [...new Set([].concat(names || []).map((n) => String(n)))]; if (!out.length || out.some((n) => !/^line-[a-z0-9-]+\.mp4$/.test(n))) throw new Error("which take? (a clip of this script, by its file name)"); return out; };
+/** Set takes aside, so the next run films the line fresh. Returns how many were newly set aside. */
+export function setAside(store, names, why = "") {
+  const list = clipNames(names), data = readJson(join(store, ASIDE_FILE)) || { clips: {} }; let n = 0;
+  for (const name of list) { if (!existsSync(join(store, name))) throw new Error(`no such take on file: ${name}`); if (!data.clips[name]) { data.clips[name] = { on: today(), ...(norm(why) ? { why: norm(why) } : {}) }; n++; } }
+  writeFileSync(join(store, ASIDE_FILE), JSON.stringify(data, null, 2) + "\n"); return n;
+}
+/** Keep a take that failed its check, on the owner's word. */
+export function keepTake(store, name, why = "") {
+  const [clip] = clipNames([name]), file = join(store, clip); if (!existsSync(file)) throw new Error(`no such take on file: ${clip}`);
+  const data = readJson(join(store, KEPT_FILE)) || { clips: {} };
+  data.clips[clip] = { sha256: fileSha(file), on: today(), ...(norm(why) ? { left: norm(why) } : {}) };
+  writeFileSync(join(store, KEPT_FILE), JSON.stringify(data, null, 2) + "\n"); return data.clips[clip];
 }
 
 // ── making the videos of one script ──────────────────────────────────────────
@@ -972,68 +1061,91 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       stills.push(out);
     }
     // A clip for each line — once, or once per location when the line says the area.
-    const made = new Map(); // "i|area" or "i|" → { file, takes, passed, check, line, why }
+    const made = new Map(); // "i|area" or "i|" → { file, takes, passed, flagged?, check, line, why, all[] }
+    const aside = asideOf(store), filmedNow = new Map(); // what this call filmed: file → seconds
     const clipFor = async (i, area) => {
       const perArea = /\{AREA\}/.test(said[i]), key = `${i}|${perArea ? area : ""}`; if (made.has(key)) return made.get(key);
       const line = fillLine(said[i], area), seconds = clipSeconds(line);
       const say = saidIn(line, saidList), nameFor = (pic) => clipName(i, line, pic, area, perArea, saidNote(say));
+      // Takes the owner set aside (Film this line again) are counted and never used: each makes room for a fresh one.
+      const mine = (f) => [stills[i], altOf(stills[i])].some((pic) => f === `${nameFor(pic)}.mp4` || f.startsWith(`${nameFor(pic)}-take`));
+      const limit = takes + [...aside].filter(mine).length;
       // The picture this line is filmed from: its own, or — once a clip was refused on that one — the second picture made for it.
       let still = !existsSync(join(store, `${nameFor(stills[i])}.mp4`)) && existsSync(altOf(stills[i])) ? altOf(stills[i]) : stills[i];
-      let take = 0, r = null, refused = 0; const passedTakes = [];
-      const gaveUp = (why) => { r = { file: null, takes: take, passed: false, refused: true, line, why }; };
-      while (take < takes && !(r && r.passed && !(r.check?.faults || []).length)) {
+      let take = 0, refused = 0, noteRetake = false, stopped = null; const judged = [];
+      // A second picture of the presenter for this line: after two refusals, or when lettering in the picture failed a take.
+      const freshPicture = async () => {
+        const alt = altOf(stills[i]);
+        if (!existsSync(alt)) {
+          if (!within("images", 1)) return "cap";
+          spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`  a fresh picture of the presenter for ${label(i)}`);
+          const again = stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[(i + 1) % FRAMINGS.length], first: false });
+          try { await models.image({ out: alt, prompt: again, refs: [stills[0], room] }); }
+          catch (e2) { if (!isRefusal(e2)) throw e2; return "refused"; }
+        }
+        still = alt; return "ok";
+      };
+      while (take < limit) {
+        // Enough: a clean take; or a take with small notes that has had its one retake (2026-11-15: one automatic
+        // retake for notes, the owner's choice — never two). A take kept on the owner's word is not filmed again.
+        const ok = judged.filter((t) => t.passed);
+        if (ok.some((t) => !t.faults.length || t.kept)) break;
+        if (ok.length) { if (noteRetake) break; noteRetake = true; }
         take++; const name = nameFor(still), file = join(store, `${name}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
+        if (aside.has(basename(file))) continue;
         if (!(existsSync(file) && statSync(file).size > 1000)) {
-          if (!within("seconds", seconds)) { if (!passedTakes.length) r = { file: null, takes: take - 1, passed: false, line, why: `the cap of ${caps.seconds} seconds of video was reached` }; take--; break; }
+          if (!within("seconds", seconds)) { stopped = { why: `the cap of ${caps.seconds} seconds of video was reached` }; take--; break; }
           spent.seconds += seconds; onProgress({ stage: "clip", line: i + 1, area: perArea ? area : null, take }); log(`${label(i)}${perArea ? ` (${area})` : ""}, take ${take}: ${seconds} s`);
           const prompt = clipPrompt({ presenter, profile, line, seconds, said: say }); writeFileSync(file.replace(/\.mp4$/, ".prompt.txt"), prompt + "\n");
-          try { await models.clip({ out: file, image: still, prompt, seconds }); }
+          try { await models.clip({ out: file, image: still, prompt, seconds }); filmedNow.set(file, seconds); }
           catch (e) {
             // Google refused the request (its content rules): nothing was made, so nothing is counted and it is no take.
             // Asked once more as it is; then on a fresh picture of the presenter; then this video is refused, in words.
             if (!isRefusal(e)) throw e;
             spent.seconds -= seconds; take--; refused++;
-            log(`  ${basename(file)}: refused by Google's video model under its content rules${refused === 1 && !passedTakes.length ? " — asked once more" : ""}`);
-            if (passedTakes.length) break; // a take already passed: it is kept
+            log(`  ${basename(file)}: refused by Google's video model under its content rules${refused === 1 && !ok.length ? " — asked once more" : ""}`);
+            if (ok.length) break; // a take already passed: it is kept
             if (refused === 1) continue;
             if (refused === 2 && still === stills[i]) {
-              const alt = altOf(stills[i]);
-              if (!existsSync(alt)) {
-                if (!within("images", 1)) { gaveUp(`refused by Google's video model under its content rules (twice), and the cap of ${caps.images} image calls leaves none for a fresh picture to try it on`); break; }
-                spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`  a fresh picture of the presenter for ${label(i)}`);
-                const again = stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[(i + 1) % FRAMINGS.length], first: false });
-                try { await models.image({ out: alt, prompt: again, refs: [stills[0], room] }); }
-                catch (e2) { if (!isRefusal(e2)) throw e2; gaveUp("refused by Google's video model under its content rules (twice), and its image model refused a fresh picture to try it on"); break; }
-              }
-              still = alt; continue;
+              const got = await freshPicture(); if (got === "ok") continue;
+              stopped = { refused: true, why: got === "cap" ? `refused by Google's video model under its content rules (twice), and the cap of ${caps.images} image calls leaves none for a fresh picture to try it on` : "refused by Google's video model under its content rules (twice), and its image model refused a fresh picture to try it on" }; break;
             }
-            gaveUp(`refused by Google's video model under its content rules, ${refused} times and on two pictures of the presenter`); break;
+            stopped = { refused: true, why: `refused by Google's video model under its content rules, ${refused} times and on two pictures of the presenter` }; break;
           }
         }
-        let seen = readJson(checkFile); if (!seen) { spent.checks++; seen = await models.watch(file, { said: say }); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
-        // A listed word heard said another way is a noted fault: the clip is made once more while takes are left, and it is never a refusal.
-        const wrong = saidWrong(seen, say); if (wrong.length) seen = { ...seen, faults: [...(seen.faults || []), ...wrong] };
-        const heard = sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean), sounds: soundsOf(say) }), alone = seen.people === 1, clean = !(seen.on_screen_text || []).length;
-        r = { file, takes: take, passed: heard && alone && clean, line, check: seen, why: !heard ? `it said "${norm(seen.spoken)}"` : !alone ? `${seen.people} people are in it` : !clean ? `words appear in the picture: ${seen.on_screen_text.join(", ")}` : null };
-        if (r.passed) passedTakes.push(r);
-        log(`  ${basename(file)}: ${r.passed ? "said as written, one person, no lettering" : r.why}${(seen.faults || []).length ? ` · noted: ${seen.faults.join("; ")}${r.passed && take < takes ? " — made once more" : ""}` : ""}`);
+        // The check on file is judged again by today's rules; one made before lettering said what it is on is watched again (a check call, no filming).
+        let seen = readJson(checkFile); if (!seen || staleCheck(seen)) { spent.checks++; seen = normalSeen(await models.watch(file, { said: say })); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
+        let j = judgeClip(seen, line, { profile, say });
+        // The owner's "Use this take anyway": that file, unchanged since, passes on his word.
+        if (!j.passed && ownerKeptClip(store, file)) j = { ...j, passed: true, kept: j.why, why: null, kind: null };
+        judged.push({ file, take, ...j, check: seen });
+        log(`  ${basename(file)}: ${j.kept ? `kept on your word (${j.kept})` : j.passed ? "said as written, one person, no lettering" : j.why}${j.marks.length ? ` · in the room: ${j.marks.join("; ")}` : ""}${j.faults.length ? ` · noted: ${j.faults.join("; ")}${j.passed && !j.kept && !noteRetake && take < limit ? " — made once more" : ""}` : ""}`);
+        // Lettering that is in the picture itself (a sign, clothing) would be in every take from it: the next take is filmed from a fresh picture. A caption the video model laid over the picture is not the picture's fault.
+        if (!j.passed && j.kind === "lettering" && j.lettering.fails.some((x) => x.on !== "overlay") && still === stills[i] && take < limit) await freshPicture();
       }
+      const ok = judged.filter((t) => t.passed), all = judged.map((t) => basename(t.file));
+      let r;
       // Of the takes that passed, the one with the fewest noted faults (the later on a tie).
-      if (passedTakes.length) r = { ...passedTakes.reduce((best, x) => ((x.check?.faults || []).length <= (best.check?.faults || []).length ? x : best)), takes: take };
+      if (ok.length) { const best = ok.reduce((b, x) => (x.faults.length <= b.faults.length ? x : b)); r = { file: best.file, takes: take, passed: true, line, check: best.check, marks: best.marks, ...(best.kept ? { kept: best.kept } : {}), all }; }
+      // None passed, but there is a take: the one nearest right (the words said as written before anything else) goes
+      // into the cut, flagged, for the owner to watch and decide (2026-11-15: "I don't even see the final output").
+      else if (judged.length) { const rank = (t) => ({ lettering: 0, people: 1, words: 2 })[t.kind] ?? 3, best = judged.reduce((b, x) => (rank(x) < rank(b) || (rank(x) === rank(b) && x.faults.length <= b.faults.length) ? x : b)); r = { file: best.file, takes: take, passed: false, flagged: true, kind: best.kind, why: best.why, line, check: best.check, marks: best.marks, all }; }
+      else r = { file: null, takes: take, passed: false, line, why: stopped?.why || "no take was made", ...(stopped?.refused ? { refused: true } : {}), all };
+      r.seconds = seconds; r.per_area = perArea; r.judged = judged.map((t) => ({ file: t.file, passed: t.passed }));
       made.set(key, r); return r;
     };
     const videos = [];
     for (const area of areas) {
       const lines = []; for (const [i] of said.entries()) lines.push(await clipFor(i, area));
-      const bad = lines.findIndex((l) => !l.passed);
-      if (bad >= 0) {
-        const l = lines[bad];
-        // A refusal is said as what it is, with what to do; anything else as before.
-        videos.push({ area, script_id: script.id, lines, ...(l.refused ? { refused: true } : {}), failed: l.refused ? `${label(bad)}: ${l.why}. Nothing else is lost: Run again tries only this cut; if it is refused again, change its words` : `line ${bad + 1} did not pass after ${l.takes} take${l.takes === 1 ? "" : "s"}: ${l.why}` }); continue;
+      // A line with no take at all (refused by Google, or the cap) leaves nothing to cut: said as what it is, with what to do.
+      const none = lines.findIndex((l) => !l.file);
+      if (none >= 0) {
+        const l = lines[none];
+        videos.push({ area, script_id: script.id, lines, ...(l.refused ? { refused: true } : {}), failed: l.refused ? `${label(none)}: ${l.why}. Nothing else is lost: Run again tries only this cut; if it is refused again, change its words` : `${label(none)}: ${l.why}` }); continue;
       }
       onProgress({ stage: "cut", area });
       const overlays = [], blocks = []; let at = 0;
-      const cuts = [];
+      const cuts = [], starts = [];
       for (const [i, l] of lines.entries()) {
         // Where he speaks, measured from the sound; the clip is kept from a breath before to a breath after, and the captions follow the voice inside it.
         const sp = speechOf(l.file), from = Math.max(0, sp.start - LEAD), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? END_HOLD : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
@@ -1042,15 +1154,23 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
           if (!(w.to > w.from)) continue;
           const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}-${w.i}.png`), capHtml(c.text, w.i)); overlays.push({ png: o.png, from: w.from, to: w.to }); if (w.i === 0) blocks.push(...o.blocks);
         }
-        at += cuts[i].to - cuts[i].from;
+        starts.push(Math.round(at * 100) / 100); at += cuts[i].to - cuts[i].from;
       }
       const outside = blocks.filter((b) => !inLive(b));
       if (outside.length) { videos.push({ area, script_id: script.id, lines, failed: `the words do not fit Meta's live area: "${outside[0].text}"` }); continue; }
       const file = assemble({ clips: cuts, overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`) });
       const poster = file.replace(/\.mp4$/, ".jpg"); ff(["-ss", "0.8", "-i", file, "-frames:v", "1", "-q:v", "3", poster]);
-      videos.push({ area, script_id: script.id, style: script.style?.name || null, pain: script.pain || null, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), notes: [...new Set(lines.flatMap((l) => l.check?.faults || []))] });
+      // Every line of the cut, for the owner's screen: where it starts, the take in it, the takes on file, what a fresh take costs, a word to listen for, and — where no take passed — why.
+      const parts = lines.map((l, i) => ({ line: i + 1, label: label(i), text: l.line, clip: basename(l.file), takes: l.all, seconds: l.seconds, at: starts[i], ...(l.per_area ? { per_area: true } : {}), ...(saidIn(l.line, saidList).length ? { listen: saidIn(l.line, saidList).map((x) => ({ word: x.word, say: x.say })) } : {}), ...(l.kept ? { kept: l.kept } : {}), ...(l.passed ? {} : { flag: { why: l.why, kind: l.kind } }) }));
+      const flags = parts.filter((p) => p.flag).map((p) => ({ line: p.line, label: p.label, why: p.flag.why, kind: p.flag.kind }));
+      videos.push({ area, script_id: script.id, style: script.style?.name || null, pain: script.pain || null, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), parts, ...(flags.length ? { flags } : {}),
+        notes: [...new Set([...lines.flatMap((l) => l.check?.faults || []), ...lines.flatMap((l) => l.marks || []), ...parts.filter((p) => p.kept).map((p) => `${p.label} kept on your word (${p.kept})`)])] });
     }
-    return { videos, spent };
+    // What this call filmed, and what became of it: in a video, replaced by a retake, failed its check, or waiting on a video that could not be cut.
+    const inCut = new Set(videos.filter((v) => v.file).flatMap((v) => v.lines.map((l) => l.file))), state = new Map([...made.values()].flatMap((r) => r.judged.map((t) => [t.file, t.passed]))), chosen = new Set([...made.values()].map((r) => r.file));
+    const tally = { filmed: 0, in_videos: 0, replaced: 0, failed: 0, waiting: 0 };
+    for (const [f, s] of filmedNow) { tally.filmed += s; tally[inCut.has(f) ? "in_videos" : chosen.has(f) ? "waiting" : state.get(f) ? "replaced" : "failed"] += s; }
+    return { videos, spent, tally };
   } finally { if (own) await browser.close(); }
 }
 

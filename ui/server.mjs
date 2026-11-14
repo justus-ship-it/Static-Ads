@@ -52,7 +52,7 @@ import { cycleFrom } from "../skills/references/cycle.mjs";
 import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
 import { plainGemini } from "../skills/references/gemini-busy.mjs";
-import { readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, readStyle, nameStyle, suggestFacts, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
+import { setAside, keepTake, clipStore, readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, readStyle, nameStyle, suggestFacts, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -889,7 +889,7 @@ function reviewState(gym, id) {
     const s = storyOf.get(a.folder) || (a.story_file && existsSync(join(out, a.story_file)) ? { file: a.story_file } : null);
     return {
       folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, ratio: a.ratio || batch.ratio || "1x1", format: a.format || null, treatment: a.treatment, style: a.style, palette: a.palette,
-      ...(a.video_file && existsSync(join(out, a.video_file)) ? { video: fileUrl(gym, join(out, a.video_file)), video_seconds: a.video?.seconds ?? null, video_words: a.video?.words || [] } : {}),
+      ...(a.video_file && existsSync(join(out, a.video_file)) ? { video: fileUrl(gym, join(out, a.video_file)), video_seconds: a.video?.seconds ?? null, video_words: a.video?.words || [], video_script: a.video?.script_id || null, video_parts: (a.video?.parts || []).map((p) => ({ line: p.line, label: p.label, text: p.text, at: p.at, seconds: p.seconds, takes: (p.takes || []).length, ...(p.per_area ? { per_area: true } : {}), ...(p.listen ? { listen: p.listen } : {}), ...(p.kept ? { kept: p.kept } : {}), ...(p.again ? { again: true } : {}), ...(p.flag ? { flag: p.flag } : {}) })), video_flags: (a.video?.flags || []).length } : {}),
       photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || a.story_failure || null, card: a.card || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
     };
   });
@@ -900,7 +900,38 @@ function reviewState(gym, id) {
     counts: { ads: ads.length, kept: count("keep"), excluded: count("exclude"), unreviewed: count(null), photos: photos.length, photos_excluded: photos.filter((p) => p.status === "exclude").length },
     saved: existsSync(join(out, "selections.json")),
     stories: stories ? { ads: stories.ads.length, image_calls: stories.image_calls, max_calls: stories.max_calls, left_out: (stories.failed?.length || 0) + (stories.left_out?.length || 0) } : null,
+    // Videos that could not be cut at all (a line with no take: refused by Google, or the cap), said where the ads are picked.
+    video_failures: (batch?.failed || []).filter((f) => f.video).map((f) => ({ candidate: f.candidate, location: f.location || null, why: [].concat(f.failures || []).join("; ") })),
+    // What a fresh take costs, and what a run of this batch would film anyway (a line not on file yet), so Film this line again… says the whole of it.
+    video_cost: (() => { const brief = readJsonFile(briefPath(gym, id)) || {}; let pending = 0; try { pending = videoCount(brief.videos) ? videoPlan(brandDir(gym), brief)?.seconds || 0 : 0; } catch {} return { usd_per_second: USD_PER_SECOND, takes: brief.attempts ?? 2, pending }; })(),
   };
+}
+/**
+ * The owner's word on one line of a video (2026-11-15), from Pick Ads. `keep`: a take that failed its check is used
+ * anyway — recorded beside the script's clips, so every later run takes that file on his word — and the flag comes off
+ * the ad. `retake`: every take on file for the line is set aside (kept on disk, never used), so the next run of the
+ * batch films it fresh; nothing is filmed here. A line that says no area is one clip for every location's video, so
+ * each of the batch's videos from that script is marked alike. Returns an error message, or null.
+ */
+function videoTake(gym, id, { ad: folder, line, action } = {}) {
+  const out = outDirOf(gym, id), batch = readJsonFile(join(out, "batch.json"));
+  const ad = (batch?.ads || []).find((a) => a.folder === folder && a.video?.script_id);
+  if (!ad) return "this batch has no such video";
+  const part = (ad.video.parts || []).find((p) => p.line === line);
+  if (!part) return "this video has no such line (a video made before 15 Nov 2026 is run again first: it costs nothing)";
+  if (!["keep", "retake"].includes(action)) return "keep this take, or film the line again";
+  if (action === "keep" && !part.flag) return `${part.label} passed its check: there is nothing to keep on your word`;
+  const store = clipStore(brandDir(gym), ad.video.script_id), why = part.flag?.why || null;
+  try { if (action === "keep") keepTake(store, part.clip, why); else setAside(store, part.takes?.length ? part.takes : [part.clip], part.flag ? why : "the owner asked for a fresh take"); }
+  catch (e) { return e.message; }
+  for (const a of batch.ads) {
+    if (a.video?.script_id !== ad.video.script_id) continue;
+    const p = (a.video.parts || []).find((x) => x.line === line && x.clip === part.clip); if (!p) continue;
+    if (action === "keep") { delete p.flag; p.kept = why; a.video.flags = (a.video.flags || []).filter((f) => f.line !== line); if (!a.video.flags.length) delete a.video.flags; a.video.notes = [...(a.video.notes || []), `${p.label} kept on your word (${why})`]; }
+    else p.again = true;
+  }
+  writeWhole(join(out, "batch.json"), JSON.stringify(batch, null, 2) + "\n");
+  return null;
 }
 
 /** A lead form's name as this gym knows it (2026-10-11): one made here, the profile's default, or one the import read — no call. */
@@ -943,6 +974,7 @@ function savePicks(gym, id, change) {
   const { ads = {}, photos = {} } = change || {};
   if (typeof ads !== "object" || typeof photos !== "object" || Array.isArray(ads) || Array.isArray(photos)) return "ads and photos must map names to keep, exclude or null";
   for (const [f, v] of Object.entries(ads)) { if (!folders.has(f)) return `this batch has no ad ${f}`; if (!DECISIONS.has(v)) return `${f}: a decision is keep, exclude or null`; }
+  for (const [f, v] of Object.entries(ads)) { const fl = v === "keep" ? batch.ads.find((a) => a.folder === f)?.video?.flags || [] : []; if (fl.length) return `${f}: ${fl[0].label} did not pass its check (${fl[0].why}). Decide it first — film the line again, use the take anyway, or edit the line — or exclude the video`; }
   for (const [p, v] of Object.entries(photos)) { if (!photoIds.has(p)) return `this batch has no photo ${p}`; if (!DECISIONS.has(v)) return `${p}: a decision is keep, exclude or null`; }
   const d = readDecisions(gym, id);
   for (const [f, v] of Object.entries(ads)) { if (v === null) delete d.ads[f]; else d.ads[f] = v; }
@@ -2105,7 +2137,7 @@ const server = createServer(async (req, res) => {
         if (rid && req.method === "PUT") { const { note, retired } = await readBody(req); return view({ ref: editCopyRef(dir, decodeURIComponent(rid), { note, retired }) }); }
       } catch (e) { return json(res, 400, { error: e.message }); }
     }
-    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull|drift\/take)$/);
+    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull|drift\/take|video\/take)$/);
     if (rv) {
       const [, gym, id, what] = rv;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
@@ -2169,6 +2201,12 @@ const server = createServer(async (req, res) => {
         } catch (e) { return json(res, 502, { error: scrubTokens(e.message) }); }
       }
       if (what === "review" && req.method === "GET") return json(res, 200, { ...reviewState(gym, id), words: (({ offer, locations, audience }) => ({ offer, locations, audience: audience ?? null }))(readJsonFile(briefPath(gym, id))), run: activeRun(gym, id) });
+      if (what === "video/take" && req.method === "POST") {
+        if (activeRun(gym, id) || orphanBatch(gym, id)) return json(res, 409, { error: "this batch is being made right now: wait for the run to end, or stop it" });
+        const body = await readBody(req), err = videoTake(gym, id, { ad: String(body.ad || ""), line: Number(body.line), action: body.action });
+        if (err) return json(res, 400, { error: err });
+        return json(res, 200, { ok: true, ...reviewState(gym, id) });
+      }
       if (what === "picks" && req.method === "PUT") {
         const change = await readBody(req);
         const err = savePicks(gym, id, change);

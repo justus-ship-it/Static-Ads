@@ -1100,28 +1100,37 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     const bArea = { ...brief, batch_id: "with-videos-area", locations: ["BISHAN", "TOA PAYOH"] }, pArea = videoPlan(dir, bArea), nB = made.clip.length;
     assert.deepEqual([pArea.seconds, pArea.reused, pArea.allow], [S(0, "TOA PAYOH"), pass - S(0, "ANG MO KIO"), S(0, "TOA PAYOH") * 2]);
     const rArea = await run(bArea); assert.deepEqual([made.clip.slice(nB), rArea.batch.ads.map((a) => a.location), rArea.batch.video_seconds], [[S(0, "TOA PAYOH")], ["BISHAN", "TOA PAYOH"], S(0, "TOA PAYOH")]);
-    // A line that never comes out as written at one location: that video is a named failure, the other is made; and the cap is never passed.
+    // A line that never comes out as written at one location (2026-11-15: "I don't even see the final output"): that video is cut all the same and joins the batch's ads FLAGGED, with the line and why, for the owner to watch and decide on Pick Ads — it is never published until he has; the other is made; the cap is never passed; and the run says what its filming came to.
     fresh();
     const b2 = { ...brief, batch_id: "with-videos-2", max_video_seconds: pass + S(0, "BISHAN") }, n0 = made.clip.length;
     const r3 = await run(b2, videoModels({ say: (line) => (/Bishan/.test(line) ? "People in Bishan, hello." : line) }));
-    assert.deepEqual([r3.batch.ads.map((a) => a.location), r3.batch.failed.map((f) => [f.candidate, f.location, f.failures[0]])], [["ANG MO KIO"], [["v01", "BISHAN", 'line 1 did not pass after 2 takes: it said "People in Bishan, hello."']]]);
+    assert.deepEqual([r3.batch.ads.map((a) => [a.location, a.video.flags]), r3.batch.failed], [[["BISHAN", [{ line: 1, label: "line 1", why: 'it said "People in Bishan, hello."', kind: "words" }]], ["ANG MO KIO", undefined]], []]);
+    assert.deepEqual(r3.batch.ads[0].video.parts.map((p) => [p.line, p.takes.length, !!p.flag, !!p.per_area]), [[1, 2, true, true], [2, 1, false, false], [3, 1, false, false]]);
+    assert.ok(existsSync(join(r3.out, r3.batch.ads[0].video_file)), "the flagged video is there to watch");
+    const { keptAds } = await import("./meta-publish.mjs");
+    assert.deepEqual(keptAds(r3.out).map((a) => a.location), ["ANG MO KIO"], "an ad not looked at counts as kept — a flagged video never does");
+    assert.ok(logs.some((l) => l === '⚑ v01 BISHAN: cut for you to watch, and waiting for your decision on Pick Ads — line 1: it said "People in Bishan, hello."'), logs.slice(-14).join(" | "));
+    assert.deepEqual(r3.batch.video_run, { filmed: pass + S(0, "BISHAN"), in_videos: pass, replaced: 0, failed: S(0, "BISHAN"), waiting: 0 });
+    assert.ok(logs.some((l) => l === `· video filmed this run: ${pass + S(0, "BISHAN")} s (US$${((pass + S(0, "BISHAN")) * 0.07).toFixed(2)}) — ${pass} s in the videos, ${S(0, "BISHAN")} s in takes that failed the check`), logs.slice(-14).join(" | "));
     assert.ok(made.clip.slice(n0).reduce((t, x) => t + x, 0) <= b2.max_video_seconds, "never more seconds than the cap");
-    // No ad at all (2026-11-12, Aether Athletics: one video, one line refused, and the run ended "Command failed: … gallery-selector"): the run ends in words with what was refused and why, the gallery step is never reached, and what was made is kept — the same brief run again, with the line now heard as written, makes its video from the clips on disk.
+    // A batch of one video with a line no take passed for is a batch of one flagged ad (before 2026-11-15 it was no ad at all, and the run ended in an error) — the same brief run again, with the line now heard as written, takes the flag off from the clips on disk.
     fresh();
     const b5 = { ...brief, batch_id: "with-videos-5", locations: ["BISHAN"] }, n5 = made.clip.length; let galleries = 0;
     const run5 = (models) => runBatch({ brandDir: dir, brief: b5, deps: { ...fakes(calls), gallery: () => { galleries++; }, browser, videoModels: models }, log: (m) => logs.push(m) });
-    await assert.rejects(run5(videoModels({ say: (line) => (/built for exactly that/.test(line) ? "Something else entirely was said here." : line) })), /^Error: no ad was made\. v01 \(BISHAN\): line 2 did not pass after 2 takes: it said "Something else entirely was said here\." Everything made so far is kept: Run again reuses it\.$/);
-    const p5 = JSON.parse(readFileSync(join(dir, "outputs", "with-videos-5", "progress.json"), "utf-8"));
-    assert.deepEqual([galleries, p5.stage, /^no ad was made\. v01 \(BISHAN\)/.test(p5.error), made.clip.length - n5], [0, "failed", true, 4], "three lines, the refused one twice");
+    const r5a = await run5(videoModels({ say: (line) => (/built for exactly that/.test(line) ? "Something else entirely was said here." : line) }));
+    assert.deepEqual([galleries, r5a.batch.ads.length, r5a.batch.ads[0].video.flags.map((f) => [f.line, f.why]), r5a.batch.failed, made.clip.length - n5], [1, 1, [[2, 'it said "Something else entirely was said here."']], [], 4], "three lines, the one that failed twice");
+    assert.equal(videoPlan(dir, b5).seconds, 0, "its takes are used up: a run films nothing for it until the owner decides");
     // A name's possessive and spelling are not a different word: "Test Gym's" heard as "Test Gyms" and as "Tess Gym" passes; the saved checks are judged again, so nothing is filmed.
     for (const f of readdirSync(join(dir, "video-clips", script.id)).filter((x) => /^line-2.*check\.json$/.test(x))) { const p = join(dir, "video-clips", script.id, f), c = JSON.parse(readFileSync(p, "utf-8")); writeFileSync(p, JSON.stringify({ ...c, spoken: /take2/.test(f) ? LINES[1].replace("Test Gym's", "Tess Gym") : LINES[1].replace("Test Gym's", "Test Gyms") })); }
     const n6 = made.clip.length, r5 = await run5(videoModels());
-    assert.deepEqual([made.clip.length - n6, r5.batch.ads.length, r5.batch.ads[0].location, r5.batch.failed, galleries], [0, 1, "BISHAN", [], 1]);
+    assert.deepEqual([made.clip.length - n6, r5.batch.ads.length, r5.batch.ads[0].location, r5.batch.ads[0].video.flags, r5.batch.failed, galleries], [0, 1, "BISHAN", undefined, [], 2]);
+    assert.ok(logs.some((l) => l === "· video filmed this run: none — everything was already on file"));
     // A clip Google refuses every time (2026-11-14: "Request blocked due to prohibited content guidelines" ended a run on the raw JSON): the batch ends in words with what to do, what was made is kept, and a fault that is not a refusal is said in plain words on the progress file.
     fresh();
     const b6 = { ...brief, batch_id: "with-videos-6", locations: ["BISHAN"] }, refuse = (models, err) => ({ ...models, async clip(x) { if (/built for exactly that/.test(x.prompt)) throw err(); return models.clip(x); } });
     const run6 = (b, models) => runBatch({ brandDir: dir, brief: b, deps: { ...fakes(calls), gallery: () => {}, browser, videoModels: models }, log: (m) => logs.push(m) });
     await assert.rejects(run6(b6, refuse(videoModels(), () => new Error('video line-2.mp4 failed (400): {"error":{"message":"Request blocked due to prohibited content guidelines. Please modify your input and retry.","code":"prohibited_content"}}'))), /^Error: no ad was made\. v01 \(BISHAN\): line 2: refused by Google's video model under its content rules, 3 times and on two pictures of the presenter\. Nothing else is lost: Run again tries only this cut; if it is refused again, change its words\. Everything made so far is kept: Run again reuses it\.$/);
+    { const p6 = JSON.parse(readFileSync(join(dir, "outputs", "with-videos-6", "progress.json"), "utf-8")); assert.deepEqual([p6.stage, /^no ad was made\. v01 \(BISHAN\)/.test(p6.error)], ["failed", true], "a line with no take at all leaves nothing to cut: no ad, said in words"); }
     fresh();
     await assert.rejects(run6({ ...b6, batch_id: "with-videos-7" }, refuse(videoModels(), () => new Error('video line-2.mp4 failed (429): {"error":{"message":"You exceeded your current quota.","status":"RESOURCE_EXHAUSTED"}}'))), /RESOURCE_EXHAUSTED/);
     assert.equal(JSON.parse(readFileSync(join(dir, "outputs", "with-videos-7", "progress.json"), "utf-8")).error, "Google's limit for this key is used up for now. Wait a few minutes and run again; if it keeps happening, the limit on the Google account needs raising. (Google said: You exceeded your current quota.)");

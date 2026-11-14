@@ -447,7 +447,8 @@ export function keptAds(batchDir) {
   const stories = existsSync(join(batchDir, "stories.json")) ? JSON.parse(readFileSync(join(batchDir, "stories.json"), "utf-8")) : null;
   const storyOf = new Map((stories?.ads || []).filter((s) => existsSync(join(batchDir, s.file))).map((s) => [s.folder, s.file]));
   const excludedPhotos = new Set(Object.entries(review.photos || {}).filter(([, v]) => v === "exclude").map(([k]) => k));
-  return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)))
+  // A video with a line no take passed for (2026-11-15) is shown to the owner flagged and is never published until he has decided that line: an ad not looked at counts as kept, and this one must not.
+  return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)) && !a.video?.flags?.length)
     .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null, ...(a.video?.style ? { video_style: a.video.style } : {}) } : {}) }));
 }
 

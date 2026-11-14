@@ -227,6 +227,15 @@
   .rv-stage figure.ex img{opacity:.35;filter:grayscale(.6)}
   .rv-stage figcaption{color:#9fb0d6;font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;margin-top:6px}
   .rv-stage figure video{max-height:calc(100% - 22px);max-width:100%;border-radius:6px;display:block;background:#000;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .rv-lines{width:360px;max-width:38vw;max-height:calc(100% - 22px);align-self:center;overflow:auto;background:#101b3d;border:1px solid #25325c;border-radius:8px;padding:10px 12px;color:#dbe4fb;font-size:12.5px;line-height:1.45;text-align:left;cursor:default;user-select:text;-webkit-user-select:text}
+  .rv-lines .hd{font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;color:#9fb0d6;margin-bottom:6px}
+  .rv-lines .wait{background:#3a2a10;border:1px solid #8a6420;color:#ffd98a;border-radius:6px;padding:6px 8px;margin-bottom:8px}
+  .rv-lines .ln{border-top:1px solid #25325c;padding:7px 0} .rv-lines .ln:first-of-type{border-top:0}
+  .rv-lines .ln.flag{background:#2a1620;border:1px solid #7c3340;border-radius:6px;padding:7px 8px;margin:4px 0}
+  .rv-lines .ln .why{color:#ff9d9d;margin-top:3px} .rv-lines .ln .lis{color:#ffd98a;margin-top:3px} .rv-lines .ln .sub{color:#9fb0d6;margin-top:3px}
+  .rv-lines .ln .row{gap:6px;margin-top:6px;flex-wrap:wrap} .rv-lines button.sm{background:#1a2750;border-color:#33406a;color:#dbe4fb} .rv-lines button.sm:hover{background:#243466}
+  .rv-lines button.sm.primary{background:#fff;border-color:#fff;color:#041131} .rv-lines button.at{font:600 11px ui-monospace,Menlo,monospace;padding:1px 6px;margin-right:4px}
+  .rv-badge.wait{background:#8a6420;color:#fff}
   .rv-stage .nostory{height:calc(100% - 22px);aspect-ratio:9/16;border:1px dashed #33406a;border-radius:6px;color:#8594bd;display:flex;align-items:center;justify-content:center;text-align:center;padding:14px;font-size:12.5px;line-height:1.5}
   .rv-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:22px;line-height:1;padding:0}
   .rv-nav:hover:not(:disabled){background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.3)}
@@ -2027,6 +2036,7 @@ function paintReview(v){
       <button class="${R.mode==='photos'?'sel':''}" onclick="rvMode('photos')">Photos<span class="n">${d.photos.length}</span></button>
     </div>
     <div class="rv-count" id="rvCount"></div>
+    ${(d.video_failures||[]).length ? `<button class="sm" id="rvVideoFail" style="border-color:var(--err);color:var(--err)" onclick="rvVideoFailShow()">${d.video_failures.length} video${d.video_failures.length===1?'':'s'} not finished…</button>` : ''}
     ${R.mode==='ads' && d.locations.length>1 ? `<div class="chips" style="margin:0">${['all',...d.locations].map(l=>`<span class="chip ${R.loc===l?'sel':''}" onclick="rvLoc(${esc(JSON.stringify(l))})">${l==='all'?'All locations':esc(l)}</span>`).join('')}</div>` : ''}
     <select id="rvShow" onchange="rvShow(this.value)" title="Which to show">
       ${[['all','Show all'],['todo','To review'],['keep','Kept'],['exclude','Excluded']].map(([k,l])=>`<option value="${k}" ${R.show===k?'selected':''}>${l}</option>`).join('')}
@@ -2084,14 +2094,15 @@ function paintStage(){
   const info = $('#rvInfo');
   if (!it){ const c = R.data.counts || {}; box.innerHTML = `<div style="color:#9fb0d6;align-self:center;text-align:center;line-height:1.7">${R.show==='todo' && R.mode==='ads' ? `<b style="color:#fff;font-size:18px">Every ad is picked.</b><br>${c.kept} kept · ${c.excluded} excluded` : R.show==='all'?'Nothing here yet.':'Nothing matches this filter.'}</div>`; info.innerHTML=''; paintButtons(null); return; }
   const st = it.status, photo = R.mode==='photos';
-  const badge = `<div class="rv-badge ${st||''}">${st==='keep'?'✓ Kept':st==='exclude'?(photo?`✕ Excluded, with its ${it.ads} ad${it.ads===1?'':'s'}`:'✕ Excluded'):(photo?'Not reviewed':'Not reviewed · kept unless excluded')}</div>`;
+const waits = !photo && it.video_flags > 0 && st !== 'exclude';
+  const badge = waits ? `<div class="rv-badge wait">Waiting for you · ${it.video_flags} line${it.video_flags===1?'':'s'} did not pass</div>` : `<div class="rv-badge ${st||''}">${st==='keep'?'✓ Kept':st==='exclude'?(photo?`✕ Excluded, with its ${it.ads} ad${it.ads===1?'':'s'}`:'✕ Excluded'):(photo?'Not reviewed':'Not reviewed · kept unless excluded')}</div>`;
   if (R.mode==='photos'){
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${it.kind==='real'?'Real photo':'Generated photo'}</figcaption></figure>${STAMPS}</div>`;
     info.innerHTML = `<b>${esc(it.id)}</b>${it.scene_id?`<span>${esc(it.scene_id)}</span>`:''}<span>in ${it.ads} ad${it.ads===1?'':'s'}</span>${it.primary?`<span>made for ${esc(layoutName(it.primary))}</span>`:''}${it.scene?`<span class="scene">${esc(it.scene)}</span>`:''}${(it.notes||[]).length?`<span class="note" title="${esc(it.notes.join(' · '))}">${esc(it.notes.join(' · '))}</span>`:''}`;
   } else if (it.video) {
     // A video ad: it plays here, sound and all. Keep and Exclude work as for any ad; a video is 9:16 already, so it has no Stories version to make.
-    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · Presenter video${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${STAMPS}</div>`;
-    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>presenter video</span>${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
+    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · Presenter video${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${rvLinesPanel(it)}${STAMPS}</div>`;
+    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>presenter video</span>${it.video_flags?`<span class="note">waiting for you: ${it.video_flags} line${it.video_flags===1?'':'s'} did not pass its check</span>`:''}${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
   } else {
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
       <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="" draggable="false">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>${STAMPS}</div>`;
@@ -2102,6 +2113,69 @@ function paintStage(){
   for (const k of [1,-1,2]) { const n = R.list[R.i+k]; if (n){ new Image().src = n.url; if (n.story) new Image().src = n.story; } }
 }
 const STAMPS = '<div class="rv-stamp keep">KEEP</div><div class="rv-stamp excl">EXCLUDE</div>';
+// ── A video's lines, beside it (2026-11-15: "I don't even see the final output") ──
+// Every line of the cut: where it starts (press to hear it), a word to listen for, and Film this line again… with what
+// it costs. A line no take passed for is in the cut all the same, marked with why: he watches it and decides — film it
+// again, use the take anyway (his word, recorded), or edit the line. Until then the video cannot be kept.
+const rvClock = (t) => `${Math.floor((t||0)/60)}:${String(Math.floor((t||0)%60)).padStart(2,'0')}`;
+const rvUsd = (sec) => `US$${(sec * (R.data.video_cost?.usd_per_second || 0.07)).toFixed(2)}`;
+function rvLinesPanel(it){
+  const parts = it.video_parts || []; if (!parts.length) return '';
+  const ln = (p) => `<div class="ln ${p.flag?'flag':''}" data-line="${p.line}">
+      <div><button class="sm at" onclick="rvJump(${Number(p.at)||0})" title="Play from this line">▶ ${rvClock(p.at)}</button>${esc(p.text)}</div>
+      ${p.flag?`<div class="why"><b>Did not pass:</b> ${esc(p.flag.why)}</div>`:''}
+      ${(p.listen||[]).map(x=>`<div class="lis">Listen for “${esc(x.word)}”: it should sound like “${esc(x.say)}”. The check cannot judge that; your ear does.</div>`).join('')}
+      ${p.kept?`<div class="sub">Kept on your word (${esc(p.kept)}).</div>`:''}
+      ${p.again?`<div class="sub" data-again>Set aside: a fresh take is filmed the next time this batch runs.</div>`:''}
+      <div class="row">${p.flag?`<button class="sm primary" data-film="${p.line}" onclick="rvFilmAgain(${p.line})">Film this line again…</button><button class="sm" data-keep-take="${p.line}" onclick="rvKeepTake(${p.line})">Use this take anyway…</button><button class="sm" data-edit-line onclick="rvEditLine()">Edit the line…</button>`:`<button class="sm" data-film="${p.line}" onclick="rvFilmAgain(${p.line})">Film this line again…</button>`}</div></div>`;
+  return `<div class="rv-lines" id="rvLines"><div class="hd">The lines of this video</div>${it.video_flags?`<div class="wait" id="rvWait">${it.video_flags===1?'One line':`${it.video_flags} lines`} did not pass the check. The video is cut for you to watch: decide ${it.video_flags===1?'that line':'each one'} below, or exclude the video. It cannot be kept or published until then.</div>`:''}${parts.map(ln).join('')}</div>`;
+}
+function rvJump(at){ const v = $('#rvVideo'); if (!v) return; try { v.currentTime = Math.max(0, at); v.play(); } catch{} }
+const rvPart = (line) => { const it = R.list[R.i]; return { it, p: (it?.video_parts||[]).find(x=>x.line===line) }; };
+async function rvTake(it, line, action){ R.data = { ...R.data, ...(await api(`/api/client/${R.gym}/batch/${R.id}/video/take`, { method:'POST', body:{ ad: it.folder, line, action } })) }; R.cur = it.folder; rvRefresh(); }
+/** Film one line again: the takes on file are set aside (kept, never used) and the batch is run — it films only what is not on file. One button, with what it costs. */
+function rvFilmAgain(line){
+  const { it, p } = rvPart(line); if (!p) return;
+  const c = R.data.video_cost || {}, takes = c.takes || 2, also = c.pending || 0, sec = p.seconds + also;
+  window.__rvFilmGo = async () => {
+    const b = $('#rvFilmGo'); if (b) { b.disabled = true; b.textContent = 'Starting…'; }
+    try {
+      const v = await api(`/api/client/${R.gym}/batch/${R.id}`), br = v.brief, pending = (v.scenes||[]).filter(x=>x.draft).map(x=>x.id);
+      await rvTake(it, line, 'retake');
+      $('#gModal').innerHTML = '';
+      run({ kind:'batch', gym:R.gym, batch:R.id, confirm:{ offer:br.offer, locations:br.locations, audience:br.audience??null, max_calls:br.max_calls, ...(pending.length?{scenes:pending}:{}) } });
+      openGenerating(R.id);
+    } catch(e){ const m = $('#rvFilmErr'); if (m) m.textContent = e.message; if (b) { b.disabled = false; b.textContent = 'Try again'; } }
+  };
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card">
+    <h2>Film this line again?</h2>
+    <div class="words"><div><span>${esc(p.label)}</span>${esc(p.text)}</div></div>
+    <p class="hint">${p.takes>1?`The ${p.takes} takes`:'The take'} on file ${p.takes>1?'are':'is'} set aside (kept, never used) and the line is filmed fresh. Everything else in this batch is reused: no photo is made and no other line is filmed${also?`, except ${also} s this batch still has to film anyway`:''}.${(it.video_parts||[]).length && !p.per_area && (R.data.locations||[]).length>1?' This line is one clip in every location’s video of this script.':''}</p>
+    <div class="summary" id="rvFilmCost">About <b>${sec} s of video (${rvUsd(sec)})</b>, never more than ${sec*takes} s (${rvUsd(sec*takes)}): a take that fails its check is filmed once more.</div>
+    <div class="hint" id="rvFilmErr" style="color:var(--err)"></div>
+    <div class="row"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" id="rvFilmGo" onclick="window.__rvFilmGo()">Film it again — about ${rvUsd(sec)}</button></div></div></div>`;
+}
+/** Use a take that did not pass, on the owner's word: recorded with the script's clips, so every later run takes it. No call. */
+function rvKeepTake(line){
+  const { it, p } = rvPart(line); if (!p?.flag) return;
+  window.__rvKeepGo = async () => { try { await rvTake(it, line, 'keep'); $('#gModal').innerHTML = ''; toast(`${p.label} is kept on your word. The video is yours to keep or exclude.`, 'ok'); } catch(e){ const m = $('#rvKeepErr'); if (m) m.textContent = e.message; } };
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card">
+    <h2>Use this take anyway?</h2>
+    <div class="words"><div><span>${esc(p.label)}</span>${esc(p.text)}</div><div><span>Did not pass</span>${esc(p.flag.why)}</div></div>
+    <p class="hint">Press ▶ on the line first if you have not heard it. Your decision is recorded with this script’s clips, so the take is used every time this script is filmed. Nothing is filmed and nothing is spent.</p>
+    <div class="hint" id="rvKeepErr" style="color:var(--err)"></div>
+    <div class="row"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" id="rvKeepGo" onclick="window.__rvKeepGo()">Use this take</button></div></div></div>`;
+}
+/** Edit the script's line on Draft Scenes: the changed line is a new clip, filmed by Run again; the other lines are reused. */
+function rvEditLine(){ const it = R.list[R.i]; if (!it?.video_script) return; VS.pending = { edit: it.video_script }; go('scenes'); }
+function rvVideoFailShow(){
+  const f = R.data.video_failures || [];
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card">
+    <h2>${f.length===1?'A video':'Videos'} not finished</h2>
+    <p class="hint">Nothing could be cut for ${f.length===1?'this one':'these'}: a line has no take at all. Everything filmed so far is kept, and Run again films only what is missing.</p>
+    <div class="words">${f.map(x=>`<div><span>${esc(x.candidate)}${x.location?` · ${esc(x.location)}`:''}</span>${esc(x.why)}</div>`).join('')}</div>
+    <div class="row"><button onclick="$('#gModal').innerHTML=''">Close</button><div class="spacer"></div><button class="primary" onclick="$('#gModal').innerHTML='';bRunAgain('${esc(R.id)}')">Run again…</button></div></div></div>`;
+}
 function paintButtons(it){
   const k = $('#rvKeep'), x = $('#rvEx'); if (!k) return;
   k.disabled = x.disabled = !it;
@@ -2116,7 +2190,7 @@ function paintButtons(it){
 const SWIPE_PX = 110, SW = { on:false, x0:0, dx:0, el:null, id:null };
 function swPaint(el, dx){ if (!el) return; el.style.transform = dx ? `translateX(${dx}px) rotate(${(dx/45).toFixed(2)}deg)` : ''; el.style.setProperty('--k', Math.max(0, Math.min(1, dx/SWIPE_PX)).toFixed(2)); el.style.setProperty('--x', Math.max(0, Math.min(1, -dx/SWIPE_PX)).toFixed(2)); }
 document.addEventListener('pointerdown', e=>{
-  const c = e.target.closest?.('#rvCards'); if (!c || e.button !== 0 || e.target.closest('button,a,select,input') || !R.list[R.i]) return;
+  const c = e.target.closest?.('#rvCards'); if (!c || e.button !== 0 || e.target.closest('button,a,select,input,.rv-lines') || !R.list[R.i]) return;
   Object.assign(SW, { on:true, x0:e.clientX, dx:0, el:c, id:e.pointerId }); try { c.setPointerCapture(e.pointerId); } catch{} c.classList.add('drag');
 });
 document.addEventListener('pointermove', e=>{ if (!SW.on || e.pointerId !== SW.id) return; SW.dx = e.clientX - SW.x0; swPaint(SW.el, SW.dx); });
@@ -2130,7 +2204,7 @@ document.addEventListener('pointerup', swEnd); document.addEventListener('pointe
 /** Keep or exclude the ad on screen, the way a swipe does: the pick is made and saved at once, and the card flies off over the next one. */
 function rvSwipe(val){
   const it = R.list[R.i], el = $('#rvCards'); if (!it) return;
-  if (R.mode==='ads' && it.by_photo && val!=='exclude'){ swPaint(el, 0); return rvDecide(val); } // refused, in words: its photo is excluded
+  if (R.mode==='ads' && ((it.by_photo && val!=='exclude') || (it.video_flags && val==='keep'))){ swPaint(el, 0); return rvDecide(val); } // refused, in words: its photo is excluded, or a line of the video waits for him
   const ghost = el ? el.cloneNode(true) : null, from = el?.style.transform || '';
   // The end of the deck: this was the last ad of the list, or the last one not picked yet.
   const atEnd = R.mode==='ads' && (!R.list[R.i+1] || (it.status == null && R.data.counts.unreviewed === 1)), id = R.id;
@@ -2195,6 +2269,7 @@ function rvShow(s){ R.show = s; rvRefresh(); }
 function rvDecide(val){
   const it = R.list[R.i]; if (!it) return;
   if (R.mode==='ads' && it.by_photo && val!=='exclude'){ toast(`Photo ${it.by_photo} is excluded, and this ad with it. Keep the photo (Photos) to use its ads.`, 'err'); return; }
+  if (R.mode==='ads' && it.video_flags && val==='keep'){ toast(`This video has ${it.video_flags===1?'a line':'lines'} that did not pass the check. Decide ${it.video_flags===1?'it':'them'} first, beside the video: film the line again, use the take anyway, or edit the line. Or exclude the video.`, 'err'); return; }
   const k = rkey(it), next = R.list[R.i+1] ? rkey(R.list[R.i+1]) : k;
   let change;
   if (R.mode==='photos'){ it.status = val; change = { photos:{ [it.id]:val } }; }
@@ -2781,7 +2856,7 @@ function ledgerCard(){
 // worked: the drafter follows how they are built and never copies them. No video is made on this screen.
 const VS = { data:null, error:null, gym:null };
 async function vsLoad(){ const gym = STATE.sel; try { const d = await api(`/api/client/${gym}/video`); if (gym !== STATE.sel) return; VS.data = d; VS.gym = gym; VS.error = null; } catch(e){ VS.error = e.message; } paintScripts();
-  if (VS.pending && !VS.error){ const p = VS.pending; VS.pending = null; $('#vsCard')?.scrollIntoView({ block:'start' }); if (p.draft) vsDraft(p.offer); } }
+  if (VS.pending && !VS.error){ const p = VS.pending; VS.pending = null; $('#vsCard')?.scrollIntoView({ block:'start' }); if (p.draft) vsDraft(p.offer); if (p.edit) { vsEdit(p.edit); toast('Change the line and save. Then Run again on the batch: only the changed line is filmed.', 'ok'); } } }
 const vsOffer = () => (B.setup?.batches||[]).map(b=>b.words?.offer).find(Boolean) || B.setup?.wordings?.[0]?.text || '';
 function paintScripts(){
   const box = $('#vsCard'); if (!box) return;
@@ -2801,8 +2876,8 @@ function paintScripts(){
     ${vsPainsBlock(D)}
     <div id="vsClosing" style="margin-top:12px"><div class="hint"><b>The closing line</b> · the last words of every script, the same for every gym</div>
       <div class="scene"><div class="body" id="vsClosingText">“${esc(D.closing.text)}”</div><button class="sm" id="vsClosingGo" onclick="vsClosingEdit()">Change…</button></div></div>
-    <div id="vsSaid" style="margin-top:12px"><div class="row" style="flex-wrap:wrap"><div class="hint"><b>How words are said</b> · the same for every gym · the presenter is told, and only the lines with the word are filmed again when you add one</div><div class="spacer"></div><button class="sm" id="vsSaidAdd" onclick="vsSaidEdit()">Add a word…</button></div>
-      ${(D.said||[]).map(x=>`<div class="scene" data-said="${esc(x.word)}"><div class="body">“${esc(x.word)}” is said <b>“${esc(x.say)}”</b></div><div class="row" style="gap:6px"><button class="sm" onclick="vsSaidEdit(${vsEnc(x.word)})">Change…</button><button class="sm" onclick="vsSaidRemove(${vsEnc(x.word)})">Remove</button></div></div>`).join('')}</div>
+    <div id="vsSaid" style="margin-top:12px"><div class="row" style="flex-wrap:wrap"><div class="hint"><b>How words are said</b> · the same for every gym · the presenter is given the word <b>written the way it sounds</b>, the captions keep its spelling, and only the lines with the word are filmed again when you add one</div><div class="spacer"></div><button class="sm" id="vsSaidAdd" onclick="vsSaidEdit()">Add a word…</button></div>
+      ${(D.said||[]).map(x=>`<div class="scene" data-said="${esc(x.word)}"><div class="body">“${esc(x.word)}” is given to the presenter as <b>“${esc(x.say)}”</b></div><div class="row" style="gap:6px"><button class="sm" onclick="vsSaidEdit(${vsEnc(x.word)})">Change…</button><button class="sm" onclick="vsSaidRemove(${vsEnc(x.word)})">Remove</button></div></div>`).join('')}</div>
     <div id="vsFacts" style="margin-top:12px"><div class="row" style="flex-wrap:wrap"><div class="hint"><b>What each challenge includes</b> · the only things about a programme a script may state, and only the ones you say are true of this gym${(D.facts||[]).length ? '' : '. None yet'}</div><div class="spacer"></div><button class="sm" id="vsFactsSuggest" onclick="vsFactsSuggest()" ${samples.length?'':'disabled title="Paste a sample script first"'}>Suggest from the samples…</button></div>
       ${(D.facts||[]).map(f=>`<div class="scene" data-facts="${esc(f.offer)}"><div class="body"><div class="hint">for “${esc(f.offer)}”</div><ul style="margin:4px 0 0 18px;line-height:1.5">${f.items.map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div><button class="sm" onclick="vsFactsEdit(decodeURIComponent('${encodeURIComponent(f.offer)}'))">Edit…</button></div>`).join('')}</div>
     <div style="margin-top:12px"><div class="hint"><b>Sample scripts</b> · templates, never filmed · <span id="vsShared">shared by every gym</span> · ${samples.length ? `<span id="vsStylesNote">${samples.length} on file, <b>each one a style</b>: a round of drafts is spread across them, one style a script, the least used first.</span> The drafter takes how a sample is built, never a sentence, a fact or a promise from it.` : 'none yet. Paste yours: each becomes a style the drafts are written in.'}</div>
@@ -2831,7 +2906,7 @@ function vsPainRetireRun(){ vsSend('PUT', `/pains/${VS.editing.id}`, { offer: VS
 function vsClosingEdit(){ vsModal('The closing line', `<p class="hint">One short sentence, the last words of every script for every gym. A script kept with the old sentence needs one edit before it is filmed again.</p><input id="vsClosingIn" value="${esc(VS.data.closing.text)}">`, 'vsClosingRun()', 'Save'); }
 function vsClosingRun(){ vsSend('POST', '/closing', { text: $('#vsClosingIn').value }); }
 /** How a word is said, for every gym (2026-11-14: “Quay” is “kee”). */
-function vsSaidEdit(word){ const x = (VS.data.said||[]).find(s=>s.word===word); vsModal('How a word is said', `<p class="hint">The word as it is written, and how it is said here, written the way it sounds. The presenter is told with any line that has the word; lines already filmed with it are filmed again the next time their script is run, the rest are reused.</p><label for="vsSaidWord">The word</label><input id="vsSaidWord" value="${esc(x?.word||'')}" placeholder="Quay" ${x?'readonly':''}><label for="vsSaidSay" style="margin-top:8px">Said as</label><input id="vsSaidSay" value="${esc(x?.say||'')}" placeholder="kee">`, 'vsSaidRun()', 'Save'); }
+function vsSaidEdit(word){ const x = (VS.data.said||[]).find(s=>s.word===word); vsModal('How a word is said', `<p class="hint">The word as it is written, and how it sounds, <b>written as a real word where there is one</b> (“Key” for “Quay”): the presenter reads exactly what you type, and the captions keep the word as it is written. Telling the presenter “it is pronounced…” did not work; reading the sound-alike word did. Lines already filmed with the word are filmed again the next time their script is run, the rest are reused.</p><label for="vsSaidWord">The word</label><input id="vsSaidWord" value="${esc(x?.word||'')}" placeholder="Quay" ${x?'readonly':''}><label for="vsSaidSay" style="margin-top:8px">Given to the presenter as</label><input id="vsSaidSay" value="${esc(x?.say||'')}" placeholder="Key">`, 'vsSaidRun()', 'Save'); }
 function vsSaidRun(){ vsSend('POST', '/said', { word: $('#vsSaidWord').value.trim(), say: $('#vsSaidSay').value.trim() }); }
 function vsSaidRemove(word){ vsSend('POST', '/said', { word, say: '' }); }
 /** A sample is a style: its name, how it opens, its parts in order; the script itself folded away under it. */

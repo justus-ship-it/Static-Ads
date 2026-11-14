@@ -3828,12 +3828,12 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     { const alone = D.scripts.find((x) => x.lines.length === 4); assert.deepEqual([st, alone.joined, alone.cost.images, alone.problems, D.scripts.find((x) => x.id === id).joined], [200, true, 3, [], false]);
       const j = JSON.parse(readFileSync(scriptsFile, "utf-8")); j.scripts = j.scripts.filter((x) => x.id !== alone.id); writeFileSync(scriptsFile, JSON.stringify(j, null, 2)); } // the test's own script, taken out again
     // How a word is said, for every gym (2026-11-14: "'Quay' is pronounced 'Kee' in Singapore"): the standing entry, the owner's own beside it, a removal; and a script that goes straight into the closing line is refused in words (2026-11-14: "it's too abrupt").
-    [st, D] = await V(); assert.deepEqual(D.said, [{ word: "Quay", say: "kee" }]);
+    [st, D] = await V(); assert.deepEqual(D.said, [{ word: "Quay", say: "Key" }]);
     assert.equal((await V("/said", { method: "POST", body: { word: "Boat Quay", say: "kee" } }))[0], 400);
     assert.equal((await call(`/api/client/${GYM}/video/said`, { method: "POST", body: { word: "Yishun", say: "ee-shoon" }, token: null })).status, 403);
-    [st, D] = await V("/said", { method: "POST", body: { word: "Yishun", say: "ee-shoon" } }); assert.deepEqual([st, D.said], [200, [{ word: "Quay", say: "kee" }, { word: "Yishun", say: "ee-shoon" }]]);
+    [st, D] = await V("/said", { method: "POST", body: { word: "Yishun", say: "ee-shoon" } }); assert.deepEqual([st, D.said], [200, [{ word: "Quay", say: "Key" }, { word: "Yishun", say: "ee-shoon" }]]);
     assert.deepEqual((await (await call("/api/client/u63-other/video")).json()).said.map((x) => x.word), ["Quay", "Yishun"], "one list for every gym");
-    [st, D] = await V("/said", { method: "POST", body: { word: "Yishun", say: "" } }); assert.deepEqual(D.said, [{ word: "Quay", say: "kee" }]);
+    [st, D] = await V("/said", { method: "POST", body: { word: "Yishun", say: "" } }); assert.deepEqual(D.said, [{ word: "Quay", say: "Key" }]);
     [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0].replace("keep watching", "hear this out"), LINES[1], "You will feel stronger and your clothes will fit better. Click the link below and we'll be in touch!"] } });
     assert.equal(st, 400); assert.match(D.error, /the script goes straight into the closing line: just before it, in the same cut, one sentence turns to the viewer and names what they want/);
     [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0].replace("keep watching", "hear this out"), LINES[1], "If you're ready to get the body that you've always wanted, now is your time. Click the link below and we'll be in touch!"] } });
@@ -3951,10 +3951,10 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await V("/facts", { method: "POST", body: { offer: BRIEF.offer, items: ["A full body scan assessment at the start"] } });
     await open("scenes", "!!document.querySelector('#vsCard [data-script]')");
     // How words are said is on the card: the standing word, Add a word…, and a word of his own saved from the dialog.
-    assert.deepEqual(await ev("[[...document.querySelectorAll('#vsSaid [data-said]')].map(x => x.innerText.replace(/\\s+/g, ' ').trim()), document.querySelector('#vsSaidAdd').textContent]"), [["“Quay” is said “kee” Change… Remove"], "Add a word…"]);
+    assert.deepEqual(await ev("[[...document.querySelectorAll('#vsSaid [data-said]')].map(x => x.innerText.replace(/\\s+/g, ' ').trim()), document.querySelector('#vsSaidAdd').textContent]"), [["“Quay” is given to the presenter as “Key” Change… Remove"], "Add a word…"]);
     await ev("document.querySelector('#vsSaidAdd').click(); document.querySelector('#vsSaidWord').value = 'Tampines'; document.querySelector('#vsSaidSay').value = 'tam-pin-ees'; document.querySelector('#vsGo').click(); true");
     await until("document.querySelectorAll('#vsSaid [data-said]').length === 2");
-    assert.deepEqual((await V())[1].said, [{ word: "Quay", say: "kee" }, { word: "Tampines", say: "tam-pin-ees" }]);
+    assert.deepEqual((await V())[1].said, [{ word: "Quay", say: "Key" }, { word: "Tampines", say: "tam-pin-ees" }]);
     await V("/said", { method: "POST", body: { word: "Tampines", say: "" } });
     // The samples say they are shared; the offer's facts are listed and come up in the draft dialog, where another offer shows its own (none).
     assert.deepEqual(await ev("[document.querySelector('#vsShared').textContent, document.querySelectorAll('#vsFacts [data-facts]').length, [...document.querySelectorAll('#vsFacts [data-facts] li')].map(li => li.textContent)]"), ["shared by every gym", 1, ["A full body scan assessment at the start"]]);
@@ -3996,6 +3996,62 @@ assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "1 sc
     await until("document.querySelector('#rvVideo').readyState >= 1");
     assert.deepEqual(await ev("[document.querySelector('#rvVideo').getAttribute('src').endsWith('v01-bishan_9x16_v1.mp4'), Math.round(document.querySelector('#rvVideo').duration), document.querySelector('#rvVideo').controls, document.querySelector('#rvCards figcaption').innerText, !!document.querySelector('#rvKeep'), document.querySelectorAll('#rvCards img').length]"), [true, 3, true, "9:16 · PRESENTER VIDEO · 3 S · REELS, STORIES AND FEED", true, 0]);
     assert.match(await ev("document.querySelector('#rvInfo').innerText.replace(/\\s+/g, ' ')"), /101 BISHAN presenter video People in Bishan, this one is for you\..* the check noticed: warped fingers/);
+    // ── A video with a line no take passed for (2026-11-15: "I don't even see the final output") ──
+    // It is in the batch's ads, cut, with every line listed beside it; it cannot be kept or published until he decides the flagged line: film it again (one button, with its cost), use the take anyway (his word, recorded), or edit the line.
+    {
+      const fid = "u63-flag", fout = join(g, "outputs", fid), store = join(g, "video-clips", id), WHY = 'it said "Something else."';
+      const { keptAds } = await import("../skills/references/meta-publish.mjs");
+      mkdirSync(join(fout, folder, "9x16"), { recursive: true }); mkdirSync(join(g, "batches", fid), { recursive: true }); mkdirSync(store, { recursive: true });
+      for (const f of [mp4, jpg]) writeFileSync(join(fout, f), readFileSync(join(out, f)));
+      for (const f of ["line-1-aaaaaa.mp4", "line-2-bbbbbb.mp4", "line-2-bbbbbb-take2.mp4", "line-3-cccccc.mp4"]) writeFileSync(join(store, f), "clip " + f);
+      const fbrief = { ...brief, batch_id: fid }; writeFileSync(join(g, "batches", fid, "brief.json"), JSON.stringify(fbrief)); writeFileSync(join(fout, "brief.json"), JSON.stringify(fbrief));
+      const words = LINES.map((l) => l.replace("{AREA}", "Bishan"));
+      const parts = [{ line: 1, label: "line 1", text: words[0], clip: "line-1-aaaaaa.mp4", takes: ["line-1-aaaaaa.mp4"], seconds: 8, at: 0, per_area: true, listen: [{ word: "Quay", say: "Key" }] }, { line: 2, label: "line 2", text: words[1], clip: "line-2-bbbbbb-take2.mp4", takes: ["line-2-bbbbbb.mp4", "line-2-bbbbbb-take2.mp4"], seconds: 9, at: 1, flag: { why: WHY, kind: "words" } }, { line: 3, label: "line 3", text: words[2], clip: "line-3-cccccc.mp4", takes: ["line-3-cccccc.mp4"], seconds: 10, at: 2 }];
+      writeFileSync(join(fout, "batch.json"), JSON.stringify({ batch_id: fid, made: new Date().toISOString(), ratio: "4x5", look: "reference", videos: { presenter: 1 }, video_seconds: 27, image_calls: 0, photos: [], failed: [{ candidate: "v02", photo: null, video: "v-other", location: "BISHAN", failures: ["line 2: refused by Google's video model under its content rules, 3 times and on two pictures of the presenter"] }],
+        ads: [{ folder, file: jpg, video_file: mp4, candidate: "v01", location: "BISHAN", location_index: 0, photos: [], photo_files: [], treatment: "video-presenter", style: "video", palette: null, ratio: "9x16", format: "presenter-video", video: { kind: "presenter", script_id: id, seconds: 3, words, notes: [], parts, flags: [{ line: 2, label: "line 2", why: WHY, kind: "words" }] }, crop: [], words: { location: "BISHAN", audience: null, offer: BRIEF.offer, free: false }, replaced: null }] }));
+      const T = (body, token) => call(`/api/client/${GYM}/batch/${fid}/video/take`, { method: "POST", body, ...(token === null ? { token: null } : {}) });
+      let fr = await (await call(`/api/client/${GYM}/batch/${fid}/review`)).json(), fa = fr.ads[0];
+      assert.deepEqual([fa.video_flags, fa.video_script, fa.video_parts.map((p) => [p.line, p.at, p.seconds, p.takes, !!p.flag, !!p.listen]), fr.video_failures.map((f) => [f.candidate, f.location, /refused by Google/.test(f.why)]), fr.video_cost.usd_per_second, fr.video_cost.takes, fr.counts.unreviewed], [1, id, [[1, 0, 8, 1, false, true], [2, 1, 9, 2, true, false], [3, 2, 10, 1, false, false]], [["v02", "BISHAN", true]], 0.07, fbrief.attempts ?? 2, 1]);
+      // It is not kept until its line is decided, and it is not in what would be published — though nothing was excluded.
+      let kr = await call(`/api/client/${GYM}/batch/${fid}/picks`, { method: "PUT", body: { ads: { [folder]: "keep" } } }); assert.equal(kr.status, 400); assert.match((await kr.json()).error, /line 2 did not pass its check \(it said "Something else\."\)\. Decide it first — film the line again, use the take anyway, or edit the line — or exclude the video/);
+      assert.deepEqual(keptAds(fout), []);
+      // The owner's word is a write: no token, no such ad, no such line, nothing to keep on a line that passed.
+      assert.equal((await T({ ad: folder, line: 2, action: "keep" }, null)).status, 403);
+      for (const [body, re] of [[{ ad: "nope", line: 2, action: "keep" }, /no such video/], [{ ad: folder, line: 9, action: "keep" }, /no such line/], [{ ad: folder, line: 3, action: "keep" }, /line 3 passed its check: there is nothing to keep on your word/], [{ ad: folder, line: 2, action: "delete" }, /keep this take, or film the line again/]]) { const x = await T(body); assert.equal(x.status, 400); assert.match((await x.json()).error, re); }
+      // The page: the lines beside the video, the flagged one marked with why and its three buttons; the others with Film this line again… alone; the word to listen for; the video not finished, said at the top.
+      await open(`review/${fid}`, "!!document.querySelector('#rvLines')");
+      await until("document.querySelector('#rvVideo').readyState >= 1");
+      assert.deepEqual(await ev("[document.querySelector('.rv-badge').innerText, /^One line did not pass the check\\. The video is cut for you to watch: decide that line below, or exclude the video\\. It cannot be kept or published until then\\.$/.test(document.querySelector('#rvWait').innerText), [...document.querySelectorAll('#rvLines .ln')].map(l => [l.classList.contains('flag'), [...l.querySelectorAll('.row button')].map(b => b.textContent)]), document.querySelector('#rvLines .ln.flag .why').innerText, document.querySelector('#rvLines .lis').innerText, document.querySelector('#rvVideoFail').textContent]"),
+        ["Waiting for you · 1 line did not pass", true, [[false, ["Film this line again…"]], [true, ["Film this line again…", "Use this take anyway…", "Edit the line…"]], [false, ["Film this line again…"]]], `Did not pass: ${WHY}`, "Listen for “Quay”: it should sound like “Key”. The check cannot judge that; your ear does.", "1 video not finished…"]);
+      // ▶ plays from that line.
+      await ev("document.querySelectorAll('#rvLines .ln button.at')[2].click(); true"); await until("document.querySelector('#rvVideo').currentTime >= 1.9");
+      // Keep is refused in words — by the button, as by the key and the drag.
+      await ev("document.querySelector('#rvKeep').click(); true"); await until("/did not pass the check\\. Decide it first, beside the video/.test(document.body.innerText)");
+      assert.equal((await (await call(`/api/client/${GYM}/batch/${fid}/review`)).json()).counts.kept, 0);
+      // The video that could not be cut: why, and Run again.
+      await ev("document.querySelector('#rvVideoFail').click(); true");
+      assert.deepEqual(await ev("[document.querySelector('#gModal h2').textContent, /v02 · BISHAN/.test(document.querySelector('#gModal .words').innerText) && /refused by Google/.test(document.querySelector('#gModal .words').innerText), [...document.querySelectorAll('#gModal button')].map(b => b.textContent)]"), ["A video not finished", true, ["Close", "Run again…"]]);
+      await ev("document.querySelector('#gModal').innerHTML = ''; true");
+      // Film this line again…: one dialog, what happens and what it costs, no field. (Not confirmed here: it would start a run.)
+      await ev("document.querySelector('#rvLines [data-film=\"3\"]').click(); true");
+      assert.deepEqual(await ev("[document.querySelector('#gModal h2').textContent, /^About \\d+ s of video \\(US\\$\\d+\\.\\d\\d\\), never more than \\d+ s \\(US\\$\\d+\\.\\d\\d\\): a take that fails its check is filmed once more\\.$/.test(document.querySelector('#rvFilmCost').innerText), /^Film it again — about US\\$\\d+\\.\\d\\d$/.test(document.querySelector('#rvFilmGo').textContent), /The take on file is set aside \\(kept, never used\\) and the line is filmed fresh/.test(document.querySelector('#gModal').innerText), document.querySelectorAll('#gModal input').length]"), ["Film this line again?", true, true, true, 0]);
+      await ev("document.querySelector('#gModal').innerHTML = ''; true");
+      // What the button does first: the line's takes are set aside (kept on disk), and the line says so.
+      let tr = await T({ ad: folder, line: 3, action: "retake" }); assert.equal(tr.status, 200); fr = await tr.json();
+      assert.deepEqual([Object.keys(JSON.parse(readFileSync(join(store, "set-aside.json"), "utf-8")).clips), existsSync(join(store, "line-3-cccccc.mp4")), fr.ads[0].video_parts[2].again, fr.ads[0].video_flags], [["line-3-cccccc.mp4"], true, true, 1]);
+      // Edit the line…: Draft Scenes opens on that script's edit dialog.
+      await ev("document.querySelector('#rvLines [data-edit-line]').click(); true"); await until("!!document.querySelector('#gModal h3') && document.querySelector('#gModal h3').textContent === 'Edit the script'");
+      await ev("document.querySelector('#gModal').innerHTML = ''; true");
+      // Use this take anyway…: a confirmation, then his word is recorded with the script's clips and the flag comes off — the video is his to keep.
+      await open(`review/${fid}`, "!!document.querySelector('#rvLines [data-again]')");
+      await ev("document.querySelector('#rvLines [data-keep-take=\"2\"]').click(); true");
+      assert.deepEqual(await ev("[document.querySelector('#gModal h2').textContent, /Nothing is filmed and nothing is spent\\./.test(document.querySelector('#gModal').innerText), document.querySelector('#rvKeepGo').textContent]"), ["Use this take anyway?", true, "Use this take"]);
+      await ev("document.querySelector('#rvKeepGo').click(); true"); await until("!document.querySelector('#rvWait') && !document.querySelector('#gModal .modal')");
+      const word = JSON.parse(readFileSync(join(store, "owner-kept.json"), "utf-8")).clips["line-2-bbbbbb-take2.mp4"], fb = JSON.parse(readFileSync(join(fout, "batch.json"), "utf-8")).ads[0].video;
+      assert.deepEqual([word.left, /^[a-f0-9]{64}$/.test(word.sha256), fb.flags, fb.parts[1].flag, fb.parts[1].kept, fb.notes], [WHY, true, undefined, undefined, WHY, [`line 2 kept on your word (${WHY})`]]);
+      assert.deepEqual(await ev("[document.querySelector('.rv-badge').innerText, document.querySelectorAll('#rvLines .ln.flag').length, /Kept on your word/.test(document.querySelector('#rvLines').innerText)]"), ["Not reviewed · kept unless excluded", 0, true]);
+      kr = await call(`/api/client/${GYM}/batch/${fid}/picks`, { method: "PUT", body: { ads: { [folder]: "keep" } } }); assert.equal(kr.status, 200); assert.deepEqual(keptAds(fout).map((a) => a.folder), [folder]);
+    }
     // Publish Ads: the video's tile says it is a video, and the card says how it goes up.
     await open("publish/u63-batch", "!!document.querySelector('.pbVideo')");
     assert.deepEqual(await ev("[document.querySelector('.pbVideo').innerText, /A video ad is uploaded to the ad account when you create, with its first frame as the cover/.test(document.querySelector('#pbVideoHint').innerText), [...document.querySelectorAll('#view h3')].some(h => /^Ads · 1 kept, 0 with a Stories version, 1 video$/.test(h.textContent.trim()))]"), ["▶ video · 3 s", true, true]);
