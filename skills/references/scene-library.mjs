@@ -1,0 +1,255 @@
+/**
+ * scene-library.mjs — the client's scene library: brands/{gym}/scenes.json.
+ *
+ * A scene is one photograph described in words (who, what, where in the movement, expression), tagged
+ * so a batch can spread its photos across exercises, ages, settings, equipment and muscle groups. The
+ * library is the owner's: nothing is generated from it until it is approved, a scene added since
+ * (`draft: true`) is left out until the owner approves it, and a scene the owner rejects is retired
+ * (`status: "retired"`, with the reason and date) — never deleted, so old batches still trace to it
+ * and a refresh never proposes it again.
+ *
+ * Shared by plan-offer-batch.mjs (which re-exports the vocabulary for its callers), refresh-scenes.mjs
+ * (which drafts new scenes) and the panel.
+ */
+
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { POSES } from "./visual-prompts.mjs";
+
+/** What a scene may be tagged with, so a batch can spread its photos across them (planVisuals). */
+export const SCENE_TAGS = {
+  age: ["young", "prime", "older"], // 20s · 30s–40s · 50s–60s
+  setting: ["solo", "coached", "group"],
+  equipment: ["bodyweight", "dumbbells", "barbell", "kettlebell", "machine", "cable"],
+  muscles: ["legs", "back", "chest", "shoulders", "arms", "core", "full-body"],
+};
+export const MAX_SCENE_PEOPLE = 6;
+/**
+ * A scene's FORMAT — the kind of photograph it is (Phase 3 of the formats plan, 2026-11-10). A scene without one is a
+ * workout scene, as every scene was before. Each format has its own way of being photographed (visual-prompts.mjs),
+ * its own quality rules (check-quality.mjs: a portrait is posed by design, a class is candid) and its own drafting
+ * brief (refresh-scenes.mjs). A batch is made in one format (the mix is Phase 4).
+ */
+export const SCENE_FORMATS = {
+  workout: "people training in the gym, caught mid-movement: candid, nobody looking into the camera",
+  "studio-portrait": "one or two people at ease on a plain backdrop (a seamless studio colour, a dark wall) or in front of the gym softened to a blur: an easy pose or a light movement, a smile, often looking into the camera",
+};
+export const formatOf = (s) => (s && SCENE_FORMATS[s.format] ? s.format : "workout");
+
+// ── the mix (Phase 4, 2026-11-10): how a batch's photos are shared between the formats ──
+/** A gym's mix when it has set none: every photo a workout photo, as before formats. Shares are whole percents that sum to 100. */
+export const DEFAULT_MIX = Object.freeze({ workout: 100 });
+/** What is wrong with a mix. Shares (`counts: false`): whole percents 0–100 summing to 100. Counts: whole photos, summing to `total` when given. */
+export function mixProblems(mix, { counts = false, total = null } = {}) {
+  if (!mix || typeof mix !== "object" || Array.isArray(mix)) return ["the mix maps each kind of photograph to its share"];
+  const errs = [], known = Object.keys(SCENE_FORMATS);
+  for (const [f, n] of Object.entries(mix)) {
+    if (!known.includes(f)) errs.push(`mix: "${f}" is not one of ${known.join(", ")}`);
+    else if (!Number.isInteger(n) || n < 0 || (!counts && n > 100)) errs.push(`mix.${f} must be a whole number${counts ? " of photos" : " from 0 to 100"}`);
+  }
+  if (errs.length) return errs;
+  const sum = Object.values(mix).reduce((a, b) => a + b, 0);
+  if (!counts && sum !== 100) errs.push(`the mix's shares must add up to 100 (they add up to ${sum})`);
+  if (counts && total != null && sum !== total) errs.push(`the mix's photos (${sum}) must add up to the batch's generated photos (${total})`);
+  return errs;
+}
+/** Whole photos per format for `count` photos from shares, the largest remainders first (ties: the larger share, then the
+ *  formats' own order), so the counts always add up to `count`. A format with a share but no photo is left out. */
+export function allocateMix(shares, count) {
+  const order = Object.keys(SCENE_FORMATS), live = order.filter((f) => (shares?.[f] || 0) > 0);
+  const total = live.reduce((a, f) => a + shares[f], 0);
+  if (!count || !total) return {};
+  const exact = live.map((f) => ({ f, x: (shares[f] / total) * count }));
+  const out = Object.fromEntries(exact.map(({ f, x }) => [f, Math.floor(x)]));
+  let left = count - Object.values(out).reduce((a, b) => a + b, 0);
+  for (const { f } of [...exact].sort((a, b) => (b.x - Math.floor(b.x)) - (a.x - Math.floor(a.x)) || shares[b.f] - shares[a.f] || order.indexOf(a.f) - order.indexOf(b.f))) { if (left-- <= 0) break; out[f]++; }
+  return Object.fromEntries(Object.entries(out).filter(([, n]) => n > 0));
+}
+/** One format when every photo is of it, else "mixed" (null for no photos). */
+export const mixName = (counts) => { const live = Object.entries(counts || {}).filter(([, n]) => n > 0).map(([f]) => f); return live.length === 1 ? live[0] : live.length ? "mixed" : null; };
+/** What a portrait scene says beyond the description. The words are the creative readings' own (read-creatives.mjs:
+ *  BACKDROPS, POSES, EXPRESSIONS), so a scene and what Meta's numbers say about ads like it are named alike. */
+/** The rooms of a gym a photo can be matched to (2026-11-11): the picture readings' own words, so a room and Meta's numbers for
+ *  pictures of it are named alike. A gym says which of its cleaned premises photos shows which (creative_defaults.room_references). */
+export const ROOMS = { "studio-room": "the studio room", "gym-floor": "the gym floor" };
+/** Tags a scene may carry and need not: a workout scene's room (when it only makes sense in one) and its mood — the readings' expression, in a scene's words. */
+export const SCENE_OPTIONAL_TAGS = { room: Object.keys(ROOMS), mood: ["effort", "smile", "calm"] };
+/** A scene's optional tags as words, for its line on a page or in a list: "calm mood", "the gym floor". */
+export const optionalWords = (s) => [s?.mood ? `${s.mood} mood` : null, s?.room ? ROOMS[s.room] : null].filter(Boolean);
+export const PORTRAIT_TAGS = {
+  backdrop: ["seamless-colour", "dark-wall", "gym-floor"], // a flat studio colour · a plain dark wall · the gym, softened to a blur
+  stance: ["easy-posed", "holding-equipment", "stretch", "walking"],
+  expression: ["smile", "neutral"],
+};
+export const MAX_PORTRAIT_PEOPLE = 2;
+export const AUDIENCES = ["men", "women", "any"];
+
+export function sceneProblems(s) {
+  const errs = [];
+  if (!s || typeof s.scene !== "string" || !s.scene.trim()) return ["a scene needs its description"];
+  if (/["“”]/.test(s.scene)) errs.push("contains quotation marks — scenes describe the picture, never words to show");
+  if (!POSES[s.pose]) errs.push(`pose must be one of ${Object.keys(POSES).join(", ")}`);
+  if (!Number.isInteger(s.people) || s.people < 1 || s.people > MAX_SCENE_PEOPLE) errs.push(`people must be 1 to ${MAX_SCENE_PEOPLE}`);
+  if (s.audience && !AUDIENCES.includes(s.audience)) errs.push('audience must be "men", "women" or "any"');
+  for (const [k, vals] of Object.entries(SCENE_OPTIONAL_TAGS)) if (s[k] != null && !vals.includes(s[k])) errs.push(`${k} must be one of ${vals.join(", ")} (or left out)`);
+  for (const [tag, allowed] of Object.entries(SCENE_TAGS)) if (s[tag] != null && !allowed.includes(s[tag])) errs.push(`${tag} must be one of ${allowed.join(", ")}`);
+  if (s.format != null && !SCENE_FORMATS[s.format]) errs.push(`format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+  for (const [tag, allowed] of Object.entries(PORTRAIT_TAGS)) if (s[tag] != null && !allowed.includes(s[tag])) errs.push(`${tag} must be one of ${allowed.join(", ")}`);
+  if (s.eye_contact != null && typeof s.eye_contact !== "boolean") errs.push("eye_contact must be true or false");
+  if (s.format === "studio-portrait") {
+    // A portrait is one person or a pair, on a backdrop it names; it is never a coached session or a class.
+    if (!s.backdrop) errs.push(`a studio-portrait scene names its backdrop: ${PORTRAIT_TAGS.backdrop.join(", ")}`);
+    if (Number.isInteger(s.people) && s.people > MAX_PORTRAIT_PEOPLE) errs.push(`a studio-portrait scene has 1 or ${MAX_PORTRAIT_PEOPLE} people`);
+    if (s.setting != null && s.setting !== "solo") errs.push("a studio-portrait scene has no setting but solo (two people are a pair, not a coached session)");
+  }
+  if (s.exercise != null && !/^[a-z][a-z-]{1,40}$/.test(s.exercise)) errs.push("exercise must be a short lower-case name, e.g. back-squat");
+  // The setting has to agree with the head count, or the people check fails every photo.
+  if (s.setting === "solo" && s.people !== 1) errs.push("a solo scene has 1 person");
+  if (s.setting === "coached" && s.people < 2) errs.push("a coached scene has at least 2 people");
+  if (s.setting === "group" && s.people < 3) errs.push("a group scene has at least 3 people");
+  return errs;
+}
+
+// Wording that asks a class to move as one. The 48-ad batch's group scenes said "side by side" and
+// "in time with each other" and came back as line-ups in identical poses (2026-09-12).
+export const UNIFORM_WORDS = /\b(side by side|in time|in unison|in sync|synchroni[sz]ed|identical(ly)?|in a (neat )?(row|line)|each (holding|doing|performing)|all (holding|doing|performing))\b/i;
+
+/** Not refusals: wording that makes a scene with several people come out posed. */
+export function sceneWarnings(s) {
+  if (!s || typeof s.scene !== "string" || !(s.people >= 2 || ["group", "coached"].includes(s.setting))) return [];
+  if (formatOf(s) === "studio-portrait") return []; // a pair posed side by side is the picture
+  const m = s.scene.match(UNIFORM_WORDS);
+  return m ? [`"${m[0]}" asks the people to move as one — photos come out posed; describe each person at their own point of the movement`] : [];
+}
+
+export const isRetired = (s) => s?.status === "retired";
+export const isDraft = (s) => s?.draft === true && !isRetired(s);
+export const today = () => new Date().toISOString().slice(0, 10);
+
+/** A gym's library before its first scene: written by the first refresh, approved by the owner's first approval. */
+export const newLibrary = () => ({ schema_version: 1, approved: false, note: "Scenes for generated photos, drafted by the agent and approved by the owner (Draft Scenes). Each describes the people and what they are doing, never words to show; the layout decides where they sit.", scenes: [] });
+/**
+ * The library file as written: every scene, drafts and retired ones included. `create` — a gym with no
+ * library yet reads as an empty one (the first refresh writes it); without it a missing library is refused.
+ */
+export function readLibrary(path, { create = false } = {}) {
+  if (!existsSync(path)) { if (create) return newLibrary(); throw new Error(`no scene library yet (${path}): draft the first scenes on Draft Scenes and approve them`); }
+  const lib = JSON.parse(readFileSync(path, "utf-8"));
+  if (!Array.isArray(lib.scenes)) lib.scenes = [];
+  return lib;
+}
+export function writeLibrary(path, lib) {
+  writeFileSync(path, JSON.stringify(lib, null, 2) + "\n");
+}
+
+/**
+ * The scenes a batch may generate from. Refused unless the library is approved. A scene marked
+ * `"draft": true` has been added since — it is left out until the owner approves it (`allowDraft` lets
+ * a dry run plan with drafts so they can be reviewed before any image is made). A retired scene is
+ * never loaded.
+ */
+export function loadScenes(path, { allowDraft = false } = {}) {
+  const lib = readLibrary(path);
+  const bad = lib.scenes.flatMap((s, i) => sceneProblems(s).map((e) => `${s.id || i}: ${e}`));
+  if (bad.length) throw new Error(`scene library problems:\n${bad.join("\n")}`);
+  if (lib.approved !== true && !allowDraft) throw new Error(`the scene library ${path} is not approved yet — nothing is generated from it until the owner approves a scene on Draft Scenes`);
+  const ids = lib.scenes.map((x) => x.id).filter(Boolean);
+  if (new Set(ids).size !== ids.length) throw new Error("scene library: two scenes share an id");
+  return lib.scenes.filter((x) => !isRetired(x) && (allowDraft || x.draft !== true));
+}
+
+/**
+ * A new gym's first scenes from another gym's library (2026-10-07: F45 Xinyi, the same format as F45 Lower Peirce,
+ * had none): every live scene of the source — never a draft, never a retired one — becomes a draft in the target,
+ * `source: "copied:{gym}"` with `copied_from`, for the owner to approve or reject as usual. The people's country is
+ * swapped in the words (`people: { from: { name, demonym }, to: { name, demonym } }`: "Singaporean" → "Taiwanese",
+ * "Singapore" → "Taiwan"); nothing else is rewritten. A scene whose id the target already has is skipped. Returns
+ * { added, skipped, problems } — a copied scene that fails the library's rules is left out with the reason.
+ */
+export function copyScenesFrom(targetPath, sourcePath, { fromGym = null, people = null, date = today() } = {}) {
+  const src = readLibrary(sourcePath);
+  const live = src.scenes.filter((x) => !isRetired(x) && x.draft !== true);
+  if (!live.length) throw new Error(`${fromGym || sourcePath} has no live scenes to copy`);
+  const lib = readLibrary(targetPath, { create: true });
+  const have = new Set(lib.scenes.map((x) => x.id));
+  const swap = (text) => {
+    if (!people?.from || !people?.to) return text;
+    let t = String(text || "");
+    if (people.from.demonym && people.to.demonym) t = t.replace(new RegExp(`\\b${people.from.demonym}\\b`, "g"), people.to.demonym);
+    if (people.from.name && people.to.name) t = t.replace(new RegExp(`\\b${people.from.name}\\b`, "g"), people.to.name);
+    return t;
+  };
+  const added = [], skipped = [], problems = [];
+  for (const x of live) {
+    if (have.has(x.id)) { skipped.push(x.id); continue; }
+    const { approved_on, approved_via, approved_note, history, ...rest } = x;
+    const s = { ...rest, scene: swap(x.scene), draft: true, source: `copied:${fromGym || "another gym"}`, copied_from: { gym: fromGym || null, id: x.id, source: x.source || null }, added: date };
+    const bad = sceneProblems(s);
+    if (bad.length) { problems.push(`${x.id}: ${bad.join("; ")}`); continue; }
+    lib.scenes.push(s); have.add(s.id); added.push(s.id);
+  }
+  writeLibrary(targetPath, lib);
+  return { added, skipped, problems };
+}
+
+/** One line per scene, for the drafter's "do not repeat" list and the panel. */
+export function sceneSummary(s) {
+  const tags = [s.audience || "any", formatOf(s) === "workout" ? null : formatOf(s), s.backdrop, s.setting, s.people != null ? `${s.people} ${s.people === 1 ? "person" : "people"}` : null, s.exercise, s.stance, s.age, s.equipment].filter(Boolean).join(", ");
+  return `${s.id} [${tags}]${isRetired(s) ? ` (retired${s.reason ? `: ${s.reason}` : ""})` : isDraft(s) ? " (draft)" : ""}: ${s.scene}`;
+}
+
+/**
+ * The owner approves drafts: the draft flag goes, `approved_on` is set (and `approved_via` when the
+ * approval came through a batch's run confirmation). Unknown ids are refused; an already-live scene
+ * is left as it is. Returns what changed.
+ */
+export function approveScenes(path, ids, { via = null, date = today() } = {}) {
+  const lib = readLibrary(path);
+  const wanted = [ids].flat().map((s) => String(s).trim()).filter(Boolean);
+  const unknown = wanted.filter((id) => !lib.scenes.some((s) => s.id === id));
+  if (unknown.length) throw new Error(`no such scene: ${unknown.join(", ")}`);
+  const approved = [], already = [];
+  for (const s of lib.scenes) {
+    if (!wanted.includes(s.id)) continue;
+    if (isRetired(s)) throw new Error(`${s.id} is retired${s.reason ? ` (${s.reason})` : ""} — a retired scene is not approved again; draft a new one`);
+    if (!isDraft(s)) { already.push(s.id); continue; }
+    delete s.draft;
+    s.approved_on = date;
+    if (via) s.approved_via = via;
+    approved.push(s.id);
+  }
+  // The owner's first approval of a scene approves the library itself: a gym started from the panel has no
+  // other way to set it (Sculpt Society's was set by hand). Nothing is generated from a draft either way.
+  if (approved.length && lib.approved !== true) { lib.approved = true; lib.approved_on = date; lib.approved_note = `approved with its first scenes (${approved.join(", ")})`; }
+  writeLibrary(path, lib);
+  return { approved, already };
+}
+
+/**
+ * The owner rejects a scene — a draft or a live one: it is retired with the reason and date and kept
+ * in the file. A reason is required (the owner's rule, 2026-09-13): it is what the drafter is told
+ * not to repeat, and what a later reader of the library sees.
+ */
+export function rejectScene(path, id, reason, { date = today() } = {}) {
+  if (typeof reason !== "string" || reason.trim().length < 3) throw new Error(`rejecting ${id} needs a reason (what was wrong with it)`);
+  const lib = readLibrary(path);
+  const s = lib.scenes.find((x) => x.id === id);
+  if (!s) throw new Error(`no such scene: ${id}`);
+  if (isRetired(s)) throw new Error(`${id} is already retired${s.reason ? ` (${s.reason})` : ""}`);
+  delete s.draft;
+  s.status = "retired";
+  s.reason = reason.trim();
+  s.retired_on = date;
+  writeLibrary(path, lib);
+  return { retired: id, reason: s.reason };
+}
+
+/** Counts for the panel and the CLI: live, drafts and retired, and live per audience. */
+export function libraryStatus(lib) {
+  const scenes = lib.scenes.filter((s) => !sceneProblems(s).length);
+  const live = scenes.filter((s) => !isRetired(s) && !isDraft(s)), counts = {};
+  for (const s of live) counts[s.audience || "any"] = (counts[s.audience || "any"] || 0) + 1;
+  // Live scenes per format and audience: a batch is made in one format, so "are there scenes for it" is asked per format.
+  const formats = {};
+  for (const s of live) { const f = (formats[formatOf(s)] ||= { total: 0, counts: {} }); f.total++; f.counts[s.audience || "any"] = (f.counts[s.audience || "any"] || 0) + 1; }
+  return { approved: lib.approved === true, counts, formats, total: live.length, drafts: scenes.filter(isDraft).length, retired: scenes.filter(isRetired).length };
+}

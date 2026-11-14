@@ -1,0 +1,104 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+/*__FONTS__*/
+html,body{margin:0;padding:0}
+#card{position:relative;overflow:hidden}
+#safe{position:absolute;display:flex;flex-direction:column;box-sizing:border-box}
+.blk{margin:0}
+#top{flex:0 0 auto;text-transform:uppercase;line-height:1.0;font-family:"Anton";letter-spacing:.01em}
+#aud{flex:0 0 auto;font-family:"Montserrat";font-weight:800;text-transform:uppercase;letter-spacing:.14em;margin-top:.5em}
+#mid{flex:1 1 0;min-height:0;display:flex;flex-direction:column;justify-content:center;box-sizing:border-box}
+#bottom{flex:0 0 auto}
+#duration{font-family:"Anton";text-transform:uppercase;line-height:1.0}
+#offer{font-family:"Montserrat";font-weight:900;text-transform:uppercase;line-height:1.08;letter-spacing:.01em}
+#body{font-family:"Montserrat";font-weight:500;line-height:1.3;overflow-wrap:break-word}
+#body b{font-weight:800}
+.paper{border-radius:.5em;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}
+#stars{line-height:1;letter-spacing:.08em;margin-bottom:.5em}
+#who{font-family:"Montserrat";font-weight:700;margin-top:.9em}
+#who span{font-weight:500}
+#title{font-family:"Montserrat";font-weight:900;line-height:1.08;margin-bottom:.7em}
+.steps{display:grid;grid-template-columns:auto auto 1fr;column-gap:.7em;align-items:start}
+.when{font-family:"Montserrat";font-weight:800;text-transform:uppercase;letter-spacing:.12em;white-space:nowrap;padding-top:.28em;font-size:.62em}
+.rail{position:relative;align-self:stretch;width:.5em}
+.rail i{position:absolute;left:50%;top:0;bottom:0;width:.09em;transform:translateX(-50%)}
+.rail u{position:absolute;left:50%;top:.42em;width:.5em;height:.5em;border-radius:50%;transform:translateX(-50%)}
+.step{padding-bottom:.75em}
+.step .head{font-family:"Montserrat";font-weight:800;line-height:1.12}
+.step .line{font-family:"Montserrat";font-weight:500;line-height:1.25;font-size:.72em;margin-top:.15em}
+</style></head><body>
+<div id="card"><div id="safe">
+  <div id="top" class="blk"></div><div id="aud" class="blk"></div>
+  <div id="mid"></div>
+  <div id="bottom"><div id="duration" class="blk"></div><div id="offer" class="blk"></div></div>
+</div></div>
+<script>
+const S = /*__SPEC__*/null;
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+window.__renderPromise = (async () => {
+  await document.fonts.ready;
+  const [W, H] = S.canvas, P = S.palette, [sx, sy, sw, sh] = S.safe;
+  const card = $("card"), safe = $("safe");
+  card.style.cssText += `width:${W}px;height:${H}px;background:${P.bg};color:${P.ink}`;
+  safe.style.cssText += `left:${W * sx / 100}px;top:${H * sy / 100}px;width:${W * sw / 100}px;height:${H * sh / 100}px`;
+  const top = $("top"), aud = $("aud"), mid = $("mid"), dur = $("duration"), offer = $("offer");
+  top.textContent = S.text.location; top.style.color = P.accent;
+  if (S.text.audience) { aud.textContent = S.text.audience; aud.style.color = P.ink; } else aud.remove();
+  if (S.text.duration) dur.textContent = S.text.duration; else dur.remove();
+  offer.textContent = S.text.offer_name; dur.style.color = P.ink; offer.style.color = P.accent;
+  // One line that fits the width, from its largest size down.
+  const fitLine = (e, max, min) => { let px = max; e.style.whiteSpace = "nowrap"; e.style.fontSize = px + "px"; while (px > min && e.scrollWidth > e.clientWidth + 0.5) { px -= 2; e.style.fontSize = px + "px"; } if (e.scrollWidth > e.clientWidth + 0.5) e.style.whiteSpace = "normal"; return px; };
+  const sizes = {};
+  sizes.location = fitLine(top, S.max_px.callout * (H > 1400 ? 0.8 : 1), S.min_px.callout);
+  if (S.text.audience) { aud.style.fontSize = Math.max(S.min_px.small, Math.round(sizes.location * 0.26)) + "px"; sizes.audience = parseFloat(aud.style.fontSize); }
+  if (S.text.duration) sizes.duration = fitLine(dur, S.max_px.duration * (H > 1400 ? 0.8 : 1), S.min_px.offer);
+  // The offer's name may take two lines, at the largest size at which it takes no more.
+  const fitLines = (e, max, min, lines) => { let px = max; e.style.whiteSpace = "normal"; e.style.fontSize = px + "px"; const over = () => e.getBoundingClientRect().height > px * 1.08 * lines + 2 || e.scrollWidth > e.clientWidth + 0.5; while (px > min && over()) { px -= 2; e.style.fontSize = px + "px"; } return px; };
+  sizes.offer_name = fitLines(offer, S.max_px.offer, S.min_px.offer, 2);
+  mid.style.padding = `${H * 0.022}px 0`;
+  // The middle: the card's own content, set at the largest size that fits the room the callout and the offer leave.
+  const texts = [];
+  let body;
+  if (S.kind === "review") {
+    const paper = el("div", "paper"); paper.style.cssText += `background:${P.paper};color:${P.paper_ink};padding:${W * 0.05}px`;
+    const stars = el("div", null, null); stars.id = "stars";
+    for (let i = 1; i <= 5; i++) { const s = el("span", null, "★"); s.style.color = i <= S.content.rating ? P.star : "rgba(128,128,128,.28)"; stars.appendChild(s); }
+    body = el("div", null, "“" + S.content.excerpt + "”"); body.id = "body";
+    const who = el("div", null, null); who.id = "who"; who.appendChild(document.createTextNode(S.content.author)); who.appendChild(el("span", null, " · " + S.content.source_label));
+    paper.append(stars, body, who); mid.appendChild(paper);
+    texts.push(["review", body], ["author", who]);
+    body._extra = [stars, who];
+  } else if (S.kind === "statement") {
+    body = el("div"); body.id = "body";
+    for (const part of S.content.parts) body.appendChild(part.bold ? el("b", null, part.text) : document.createTextNode(part.text));
+    mid.appendChild(body); texts.push(["statement", body]);
+  } else if (S.kind === "timeline") {
+    body = el("div"); body.id = "body";
+    const title = el("div", null, S.content.title); title.id = "title"; body.appendChild(title); texts.push(["title", title]);
+    const steps = el("div", "steps");
+    S.content.steps.forEach((st, i) => {
+      const when = el("div", "when", st.when); when.style.color = P.accent;
+      const rail = el("div", "rail"); const line = el("i"); line.style.background = P.muted; if (i === S.content.steps.length - 1) line.style.bottom = "auto", line.style.height = ".6em"; const dot = el("u"); dot.style.background = P.accent; rail.append(line, dot);
+      const step = el("div", "step"); const head = el("div", "head", st.head); step.appendChild(head); texts.push([`step ${i + 1}`, head]);
+      if (st.line) { const ln = el("div", "line", st.line); ln.style.color = P.muted; step.appendChild(ln); texts.push([`step ${i + 1} line`, ln]); }
+      texts.push([`step ${i + 1} when`, when]);
+      steps.append(when, rail, step);
+    });
+    body.appendChild(steps); mid.appendChild(body);
+  }
+  // Largest body size at which the middle does not overflow.
+  // (The content is centred in the middle, so what spills over the top is not in scrollHeight: its own box is measured.)
+  const inner = mid.firstElementChild, room = () => { const cs = getComputedStyle(mid); return [mid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), mid.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)]; };
+  const overflows = () => { const r = inner.getBoundingClientRect(), [rw, rh] = room(); return r.height > rh + 0.5 || r.width > rw + 0.5 || [...mid.querySelectorAll(".when")].some((n) => n.scrollWidth > n.clientWidth + 1); };
+  const setBody = (px) => { body.style.fontSize = px + "px"; for (const x of body._extra || []) x.style.fontSize = (x.id === "stars" ? px * 1.05 : Math.max(S.min_px.small, px * 0.62)) + "px"; if (S.kind === "timeline") $("title").style.fontSize = px * 1.25 + "px"; };
+  let px = Math.round(S.max_px.body * (S.kind === "statement" ? 1.35 : S.kind === "review" ? 0.92 : 0.88)); setBody(px);
+  while (px > S.min_px.body && overflows()) { px -= 1; setBody(px); }
+  sizes.body = px;
+  const rect = (e) => { const r = e.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
+  const blocks = [["location", top], ...(S.text.audience ? [["audience", aud]] : []), ...(S.text.duration ? [["duration", dur]] : []), ["offer_name", offer], ...texts]
+    .map(([block, e]) => ({ block, text: e.textContent, px: parseFloat(getComputedStyle(e).fontSize), rect: rect(e), clipped: e.scrollWidth > e.clientWidth + 1 }));
+  return { canvas: S.canvas, kind: S.kind, sizes, overflow: overflows(), blocks, safe: { x: W * sx / 100, y: H * sy / 100, w: W * sw / 100, h: H * sh / 100 } };
+})();
+</script></body></html>

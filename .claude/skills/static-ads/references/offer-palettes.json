@@ -1,0 +1,106 @@
+{
+  "schema_version": 2,
+  "note": "Colour pairings for the offer-first text layer, taken from the high-performing reference set. Deliberately loud and high-contrast: these ads read as native posts, not agency work. Each palette gives each line its own fill and outline, so two or three colours appear per ad as in the references. The renderer's contrast guard still decides whether a pairing is legible on a given photo and escalates (stroke -> scrim -> band) when it is not. 'pill' is the band colour used by styles whose effect is 'band'; 'band' is the fallback band. 'divider' is the thin rule some layouts draw between the audience and the offer; if it would not reach 3:1 against the photo (the WCAG level for non-text marks) the renderer swaps it for white or black.",
+  "palettes": {
+    "white-on-dark": {
+      "seen_in": ["Asheville boxing ('HEY, ASHEVILLE!')", "Mount Dora, plank"],
+      "blocks": {
+        "location":   { "fill": "#FFFFFF", "outline": "#1A1A1A", "shadow": "rgba(0,0,0,0.6)" },
+        "audience":   { "fill": "#FFFFFF", "outline": "#1A1A1A", "shadow": "rgba(0,0,0,0.6)" },
+        "duration":   { "fill": "#FFFFFF", "outline": "#1A1A1A", "shadow": "rgba(0,0,0,0.6)" },
+        "offer_name": { "fill": "#FFFFFF", "outline": "#1A1A1A", "shadow": "rgba(0,0,0,0.6)" }
+      },
+      "pill": "#111111", "band": "#121212", "scrim": "#000000", "divider": "#FFFFFF"
+    },
+    "cyan-pink": {
+      "seen_in": ["Asheville ladies, MMA cage", "Asheville ladies, boxing", "Mount Dora, stairs"],
+      "blocks": {
+        "location":   { "fill": "#3BE3EA", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" },
+        "audience":   { "fill": "#FFFFFF", "outline": "#FF5DBB", "shadow": "rgba(0,0,0,0.55)" },
+        "duration":   { "fill": "#3BE3EA", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" },
+        "offer_name": { "fill": "#FFA6DC", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" }
+      },
+      "pill": "#1B1B2E", "band": "#121212", "scrim": "#000000", "divider": "#FF5DBB"
+    },
+    "red-white": {
+      "seen_in": ["Asheville 'MEN WANTED', MMA red"],
+      "blocks": {
+        "location":   { "fill": "#FF2A2A", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" },
+        "audience":   { "fill": "#FF2A2A", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" },
+        "duration":   { "fill": "#FFFFFF", "outline": "#FF2A2A", "shadow": "rgba(0,0,0,0.55)" },
+        "offer_name": { "fill": "#FF2A2A", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" }
+      },
+      "pill": "#FFFFFF", "band": "#121212", "scrim": "#000000", "divider": "#FFFFFF"
+    },
+    "blue-white": {
+      "seen_in": ["Asheville collage, blue"],
+      "blocks": {
+        "location":   { "fill": "#2B59FF", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" },
+        "audience":   { "fill": "#2B59FF", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" },
+        "duration":   { "fill": "#FFFFFF", "outline": "#2B59FF", "shadow": "rgba(0,0,0,0.55)" },
+        "offer_name": { "fill": "#2B59FF", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" }
+      },
+      "pill": "#FFFFFF", "band": "#121212", "scrim": "#000000", "divider": "#FFFFFF"
+    },
+    "purple-white": {
+      "seen_in": ["Asheville ladies, muay thai", "Mount Dora, purple pill"],
+      "blocks": {
+        "location":   { "fill": "#C98BFF", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" },
+        "audience":   { "fill": "#FFFFFF", "outline": "#7B2FBF", "shadow": "rgba(0,0,0,0.55)" },
+        "duration":   { "fill": "#FFFFFF", "outline": "#7B2FBF", "shadow": "rgba(0,0,0,0.55)" },
+        "offer_name": { "fill": "#E7C4FF", "outline": "#4A1566", "shadow": "rgba(0,0,0,0.55)" }
+      },
+      "pill": "#3D1452", "band": "#121212", "scrim": "#000000", "divider": "#C98BFF"
+    },
+    "pink-white": {
+      "seen_in": ["Ladies of Asheville, pink", "Mount Dora, TRX", "Anchorage, lat pulldown"],
+      "blocks": {
+        "location":   { "fill": "#D6337F", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" },
+        "audience":   { "fill": "#FFFFFF", "outline": "#D6337F", "shadow": "rgba(0,0,0,0.55)" },
+        "duration":   { "fill": "#FFB6D5", "outline": "#D6337F", "shadow": "rgba(0,0,0,0.55)" },
+        "offer_name": { "fill": "#FFB6D5", "outline": "#D6337F", "shadow": "rgba(0,0,0,0.55)" }
+      },
+      "pill": "#5A0F33", "band": "#121212", "scrim": "#000000", "divider": "#FFFFFF"
+    },
+    "green-white": {
+      "seen_in": ["Mount Dora, green dumbbell"],
+      "blocks": {
+        "location":   { "fill": "#6CFF3F", "outline": "#0B3D00", "shadow": "rgba(0,0,0,0.55)" },
+        "audience":   { "fill": "#FFFFFF", "outline": "#0B3D00", "shadow": "rgba(0,0,0,0.55)" },
+        "duration":   { "fill": "#6CFF3F", "outline": "#0B3D00", "shadow": "rgba(0,0,0,0.55)" },
+        "offer_name": { "fill": "#6CFF3F", "outline": "#0B3D00", "shadow": "rgba(0,0,0,0.55)" }
+      },
+      "pill": "#0E2A06", "band": "#121212", "scrim": "#000000", "divider": "#6CFF3F"
+    },
+    "yellow-accent": {
+      "seen_in": ["Anchorage 'Ladies Wanted', circles"],
+      "blocks": {
+        "location":   { "fill": "#FFFFFF", "outline": "#1A1A1A", "shadow": "rgba(0,0,0,0.55)" },
+        "audience":   { "fill": "#FFD83D", "outline": "#1A1A1A", "shadow": "rgba(0,0,0,0.55)" },
+        "duration":   { "fill": "#FFD83D", "outline": "#1A1A1A", "shadow": "rgba(0,0,0,0.55)" },
+        "offer_name": { "fill": "#FFFFFF", "outline": "#1A1A1A", "shadow": "rgba(0,0,0,0.55)" }
+      },
+      "pill": "#1A1A1A", "band": "#121212", "scrim": "#000000", "divider": "#FFD83D"
+    },
+    "cyan-white": {
+      "seen_in": ["Mount Dora, full body", "Mount Dora, black bar"],
+      "blocks": {
+        "location":   { "fill": "#43C3FF", "outline": "#0A2A3A", "shadow": "rgba(0,0,0,0.55)" },
+        "audience":   { "fill": "#43C3FF", "outline": "#0A2A3A", "shadow": "rgba(0,0,0,0.55)" },
+        "duration":   { "fill": "#FFFFFF", "outline": "#0A2A3A", "shadow": "rgba(0,0,0,0.55)" },
+        "offer_name": { "fill": "#FFFFFF", "outline": "#0A2A3A", "shadow": "rgba(0,0,0,0.55)" }
+      },
+      "pill": "#0B0B0B", "band": "#121212", "scrim": "#000000", "divider": "#43C3FF"
+    },
+    "red-pink": {
+      "seen_in": ["Asheville 'ULTIMATE BODY TRANSFORMATION', jump"],
+      "blocks": {
+        "location":   { "fill": "#FFFFFF", "outline": "#1A1A1A", "shadow": "rgba(0,0,0,0.55)" },
+        "audience":   { "fill": "#FF4D6D", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" },
+        "duration":   { "fill": "#FFFFFF", "outline": "#FF4D6D", "shadow": "rgba(0,0,0,0.55)" },
+        "offer_name": { "fill": "#FF4D6D", "outline": "#FFFFFF", "shadow": "rgba(0,0,0,0.55)" }
+      },
+      "pill": "#2A0710", "band": "#121212", "scrim": "#000000", "divider": "#FF4D6D"
+    }
+  }
+}

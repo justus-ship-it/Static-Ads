@@ -1,0 +1,910 @@
+#!/usr/bin/env node
+/**
+ * plan-offer-batch.mjs — one brief in, a gallery of finished, verified offer-first ads out.
+ *
+ * The brief (brands/{gym}/batches/{id}/brief.json) is written by the user. Every word on every ad —
+ * offer, locations, audience — comes from it exactly; nothing is read from the offer file or made up.
+ *
+ *   1 plan      validate the brief; for each photo to generate, pick the layout it is made for (its
+ *               primary — spread across layouts) and a scene from the client's approved library that
+ *               suits the audience and that layout's pose. Real photos are checked for marks.
+ *   2 pictures  generate-visuals.mjs (Step 4) with a clean real photo as the room reference. Every photo
+ *               must pass the text/placement check and the quality check (looks real; groups candid).
+ *               Photos on disk are reused if they pass today's checks. The only stage that spends
+ *               image calls: at most max_calls for the batch.
+ *   3 fit       every photo against every layout (check-visual.mjs → fitLayouts): which layouts it can
+ *               carry and the crop each would use. A photo made for T1 is not given T3's column.
+ *   4 looks     assign-variants.mjs, from the layouts each photo can carry, with photo colour and the
+ *               client's exclusions; a generated photo's primary layout is its first look.
+ *   5 render    every look, for every location together: a look is kept only if it verifies for all
+ *               of them, so the ads for each location differ only in the location line.
+ *   6 gallery   one numbered folder per ad (gallery-selector.mjs finds them unchanged), batch.json
+ *               mapping each folder to its photos, look, crop and exact words, and gallery.html.
+ *
+ * --dry-run stops after stage 1 and says what would be generated and what it may cost.
+ * --render-only re-renders from the photos on disk (change the offer, a location or the audience in
+ * the brief): zero image calls.
+ *
+ * Usage:
+ *   node skills/references/plan-offer-batch.mjs --brand-dir brands/sculpt-society \
+ *     --brief batches/2026-09-12-test/brief.json [--dry-run] [--render-only]
+ */
+
+import { generateImage } from "./generate_ads_gemini.mjs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync, readdirSync, renameSync, copyFileSync } from "fs";
+import { join, resolve, basename, dirname, relative } from "path";
+import { fileURLToPath } from "url";
+import { parseArgs } from "util";
+import { execFileSync } from "child_process";
+import { createHash } from "crypto";
+import { validateInputs, loadCatalogue, launchBrowser, layoutFor, LOOKS } from "./render-composites.mjs";
+import { poseProblem, POSES, readShotGuide } from "./visual-prompts.mjs";
+import { fitLayouts, imageSize, checkTiled, splitMarks, ownerKept } from "./check-visual.mjs";
+import { QUALITY_VERSION } from "./check-quality.mjs";
+import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from "./assign-variants.mjs";
+import { catalogueFor, imageModelFor, mixOf, FEED_RATIOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
+import { cardsProblems, cardCount, pickCards } from "./cards.mjs";
+import { renderCard, loadCards } from "./render-cards.mjs";
+import { videosProblems, videoCount, pickScripts, makePresenterVideos, videoNeeds, USD_PER_SECOND } from "./presenter-video.mjs";
+import { plainGemini } from "./gemini-busy.mjs";
+import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
+import { makePixelTools } from "./clean-photo.mjs";
+import { ROOMS, SCENE_OPTIONAL_TAGS, SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
+import { draftScenes, validateDirection } from "./refresh-scenes.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+/** Which checks a passed photo has been through. A photo passed under older checks (before the quality
+ *  check, 2026-09-12) is re-checked on the next run — vision calls only — before it is used again. */
+export const CHECKS_VERSION = `q${QUALITY_VERSION}`;
+export const MAX_LOCATIONS = 4;
+export const MAX_CALLS_CAP = 40;
+/** The look a generated photo's own finished-ad check is rendered with (Step 4). */
+const CHECK_LOOK = { style: "s1-heavy-sans", palette: "white-on-dark" };
+
+// ── the brief ─────────────────────────────────────────────────────────────
+
+/** Which scenes suit an audience callout. The brief can say so outright (scene_audience). */
+export function sceneAudience(audience, override = null) {
+  if (override) return override;
+  const a = String(audience || "");
+  // English words at word boundaries; Chinese words anywhere (2026-10-07: "女性" was read as "anyone" and F45 Xinyi's
+  // women's batch planned men's scenes). A callout naming both (男女, "men and women") is for anyone.
+  const men = /\b(men|man|guys|dads?|gents|gentlemen|males?|brothers)\b/i.test(a) || MEN_ZH.test(a);
+  const women = /\b(ladies|women|woman|mums?|moms?|girls|females?|sisters)\b/i.test(a) || WOMEN_ZH.test(a);
+  if (men && women) return "any";
+  if (men) return "men";
+  if (women) return "women";
+  return "any";
+}
+/** Chinese words for women and for men in an audience callout (the "women" ones first so 男女 is seen as both). */
+export const WOMEN_ZH = /女性|女生|女士|女人|女孩|女子|媽媽|妈妈|姐妹|辣妹|辣台妹|人妻|姊妹/;
+export const MEN_ZH = /男性|男生|男士|男人|男孩|男子|爸爸|老爸|兄弟|型男/;
+
+/** Every problem with a brief, as messages. Empty = runnable. */
+export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogue() } = {}) {
+  const errs = [];
+  const T = catalogue.treatments;
+  if (!brief || typeof brief !== "object") return ["the brief is not a JSON object"];
+  if (!/^[a-z0-9][a-z0-9-]{2,60}$/.test(brief.batch_id || "")) errs.push("batch_id is required: lower-case letters, digits and dashes (it names the output folder)");
+  if (typeof brief.offer !== "string" || !brief.offer.trim()) errs.push("offer is required, written exactly as it should appear — it is never taken from the offer file or made up");
+  const locations = brief.locations;
+  // The offer and audience are checked once, each location on its own — one problem, one message
+  // (the panel showed an offer's dash once per location).
+  if (typeof brief.offer === "string" && brief.offer.trim()) for (const e of validateInputs({ location: "X", audience: brief.audience ?? null, offer: brief.offer })) if (!e.startsWith("location")) errs.push(e);
+  if (!Array.isArray(locations) || locations.length < 1 || locations.length > MAX_LOCATIONS) errs.push(`locations must list 1 to ${MAX_LOCATIONS} location callouts`);
+  else {
+    if (new Set(locations).size !== locations.length) errs.push("locations repeat");
+    for (const loc of locations) for (const e of validateInputs({ location: loc, audience: null, offer: "x" })) if (e.startsWith("location")) errs.push(`${JSON.stringify(loc)}: ${e}`);
+  }
+  if (brief.free !== undefined && typeof brief.free !== "boolean") errs.push("free must be true or false");
+  if (brief.scene_audience != null && !["men", "women", "any"].includes(brief.scene_audience)) errs.push('scene_audience must be "men", "women" or "any"');
+  const g = brief.generated ?? 0, real = brief.real || [];
+  if (!Number.isInteger(g) || g < 0 || g > 12) errs.push("generated must be a whole number from 0 to 12");
+  if (!Array.isArray(real)) errs.push("real must be a list of photo paths");
+  else if (g + real.length + cardCount(brief.cards) + videoCount(brief.videos) < 1) errs.push("the batch has no photos: set generated, list real photos, or both");
+  // Videos (2026-11-12): a presenter talking to camera — how many (each is one kept script, made once for every location), and the most seconds of video the run may ask for.
+  errs.push(...videosProblems(brief.videos));
+  if (brief.max_video_seconds != null && !(Number.isInteger(brief.max_video_seconds) && brief.max_video_seconds >= 0 && brief.max_video_seconds <= MAX_VIDEO_SECONDS)) errs.push(`max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`);
+  // Cards (Phase 5): text-led ads with no photograph — how many of each kind. No image call.
+  errs.push(...cardsProblems(brief.cards));
+  if (brandDir && Array.isArray(real)) for (const p of real) if (!existsSync(join(brandDir, "brand-assets", p)) && !existsSync(resolve(p))) errs.push(`real photo not found: ${p}`);
+  if (brief.reference && brandDir && !existsSync(join(brandDir, "brand-assets", brief.reference)) && !existsSync(resolve(brief.reference))) errs.push(`reference photo not found: ${brief.reference}`);
+  const looks = brief.looks_per_photo ?? 2;
+  if (!Number.isInteger(looks) || looks < 1 || looks > 6) errs.push("looks_per_photo must be 1 to 6");
+  const maxCalls = brief.max_calls ?? g, attempts = brief.attempts ?? 1;
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 5) errs.push("attempts must be 1 to 5");
+  if (!Number.isInteger(maxCalls) || maxCalls < g) errs.push(`max_calls (${maxCalls}) must cover at least one call per generated photo (${g})`);
+  // The budget is for the batch's whole life (re-runs replace failed photos from what is left), so a
+  // 48-ad batch can legitimately grow past 30 — the owner raised one to 32 (2026-09-12).
+  if (maxCalls > MAX_CALLS_CAP) errs.push(`max_calls over ${MAX_CALLS_CAP}: split the batch`);
+  if (brief.scenes != null) {
+    if (!Array.isArray(brief.scenes) || brief.scenes.length < g) errs.push(`scenes, when given, must list at least one per generated photo (${g})`);
+    else for (const [i, s] of brief.scenes.entries()) for (const e of sceneProblems(s)) errs.push(`scenes[${i}]: ${e}`);
+  }
+  if (brief.age_range != null && !(Array.isArray(brief.age_range) && brief.age_range.length === 2 && brief.age_range.every((n) => Number.isInteger(n) && n >= 18 && n <= 75) && brief.age_range[0] <= brief.age_range[1])) errs.push("age_range is the photos' ages as [youngest, oldest], whole years from 18 to 75");
+  if (brief.must_show != null) {
+    if (typeof brief.must_show !== "object" || Array.isArray(brief.must_show)) errs.push("must_show must map a tag to the values the batch must include");
+    else for (const [tag, values] of Object.entries(brief.must_show)) {
+      if (tag !== "exercise" && !SCENE_TAGS[tag]) errs.push(`must_show: unknown tag "${tag}" (use exercise, ${Object.keys(SCENE_TAGS).join(", ")})`);
+      else if (!Array.isArray(values) || !values.every((v) => typeof v === "string" && v)) errs.push(`must_show.${tag} must be a list of values`);
+      else if (SCENE_TAGS[tag]) for (const v of values) if (!SCENE_TAGS[tag].includes(v)) errs.push(`must_show.${tag}: "${v}" is not one of ${SCENE_TAGS[tag].join(", ")}`);
+    }
+  }
+  if (brief.ratio && !T.canvas[brief.ratio]) errs.push(`ratio "${brief.ratio}" is not one of ${Object.keys(T.canvas).join(", ")}`);
+  if (brief.look != null && !LOOKS.includes(brief.look)) errs.push(`look "${brief.look}" is not one of ${LOOKS.join(", ")}`);
+  if (brief.format != null && !SCENE_FORMATS[brief.format]) errs.push(`format "${brief.format}" is not one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+  // The mix (Phase 4): how many of the generated photos are of each kind. Photos, not shares; they add up to `generated`.
+  if (brief.mix != null) {
+    errs.push(...mixProblems(brief.mix, { counts: true, total: g }));
+    if (brief.format != null) errs.push("give the batch a format or a mix, not both");
+    if (brief.direction != null && Object.values(brief.mix || {}).filter((n) => n > 0).length > 1) errs.push("a directed batch is one kind of photograph: its words or reference decide the pictures, so it cannot be a mix");
+  }
+  errs.push(...leanProblems(brief.lean));
+  if (brief.words_weight != null && !WORDS_WEIGHTS.includes(brief.words_weight)) errs.push(`words_weight must be one of ${WORDS_WEIGHTS.join(", ")} (how large the words are set: it never changes the words)`);
+  // The owner's direction for the batch's photos: words, or a reference image read into words.
+  if (brief.direction != null) {
+    for (const e of validateDirection(brief.direction, { brandDir })) errs.push(`direction: ${e}`);
+    if (brief.scenes != null) errs.push("direction and scenes cannot both be given: the direction drafts the batch's scenes");
+    if (!(g > 0)) errs.push("direction needs generated photos (generated is 0)");
+  }
+  return errs;
+}
+
+// ── scenes ────────────────────────────────────────────────────────────────
+// The library itself lives in scene-library.mjs (vocabulary, validation, approve / reject / retire);
+// re-exported here for the callers that always found it on the planner.
+export { SCENE_TAGS, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes };
+
+/**
+ * A directed batch (brief.direction: the owner's words, or a reference image read into words) draws
+ * its scenes from what was drafted for it — `source: "batch:{id}"` in the library — not from the
+ * library at large. The dry run drafts what is missing (text calls only); a real run needs those
+ * drafts confirmed (the panel's Run confirmation, or --approve-scenes), since nothing is generated
+ * from a draft. Rejecting one (refresh-scenes.mjs --reject) retires it, and the next dry run drafts a
+ * replacement.
+ */
+export async function directedScenes({ brandDir, brief, scenesPath, audience, dryRun, renderOnly, draft = draftScenes, log = console.log }) {
+  const lib = readLibrary(scenesPath);
+  const g = brief.generated ?? 0, source = `batch:${brief.batch_id}`;
+  const mine = () => lib.scenes.filter((s) => s.source === source && !isRetired(s));
+  const have = mine();
+  if (have.length < g && !renderOnly) {
+    const r = await draft({ brandDir, scenesPath, audience, count: g - have.length, direction: brief.direction, source, ...(brief.format && brief.format !== "workout" ? { format: brief.format } : {}), log });
+    lib.scenes = readLibrary(scenesPath).scenes; // what the drafter wrote
+    log(`· direction: ${r.drafts.length} scene(s) drafted for this batch${r.dropped.length ? ` (${r.dropped.length} dropped: ${r.dropped.map((d) => d.reason).join("; ")})` : ""}`);
+  }
+  const scenes = mine();
+  const bad = scenes.flatMap((s) => sceneProblems(s).map((e) => `${s.id}: ${e}`));
+  if (bad.length) throw new Error(`this batch's scenes have problems:\n${bad.join("\n")}`);
+  if (!scenes.length) throw new Error("no scene could be drafted for this batch's direction — change the words, or give scenes in the brief");
+  const pending = scenes.filter(isDraft);
+  if (pending.length && !dryRun) throw new Error(`this batch's ${pending.length} drafted scene(s) await confirmation: ${pending.map((s) => s.id).join(", ")} — read them in the plan, then confirm (the panel's Run confirmation, or --approve-scenes) or reject one with a reason (refresh-scenes.mjs --reject)`);
+  return scenes;
+}
+
+/**
+ * The owner's rulings on photos: `brands/{gym}/quality-calibration.json`, the entries marked
+ * `"by": "owner"` (the same file check-quality.mjs --calibrate measures the check against). A photo
+ * ruled "fail" is never used, whatever the checks say (2026-09-12: the owner failed two photos the
+ * checker passes); one ruled "pass" skips the quality check but still goes through the text and
+ * placement check, which the render needs. Paths are relative to the file.
+ */
+export function loadRulings(brandDir) {
+  const p = join(brandDir, "quality-calibration.json");
+  if (!existsSync(p)) return {};
+  const { photos = [] } = JSON.parse(readFileSync(p, "utf-8"));
+  return Object.fromEntries(photos.filter((x) => x.by === "owner" && ["pass", "fail"].includes(x.expect) && x.file).map((x) => [resolve(brandDir, x.file), { expect: x.expect, why: x.why || "" }]));
+}
+export function withRulings(check, rulings = {}) {
+  return async (file, opts) => {
+    const r = rulings[resolve(file)];
+    if (r?.expect === "fail") return { ok: false, failures: [`ruled out by the owner${r.why ? `: ${r.why}` : ""}`], faces: [], focus: [0.5, 0.5], placement: null };
+    return check(file, r?.expect === "pass" ? { ...opts, skipQuality: true } : opts);
+  };
+}
+
+/** Layouts a generated photo can be made for: single-photo layouts with a subject area. */
+export function primaryLayouts(catalogue = loadCatalogue(), ratio = "1x1", exclude = {}) {
+  const rules = fitLayouts({ people_box: null, face_boxes: [], people_count: 0 }, { ratio, expectPeople: false, catalogue });
+  return Object.entries(rules).filter(([id, f]) => f.rule === "subject-area" && !(exclude.layouts || []).includes(id)).map(([id]) => id);
+}
+
+function rngFrom(seed) {
+  let h = 2166136261;
+  for (const ch of String(seed)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return () => { h |= 0; h = (h + 0x6d2b79f5) | 0; let t = Math.imul(h ^ (h >>> 15), 1 | h); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
+/** How much a scene adds by bringing something new on each tag — the exercise most. */
+export const VARIETY_WEIGHTS = { exercise: 3, age: 3, setting: 2, equipment: 2, muscles: 1, backdrop: 3, stance: 2 }; // backdrop and stance: portrait scenes only
+// ── the lean (Phase 6, 2026-11-11) ────────────────────────────────────────────
+// What the gym's results say the next photos should lean on — a dark wall behind a portrait, a group on the floor — as
+// scene tags. A scene that shows a lean is preferred until LEAN_SHARE of its kind's photos show it; the rest keep the
+// batch's variety, so the other values go on being tested. It only ever picks among approved scenes.
+export const LEAN_SHARE = 0.6, MAX_LEANS = 6;
+/** How large the words are set on the picture, when the gym's results say it matters (2026-11-11): which layout an ad gets is weighted toward more room for the words, or less. The words themselves are always the owner's. */
+export const WORDS_WEIGHTS = ["bolder", "quieter"];
+export const LEAN_TAGS = ["exercise", ...Object.keys(SCENE_TAGS), ...Object.keys(PORTRAIT_TAGS), "eye_contact", "people", ...Object.keys(SCENE_OPTIONAL_TAGS)];
+/** What is wrong with a brief's `lean`: a list of { tag, value, format?, why? }. */
+export function leanProblems(lean) {
+  if (lean == null) return [];
+  if (!Array.isArray(lean) || lean.length > MAX_LEANS) return [`lean must be a list of up to ${MAX_LEANS} scene tags to lean on`];
+  const errs = [];
+  for (const [i, l] of lean.entries()) {
+    if (!l || typeof l !== "object" || Array.isArray(l)) { errs.push(`lean[${i}] must be { tag, value }`); continue; }
+    const vocab = SCENE_TAGS[l.tag] || PORTRAIT_TAGS[l.tag] || SCENE_OPTIONAL_TAGS[l.tag];
+    if (!LEAN_TAGS.includes(l.tag)) errs.push(`lean[${i}]: unknown tag "${l.tag}" (use ${LEAN_TAGS.join(", ")})`);
+    else if (vocab ? !vocab.includes(l.value) : l.tag === "eye_contact" ? typeof l.value !== "boolean" : l.tag === "people" ? !(Number.isInteger(l.value) && l.value >= 1 && l.value <= MAX_SCENE_PEOPLE) : !(typeof l.value === "string" && /^[a-z][a-z-]{1,30}$/.test(l.value))) errs.push(`lean[${i}]: "${l.value}" is not a value of ${l.tag}`);
+    if (l.format != null && !SCENE_FORMATS[l.format]) errs.push(`lean[${i}]: format "${l.format}" is not one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+    if (l.why != null && (typeof l.why !== "string" || l.why.length > 300)) errs.push(`lean[${i}]: why is a short sentence`);
+    if (l.test != null && typeof l.test !== "boolean") errs.push(`lean[${i}]: test is true or false`);
+    if (l.photos != null && !(Number.isInteger(l.photos) && l.photos >= 1 && l.photos <= 12)) errs.push(`lean[${i}]: photos is a whole number, 1 to 12`);
+  }
+  return errs;
+}
+/** A lean in words: "dark-wall backdrop (studio portraits)". */
+/** How much of the picture the words covered on this gym's own past ads, on average, per layout and per style (batch.json → text_cover): what the words' weight goes by for the styles. */
+export function measuredCover(brandDir) {
+  const acc = { layouts: {}, styles: {} }, dir = join(brandDir, "outputs");
+  if (existsSync(dir)) for (const id of readdirSync(dir)) {
+    let b = null; try { b = JSON.parse(readFileSync(join(dir, id, "batch.json"), "utf-8")); } catch { continue; }
+    for (const a of b?.ads || []) if (typeof a.text_cover === "number") for (const [k, key] of [["layouts", a.treatment], ["styles", a.style]]) { const x = (acc[k][key] ||= { n: 0, sum: 0 }); x.n++; x.sum += a.text_cover; }
+  }
+  const avg = (m) => Object.fromEntries(Object.entries(m).map(([k, x]) => [k, Math.round((x.sum / x.n) * 1000) / 1000]));
+  return { layouts: avg(acc.layouts), styles: avg(acc.styles) };
+}
+export const leanName = (l) => `${l.tag === "people" ? `${l.value} people` : l.tag === "eye_contact" ? (l.value ? "looking into the camera" : "looking away") : l.tag === "room" ? ROOMS[l.value] || l.value : l.tag === "mood" ? `a ${l.value} mood` : `${l.value} ${l.tag}`}${l.format ? ` (${l.format})` : ""}`;
+
+/** A scene's age tag for an age in years: young 20s, prime 30s–40s, older 50s–60s (SCENE_TAGS.age). */
+export const ageBand = (n) => (n < 30 ? "young" : n < 50 ? "prime" : "older");
+/**
+ * One age per generated photo on a bell curve over the owner's range (2026-09-27: "if I give 25-60, most
+ * should be in their 40s"): mean at the middle, standard deviation a quarter of the range (so about 95%
+ * fall inside it), clamped to the range, seeded so the same brief gives the same ages.
+ */
+export function ageTargets({ range, count, seed = "batch" }) {
+  if (!Array.isArray(range) || range.length !== 2) return null;
+  const [lo, hi] = range, mean = (lo + hi) / 2, sd = Math.max(1.5, (hi - lo) / 4), rand = rngFrom(`${seed}|ages`);
+  return Array.from({ length: count }, () => { const u = Math.max(1e-9, rand()), v = rand(); const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); return Math.round(Math.min(hi, Math.max(lo, mean + z * sd))); });
+}
+
+/**
+ * For each photo to generate: the layout it is made for and a scene that suits the audience and that
+ * layout's pose. Each photo takes the scene that adds the most the batch does not have yet — a new
+ * exercise, age, setting, piece of equipment or muscle group — so ten photos are not six squats.
+ * No scene repeats until every suitable one is used; layouts are spread; seeded.
+ */
+/** Does a scene show a must_show value? An exercise matches by name part: "squat" is any squat. */
+export const shows = (scene, tag, value) => scene[tag] != null && (scene[tag] === value || (tag === "exercise" && String(scene[tag]).split("-").includes(value)) || (tag === "exercise" && String(scene[tag]).includes(value)));
+
+/**
+ * The scenes a batch of `count` generated photos draws from: a gendered callout ("LADIES WANTED") its own
+ * scenes, with the mixed ("any") ones only when its own are fewer than the photos wanted; an ungendered
+ * callout the mixed ones. planVisuals and spreadFor share it, so the check and the run agree.
+ */
+export function scenePool(scenes, audience, count) {
+  const own = scenes.filter((s) => !s.audience || s.audience === audience), mixed = scenes.filter((s) => s.audience === "any");
+  return audience === "any" ? scenes.filter((s) => !s.audience || s.audience === "any") : own.length >= count ? own : [...own, ...mixed];
+}
+/** What "Spread across exercises, ages, settings and equipment" asks for, before it meets a gym's scenes. */
+export const SPREAD_WISH = Object.freeze({ exercise: ["lunge", "squat", "deadlift", "bench-press"], age: ["young", "prime", "older"], setting: ["solo", "coached", "group"], equipment: ["bodyweight", "dumbbells", "barbell"] });
+/**
+ * The spread a gym's library can deliver for this audience: every wished value some scene in the pool shows
+ * (`shows`, the planner's own match), in the wish's order; the rest named in `left_out`. A tag with nothing
+ * left is dropped. Before (2026-09-26), the panel sent the whole wish and a 10-scene library without a bench
+ * press refused the batch.
+ */
+export function spreadFor({ scenes = [], audience = "any", count = 1, wish = SPREAD_WISH }) {
+  const pool = scenePool(scenes, audience, count), must_show = {}, left_out = [];
+  for (const [tag, values] of Object.entries(wish)) {
+    const ok = values.filter((v) => pool.some((sc) => shows(sc, tag, v)));
+    for (const v of values) if (!ok.includes(v)) left_out.push(`${tag} ${v}`);
+    if (ok.length) must_show[tag] = ok;
+  }
+  return { must_show, left_out };
+}
+
+/** must_show values no suitable scene can show — refused before planning. */
+export function unshowable(mustShow = {}, scenes = []) {
+  return Object.entries(mustShow || {}).flatMap(([tag, values]) => (values || []).filter((v) => !scenes.some((sc) => shows(sc, tag, v))).map((v) => `${tag} "${v}"`));
+}
+
+export function planVisuals({ count, scenes, audience, seed = "batch", mustShow = {}, catalogue = loadCatalogue(), ratio = "1x1", exclude = {}, ages = null, mix = null, lean = [] }) {
+  if (!count) return [];
+  const rand = rngFrom(`${seed}|visuals`);
+  const shuffle = (xs) => { const a = [...xs]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  // A gendered callout ("LADIES WANTED") draws from its own scenes; the mixed ("any") scenes serve
+  // ungendered callouts, and fill in only when the gendered scenes are fewer than the photos wanted
+  // (2026-09-12: a women's batch had planned three mixed scenes with a man in frame).
+  // With a mix (photos per format) each format draws from its own scenes for the audience, and is given exactly its share.
+  const left = mix ? { ...mix } : null;
+  const suits = shuffle(mix ? Object.entries(mix).filter(([, n]) => n > 0).flatMap(([f, n]) => {
+    const pool = scenePool(scenes.filter((s) => formatOf(s) === f), audience, n);
+    if (!pool.length) throw new Error(`no ${f} scene in the library suits a "${audience}" audience`);
+    return pool;
+  }) : scenePool(scenes, audience, count));
+  if (!suits.length) throw new Error(`no scene in the library suits a "${audience}" audience`);
+  const layouts = shuffle(primaryLayouts(catalogue, ratio, exclude));
+  const usedL = new Map(layouts.map((l) => [l, 0])), usedS = new Map(suits.map((s) => [s, 0]));
+  const seen = Object.fromEntries(Object.keys(VARIETY_WEIGHTS).map((k) => [k, new Set()]));
+  const uses = Object.fromEntries(Object.keys(VARIETY_WEIGHTS).map((k) => [k, new Map()]));
+  // What the brief asked to see, still missing. Covering one outranks any amount of general variety.
+  // A wish no scene of this audience can show is left out, not refused (2026-10-07: a Spread cut for the "anyone"
+  // pool asked a women's batch for a lunge no women's scene shows): the plan says what was left out (`notShown`).
+  const missing = unshowable(mustShow, suits);
+  const leftOut = missing.map((m) => `${m} (no ${audience === "any" ? "" : audience + "'s "}scene in the library shows it)`);
+  const canShow = Object.fromEntries(Object.entries(mustShow || {}).map(([tag, values]) => [tag, (values || []).filter((v) => !missing.includes(`${tag} "${v}"`))]));
+  const wanted = Object.entries(canShow).flatMap(([tag, values]) => values.map((value) => ({ tag, value })));
+  const out = [];
+  // The lean: each one is followed until LEAN_SHARE of its kind's photos show it. One no scene here shows is said, not refused.
+  const ofKind = (l, sc) => (!l.format || formatOf(sc) === l.format) && shows(sc, l.tag, l.value);
+  // A test (2026-11-11) is a lead not confirmed yet — one picture's leads, a tiring winner's kind: exactly `photos` of the
+  // batch repeat it in new versions, ahead of any lean, so the next review can confirm it or drop it. A lean with its own
+  // `photos` is held to that number too.
+  const leans = (lean || []).map((l) => { const of = l.format && mix ? mix[l.format] || 0 : count; return { ...l, n: 0, cap: Math.max(1, Number.isInteger(l.photos) ? Math.min(l.photos, of) : Math.ceil(LEAN_SHARE * of)), shown: suits.some((sc) => ofKind(l, sc)) }; });
+  // What was asked for stays even: adding to a must_show value that is already ahead of the others
+  // on its tag costs a scene more than any general variety is worth, so young and older men (or solo,
+  // coached and group) come out close to level — without making every tag level at once, which ten
+  // photos cannot do.
+  const shownCount = (tag, v) => out.filter((o) => shows(o.src, tag, v)).length;
+  const ahead = (sc) => Object.entries(mustShow || {}).reduce((n, [tag, vals]) => {
+    const low = Math.min(...(vals || []).map((v) => shownCount(tag, v)));
+    return n + (vals || []).filter((v) => shows(sc, tag, v)).reduce((m, v) => m + (shownCount(tag, v) - low), 0);
+  }, 0);
+  for (let i = 0; i < count; i++) {
+    let pick = null;
+    for (const s of suits) {
+      if (left && !(left[formatOf(s)] > 0)) continue; // this format has its photos
+      const asked = wanted.filter((w) => !w.done && shows(s, w.tag, w.value)).length;
+      const novelty = Object.entries(VARIETY_WEIGHTS).reduce((n, [k, w]) => n + (s[k] != null && !seen[k].has(s[k]) ? w : 0), 0)
+        // Once every value has appeared, keep them even: a fourth older man counts against a scene.
+        - Object.entries(VARIETY_WEIGHTS).reduce((n, [k, w]) => n + (s[k] != null ? w * (uses[k].get(s[k]) || 0) * 0.6 : 0), 0);
+      const tilt = ahead(s);
+      const leaning = leans.filter((l) => !l.test && l.n < l.cap && ofKind(l, s)).length, testing = leans.filter((l) => l.test && l.n < l.cap && ofKind(l, s)).length;
+      // The layout this scene would be made for: the one it prefers (a scene drafted from a reference
+      // image keeps the reference's framing), if its pose fits; else the least-used one that fits.
+      const fits = layouts.filter((la) => !poseProblem(la, s.pose, catalogue));
+      const la = fits.includes(s.prefer_layout) ? s.prefer_layout : fits.reduce((best, x) => (best === null || usedL.get(x) < usedL.get(best) ? x : best), null);
+      if (la === null) continue;
+      // The photo's target age (the bell curve): a scene of that age band first, one of another band last.
+      const ageFit = ages && s.age ? (s.age === ageBand(ages[i]) ? 1 : -1) : 0;
+      // A repeated scene is worst; then less new; then a busier layout. Ties keep the seeded order.
+      const score = -usedS.get(s) * 100000 + testing * 6000 + ageFit * 3000 + asked * 1000 + leaning * 500 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
+      if (!pick || score > pick.score) pick = { la, s, score };
+    }
+    if (!pick) throw new Error("no scene in the library fits any layout the batch can use");
+    usedL.set(pick.la, usedL.get(pick.la) + 1); usedS.set(pick.s, usedS.get(pick.s) + 1);
+    if (left) left[formatOf(pick.s)]--;
+    for (const k of Object.keys(VARIETY_WEIGHTS)) if (pick.s[k] != null) { seen[k].add(pick.s[k]); uses[k].set(pick.s[k], (uses[k].get(pick.s[k]) || 0) + 1); }
+    for (const w of wanted) if (shows(pick.s, w.tag, w.value)) w.done = true;
+    for (const l of leans) if (ofKind(l, pick.s)) l.n++;
+    const tags = Object.fromEntries(["exercise", ...Object.keys(SCENE_TAGS), ...Object.keys(PORTRAIT_TAGS), "eye_contact"].filter((k) => pick.s[k] != null).map((k) => [k, pick.s[k]]));
+    out.push({ id: `g${String(i + 1).padStart(2, "0")}`, treatment: pick.la, scene: pick.s.scene, scene_id: pick.s.id || null, pose: pick.s.pose, people: pick.s.people, ...(formatOf(pick.s) !== "workout" ? { format: formatOf(pick.s) } : {}), tags, ...(ages ? { age: ages[i] } : {}), look: CHECK_LOOK });
+    Object.defineProperty(out.at(-1), "src", { value: pick.s, enumerable: false }); // for the even-spread rule; not written out
+  }
+  // Rooms (2026-11-11). Which of the gym's rooms a workout photo is matched to is the planner's to say, photo by photo: a scene
+  // that names its room keeps it; for the rest, a lean or a test on a room gives that room to its share of the photos. The
+  // run matches each such photo to the gym's own photo of that room (creative_defaults.room_references).
+  for (const o of out) if (o.src.room) o.room = o.src.room;
+  for (const l of leans.filter((x) => x.tag === "room")) {
+    const can = out.filter((o) => (!l.format || (o.format || "workout") === l.format) && (o.format || "workout") === "workout" && (!o.room || o.room === l.value));
+    l.shown = can.length > 0; l.n = can.filter((o) => o.room === l.value).length;
+    for (const o of can) { if (l.n >= l.cap) break; if (!o.room) { o.room = l.value; l.n++; } }
+  }
+  const notShown = [...leftOut, ...wanted.filter((w) => !w.done).map((w) => `${w.tag} "${w.value}"`)];
+  if (notShown.length) out.notShown = notShown; // no scene shows it, or too few photos for everything asked
+  if (leans.length) out.leaned = leans.map(({ tag, value, format, n, cap, shown, test }) => ({ tag, value, ...(format ? { format } : {}), ...(test ? { test: true } : {}), photos: n, cap, shown })); // how far each lean was followed
+  return out;
+}
+
+// ── output ────────────────────────────────────────────────────────────────
+
+export const slug = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const shortLayout = (id) => id.split("-")[0];
+
+/** One numbered folder per ad (candidate × location), numbered from 101 in candidate order. */
+export function adFolders(results, locations, ratio = "1x1") {
+  const ads = [];
+  let n = 101;
+  for (const c of results) {
+    if (c.failed) continue;
+    for (const [li, loc] of locations.entries()) {
+      const folder = `${n++}-${c.id}-${slug(loc)}-${shortLayout(c.treatment)}-${c.palette}`;
+      ads.push({ folder, file: join(folder, ratio, `${c.id}-${slug(loc)}_${ratio}_v1.png`), candidate: c.id, location: loc, location_index: li });
+    }
+  }
+  return ads;
+}
+
+/** selections.json (from the gallery) → each chosen ad's full record from batch.json. */
+export function resolveSelections(batchDir, selections = JSON.parse(readFileSync(join(batchDir, "selections.json"), "utf-8"))) {
+  const batch = JSON.parse(readFileSync(join(batchDir, "batch.json"), "utf-8"));
+  const byFolder = new Map(batch.ads.map((a) => [a.folder, a]));
+  const excluded = new Set(selections.excluded || []);
+  const chosen = [], unknown = [];
+  for (const [folder, ratios] of Object.entries(selections)) {
+    if (folder === "excluded" || excluded.has(folder)) continue;
+    const ad = byFolder.get(folder);
+    if (!ad) { unknown.push(folder); continue; }
+    chosen.push({ ...ad, picked: ratios });
+  }
+  if (unknown.length) throw new Error(`selections.json names folders this batch did not make: ${unknown.join(", ")}`);
+  return chosen;
+}
+
+const hashFile = (p) => createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 16);
+
+// ── progress ──────────────────────────────────────────────────────────────
+
+/**
+ * `progress.json` in the batch folder: what a run is doing, photo by photo, for the panel's Generating
+ * screen (and for anyone who reopens it mid-run). Replaced whole on every change, so a reader never
+ * sees half a file; a failure to write it never stops the run.
+ *   stage: photos → fit → looks → render → gallery → done | failed
+ *   photos[id].state: queued · checking · generating · retrying · passed · flagged · skipped · error
+ */
+/**
+ * The feed shape a batch folder's work was made at, or null when nothing has been made there yet. A finished batch says
+ * it (batch.json; one from before shapes were recorded is a square), a run under way or stopped says it in progress.json,
+ * and photos or spend from before 2026-11-10 with no shape on record are a square's. A batch keeps its shape for good.
+ */
+export function madeShape(out) {
+  const read = (f) => { try { return JSON.parse(readFileSync(join(out, f), "utf-8")); } catch { return null; } };
+  const b = read("batch.json"); if (b) return b.ratio || "1x1";
+  const p = read("progress.json"); if (p?.ratio) return p.ratio;
+  if (existsSync(join(out, "pictures.json")) || existsSync(join(out, "spend.json"))) return "1x1";
+  return null;
+}
+
+/**
+ * A batch's cards, rendered: the gym's usable reviews and kept statements and timelines (cards.mjs → pickCards), each on
+ * its own colour, once per location at 4:5 and again at 9:16. A card whose feed render fails is a failure of the batch,
+ * named; one whose 9:16 does not fit keeps its feed ad and says why it has no Stories version. No image call.
+ */
+export async function renderBatchCards(browser, { brandDir, brief, profile, seed, audience = null, log = console.log }) {
+  const picked = pickCards(brandDir, { cards: brief.cards, offer: brief.offer, profile, seed });
+  const palettes = Object.keys(loadCards().palettes), start = [...String(seed)].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+  const out = [];
+  for (const [i, k] of picked.entries()) {
+    const palette = palettes[(start + i) % palettes.length], renders = [], fails = [];
+    for (const loc of brief.locations) {
+      const words = { kind: k.kind, content: k.content, location: loc, audience, offer: brief.offer, free: brief.free === true, palette };
+      const feed = await renderCard(browser, { ...words, ratio: "4x5" });
+      if (!feed.ok) { fails.push(...feed.failures.map((f) => `${loc}: ${f}`)); continue; }
+      const story = await renderCard(browser, { ...words, ratio: "9x16" });
+      renders.push({ feed: feed.png, story: story.ok ? story.png : null, story_failure: story.ok ? null : story.failures.join("; ") });
+    }
+    if (fails.length) { log(`⚑ ${k.id} (${k.kind} ${k.source_id}): ${fails.join("; ")}`); out.push({ ...k, palette, failed: fails }); }
+    else { log(`· ${k.id}: ${k.kind} card from ${k.source_id} on ${palette}${renders.some((r) => !r.story) ? " (no Stories version: " + renders.find((r) => !r.story).story_failure + ")" : ""}`); out.push({ ...k, palette, renders }); }
+  }
+  return out;
+}
+
+/** The most seconds of video one batch may ask for, whatever its brief says (about US$21 at the day's price). */
+export const MAX_VIDEO_SECONDS = 300;
+export const VIDEO_SPEND = "video-spend.json";
+/** The photo of the room a batch's videos are filmed in: its reference, else its first real photo. */
+const roomOf = (brandDir, brief) => { const ref = brief.reference || brief.real?.[0] || null; return ref ? (existsSync(join(brandDir, "brand-assets", ref)) ? join(brandDir, "brand-assets", ref) : resolve(ref)) : null; };
+/** Where a script was filmed before clips were kept per gym: this batch's own folder first, then every other batch's, the newest first. */
+export function videoFolders(brandDir, scriptId, batchId) {
+  const outs = join(brandDir, "outputs"), own = join(outs, batchId, "videos", scriptId);
+  const others = !existsSync(outs) ? [] : readdirSync(outs).filter((b) => b !== batchId && !b.startsWith("_")).map((b) => join(outs, b, "videos", scriptId)).filter((d) => existsSync(d))
+    .map((d) => ({ d, t: statSync(d).mtimeMs })).sort((a, b) => b.t - a.t).map((x) => x.d);
+  return [own, ...others];
+}
+/**
+ * What a batch's presenter videos would take, by what is already filmed (2026-11-14: a script's pictures and clips are
+ * kept per gym, so a batch films only what is not there): the scripts, `seconds` still to film in one clean pass,
+ * `reused` (seconds already filmed), `spent` (what this batch has used so far), `allow` (the most this run may
+ * film: every take allowed, or what is left of the brief's own cap) and `max_seconds` = spent + allow.
+ */
+export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id, profile = null } = {}) {
+  const n = videoCount(brief.videos); if (!n) return null;
+  const prof = profile || (() => { try { return JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8")); } catch { return {}; } })();
+  const scripts = pickScripts(brandDir, { count: n, offer: brief.offer, seed }), room = roomOf(brandDir, brief), takes = brief.attempts ?? 2;
+  const needs = scripts.map((x) => videoNeeds({ gymDir: brandDir, script: x, areas: brief.locations, room, profile: prof, legacy: videoFolders(brandDir, x.id, brief.batch_id) }));
+  const seconds = needs.reduce((t, c) => t + c.seconds, 0), reused = needs.reduce((t, c) => t + c.reused, 0), images = needs.reduce((t, c) => t + c.images, 0);
+  const spent = (() => { try { return JSON.parse(readFileSync(join(brandDir, "outputs", brief.batch_id, VIDEO_SPEND), "utf-8")).seconds || 0; } catch { return 0; } })();
+  const allow = Math.max(0, brief.max_video_seconds != null ? Math.min(MAX_VIDEO_SECONDS, brief.max_video_seconds) - spent : Math.min(MAX_VIDEO_SECONDS - spent, seconds * takes));
+  const usd = (x) => Math.round(x * USD_PER_SECOND * 100) / 100;
+  return { scripts, count: n, videos: n * brief.locations.length, seconds, reused, spent, allow, images, takes, max_seconds: spent + allow, usd: usd(seconds), usd_max: usd(allow) };
+}
+/**
+ * A batch's presenter videos (presenter-video.mjs): each picked script made once for every location, in the gym's own
+ * room, under the batch's cap on seconds of video. What a run spends is added to video-spend.json, and everything
+ * already on disk is reused, so a re-run costs nothing. A video that is refused is a named failure of the batch.
+ */
+export async function renderBatchVideos(browser, { brandDir, out, brief, profile, seed, audience = null, log = console.log, prog = null, models = null }) {
+  const plan = videoPlan(brandDir, brief, { seed, profile }), room = roomOf(brandDir, brief);
+  if (plan.reused) log(`· videos: ${plan.reused} s already filmed for ${plan.scripts.length === 1 ? "this script" : "these scripts"} are reused; ${plan.seconds} s to film`);
+  const spendPath = join(out, VIDEO_SPEND), before = (() => { try { return JSON.parse(readFileSync(spendPath, "utf-8")); } catch { return { seconds: 0, images: 0, checks: 0 }; } })();
+  const spent = { seconds: 0, images: 0, checks: 0 }, save = () => writeFileSync(spendPath, JSON.stringify({ seconds: before.seconds + spent.seconds, images: before.images + spent.images, checks: before.checks + spent.checks, max_seconds: plan.max_seconds }, null, 2) + "\n");
+  const outVideos = [];
+  for (const [i, script] of plan.scripts.entries()) {
+    const id = `v${String(i + 1).padStart(2, "0")}`;
+    log(`· ${id}: presenter video from script ${script.id} (${brief.locations.length} location${brief.locations.length === 1 ? "" : "s"})`);
+    const r = await makePresenterVideos({ gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, audience, room, profile, caps: { seconds: plan.allow, images: plan.images + 2 }, spent, takes: plan.takes, browser, legacy: videoFolders(brandDir, script.id, brief.batch_id), ...(models ? { models } : {}),
+      log: (m) => log(`  ${m}`), onProgress: (p) => { save(); prog?.set({ stage: "videos", video: { id, script: script.id, ...p }, video_seconds: before.seconds + spent.seconds, video_max_seconds: plan.max_seconds }); } });
+    save();
+    for (const v of r.videos) { if (v.failed) log(`⚑ ${id} ${v.area}: ${v.failed}`); outVideos.push({ id, script_id: script.id, ...v }); }
+  }
+  return { videos: outVideos, spent: { seconds: before.seconds + spent.seconds, images: before.images + spent.images, checks: before.checks + spent.checks }, this_run: spent, plan };
+}
+
+/** A batch's photos per format: the brief's own mix (counts), else all of its one format, else the gym's default shares
+ *  (Ad defaults → mix, or its one format) turned into photos by `allocateMix`. No generated photos: {}. */
+export function batchMix(brief, profile = null) {
+  const g = brief?.generated ?? 0;
+  if (!g) return {};
+  if (brief.mix && !mixProblems(brief.mix, { counts: true, total: g }).length) return Object.fromEntries(Object.entries(brief.mix).filter(([, n]) => n > 0));
+  if (SCENE_FORMATS[brief.format]) return { [brief.format]: g };
+  return allocateMix(mixOf(profile), g);
+}
+
+export function progressWriter(out, base) {
+  const path = join(out, "progress.json");
+  const state = { ...base, photos: { ...(base.photos || {}) } };
+  const flush = () => {
+    try {
+      state.updated = new Date().toISOString();
+      writeFileSync(path + ".tmp", JSON.stringify(state, null, 2) + "\n");
+      renameSync(path + ".tmp", path);
+    } catch {}
+  };
+  flush();
+  return {
+    state,
+    set(patch) { Object.assign(state, patch); flush(); },
+    photo(id, patch) {
+      const p = { ...(state.photos[id] || {}), ...patch };
+      if (p.file) p.file = relative(out, resolve(out, p.file)); // kept relative to the batch folder
+      state.photos[id] = p; flush();
+    },
+  };
+}
+
+// ── the run ───────────────────────────────────────────────────────────────
+
+/**
+ * Run a batch. Injectable for tests: generate, check (a generated photo's check), checkPhoto (a real
+ * photo's tiled check), checkRef, compositor, gallery (builds gallery.html), log.
+ */
+export async function runBatch({ brandDir, brief, outDir = null, dryRun = false, renderOnly = false, approveScenes: confirmScenes = false, scenesPath = null, deps = {}, log = console.log }) {
+  const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
+  // The reference palettes, the gym's brand palettes, or both (creative_defaults.palettes).
+  // The batch's look family (its own, else the gym's default) picks the catalogue; the feed ad's shape likewise.
+  if (brief.look != null && !LOOKS.includes(brief.look)) throw new Error(`the brief cannot run:\n- look "${brief.look}" is not one of ${LOOKS.join(", ")}`);
+  const look = brief.look || profile.creative_defaults?.look || CREATIVE_DEFAULTS.look;
+  const catalogue = catalogueFor(profile, null, { look });
+  const errs = validateBrief(brief, { brandDir, catalogue });
+  if (errs.length) throw new Error(`the brief cannot run:\n- ${errs.join("\n- ")}`);
+  const looks = brief.looks_per_photo ?? 2, seed = brief.seed || brief.batch_id;
+  const exclude = excludeFromProfile(profile.creative);
+  const audience = brief.audience ?? null;
+  const texts = brief.locations.map((location) => ({ location, audience, offer: brief.offer, free: brief.free === true }));
+  const photography = profile.brand_lock?.photography || {};
+  const brandNames = [profile.display_name, profile.formerly?.split(/\s[—–-]\s|[;,(]/)[0].trim()].filter(Boolean);
+  const out = resolve(outDir || join(brandDir, "outputs", brief.batch_id));
+  // The feed shape: a batch with work on disk keeps the shape it was made at (a square batch from before 2026-11-10 is
+  // re-rendered and run again as a square); a new one is the brief's, else the gym's, else 4:5.
+  // The batch's format — the kind of photograph its generated photos are (Phase 3): the brief's, else the gym's, else
+  // workout. A batch is made in one format; its scenes are that format's (the mix across formats is Phase 4).
+  if (brief.format != null && !SCENE_FORMATS[brief.format]) throw new Error(`the brief cannot run:\n- format "${brief.format}" is not one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
+  // The mix (Phase 4): photos per format — the brief's own counts, else all of the brief's one format, else the gym's
+  // default shares (Ad defaults) turned into photos. `format` names the one kind when there is one, else "mixed".
+  const mix = batchMix(brief, profile), format = mixName(mix) || brief.format || "workout";
+  const made = madeShape(out);
+  const ratio = made || brief.ratio || profile.creative_defaults?.ratio || CREATIVE_DEFAULTS.ratio;
+  if (made && brief.ratio && brief.ratio !== made) log(`· this batch was made at ${made.replace("x", ":")} and keeps that shape (the brief asked for ${brief.ratio.replace("x", ":")})`);
+  mkdirSync(out, { recursive: true });
+  const at = (p) => (existsSync(join(brandDir, "brand-assets", p)) ? join(brandDir, "brand-assets", p) : resolve(p));
+
+  // ── 1 plan ──
+  const g = brief.generated ?? 0;
+  const libraryPath = scenesPath || join(brandDir, "scenes.json");
+  let scenes, quota = null; // quota: photos per format, for scenes drawn from the library
+  if (brief.scenes) scenes = brief.scenes;
+  else if (!g) scenes = [];
+  else if (brief.direction) {
+    // The owner confirmed this batch's drafted scenes (the panel's Run confirmation, or --approve-scenes).
+    if (confirmScenes && !dryRun) {
+      const ids = readLibrary(libraryPath).scenes.filter((s) => s.source === `batch:${brief.batch_id}` && isDraft(s)).map((s) => s.id);
+      if (ids.length) { approveScenes(libraryPath, ids, { via: brief.batch_id }); log(`· direction: ${ids.length} scene(s) confirmed for this batch: ${ids.join(", ")}`); }
+    }
+    scenes = await directedScenes({ brandDir, brief, scenesPath: libraryPath, audience: sceneAudience(audience, brief.scene_audience), dryRun, renderOnly, ...(deps.draft ? { draft: deps.draft } : {}), log });
+  } else {
+    scenes = loadScenes(libraryPath, { allowDraft: dryRun }).filter((s) => (mix[formatOf(s)] || 0) > 0);
+    quota = mix;
+    if (!(renderOnly && existsSync(join(out, "visuals.json")))) for (const f of Object.keys(mix)) if (!scenes.some((s) => formatOf(s) === f)) throw new Error(`no approved ${f} scenes yet: draft some on Draft Scenes (Refresh scenes…, format: ${f}) and approve them — nothing is generated from a draft`);
+  }
+  const plannedPath = join(out, "visuals.json");
+  let visuals;
+  // A directed batch photographs what its reference or words show, from its own drafted scenes: a must_show
+  // (the Spread switch, saved before 2026-09-28) cannot apply to them and is ignored, said in the log.
+  const directed = !!(brief.direction && (brief.direction.words || brief.direction.reference));
+  if (directed && brief.must_show && Object.keys(brief.must_show).length) log("· must_show is ignored for a directed batch: its reference or words decide what the photos show");
+  // The Spread's wish is about exercises, settings and equipment: a portrait batch spreads its backdrops and stances by itself.
+  const spreadable = (mix.workout || 0) > 0 || !!brief.scenes;
+  if (!directed && !spreadable && brief.must_show && Object.keys(brief.must_show).length) log(`· must_show is ignored for a ${format} batch: it spreads across backdrops, poses and ages by itself`);
+  if (Object.keys(mix).length > 1) log(`· mix: ${Object.entries(mix).map(([f, n]) => `${n} ${f}`).join(", ")}`);
+  if (renderOnly && existsSync(plannedPath)) visuals = JSON.parse(readFileSync(plannedPath, "utf-8")).visuals;
+  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: directed || !spreadable ? {} : brief.must_show, catalogue, ratio, exclude, ages: ageTargets({ range: brief.age_range, count: g, seed }), mix: quota, lean: directed ? [] : brief.lean || [] });
+  if (directed && brief.lean?.length) log("· the lean is ignored for a directed batch: its reference or words decide what the photos show");
+  if (visuals.leaned) log(`· leaning on what earns leads: ${visuals.leaned.map((l) => l.shown ? `${leanName(l)} in ${l.photos} photo${l.photos === 1 ? "" : "s"}` : `${leanName(l)} — no approved scene shows it`).join("; ")}`);
+  if (visuals.notShown) log(`  note: not everything asked for is shown — left out: ${visuals.notShown.join(", ")}`);
+  for (const v of visuals) for (const w of sceneWarnings({ scene: v.scene, people: v.people, setting: v.tags?.setting, format: v.format })) log(`  warning: ${v.id} (${v.scene_id || "brief scene"}): ${w}`);
+  for (const v of visuals) { const p = poseProblem(v.treatment, v.pose, catalogue); if (p) throw new Error(`${v.id}: ${p}`); }
+  const reference = brief.reference || brief.real?.[0] || null;
+  const plan = { batch_id: brief.batch_id, audience_for_scenes: sceneAudience(audience, brief.scene_audience), reference, visuals, max_calls: brief.max_calls ?? g, attempts: brief.attempts ?? 1 };
+  writeFileSync(plannedPath, JSON.stringify(plan, null, 2) + "\n");
+  writeFileSync(join(out, "brief.json"), JSON.stringify(brief, null, 2) + "\n"); // the brief as run
+  log(`· plan: ${visuals.length} photo(s) to generate (${visuals.map((v) => `${v.id} for ${shortLayout(v.treatment)}: ${v.scene_id || "brief scene"}`).join("; ") || "none"}), ${(brief.real || []).length} real; ${looks} look(s) each × ${brief.locations.length} location(s); at most ${plan.max_calls} image call(s)`);
+  if (dryRun) return { dryRun: true, plan, out };
+  // What this run is doing, photo by photo: the panel's Generating screen reads it (progress.json).
+  const prog = progressWriter(out, { batch_id: brief.batch_id, run: renderOnly ? "render-only" : "run", started: new Date().toISOString(), pid: process.pid, stage: "photos", ratio, max_calls: plan.max_calls, attempts: plan.attempts, spent_before: 0, calls: 0, real: (brief.real || []).length, ads: null, failed: 0, error: null,
+    photos: Object.fromEntries(visuals.map((v) => [v.id, { scene_id: v.scene_id || null, scene: v.scene, treatment: v.treatment, state: "queued" }])) });
+  try {
+
+    // Real photos: their marks and their people, from the tiled check — cached by file contents.
+    const photosPath = join(out, "photos.json");
+    const cache = existsSync(photosPath) ? JSON.parse(readFileSync(photosPath, "utf-8")) : {};
+    const pixels = deps.pixels || makePixelTools();
+    const checkPhoto = deps.checkPhoto || ((p) => checkTiled(p, { never: photography.never || [], crop: pixels.crop }));
+    const photos = [];
+    try {
+      for (const [i, rel] of (brief.real || []).entries()) {
+        const file = at(rel), key = hashFile(file);
+        let c = cache[key];
+        if (!c) { c = await checkPhoto(file); cache[key] = { text: c.text, never: c.never, people_count: c.people_count, people_box: c.people_box || null, face_boxes: c.face_boxes || [] }; c = cache[key]; }
+        // Small marks are notes, and a photo the owner kept anyway passes on their word (splitMarks, ownerKept).
+        const split = splitMarks(c), kept = ownerKept(file);
+        const marks = kept ? [] : [...split.marks, ...split.never];
+        if (kept) log(`  real photo ${rel}: kept by the owner on ${kept.kept_on}; used as it is`);
+        else if (split.small.length) log(`  real photo ${rel}: ${split.small.length} small mark(s) left in it, noted: ${split.small.map((m) => `${m.kind || "mark"} "${m.what}"`).join("; ").slice(0, 300)}`);
+        if (marks.length) throw new Error(`real photo ${rel} is not clean: ${marks.map((m) => `${m.kind || "never-list"} "${m.what}"`).join("; ")} — clean it first (clean-photo.mjs)`);
+        photos.push({ id: `r${String(i + 1).padStart(2, "0")}`, kind: "real", file, source: rel, answer: { people_box: c.people_box, face_boxes: c.face_boxes, people_count: c.people_count }, expectPeople: false, maxPeople: null });
+      }
+    } finally { if (!deps.pixels) await pixels.close(); }
+    writeFileSync(photosPath, JSON.stringify(cache, null, 2) + "\n");
+
+    // ── 2 pictures ──
+    const picsPath = join(out, "pictures.json"), spendPath = join(out, "spend.json"), visualsDir = join(out, "visuals");
+    const prior = existsSync(picsPath) ? JSON.parse(readFileSync(picsPath, "utf-8")) : {};
+    // A photo is reused only if it passed today's checks. A free re-render (words only) keeps photos
+    // passed under older checks and says so — re-checking them would be a run, not a re-render.
+    const rulings = deps.rulings || loadRulings(brandDir);
+    const passedFor = (a, v) => a && a.status === "passed" && a.scene === v.scene && a.treatment === v.treatment && existsSync(a.file) && rulings[resolve(a.file)]?.expect !== "fail";
+    const same = (a, v) => passedFor(a, v) && (renderOnly || a.checks === CHECKS_VERSION);
+    let todo = renderOnly ? [] : visuals.filter((v) => !same(prior[v.id], v));
+    if (renderOnly) {
+      const missing = visuals.filter((v) => !same(prior[v.id], v)); if (missing.length) log(`· render-only: ${missing.map((v) => v.id).join(", ")} have no passed photo on disk and are left out`);
+      const older = visuals.filter((v) => same(prior[v.id], v) && prior[v.id].checks !== CHECKS_VERSION); if (older.length) log(`· render-only: ${older.map((v) => v.id).join(", ")} passed before today's checks — a full run re-checks them (no image calls)`);
+    }
+    // max_calls is the budget for the batch, not for each run: a re-run spends only what is left
+    // (the 48-ad batch showed a re-run would otherwise have had its full allowance again).
+    const oldBatch = existsSync(join(out, "batch.json")) ? JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")) : null;
+    const spentBefore = existsSync(spendPath) ? JSON.parse(readFileSync(spendPath, "utf-8")).image_calls : (oldBatch?.image_calls ?? 0);
+    prog.set({ spent_before: spentBefore });
+    for (const v of visuals) {
+      const a = prior[v.id];
+      if (same(a, v)) prog.photo(v.id, { state: "passed", file: a.file, reused: true, notes: a.notes || [], own_layout_failed: a.own_layout_failed || null });
+      else if (renderOnly) prog.photo(v.id, { state: "skipped", failures: ["no passed photo on disk"] });
+    }
+    const record = (r, file, c) => ({ status: r.status, scene: r.scene, treatment: r.treatment, file, ...(r.status === "passed" ? { checks: CHECKS_VERSION } : {}), ...(r.own_layout_failed ? { own_layout_failed: r.own_layout_failed } : {}), check: c ? { faces: c.faces, focus: c.focus, placement: c.placement } : null, notes: c?.notes || [], quality: c?.quality ? { failures: c.quality.failures, minor: c.quality.minor, dismissed: c.quality.dismissed, exercise_seen: c.quality.exercise_seen, interaction_seen: c.quality.interaction_seen } : null, failures: c?.failures || (r.reason ? [r.reason] : []) });
+    // Photos already on disk get a look with today's checks before anything new is made — free of
+    // image calls. That covers photos an earlier run rejected (the 48-ad batch: good photos had been
+    // rejected for their own mirror reflections) and photos passed before today's checks existed. The
+    // photo in use is looked at first, so a batch keeps its photos when they still pass.
+    const check = withRulings(deps.check || checkPicture, rulings);
+    if (todo.length) {
+      const compositor = deps.compositor !== undefined ? deps.compositor : makeCompositor(catalogue);
+      const earlier = (v) => {
+        if (!(prior[v.id]?.scene === v.scene && prior[v.id]?.treatment === v.treatment && existsSync(visualsDir))) return [];
+        const files = readdirSync(visualsDir).filter((n) => new RegExp(`^${v.id}(-a\\d+)?\\.(png|jpe?g|webp)$`).test(n)).map((n) => join(visualsDir, n)).reverse();
+        const inUse = prior[v.id].status === "passed" ? prior[v.id].file : null;
+        return inUse && files.includes(inUse) ? [inUse, ...files.filter((f) => f !== inUse)] : files;
+      };
+      try {
+        for (const v of todo) {
+          let last = null, pictureGood = null;
+          if (earlier(v).length) prog.photo(v.id, { state: "checking", attempt: null });
+          for (const file of earlier(v)) {
+            const c = await assess(file, v, { ratio, text: texts[0], check, compositor, outDir: visualsDir, never: photography.never || [] });
+            if (c.ok) { prior[v.id] = record({ ...v, status: "passed" }, file, c); log(`✓ ${v.id}: ${basename(file)} on disk passes today's checks — no new image needed`); last = null; break; }
+            if (c.picture_ok) pictureGood = { file, c };
+            last = { file, c };
+            log(`⚑ ${v.id}: ${basename(file)} fails today's checks: ${c.failures.join(" | ")}`);
+          }
+          // Passes the picture checks, not its own layout: kept for the layouts it fits (as generateVisuals does).
+          if (last && pictureGood) { prior[v.id] = record({ ...v, status: "passed", own_layout_failed: pictureGood.c.failures }, pictureGood.file, pictureGood.c); log(`✓ ${v.id}: ${basename(pictureGood.file)} passes the picture checks; its own layout did not work out — kept for the layouts it fits`); }
+          else if (last) prior[v.id] = record({ ...v, status: "flagged" }, last.file, last.c);
+          const a = prior[v.id];
+          prog.photo(v.id, same(a, v) ? { state: "passed", file: a.file, reused: true, notes: a.notes || [], own_layout_failed: a.own_layout_failed || null } : { state: "queued" });
+        }
+      } finally { if (deps.compositor === undefined) await compositor?.close(); }
+      todo = todo.filter((v) => !same(prior[v.id], v));
+    }
+    let calls = 0;
+    const left = Math.max(0, plan.max_calls - spentBefore);
+    if (todo.length && !left) log(`- the batch's budget of ${plan.max_calls} image calls is spent: ${todo.map((v) => v.id).join(", ")} not generated`);
+    if (todo.length && !left) for (const v of todo) prog.photo(v.id, { state: "skipped", failures: [`the batch's budget of ${plan.max_calls} image calls is spent`] });
+    if (todo.length && left) {
+      if (!deps.generate) log(`· image model: ${imageModelFor(profile)}`);
+      const rep = await generateVisuals({
+        visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio, shotGuide: deps.shotGuide !== undefined ? deps.shotGuide : readShotGuide(),
+        refs: reference ? [at(reference)] : [], roomRefs: Object.fromEntries(Object.entries(profile.creative_defaults?.room_references || {}).filter(([, p]) => typeof p === "string" && existsSync(at(p))).map(([k, p]) => [k, at(p)])), maxCalls: left, attempts: plan.attempts,
+        // The gym's image model (creative_defaults.image_model, Pro by default); tests inject their own.
+        generate: deps.generate || ((p, parts, o) => generateImage(p, parts, { ...o, model: imageModelFor(profile) })), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
+        onProgress: (e) => {
+          if (e.event === "generating") prog.photo(e.id, { state: "generating", attempt: e.attempt });
+          else if (e.event === "checking") prog.photo(e.id, { state: "checking", attempt: e.attempt, file: e.file });
+          else if (e.event === "tried" && e.status !== "passed" && e.attempt < plan.attempts) prog.photo(e.id, { state: "retrying", attempt: e.attempt, failures: e.failures });
+          else if (e.event === "done") prog.photo(e.id, { state: e.status, attempt: e.attempt, file: e.file, failures: e.failures, notes: e.notes, own_layout_failed: e.own_layout_failed });
+          if (e.calls != null) prog.set({ calls: e.calls });
+          // Saved as it goes, so a run stopped part-way (the panel's Stop, 2026-10-02) keeps what it cost and
+          // what it finished: before, both were written only at the end, and a stopped run's calls were
+          // forgotten — the next run had its whole budget again and made the finished photos a second time.
+          if (e.calls != null) writeFileSync(spendPath, JSON.stringify({ image_calls: spentBefore + e.calls, max_calls: plan.max_calls }, null, 2) + "\n");
+          if (e.event === "done" && e.result) { prior[e.id] = record(e.result, e.result.file, e.result.check); writeFileSync(picsPath, JSON.stringify(prior, null, 2) + "\n"); }
+        },
+      });
+      calls = rep.image_calls;
+      for (const r of rep.results) prior[r.id] = record(r, r.file, r.check);
+    }
+    const spent = spentBefore + calls;
+    writeFileSync(spendPath, JSON.stringify({ image_calls: spent, max_calls: plan.max_calls }, null, 2) + "\n");
+    writeFileSync(picsPath, JSON.stringify(prior, null, 2) + "\n");
+    for (const v of visuals) {
+      const a = prior[v.id];
+      if (!same(a, v)) { if (!["flagged", "error", "skipped"].includes(prog.state.photos[v.id]?.state)) prog.photo(v.id, { state: a?.status === "flagged" ? "flagged" : "skipped", failures: a?.failures || [] }); log(`- ${v.id}: no passing photo (${a?.failures?.join("; ") || "not generated"}) — left out of the batch`); continue; }
+      // A photo whose own layout did not work out has no primary look: the planner places it where it fits.
+      photos.unshift({ id: v.id, kind: "generated", file: a.file, primary: a.own_layout_failed ? null : v.treatment, scene_id: v.scene_id, format: v.format || "workout", ...(v.room ? { room: v.room } : {}), notes: [...(a.notes || []), ...(a.own_layout_failed ? [`not used in its own layout: ${a.own_layout_failed.join("; ")}`] : [])], answer: { people_box: a.check.placement.people_box, face_boxes: a.check.faces, people_count: a.check.placement.people_count }, expectPeople: true, maxPeople: v.people });
+    }
+    photos.sort((a, b) => a.id.localeCompare(b.id));
+    if (!photos.length && !cardCount(brief.cards) && !videoCount(brief.videos)) throw new Error("no photos passed: nothing to render"); // a batch of cards or videos alone has none to pass
+
+    // ── 3 fit ──
+    prog.set({ stage: "fit", calls });
+    const allowed = {}, focus = {}, faces = {};
+    for (const p of photos) {
+      const fit = fitLayouts(p.answer, { ratio, imageSize: imageSize(readFileSync(p.file)), expectPeople: p.expectPeople, maxPeople: p.maxPeople, catalogue });
+      allowed[p.id] = Object.keys(fit).filter((id) => fit[id].ok && !(exclude.layouts || []).includes(id));
+      focus[p.id] = Object.fromEntries(Object.entries(fit).map(([id, f]) => [id, f.focus]));
+      faces[p.id] = p.answer.face_boxes || [];
+      p.fit = Object.fromEntries(Object.entries(fit).map(([id, f]) => [id, f.ok ? "ok" : f.failures.join("; ")]));
+    }
+    for (const p of photos) if (p.primary && !allowed[p.id].includes(p.primary)) log(`  ${p.id}: passed its own check but not its layout's fit at the batch ratio`);
+    log(`· fit: ${photos.map((p) => `${p.id} → ${allowed[p.id].map(shortLayout).join(" ")}`).join("; ")}`);
+
+    // ── 4 looks ──
+    prog.set({ stage: "looks" });
+    const browser = deps.browser || await launchBrowser();
+    let results, cardRenders = [], videoRun = null;
+    try {
+      if (!photos.length) results = []; // cards alone: no photograph to look at or set words on
+      else {
+        const stats = await measurePhotos(browser, photos.map((p) => p.file), { ratio, catalogue });
+        const planned = assignVariants({ visuals: photos.map((p) => ({ id: p.id })), perVisual: looks, text: { location: brief.locations[0], audience }, seed, exclude, photoStats: stats, allowed, prefer: Object.fromEntries(photos.filter((p) => p.primary).map((p) => [p.id, p.primary])), words: brief.words_weight === "bolder" ? 1 : brief.words_weight === "quieter" ? -1 : 0, measured: brief.words_weight ? measuredCover(brandDir) : null, catalogue, ratio });
+        for (const n of planned.notes) log(`  note: ${n}`);
+
+        // ── 5 render ──
+        prog.set({ stage: "render" });
+        const fileOf = Object.fromEntries(photos.map((p) => [p.id, p.file]));
+        results = await renderPlan(browser, planned, { texts, imageFor: (id) => fileOf[id], facesFor: (id) => faces[id], focusFor: (id, la) => focus[id]?.[la] || null, catalogue });
+      }
+      // ── 5b cards ── text-led ads: the gym's reviews, statements and timelines set on a plain card, for the feed and for Stories.
+      if (cardCount(brief.cards)) {
+        if (ratio !== "4x5") throw new Error("cards are made at 4:5 with a 9:16 for Stories: this batch was made as a square before, so it takes none");
+        cardRenders = await renderBatchCards(browser, { brandDir, brief, profile, seed, audience, log });
+      }
+      // ── 5c videos ── a presenter talking to camera: one kept script each, made once for every location. The only step that makes video.
+      if (videoCount(brief.videos)) {
+        if (ratio !== "4x5") throw new Error("videos are made for a 4:5 batch (they are 9:16 themselves): this batch was made as a square before, so it takes none");
+        prog.set({ stage: "videos" });
+        videoRun = await renderBatchVideos(browser, { brandDir, out, brief, profile, seed, audience, log, prog, models: deps.videoModels || null });
+      }
+    } finally { if (!deps.browser) await browser.close(); }
+
+    // ── 6 gallery ──
+    prog.set({ stage: "gallery" });
+    const old = existsSync(join(out, "batch.json")) ? JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")) : null;
+    for (const a of old?.ads || []) rmSync(join(out, a.folder), { recursive: true, force: true }); // only folders this batch made before
+    const ads = adFolders(results, brief.locations, ratio).map((a) => {
+      const c = results.find((r) => r.id === a.candidate);
+      const png = c.renders[a.location_index].r.png;
+      mkdirSync(dirname(join(out, a.file)), { recursive: true });
+      writeFileSync(join(out, a.file), png);
+      return {
+        ...a, photos: c.images, photo_files: c.images.map((id) => photos.find((p) => p.id === id).source || basename(photos.find((p) => p.id === id).file)),
+        treatment: c.treatment, style: c.style, palette: c.palette, ratio,
+        format: photos.find((p) => p.id === c.images[0])?.format || null, // the kind of photograph (null: a real photo), so results can be read per format
+        crop: c.images.map((id) => focus[id]?.[c.treatment] || [0.5, 0.5]),
+        words: { location: a.location, audience, offer: brief.offer, free: brief.free === true },
+        replaced: c.replaced || null,
+        // How much of the picture the words cover (2026-11-11), measured from the render itself: the boxes of its lines over the canvas.
+        ...(() => { const rep = c.renders[a.location_index].r.report, [W, H] = rep?.canvas || []; if (!W || !H || !rep.blocks?.length) return {}; return { text_cover: Math.round((rep.blocks.reduce((t, b) => t + (b.rect ? b.rect.w * b.rect.h : 0), 0) / (W * H)) * 1000) / 1000 }; })(),
+      };
+    });
+    const failed = results.filter((r) => r.failed).map((r) => ({ candidate: r.id, photo: r.visual, failures: r.failed }));
+    // The cards join the batch's ads after its photo ads, numbered on: each carries its kind as its format, what it was
+    // made from, and its own Stories file (a card's 9:16 is set with it, at no cost).
+    let cardNo = 101 + ads.length;
+    for (const c of cardRenders) {
+      if (c.failed) { failed.push({ candidate: c.id, photo: null, card: c.kind, failures: c.failed }); continue; }
+      for (const [li, loc] of brief.locations.entries()) {
+        const r = c.renders[li], folder = `${cardNo++}-${c.id}-${slug(loc)}-${c.kind}-${c.palette.replace(/^k-/, "")}`, name = `${c.id}-${slug(loc)}`;
+        const file = join(folder, "4x5", `${name}_4x5_v1.png`), story = r.story ? join(folder, "9x16", `${name}_9x16_v1.png`) : null;
+        mkdirSync(dirname(join(out, file)), { recursive: true }); writeFileSync(join(out, file), r.feed);
+        if (story) { mkdirSync(dirname(join(out, story)), { recursive: true }); writeFileSync(join(out, story), r.story); }
+        ads.push({ folder, file, candidate: c.id, location: loc, location_index: li, photos: [], photo_files: [], treatment: `card-${c.kind}`, style: "card", palette: c.palette, ratio, format: c.kind,
+          card: { kind: c.kind, source_id: c.source_id }, ...(story ? { story_file: story } : { story_failure: r.story_failure }), crop: [], words: { location: loc, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
+      }
+    }
+    // The videos join after the cards, numbered on. A video is 9:16 and carries its own picture (a frame of it) as the
+    // ad's still, so every screen that shows an ad has something to show; `video_file` is the advert itself.
+    for (const v of videoRun?.videos || []) {
+      if (v.failed) { failed.push({ candidate: v.id, photo: null, video: v.script_id, location: v.area, failures: [v.failed] }); continue; }
+      const li = brief.locations.indexOf(v.area), folder = `${cardNo++}-${v.id}-${slug(v.area)}-presenter-video`, name = `${v.id}-${slug(v.area)}`;
+      const video = join(folder, "9x16", `${name}_9x16_v1.mp4`), poster = join(folder, "9x16", `${name}_9x16_v1.jpg`);
+      mkdirSync(dirname(join(out, video)), { recursive: true }); copyFileSync(v.file, join(out, video)); copyFileSync(v.poster, join(out, poster));
+      ads.push({ folder, file: poster, video_file: video, candidate: v.id, location: v.area, location_index: li, photos: [], photo_files: [], treatment: "video-presenter", style: "video", palette: null, ratio: "9x16", format: "presenter-video",
+        video: { kind: "presenter", script_id: v.script_id, style: v.style || null, pain: v.pain || null, seconds: v.seconds, words: v.words, notes: v.notes || [] }, crop: [], words: { location: v.area, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
+    }
+    // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
+    // record of the calls that made its photos (the panel showed "0 image calls" after one).
+    const batch = {
+      batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, ...(brief.words_weight ? { words_weight: brief.words_weight } : {}), ...(cardRenders.length ? { cards: Object.fromEntries(["review", "statement", "timeline"].map((k) => [k, cardRenders.filter((c) => c.kind === k && !c.failed).length]).filter(([, n]) => n > 0)) } : {}), format, mix: Object.fromEntries(Object.keys(SCENE_FORMATS).map((f) => [f, photos.filter((p) => p.format === f).length]).filter(([, n]) => n > 0)), ...(brief.lean?.length && !directed ? { lean: brief.lean } : {}), image_calls: spent, image_calls_this_run: calls,
+      photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.format ? { format: p.format } : {}), ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
+      ...(videoRun ? { videos: { presenter: new Set(videoRun.videos.filter((v) => !v.failed).map((v) => v.id)).size }, video_seconds: videoRun.spent.seconds } : {}),
+      ads, failed,
+    };
+    writeFileSync(join(out, "batch.json"), JSON.stringify(batch, null, 2) + "\n");
+    // What the checks noticed about each ad's photos but did not reject, for the gallery's headings —
+    // the owner picks with the notes in view (2026-09-12: "the selection step is an additional check").
+    const noteOf = (id) => (photos.find((p) => p.id === id)?.notes || []).map((n) => `${id}: ${n}`);
+    const galleryNotes = Object.fromEntries(ads.map((a) => [a.folder, [...a.photos.flatMap(noteOf), ...(a.video?.notes || [])].join(" · ")]).filter(([, n]) => n));
+    writeFileSync(join(out, "gallery-notes.json"), JSON.stringify(galleryNotes, null, 2) + "\n");
+    // No ad at all (2026-11-12: a batch of one video whose one line was refused ended "Command failed: … gallery-selector"):
+    // there is nothing for a gallery to show, so the run ends here, in words, with what was refused and why. What was
+    // made is on disk and is reused by Run again.
+    if (!ads.length) { const why = failed.length ? failed.map((f) => `${f.candidate}${f.location ? ` (${f.location})` : ""}: ${[].concat(f.failures || []).join("; ")}`).join(" · ") : "Nothing in this batch passed its checks."; throw new Error(`no ad was made. ${why}${/[.!?"”]$/.test(why) ? "" : "."} Everything made so far is kept: Run again reuses it.`); }
+    const gallery = deps.gallery || ((dir) => execFileSync(process.execPath, [join(HERE, "gallery-selector.mjs"), "--output-dir", dir], { stdio: "ignore" }));
+    gallery(out);
+    prog.set({ stage: "done", ads: ads.length, failed: failed.length, image_calls: spent });
+    log(`· ${ads.length} ad(s) in ${out} (${results.filter((r) => !r.failed).length} looks × ${brief.locations.length} location(s))${failed.length ? `; ${failed.length} look(s) failed to verify and are left out` : ""}; ${calls} image call(s) this run, ${batch.image_calls} for the batch in all`);
+    return { out, batch, calls, results };
+  } catch (e) { prog.set({ stage: "failed", error: plainGemini(e) }); throw e; } // a Google error is said in plain words, with Google's own after it
+}
+
+
+/** The run is over: say so and leave. Something (a socket, a timer) has kept a finished run alive for minutes
+ *  before — the panel then shows "running" over a batch that is done — so the CLI ends the process itself,
+ *  after its last line has been written. BATCH_DEBUG_HANDLES=1 names what was still open. */
+export function exitWhenWritten(code = 0) {
+  if (process.env.BATCH_DEBUG_HANDLES) console.error(`still open at exit: ${process.getActiveResourcesInfo().join(", ") || "nothing"}`);
+  process.stdout.write("", () => process.stderr.write("", () => process.exit(code)));
+}
+
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  const { values: v } = parseArgs({ options: {
+    "brand-dir": { type: "string" }, brief: { type: "string" }, out: { type: "string" },
+    "dry-run": { type: "boolean", default: false }, "render-only": { type: "boolean", default: false },
+    "approve-scenes": { type: "boolean", default: false },
+  } });
+  if (!v["brand-dir"] || !v.brief) {
+    console.error("Usage: plan-offer-batch.mjs --brand-dir <brands/x> --brief <batches/id/brief.json> [--dry-run] [--render-only] [--approve-scenes] [--out <dir>]");
+    process.exit(1);
+  }
+  const brandDir = resolve(v["brand-dir"]);
+  const briefPath = [resolve(v.brief), join(brandDir, v.brief)].find(existsSync);
+  if (!briefPath) { console.error(`brief not found: ${v.brief}`); process.exit(1); }
+  try {
+    const r = await runBatch({ brandDir, brief: JSON.parse(readFileSync(briefPath, "utf-8")), outDir: v.out, dryRun: v["dry-run"], renderOnly: v["render-only"], approveScenes: v["approve-scenes"] });
+    if (!r.dryRun) console.log(`gallery: ${join(r.out, "gallery.html")}`);
+    exitWhenWritten(0);
+  } catch (e) {
+    console.error(e.message);
+    exitWhenWritten(1);
+  }
+}

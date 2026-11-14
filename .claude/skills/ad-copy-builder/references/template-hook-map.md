@@ -107,3 +107,11 @@ Use these filled examples as inspiration for the tone and specificity level. Rep
 **The Root Cause** → `"We don't just treat the symptoms. We fix the root cause of [problem]."`
 
 **The Cost of Inaction** → `"Every month you wait, [problem] is costing you [specific losses]. This is fixable."`
+
+## Swipe-Sourced Templates
+
+Templates distilled from competitor ad-library patterns (Phase 0).
+
+| Template | Best Hook Types | Notes |
+|----------|----------------|-------|
+| `51-facility-hero-offer-banner` | Urgency, Contrast | swipe-sourced (gym) |

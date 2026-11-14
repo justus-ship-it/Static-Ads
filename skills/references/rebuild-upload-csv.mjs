@@ -8,9 +8,11 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'fs';
+import * as fs from 'fs';
 import { join, dirname, basename } from 'path';
 import { parseArgs } from 'util';
-import XLSX from 'xlsx';
+import * as XLSX from 'xlsx';
+XLSX.set_fs(fs); // patched SheetJS CDN build is fs-agnostic; wire Node fs for read/writeFile
 
 const { values } = parseArgs({
   options: { 'output-dir': { type: 'string' } },
