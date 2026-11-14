@@ -44,6 +44,13 @@
  *     before this brings its newest batch's pictures and clips in the first time (one batch only: one presenter).
  *   · A SCRIPT THAT NEEDS AN EDIT IS EDITED BY THE AGENT FOR HIM TO APPROVE (`proposeEdit`, his word the same day:
  *     "have the agent propose any edits required for me to approve, but I can also manually edit it").
+ *   · A WORD IS SAID THE WAY IT IS SAID HERE (the owner, 2026-11-14: "'Quay' is pronounced 'Kee' in Singapore"): a
+ *     short list, shared by every gym and his to add to (`saidAs`), is told to the presenter with the line, and a
+ *     clip is named for it too, so adding a word films again only the lines that say it.
+ *   · THE ENDING IS TWO BEATS (the same day: "it's too abrupt when we transition into 'Click the link below…'", with
+ *     the end of his own sample as the model): one sentence that turns to the viewer and names what they want — "If
+ *     you're ready to …, now is your time." — and then the closing line. What they will feel or be able to do, never
+ *     an ideal body. A script that goes straight into the closing line needs an edit.
  *   · THE PLACE IS ONLY EVER {AREA}, and never the whole country (the owner, 2026-11-14: "We can't say the full of
  *     Singapore no matter what").
  *   · A CLIP WITH A NOTED FAULT IS MADE ONCE MORE while takes are left (warped fingers, a hand that moves wrongly),
@@ -120,10 +127,11 @@ const near = (a, b) => {
  * "Athletics"), the spelling of a NAME (`names`: the gym's own name — a word of it may be one letter off, "Ether"
  * for "Aether"), and where a name's spaces fall ("F 45" for "F45"). Every other word must be the word.
  */
-export function sameWords(said, line, { names = [] } = {}) {
+export function sameWords(said, line, { names = [], sounds = [] } = {}) {
   const a = spoken(said), b = spoken(line);
   const named = new Set(names.flatMap((n) => spoken(n).map((t) => t.w)).filter((w) => w.length >= 4));
-  const same = (x, y) => x.w === y.w || ((x.poss || y.poss) && (x.w + "s" === y.w || y.w + "s" === x.w)) || (named.has(y.w) && near(x.w, y.w));
+  // `sounds`: words that are one word to the ear — a word and the way it is said here ("quay", "kee", "key").
+  const same = (x, y) => x.w === y.w || ((x.poss || y.poss) && (x.w + "s" === y.w || y.w + "s" === x.w)) || (named.has(y.w) && near(x.w, y.w)) || sounds.some((grp) => grp.includes(x.w) && grp.includes(y.w));
   if (a.length === b.length && a.every((t, i) => same(t, b[i]))) return true;
   // The same letters with the spaces elsewhere (a name written as one word and heard as two) — only where a name is in the line.
   return named.size + names.length > 0 && names.some((n) => spoken(n).some((t) => b.some((y) => y.w === t.w))) && a.map((t) => t.w).join("") === b.map((t) => t.w).join("");
@@ -176,6 +184,23 @@ export function filmedLines(lines, closing = closingLine()) {
   const ls = (lines || []).map(norm), n = ls.length;
   return n >= 2 && closingAlone(ls[n - 1], closing) ? [...ls.slice(0, n - 2), `${ls[n - 2]} ${ls[n - 1]}`] : ls;
 }
+/**
+ * The ending is two beats (2026-11-14, the owner on a video that went from "…your body feels stronger." straight into
+ * the closing line: "it's too abrupt"; his model, the end of his own sample: "If you're ready to transform your life
+ * …, now is your time. Sign up now …"). The sentence just before the closing line, in the cut it is filmed in, is the
+ * BRIDGE: it turns to the viewer ("If you…", or it speaks of being ready), names what they want, and is a sentence of
+ * its own — `BRIDGE_WORDS` or more — never a bare lead-in ("If that sounds like you, click…"). What they want is
+ * what they will feel or be able to do, never an ideal body (`IDEAL_BODY`: his ruling the same day, his
+ * no-promised-result rule, and Meta's rules on appearance).
+ */
+export const BRIDGE_WORDS = 8;
+const IDEAL_BODY = /\b(?:dream|perfect|ideal|beach|bikini|summer) body\b|\bbody (?:that )?(?:you|they)(?:'ve| have)? always wanted\b/i;
+export function bridgeOf(lines, closing = CLOSING_LINE) {
+  const cuts = filmedLines(lines, closing), parts = withoutClosing(cuts[cuts.length - 1] || "", closing).trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+  return (parts[parts.length - 1] || "").trim();
+}
+export const isBridge = (sentence) => wordCount(sentence) >= BRIDGE_WORDS && /\byou(?:'re|r)?\b/i.test(apos(sentence)) && (/^(?:so |and |but )?if\b/i.test(sentence) || /\bready\b/i.test(sentence));
+export const BRIDGE_WHY = `the script goes straight into the closing line: just before it, in the same cut, one sentence turns to the viewer and names what they want — "If you're ready to …, now is your time." (${BRIDGE_WORDS} words or more)`;
 /** What is wrong with a script's lines, in words; empty when it may be made. `offer`: the exact words it must name; `closing`: the sentence it must end on. */
 export function scriptProblems(lines, { offer = null, profile = {}, closing = closingLine() } = {}) {
   const errs = [];
@@ -189,11 +214,13 @@ export function scriptProblems(lines, { offer = null, profile = {}, closing = cl
     const own = (i === last ? withoutClosing(l, closing) : l).replace(/\{AREA\}/g, "");
     if (FIRST_PERSON.test(own)) errs.push(`line ${i + 1} speaks as the gym or a member ("${own.match(FIRST_PERSON)[0]}"): the presenter is nobody in particular, so no I, we, our, my or us`);
     if (TAP.test(l)) errs.push(`line ${i + 1} says "${l.match(TAP)[0]}": the only call to action is the closing line`);
+    const ideal = apos(l).match(IDEAL_BODY); if (ideal) errs.push(`line ${i + 1} promises an ideal body ("${ideal[0]}"): say what the person will feel or be able to do`);
     const country = countryNamed(l, { profile, offer }); if (country) errs.push(`line ${i + 1} names the whole country ("${country}"): the place is only ever {AREA}, the area around the gym`);
     if (/[\n\r]/.test(String(lines[i]))) errs.push(`line ${i + 1} is two lines: one line is one cut`);
   });
   if (!endsWithClosing(ls[last], closing)) errs.push(`the last line ends with the closing line, word for word: "${closing}"`);
-  else if (closingAlone(ls[last], closing) && wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio")) > JOINED_WORDS) errs.push(`line ${last} and the closing line are filmed as one cut (the closing line cannot be a clip of its own) and together they are ${wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio"))} words: at most ${JOINED_WORDS}, so shorten line ${last}`);
+  else if (!isBridge(bridgeOf(ls, closing))) errs.push(BRIDGE_WHY);
+  if (endsWithClosing(ls[last], closing) && closingAlone(ls[last], closing) && wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio")) > JOINED_WORDS) errs.push(`line ${last} and the closing line are filmed as one cut (the closing line cannot be a clip of its own) and together they are ${wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio"))} words: at most ${JOINED_WORDS}, so shorten line ${last}`);
   const all = ls.join(" ");
   if (offer && !all.toLowerCase().includes(norm(offer).toLowerCase())) errs.push(`the script must name the offer in its exact words: "${norm(offer)}"`);
   for (const e of onAdProblems(fillLine(all, "Bishan"), profile)) if (!errs.includes(e)) errs.push(e);
@@ -233,7 +260,7 @@ export function buildEditPrompt({ profile = {}, script, problems, closing = CLOS
     `This is a short script for a talking-to-camera video advert for ${gym}'s programme "${script.offer}", one line for each cut. It breaks the rules below. Propose the SMALLEST edit that mends it, for the owner to approve.`,
     `THE SCRIPT:\n${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`,
     `WHAT IS WRONG:\n${problems.map((x) => `- ${x}`).join("\n")}`,
-    `THE RULES. Keep every line that breaks no rule exactly as it is, word for word and in its place; change only what a rule requires, and keep the owner's voice. The last line ends with exactly this sentence, word for word — "${closing}" — after a few words in the same line ("If that sounds like you, ${closing.charAt(0).toLowerCase()}${closing.slice(1)}"); it is the only call to action, so a sentence that says "tap below", names a button or gives another instruction is taken out. The offer is named in its exact words: "${script.offer}". The place is only ever written {AREA}, never the country. The speaker is nobody in particular: no I, we, our, my or us, except inside the closing sentence. Each line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words; a script is ${LINES[0]} to ${LINES[1]} lines. Never: a price, free, before and after, a guarantee, a promised result, a number of kilos, an em dash.`,
+    `THE RULES. Keep every line that breaks no rule exactly as it is, word for word and in its place; change only what a rule requires, and keep the owner's voice. The ending is two beats in the last line: first ONE sentence of its own that turns to the viewer and names what they want, in this shape — "If you're ready to [what they want], now is your time." (what they will feel or be able to do, never an ideal body, never a promised result) — and then exactly this sentence, word for word: "${closing}". That sentence is the only call to action, so a sentence that says "tap below", names a button or gives another instruction is taken out. When the script goes straight into the closing sentence, add the bridge sentence before it and change nothing else. The offer is named in its exact words: "${script.offer}". The place is only ever written {AREA}, never the country. The speaker is nobody in particular: no I, we, our, my or us, except inside the closing sentence. Each line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words; a script is ${LINES[0]} to ${LINES[1]} lines. Never: a price, free, before and after, a guarantee, a promised result, a number of kilos, an em dash.`,
     `Answer with every line of the script after the edit, in order, and a note of one sentence saying what you changed.`,
   ].join("\n\n") };
 }
@@ -281,8 +308,46 @@ export const SAMPLE_LIMIT = [40, 1500];
 export const videoLibraryDir = () => resolve(process.env.VIDEO_LIBRARY_DIR || process.env.COPY_LIBRARY_DIR || join(REPO_ROOT, "library"));
 export const VIDEO_LIBRARY_DIR = videoLibraryDir();
 export const SAMPLES_FILE = "video-samples.json";
-export const readSamples = (libDir = videoLibraryDir()) => { const j = readJson(join(libDir, SAMPLES_FILE)); return { schema: 1, samples: Array.isArray(j?.samples) ? j.samples : [], closing: j?.closing && typeof j.closing.text === "string" ? j.closing : null }; };
-const writeSamples = (libDir, data) => { mkdirSync(libDir, { recursive: true }); writeFileSync(join(libDir, SAMPLES_FILE), JSON.stringify({ schema: 1, samples: data.samples, ...(data.closing ? { closing: data.closing } : {}) }, null, 2) + "\n"); };
+export const readSamples = (libDir = videoLibraryDir()) => { const j = readJson(join(libDir, SAMPLES_FILE)); return { schema: 1, samples: Array.isArray(j?.samples) ? j.samples : [], closing: j?.closing && typeof j.closing.text === "string" ? j.closing : null, said: Array.isArray(j?.said) ? j.said : [] }; };
+const writeSamples = (libDir, data) => { mkdirSync(libDir, { recursive: true }); writeFileSync(join(libDir, SAMPLES_FILE), JSON.stringify({ schema: 1, samples: data.samples, ...(data.closing ? { closing: data.closing } : {}), ...(data.said?.length ? { said: data.said } : {}) }, null, 2) + "\n"); };
+/**
+ * How a word is said (2026-11-14, the owner: "'Quay' is pronounced 'Kee' in Singapore. Edge case but let's account for
+ * it too"). A short list for every gym — the standing entries here, and the owner's own in the shared library
+ * (`said`), which win and may take a standing one out. The presenter is told it with a line that has the word; the
+ * check takes the word as said for the word as written ("key" for "Quay"), and is asked how it sounded: said another
+ * way is a noted fault (the clip is made once more while takes are left), never a refusal — his ear is the last check.
+ */
+export const SAID_AS = [{ word: "Quay", say: "kee", heard: ["key"] }];
+const letters = (w) => String(w).toLowerCase().replace(/[^a-z0-9]/g, "");
+export function saidAs(libDir = videoLibraryDir()) {
+  const out = new Map(SAID_AS.map((x) => [letters(x.word), { ...x }]));
+  for (const x of readSamples(libDir).said) { const k = letters(x.word); if (x.removed) out.delete(k); else if (x.word && x.say) out.set(k, { word: x.word, say: x.say, heard: out.get(k)?.say === x.say ? out.get(k).heard || [] : [] }); }
+  return [...out.values()];
+}
+export function saidProblems(word, say) {
+  const errs = [];
+  if (!/^[A-Za-z][A-Za-z'-]{1,29}$/.test(String(word || "").trim())) errs.push("the word is one word as it is written, 2 to 30 letters (\"Quay\")");
+  if (!/^[A-Za-z][A-Za-z '-]{0,39}$/.test(String(say || "").trim())) errs.push("how it is said is written the way it sounds, in letters (\"kee\")");
+  return errs;
+}
+/** Add or change how a word is said, for every gym; an empty `say` takes the word off the list. */
+export function setSaid(libDir, word, say) {
+  const w = norm(word), how = norm(say), data = readSamples(libDir), rest = data.said.filter((x) => letters(x.word) !== letters(w));
+  if (!how) { if (!/^[A-Za-z][A-Za-z'-]{1,29}$/.test(w)) throw new Error("which word?"); data.said = [...rest, ...(SAID_AS.some((x) => letters(x.word) === letters(w)) ? [{ word: w, removed: true, updated: today() }] : [])]; }
+  else { const errs = saidProblems(w, how); if (errs.length) throw new Error(errs.join("; ")); data.said = [...rest, { word: w, say: how, updated: today() }]; }
+  writeSamples(libDir, data); return saidAs(libDir);
+}
+/** The entries whose word is in a line, as a whole word. */
+export const saidIn = (line, list = []) => list.filter((x) => new RegExp(`(?<![A-Za-z])${x.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`, "i").test(String(line)));
+/** What names a clip beside its words and its picture: a changed way of saying a word films that line again, and no other. */
+const saidNote = (entries) => entries.map((x) => `${letters(x.word)}=${letters(x.say)}`).sort().join("|");
+const soundsOf = (entries) => entries.map((x) => [x.word, x.say, ...(x.heard || [])].map(letters));
+/** From a clip's check: the listed words that were heard said another way, each as a noted fault. */
+function saidWrong(seen, entries) {
+  const out = [];
+  for (const x of entries) { const p = (seen?.pronounced || []).find((q) => letters(q.word) === letters(x.word)), how = letters(p?.sounded_like || ""); if (how && how !== letters(x.word) && !soundsOf([x])[0].includes(how)) out.push(`"${x.word}" sounded like "${norm(p.sounded_like)}" (it is said "${x.say}")`); }
+  return out;
+}
 /** The closing line every script ends on: the owner's own when he has changed it, else the standing sentence. */
 export function closingLine(libDir = videoLibraryDir()) { return norm(readSamples(libDir).closing?.text) || CLOSING_LINE; }
 export function closingProblems(text, profile = {}) {
@@ -497,7 +562,7 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
   // With the owner's samples or his facts for this offer a script may run longer: it follows the sample's beats, cut to what is relevant and true here.
   const long = samples.length > 0 || facts.length > 0;
   const open = "says where — the place written as {AREA} (it is filled in for each location) — and opens on ONE pain point: what this person is living with and wants gone, said as a moment of their day they will recognise at once";
-  const close = `The last line ends with exactly this sentence, word for word; it is the ONLY call to action in the script: "${closing}" It follows a few words in the same line ("If that sounds like you, ${closing.charAt(0).toLowerCase()}${closing.slice(1)}"): it is never a line on its own. Never write "tap", never name a button, never add another instruction.`;
+  const close = `THE ENDING is two beats, both in the last line. First ONE sentence that turns to the viewer and names what they want, tied to the pain the script opened on, in this shape: "If you're ready to [what they want], now is your time." Then exactly this sentence, word for word; it is the ONLY call to action in the script: "${closing}" Never go straight from a benefit into the call to action, and never use a bare lead-in ("If that sounds like you, …"). What they want is what they will FEEL or be able to DO (feel strong and at ease in their clothes again, have energy left for the evening), never an ideal body and never a promised result ("the body you've always wanted" is out). The last line may run to ${LINE_WORDS[1]} words. Never write "tap", never name a button, never add another instruction.`;
   const lines = [
     `You write short scripts for a talking-to-camera video advert for ${gym}'s programme: "${offer}". ${audience ? `The advert is for: ${audience}.` : "The advert is for adults near the gym who are not training yet."} Someone stands in the gym, talks to a phone camera the way a friend would, and the video cuts to a new spot for each line.`,
     long
@@ -505,7 +570,7 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
       : `A script is exactly 3 lines. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`,
     long
       ? `The first line ${open}. One of the first two lines names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. The lines between are the beats worth keeping${samples.length ? " from the sample you follow" : ""}: each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. ${close}`
-      : `Line 1 ${open}. Line 2 names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. Line 3 says, in a few words, one more thing they will get from it, and then closes. ${close}`,
+      : `Line 1 ${open}. Line 2 names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. Line 3 is the ending. ${close}`,
     `Speak about BENEFITS, never features. A benefit is what changes for the person: feeling stronger, more energy for the day, clothes fitting better, confidence, keeping up with the children, a body that does what is asked of it. A feature is how the gym runs, and the script says NONE: nothing about how training is organised (no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size), because a wrong one is a false claim about this gym.${facts.length ? ` The only facts about the gym or the programme that may be stated are these, in the owner's words: ${facts.map((x) => `"${x}"`).join("; ")}. Say them as given, and nothing else about how the programme works.` : ""} A benefit is what the programme is built to help with, never a promised result.`,
     `The speaker is nobody in particular: NOT a coach, NOT a member, NOT the owner. So the script never says I, we, our, my or us, and never claims an experience ("I joined", "we built"): where a gym would say we, the script says "${gym}", "the coaches" or "the team". The closing sentence is the one exception: it is said word for word as given.`,
     `The place is only ever {AREA}, the area around the gym: the script never names the country, and never speaks to a whole city or island.`,
@@ -569,12 +634,14 @@ export function realModels(profile = {}) {
       else if (v.uri) { const res = await fetch(v.uri.includes("alt=media") ? v.uri : `${v.uri}${v.uri.includes("?") ? "&" : "?"}alt=media`, { headers: { "x-goog-api-key": loadGeminiKey() } }); if (!res.ok) throw new Error(`the video could not be downloaded (${res.status})`); writeFileSync(out, Buffer.from(await res.arrayBuffer())); }
       else throw new Error("the video part carried neither data nor a uri");
     },
-    async watch(file) {
-      // A name is spelt the gym's way when it is heard ("Aether", not "Ether"; "F45", not "F forty-five"): nothing else about the line is told.
-      const question = profile.display_name ? `${WATCH_QUESTION} The business is called "${profile.display_name}": where that name is spoken, write it exactly that way.` : WATCH_QUESTION;
+    async watch(file, { said = [] } = {}) {
+      // A name is spelt the gym's way when it is heard ("Aether", not "Ether"; "F45", not "F forty-five"), and so is a word on the said-as list ("Quay", however it sounds): nothing else about the line is told.
+      const named = profile.display_name ? ` The business is called "${profile.display_name}": where that name is spoken, write it exactly that way.` : "";
+      const words = said.length ? ` ${said.map((x) => `"${x.word}"`).join(", ")} ${said.length === 1 ? "is a word" : "are words"} in what is spoken: write ${said.length === 1 ? "it" : "each"} as spelt here, however it sounds. pronounced: for ${said.length === 1 ? "that word" : "each of them"}, how the speaker said it, written the way it sounded (for example "kee" or "kway").` : "";
+      const question = WATCH_QUESTION + named + words, schema = said.length ? { ...WATCH_SCHEMA, properties: { ...WATCH_SCHEMA.properties, pronounced: { type: "ARRAY", items: { type: "OBJECT", properties: { word: { type: "STRING" }, sounded_like: { type: "STRING" } }, required: ["word", "sounded_like"] } } } } : WATCH_SCHEMA;
       const out = await whenGeminiFree(async () => {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHECK_MODEL}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": loadGeminiKey() }, signal: AbortSignal.timeout(240000),
-          body: JSON.stringify({ contents: [{ parts: [{ text: question }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: WATCH_SCHEMA, temperature: 0 } }) });
+          body: JSON.stringify({ contents: [{ parts: [{ text: question }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0 } }) });
         if (!res.ok) throw new Error(`the video check failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
         return res.json();
       }, { label: "video check" });
@@ -594,9 +661,10 @@ export function stillPrompt({ presenter, profile, spot, first, framing = FRAMING
   const she = presenter.gender === "man" ? "He" : "She", pron = presenter.gender === "man" ? "his" : "her";
   return `A real photograph taken on a phone held upright, 9:16. ${first ? "" : `The person is the SAME person as in the first image: the same face, hair and clothes. `}${she} is ${presenterWords(presenter, profile)}, standing ${spot}${first ? "" : " — a different part of the room from the first image, with a different background behind"}. ${she} faces the camera, ${framing}, mid-sentence with one hand slightly raised as if explaining something to a friend, looking straight into the lens, relaxed and friendly. The room is the gym in the ${first ? "first" : "second"} image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, and ${she.toLowerCase()} is alone. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; ${pron} hands are relaxed and natural. ${NO_WORDS}`;
 }
-export function clipPrompt({ presenter, profile, line, seconds }) {
+export function clipPrompt({ presenter, profile, line, seconds, said = [] }) {
+  const how = said.length ? ` ${said.map((x) => `"${x.word}" is pronounced "${x.say}"`).join("; ")}: ${presenter.gender === "man" ? "he" : "she"} says it that way.` : "";
   const she = presenter.gender === "man" ? "The man" : "The woman", pron = presenter.gender === "man" ? "His" : "Her", their = presenter.gender === "man" ? "his" : "her", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`;
-  return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${line}" ${pron} mouth forms exactly these words, in time with ${their} voice, and says nothing else; the sentence is finished before the clip ends. ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
+  return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${line}"${how} ${pron} mouth forms exactly these words, in time with ${their} voice, and says nothing else; the sentence is finished before the clip ends. ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
 }
 
 // ── the text layer and the cut (software: no model) ──────────────────────────
@@ -729,22 +797,22 @@ export function adoptClips(store, legacy = []) {
 const stillPromptFor = (i, presenter, profile) => stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[i % FRAMINGS.length], first: i === 0 });
 const stillName = (i, prompt, room) => `still-${i + 1}-${sha(prompt + basename(room)).slice(0, 6)}.jpg`;
 const altOf = (still) => still.replace(/\.jpg$/, "-b.jpg");
-const clipName = (i, line, still, area, perArea) => `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(line + basename(still)).slice(0, 6)}`;
-const passedCheck = (seen, line, profile) => !!seen && sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean) }) && seen.people === 1 && !(seen.on_screen_text || []).length;
+const clipName = (i, line, still, area, perArea, note = "") => `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(line + basename(still) + (note ? `|said:${note}` : "")).slice(0, 6)}`;
+const passedCheck = (seen, line, profile, sounds = []) => !!seen && sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean), sounds }) && seen.people === 1 && !(seen.on_screen_text || []).length;
 /**
  * What a script still needs filmed for these locations, by what is on file: { clips[{ line, area, seconds, on_file }],
  * seconds (to film, one clean pass), reused (seconds already filmed), images (pictures still to make) }. No call, and
  * nothing is written: before a script's first use of the store it looks where `adoptClips` would bring files from.
  */
-export function videoNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [] }) {
+export function videoNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [], saidList = saidAs() }) {
   const presenter = presenterOf(profile), said = filmedLines(script.lines, closing), where = existsSync(store) ? store : legacy.find(hasStills) || store;
   const files = existsSync(where) ? readdirSync(where) : [], clips = []; let images = 0;
   for (const [i, raw] of said.entries()) {
     const still = presenter && room ? stillName(i, stillPromptFor(i, presenter, profile), room) : null, perArea = /\{AREA\}/.test(raw);
     if (!still || !files.includes(still)) images++;
     for (const area of perArea ? (areas.length ? areas : [""]) : [null]) {
-      const line = fillLine(raw, area || ""), names = still ? [clipName(i, line, still, area, perArea), clipName(i, line, altOf(still), area, perArea)] : [];
-      const on_file = files.some((f) => /\.mp4$/.test(f) && names.some((nm) => f === `${nm}.mp4` || (f.startsWith(`${nm}-take`))) && passedCheck(readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), line, profile));
+      const line = fillLine(raw, area || ""), say = saidIn(line, saidList), note = saidNote(say), names = still ? [clipName(i, line, still, area, perArea, note), clipName(i, line, altOf(still), area, perArea, note)] : [];
+      const on_file = files.some((f) => /\.mp4$/.test(f) && names.some((nm) => f === `${nm}.mp4` || (f.startsWith(`${nm}-take`))) && passedCheck(readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), line, profile, soundsOf(say)));
       clips.push({ line, area, seconds: clipSeconds(line), on_file });
     }
   }
@@ -758,7 +826,7 @@ export function videoNeeds({ gymDir, script, areas = [""], room = null, profile 
  * `spent` may be passed in (a batch's running count) and is added to; `caps { seconds, images }` are never passed:
  * a call that would pass one is not made, and the videos that needed it are refused with that as the reason.
  */
-export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [join(outDir, script.id)], log = () => {}, onProgress = () => {} }) {
+export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [join(outDir, script.id)], saidList = saidAs(), log = () => {}, onProgress = () => {} }) {
   const presenter = presenterOf(profile);
   if (!presenter) throw new Error("say who presents first (Ad defaults → Presenter): a woman or a man. Nothing is made until then");
   const errs = scriptProblems(script.lines, { offer, profile, closing }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
@@ -802,7 +870,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
     const clipFor = async (i, area) => {
       const perArea = /\{AREA\}/.test(said[i]), key = `${i}|${perArea ? area : ""}`; if (made.has(key)) return made.get(key);
       const line = fillLine(said[i], area), seconds = clipSeconds(line);
-      const nameFor = (pic) => clipName(i, line, pic, area, perArea);
+      const say = saidIn(line, saidList), nameFor = (pic) => clipName(i, line, pic, area, perArea, saidNote(say));
       // The picture this line is filmed from: its own, or — once a clip was refused on that one — the second picture made for it.
       let still = !existsSync(join(store, `${nameFor(stills[i])}.mp4`)) && existsSync(altOf(stills[i])) ? altOf(stills[i]) : stills[i];
       let take = 0, r = null, refused = 0; const passedTakes = [];
@@ -812,7 +880,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         if (!(existsSync(file) && statSync(file).size > 1000)) {
           if (!within("seconds", seconds)) { if (!passedTakes.length) r = { file: null, takes: take - 1, passed: false, line, why: `the cap of ${caps.seconds} seconds of video was reached` }; take--; break; }
           spent.seconds += seconds; onProgress({ stage: "clip", line: i + 1, area: perArea ? area : null, take }); log(`${label(i)}${perArea ? ` (${area})` : ""}, take ${take}: ${seconds} s`);
-          const prompt = clipPrompt({ presenter, profile, line, seconds }); writeFileSync(file.replace(/\.mp4$/, ".prompt.txt"), prompt + "\n");
+          const prompt = clipPrompt({ presenter, profile, line, seconds, said: say }); writeFileSync(file.replace(/\.mp4$/, ".prompt.txt"), prompt + "\n");
           try { await models.clip({ out: file, image: still, prompt, seconds }); }
           catch (e) {
             // Google refused the request (its content rules): nothing was made, so nothing is counted and it is no take.
@@ -836,8 +904,10 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
             gaveUp(`refused by Google's video model under its content rules, ${refused} times and on two pictures of the presenter`); break;
           }
         }
-        let seen = readJson(checkFile); if (!seen) { spent.checks++; seen = await models.watch(file); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
-        const heard = sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean) }), alone = seen.people === 1, clean = !(seen.on_screen_text || []).length;
+        let seen = readJson(checkFile); if (!seen) { spent.checks++; seen = await models.watch(file, { said: say }); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
+        // A listed word heard said another way is a noted fault: the clip is made once more while takes are left, and it is never a refusal.
+        const wrong = saidWrong(seen, say); if (wrong.length) seen = { ...seen, faults: [...(seen.faults || []), ...wrong] };
+        const heard = sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean), sounds: soundsOf(say) }), alone = seen.people === 1, clean = !(seen.on_screen_text || []).length;
         r = { file, takes: take, passed: heard && alone && clean, line, check: seen, why: !heard ? `it said "${norm(seen.spoken)}"` : !alone ? `${seen.people} people are in it` : !clean ? `words appear in the picture: ${seen.on_screen_text.join(", ")}` : null };
         if (r.passed) passedTakes.push(r);
         log(`  ${basename(file)}: ${r.passed ? "said as written, one person, no lettering" : r.why}${(seen.faults || []).length ? ` · noted: ${seen.faults.join("; ")}${r.passed && take < takes ? " — made once more" : ""}` : ""}`);

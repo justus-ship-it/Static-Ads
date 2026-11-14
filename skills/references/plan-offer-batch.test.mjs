@@ -1054,7 +1054,7 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     const { videoPlan, VIDEO_SPEND, MAX_VIDEO_SECONDS } = await import("./plan-offer-batch.mjs");
     const profile = { ...JSON.parse(readFileSync(join(dir, "gym-profile.json"), "utf-8")), creative_defaults: { presenter: { gender: "man", age: 36 } } };
     writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(profile));
-    const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "Feel stronger and have more energy for your day. Click the link below and we'll be in touch!"];
+    const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "with-videos", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN", "ANG MO KIO"], videos: { presenter: 1 } };
     // The brief's own rules.
     assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 9, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter)', "videos.presenter must be a whole number from 0 to 3", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
@@ -1071,7 +1071,7 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     // No script kept for this offer yet: refused by name, before any call.
     await assert.rejects(run(brief), /1 presenter video asked for, but no script is kept for "12 Week Total Body Reset": keep 1 more on Draft Scenes → Video scripts/);
     const script = addScript(dir, { lines: LINES, offer: brief.offer }, { profile });
-    addScript(dir, { lines: [LINES[0], LINES[1], "Walk into your week with more energy than you have had in years. Click the link below and we'll be in touch!"], offer: "6 Week Other Thing".length ? brief.offer : "", source: "drafted" }, { profile }); // a draft is not made
+    addScript(dir, { lines: [LINES[0], LINES[1], "If you are ready for more energy than you have had in years, now is your time. Click the link below and we'll be in touch!"], offer: "6 Week Other Thing".length ? brief.offer : "", source: "drafted" }, { profile }); // a draft is not made
     const S = (i, area) => clipSeconds(fillLine(LINES[i], area)), pass = S(0, "BISHAN") + S(0, "ANG MO KIO") + S(1, "") + S(2, "");
     const plan = videoPlan(dir, brief);
     assert.deepEqual([plan.count, plan.videos, plan.seconds, plan.images, plan.takes, plan.max_seconds, plan.scripts.map((x) => x.id), plan.usd], [1, 2, pass, 3, 2, pass * 2, [script.id], Math.round(pass * 0.07 * 100) / 100]);

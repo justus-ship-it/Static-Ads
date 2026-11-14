@@ -52,7 +52,7 @@ import { cycleFrom } from "../skills/references/cycle.mjs";
 import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
 import { plainGemini } from "../skills/references/gemini-busy.mjs";
-import { readyScripts, scriptIssues, filmedLines, proposeEdit, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
+import { readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -1792,7 +1792,8 @@ const server = createServer(async (req, res) => {
       try { const r = await proposeEdit({ brandDir: brandDir(gym), id, libraryDir: VIDEO_LIBRARY_DIR }); return json(res, 200, { proposal: { id, lines: r.lines, changed: r.changed, note: r.note, problems: r.problems } }); }
       catch (e) { return json(res, 400, { error: scrubTokens(plainGemini(e)) }); }
     }
-    const vdm = p.match(/^\/api\/client\/([^/]+)\/video(?:\/(presenter|script|draft|sample|facts|closing|pains)(?:\/([\w-]+))?)?$/);
+    // How a word is said, for every gym ("Quay" is "kee"): POST /said { word, say } — an empty say takes the word off the list.
+    const vdm = p.match(/^\/api\/client\/([^/]+)\/video(?:\/(presenter|script|draft|sample|facts|closing|pains|said)(?:\/([\w-]+))?)?$/);
     if (vdm) {
       const [, gym, what, x1] = vdm;
       if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
@@ -1803,7 +1804,7 @@ const server = createServer(async (req, res) => {
         adoptSamples(VIDEO_LIBRARY_DIR, listClients().map((c) => brandDir(c.gym)));
         const closing = closingLine(VIDEO_LIBRARY_DIR);
         return { presenter: presenterOf(prof), genders: PRESENTER_GENDERS, scripts: d.scripts.map((x) => ({ ...x, cost: (({ seconds, images, usd }) => ({ seconds, images, usd }))(scriptCost(x, areas)), problems: x.status === "retired" ? [] : scriptIssues(x, { profile: prof, closing }), joined: filmedLines(x.lines, closing).length < x.lines.length })), samples: readSamples(VIDEO_LIBRARY_DIR).samples, facts: Object.values(d.facts),
-          pains: readPains(dir), closing: { text: closing, standing: closing === CLOSING_LINE }, ffmpeg: hasFfmpeg(), room: !!(prof.creative_defaults?.room_reference || cleanPhotos(gym).some((x) => !x.people)), limits: { lines: SCRIPT_LINES, words: SCRIPT_LINE_WORDS, max_videos: MAX_VIDEOS, facts: FACT_LIMITS, pains: PAIN_LIMITS }, usd_per_second: USD_PER_SECOND, locations: areas.filter(Boolean) }; };
+          pains: readPains(dir), closing: { text: closing, standing: closing === CLOSING_LINE }, said: saidAs(VIDEO_LIBRARY_DIR).map((x) => ({ word: x.word, say: x.say })), ffmpeg: hasFfmpeg(), room: !!(prof.creative_defaults?.room_reference || cleanPhotos(gym).some((x) => !x.people)), limits: { lines: SCRIPT_LINES, words: SCRIPT_LINE_WORDS, max_videos: MAX_VIDEOS, facts: FACT_LIMITS, pains: PAIN_LIMITS }, usd_per_second: USD_PER_SECOND, locations: areas.filter(Boolean) }; };
       try {
         if (!what && req.method === "GET") return json(res, 200, view());
         if (req.method !== "POST" && req.method !== "PUT") return json(res, 405, { error: "method not allowed" });
@@ -1819,6 +1820,7 @@ const server = createServer(async (req, res) => {
         if (what === "script" && req.method === "POST" && !x1) { addScript(dir, { lines: body.lines, offer: body.offer, source: "owner" }, { profile, closing }); return json(res, 200, view()); }
         if (what === "script" && req.method === "PUT" && x1) { decideScript(dir, x1, { status: body.status, lines: body.lines, reason: body.reason }, { profile, closing }); return json(res, 200, view()); }
         if (what === "closing" && req.method === "POST" && !x1) { setClosing(VIDEO_LIBRARY_DIR, body.text); return json(res, 200, view()); }
+        if (what === "said" && req.method === "POST" && !x1) { setSaid(VIDEO_LIBRARY_DIR, body.word, body.say); return json(res, 200, view()); }
         if (what === "pains" && req.method === "POST" && !x1) { addPain(dir, body.offer, body.text, { profile, source: "owner" }); return json(res, 200, view()); }
         if (what === "pains" && req.method === "POST" && x1 === "suggest") {
           const count = body.count ?? 6; if (!Number.isInteger(count) || count < 1 || count > 8) return json(res, 400, { error: "how many pain points to suggest must be 1 to 8" });
