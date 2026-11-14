@@ -45,7 +45,7 @@ import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from ".
 import { catalogueFor, imageModelFor, mixOf, FEED_RATIOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
 import { cardsProblems, cardCount, pickCards } from "./cards.mjs";
 import { renderCard, loadCards } from "./render-cards.mjs";
-import { videosProblems, videoCount, pickScripts, makePresenterVideos, scriptCost, USD_PER_SECOND } from "./presenter-video.mjs";
+import { videosProblems, videoCount, pickScripts, makePresenterVideos, videoNeeds, USD_PER_SECOND } from "./presenter-video.mjs";
 import { plainGemini } from "./gemini-busy.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
@@ -483,12 +483,31 @@ export async function renderBatchCards(browser, { brandDir, brief, profile, seed
 /** The most seconds of video one batch may ask for, whatever its brief says (about US$21 at the day's price). */
 export const MAX_VIDEO_SECONDS = 300;
 export const VIDEO_SPEND = "video-spend.json";
-/** What a batch's presenter videos would take: the scripts it would make, the seconds of one clean pass, and the cap a run is given (every take allowed). */
-export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id } = {}) {
+/** The photo of the room a batch's videos are filmed in: its reference, else its first real photo. */
+const roomOf = (brandDir, brief) => { const ref = brief.reference || brief.real?.[0] || null; return ref ? (existsSync(join(brandDir, "brand-assets", ref)) ? join(brandDir, "brand-assets", ref) : resolve(ref)) : null; };
+/** Where a script was filmed before clips were kept per gym: this batch's own folder first, then every other batch's, the newest first. */
+export function videoFolders(brandDir, scriptId, batchId) {
+  const outs = join(brandDir, "outputs"), own = join(outs, batchId, "videos", scriptId);
+  const others = !existsSync(outs) ? [] : readdirSync(outs).filter((b) => b !== batchId && !b.startsWith("_")).map((b) => join(outs, b, "videos", scriptId)).filter((d) => existsSync(d))
+    .map((d) => ({ d, t: statSync(d).mtimeMs })).sort((a, b) => b.t - a.t).map((x) => x.d);
+  return [own, ...others];
+}
+/**
+ * What a batch's presenter videos would take, by what is already filmed (2026-11-14: a script's pictures and clips are
+ * kept per gym, so a batch films only what is not there): the scripts, `seconds` still to film in one clean pass,
+ * `reused` (seconds already filmed), `spent` (what this batch has used so far), `allow` (the most this run may
+ * film: every take allowed, or what is left of the brief's own cap) and `max_seconds` = spent + allow.
+ */
+export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id, profile = null } = {}) {
   const n = videoCount(brief.videos); if (!n) return null;
-  const scripts = pickScripts(brandDir, { count: n, offer: brief.offer, seed }), costs = scripts.map((x) => scriptCost(x, brief.locations)), takes = brief.attempts ?? 2;
-  const seconds = costs.reduce((t, c) => t + c.seconds, 0), images = costs.reduce((t, c) => t + c.images, 0), cap = Math.min(MAX_VIDEO_SECONDS, brief.max_video_seconds ?? seconds * takes);
-  return { scripts, count: n, videos: n * brief.locations.length, seconds, images, takes, max_seconds: cap, usd: Math.round((seconds * USD_PER_SECOND) * 100) / 100, usd_max: Math.round((cap * USD_PER_SECOND) * 100) / 100 };
+  const prof = profile || (() => { try { return JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8")); } catch { return {}; } })();
+  const scripts = pickScripts(brandDir, { count: n, offer: brief.offer, seed }), room = roomOf(brandDir, brief), takes = brief.attempts ?? 2;
+  const needs = scripts.map((x) => videoNeeds({ gymDir: brandDir, script: x, areas: brief.locations, room, profile: prof, legacy: videoFolders(brandDir, x.id, brief.batch_id) }));
+  const seconds = needs.reduce((t, c) => t + c.seconds, 0), reused = needs.reduce((t, c) => t + c.reused, 0), images = needs.reduce((t, c) => t + c.images, 0);
+  const spent = (() => { try { return JSON.parse(readFileSync(join(brandDir, "outputs", brief.batch_id, VIDEO_SPEND), "utf-8")).seconds || 0; } catch { return 0; } })();
+  const allow = Math.max(0, brief.max_video_seconds != null ? Math.min(MAX_VIDEO_SECONDS, brief.max_video_seconds) - spent : Math.min(MAX_VIDEO_SECONDS - spent, seconds * takes));
+  const usd = (x) => Math.round(x * USD_PER_SECOND * 100) / 100;
+  return { scripts, count: n, videos: n * brief.locations.length, seconds, reused, spent, allow, images, takes, max_seconds: spent + allow, usd: usd(seconds), usd_max: usd(allow) };
 }
 /**
  * A batch's presenter videos (presenter-video.mjs): each picked script made once for every location, in the gym's own
@@ -496,14 +515,15 @@ export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id
  * already on disk is reused, so a re-run costs nothing. A video that is refused is a named failure of the batch.
  */
 export async function renderBatchVideos(browser, { brandDir, out, brief, profile, seed, audience = null, log = console.log, prog = null, models = null }) {
-  const plan = videoPlan(brandDir, brief, { seed }), ref = brief.reference || brief.real?.[0] || null, room = ref ? (existsSync(join(brandDir, "brand-assets", ref)) ? join(brandDir, "brand-assets", ref) : resolve(ref)) : null;
+  const plan = videoPlan(brandDir, brief, { seed, profile }), room = roomOf(brandDir, brief);
+  if (plan.reused) log(`· videos: ${plan.reused} s already filmed for ${plan.scripts.length === 1 ? "this script" : "these scripts"} are reused; ${plan.seconds} s to film`);
   const spendPath = join(out, VIDEO_SPEND), before = (() => { try { return JSON.parse(readFileSync(spendPath, "utf-8")); } catch { return { seconds: 0, images: 0, checks: 0 }; } })();
   const spent = { seconds: 0, images: 0, checks: 0 }, save = () => writeFileSync(spendPath, JSON.stringify({ seconds: before.seconds + spent.seconds, images: before.images + spent.images, checks: before.checks + spent.checks, max_seconds: plan.max_seconds }, null, 2) + "\n");
   const outVideos = [];
   for (const [i, script] of plan.scripts.entries()) {
     const id = `v${String(i + 1).padStart(2, "0")}`;
     log(`· ${id}: presenter video from script ${script.id} (${brief.locations.length} location${brief.locations.length === 1 ? "" : "s"})`);
-    const r = await makePresenterVideos({ gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, audience, room, profile, caps: { seconds: Math.max(0, plan.max_seconds - before.seconds), images: plan.images + 2 }, spent, takes: plan.takes, browser, ...(models ? { models } : {}),
+    const r = await makePresenterVideos({ gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, audience, room, profile, caps: { seconds: plan.allow, images: plan.images + 2 }, spent, takes: plan.takes, browser, legacy: videoFolders(brandDir, script.id, brief.batch_id), ...(models ? { models } : {}),
       log: (m) => log(`  ${m}`), onProgress: (p) => { save(); prog?.set({ stage: "videos", video: { id, script: script.id, ...p }, video_seconds: before.seconds + spent.seconds, video_max_seconds: plan.max_seconds }); } });
     save();
     for (const v of r.videos) { if (v.failed) log(`⚑ ${id} ${v.area}: ${v.failed}`); outVideos.push({ id, script_id: script.id, ...v }); }

@@ -52,7 +52,7 @@ import { cycleFrom } from "../skills/references/cycle.mjs";
 import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
 import { plainGemini } from "../skills/references/gemini-busy.mjs";
-import { readyScripts, scriptIssues, filmedLines, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
+import { readyScripts, scriptIssues, filmedLines, proposeEdit, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -817,7 +817,7 @@ function checkBrief(gym, raw) {
     if (!presenterOf(profile)) errors.push("say who presents the videos first: Ad defaults → Presenter (a woman or a man)");
     if (!hasFfmpeg()) errors.push("videos need ffmpeg on this machine: run `brew install ffmpeg` once in Terminal");
     if (!(brief.reference || real[0])) errors.push("a video is filmed in the gym's own room: clean a premises photo on Photos & assets first");
-    try { const vp = videoPlan(brandDir(gym), brief); videos = { count: vp.count, videos: vp.videos, seconds: vp.seconds, max_seconds: vp.max_seconds, usd: vp.usd, usd_max: vp.usd_max, images: vp.images, scripts: vp.scripts.map((x) => x.id) }; }
+    try { const vp = videoPlan(brandDir(gym), brief); videos = { count: vp.count, videos: vp.videos, seconds: vp.seconds, reused: vp.reused, allow: vp.allow, max_seconds: vp.max_seconds, usd: vp.usd, usd_max: vp.usd_max, images: vp.images, scripts: vp.scripts.map((x) => x.id) }; }
     catch (e) { if (typeof brief.offer === "string" && brief.offer.trim() && locs) errors.push(scrubTokens(e.message)); }
   }
   return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs + cardCount(cards) * locs + nv * locs, cards, videos, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format, mix } };
@@ -1783,6 +1783,15 @@ const server = createServer(async (req, res) => {
     // The closing line (2026-11-14) is one sentence for every gym: POST /closing { text }. Pain points are this gym's own,
     // by the offer's words: POST /pains { offer, text } (the owner's, kept at once); POST /pains/suggest { offer, audience?,
     // count } (one text call: the owner's click; drafts); PUT /pains/{id} { offer, status, text, reason }.
+    // POST /video/script/{id}/propose — the edit a script needs, proposed by the agent (one text call, the owner's click).
+    // Nothing is saved: the owner approves it, edits it first, or writes his own (PUT /script/{id} { lines }).
+    const vpm = p.match(/^\/api\/client\/([^/]+)\/video\/script\/([\w-]+)\/propose$/);
+    if (vpm && req.method === "POST") {
+      const [, gym, id] = vpm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      try { const r = await proposeEdit({ brandDir: brandDir(gym), id, libraryDir: VIDEO_LIBRARY_DIR }); return json(res, 200, { proposal: { id, lines: r.lines, changed: r.changed, note: r.note, problems: r.problems } }); }
+      catch (e) { return json(res, 400, { error: scrubTokens(plainGemini(e)) }); }
+    }
     const vdm = p.match(/^\/api\/client\/([^/]+)\/video(?:\/(presenter|script|draft|sample|facts|closing|pains)(?:\/([\w-]+))?)?$/);
     if (vdm) {
       const [, gym, what, x1] = vdm;

@@ -3798,7 +3798,12 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     { const su = await (await call(`/api/client/${GYM}/batch-setup`)).json(); assert.deepEqual([su.videos.kept, su.videos.needs_edit], [[], [{ id, offer: BRIEF.offer }]]);
       const c0 = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u63-new", videos: { presenter: 1 } } } })).json();
       assert.ok(c0.errors.some((e) => /1 presenter video asked for, but no script is ready for "12 Week Total Body Reset": the script kept for this offer needs an edit first — the last line ends with the closing line/.test(e)), c0.errors.join(" | ")); }
+    // The edit it needs is the agent's to propose (2026-11-14: "have the agent propose any edits required for me to approve, but i can also manually edit it"): one text call — there is no model in the tests, and that is said; nothing is saved by asking.
+    { const pr = await call(`/api/client/${GYM}/video/script/${id}/propose`, { method: "POST", body: {} }), pj = await pr.json(); assert.equal(pr.status, 400); assert.match(pj.error, /network blocked|GEMINI_KEY/);
+      assert.equal((await call(`/api/client/${GYM}/video/script/${id}/propose`, { method: "POST", body: {}, token: null })).status, 403);
+      const none = await call(`/api/client/${GYM}/video/script/v-nope/propose`, { method: "POST", body: {} }); assert.equal(none.status, 400); assert.match((await none.json()).error, /no such script/); }
     [st, D] = await V("/closing", { method: "POST", body: { text: CLOSE } }); assert.deepEqual([st, D.closing.text, D.scripts[0].problems], [200, CLOSE, []]);
+    { const ok = await call(`/api/client/${GYM}/video/script/${id}/propose`, { method: "POST", body: {} }); assert.equal(ok.status, 400); assert.match((await ok.json()).error, /this script needs no edit/); }
     // The closing line as a script's whole last line (2026-11-14: Google's video model refuses that sentence as a clip of its own): it is filmed with the line before it — one cut, one picture fewer — and the script says so.
     [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0].replace("keep watching", "stay with this"), LINES[1], "Feel stronger and have more energy for your whole day.", CLOSE] } });
     { const alone = D.scripts.find((x) => x.lines.length === 4); assert.deepEqual([st, alone.joined, alone.cost.images, alone.problems, D.scripts.find((x) => x.id === id).joined], [200, true, 3, [], false]);
@@ -3807,6 +3812,7 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     const check = async (over) => (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u63-new", ...over } } })).json();
     let c = await check({ videos: { presenter: 1 } });
     assert.deepEqual(c.errors, []); assert.deepEqual([c.summary.videos.count, c.summary.videos.videos, c.summary.videos.scripts, c.summary.videos.images, c.summary.videos.max_seconds, c.summary.videos.usd > 2], [1, 2, [id], 3, c.summary.videos.seconds * BRIEF.attempts, true]);
+    assert.deepEqual([c.summary.videos.reused, c.summary.videos.allow], [0, c.summary.videos.max_seconds], "nothing is filmed yet for this script, so nothing is reused and the run may film its whole allowance");
     assert.equal(c.summary.ads, (await check({})).summary.ads + 2, "one video for each location is one more ad each");
     c = await check({ videos: { presenter: 2 } }); assert.ok(c.errors.some((e) => /2 presenter videos asked for, but only 1 script is kept for "12 Week Total Body Reset": keep 1 more on Draft Scenes → Video scripts/.test(e)), c.errors.join(" | "));
     c = await check({ videos: { presenter: 9 } }); assert.ok(c.errors.some((e) => /videos\.presenter must be a whole number from 0 to 3/.test(e)));
@@ -3866,6 +3872,23 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await until("document.querySelector('#vsWhy') && document.querySelector('#vsWhy').textContent.length > 5");
     assert.match(await ev("document.querySelector('#vsWhy').textContent"), /line 1/); assert.equal(await ev("document.querySelectorAll('#gModal textarea').length"), 7, "a refused script keeps what was typed");
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // A script that needs an edit: the card offers Propose an edit… beside Edit…; the agent's proposal (the model's answer is stood in for here) comes up in the same boxes, says what changed and why, and is saved only when he presses Use this edit — after any change of his own.
+    assert.equal(await ev("!!document.querySelector('#vsCard [data-propose]')"), false, "a script that needs no edit offers none");
+    await V("/closing", { method: "POST", body: { text: "Click the link below and the team will be in touch." } });
+    await open("scenes", "!!document.querySelector('#vsCard [data-propose]')");
+    assert.deepEqual(await ev("[document.querySelector('#vsCard [data-propose]').textContent, /Press Propose an edit… and the agent writes it for you to approve, or Edit… to do it yourself\\./.test(document.querySelector('#vsCard [data-problems]').innerText), document.querySelector('#vsCard [data-script] .pill').textContent]"), ["Propose an edit…", true, "kept · needs an edit"]);
+    const NEWLAST = "Feel stronger and have more energy for your day. If that sounds like you, click the link below and the team will be in touch.";
+    await ev(`(() => { const real = window.fetch; window.fetch = async (u, o) => /\\/propose$/.test(String(u)) ? new Response(JSON.stringify({ proposal: { id: ${JSON.stringify(id)}, lines: ${JSON.stringify([LINES[0], LINES[1], NEWLAST])}, changed: [3], note: "The last line now ends with the closing line.", problems: ["the last line ends with the closing line, word for word"] } }), { status: 200, headers: { "content-type": "application/json" } }) : real(u, o); return true; })()`);
+    await ev("document.querySelector('#vsCard [data-propose]').click(); true");
+    await until("!!document.querySelector('#vsProposal')");
+    assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelector('#vsGo').textContent, /Changed: line 3 — The last line now ends with the closing line\\. The other lines are as you had them\\./.test(document.querySelector('#vsProposal').innerText), document.querySelector('#vsLine0').value, document.querySelector('#vsLine2').value]"), ["The agent’s proposed edit", "Use this edit", true, LINES[0], NEWLAST]);
+    assert.deepEqual((await V())[1].scripts.find((x) => x.id === id).lines, LINES, "nothing is saved by proposing");
+    await ev("document.querySelector('#vsLine2').value = document.querySelector('#vsLine2').value.replace('Feel stronger', 'Feel much stronger'); document.querySelector('#vsGo').click(); true");
+    await until("!document.querySelector('#vsProposal') && !document.querySelector('#vsCard [data-propose]')");
+    { const now = (await V())[1].scripts.find((x) => x.id === id); assert.deepEqual([now.lines[2], now.problems, now.status], [NEWLAST.replace("Feel stronger", "Feel much stronger"), [], "kept"], "his own change to the proposal is what is saved, checked again"); }
+    // Back as it was for the rest of the test.
+    await V("/closing", { method: "POST", body: { text: "Click the link below and we'll be in touch!" } }); await V(`/script/${id}`, { method: "PUT", body: { lines: LINES } });
+    await open("scenes", "!!document.querySelector('#vsCard [data-script]')");
     // Pain points and the closing line are on the card; the draft dialog lists the owner's pain points for the offer typed (they come first), and for an offer with none says the agent works them out itself — nothing has to be typed first.
     assert.deepEqual(await ev("[document.querySelectorAll('#vsPains [data-pain-id]').length, document.querySelector('#vsPains [data-pain-id]').dataset.status, document.querySelector('#vsPains [data-pain-id] .pill').textContent, document.querySelector('#vsClosingText').textContent, !!document.querySelector('#vsPainAdd'), document.querySelector('#vsPainSuggest').textContent]"), [1, "kept", "kept", "“Click the link below and we'll be in touch!”", true, "Suggest pain points…"]);
     await ev(`document.querySelector('#vsDraftGo').click(); document.querySelector('#vsOfferIn').value = ${JSON.stringify(BRIEF.offer)}; document.querySelector('#vsOfferIn').oninput(); true`);

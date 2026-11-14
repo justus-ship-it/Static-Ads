@@ -37,6 +37,13 @@
  *     line before it, as one cut (`filmedLines`) — the words stay exactly as they are; (2) A REFUSAL IS A FAILED
  *     TAKE, NOT A CRASH: the clip is asked for once more, then on a fresh picture of the presenter, and only then is
  *     that video refused, in words; a refused request made nothing, so its seconds are not counted.
+ *   · WHAT IS FILMED IS KEPT PER GYM AND SCRIPT, NOT PER BATCH (2026-11-14: Aether's second batch filmed lines 2 to 4
+ *     again, word for word what its first batch had). The presenter's pictures and the clips of a script live in
+ *     `brands/{gym}/video-clips/{script}/`, named for what made them, so any batch that films the script again makes
+ *     only what is not there: a new location makes its one line, an edited line makes that line. A script filmed
+ *     before this brings its newest batch's pictures and clips in the first time (one batch only: one presenter).
+ *   · A SCRIPT THAT NEEDS AN EDIT IS EDITED BY THE AGENT FOR HIM TO APPROVE (`proposeEdit`, his word the same day:
+ *     "have the agent propose any edits required for me to approve, but I can also manually edit it").
  *   · THE PLACE IS ONLY EVER {AREA}, and never the whole country (the owner, 2026-11-14: "We can't say the full of
  *     Singapore no matter what").
  *   · A CLIP WITH A NOTED FAULT IS MADE ONCE MORE while takes are left (warped fingers, a hand that moves wrongly),
@@ -56,8 +63,8 @@
  * Assembly is ffmpeg (installed once: `brew install ffmpeg`) and the text layer is headless Chrome, as for the stills.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs";
-import { join, resolve, extname, basename } from "path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync, copyFileSync } from "fs";
+import { join, resolve, extname, basename, dirname } from "path";
 import { createHash } from "crypto";
 import { parseArgs } from "util";
 import { fileURLToPath } from "url";
@@ -218,6 +225,39 @@ export function decideScript(gymDir, id, { status, lines, reason } = {}, { profi
     row.status = status;
   }
   writeScripts(gymDir, data); return row;
+}
+const EDIT_SCHEMA = { type: "OBJECT", properties: { lines: { type: "ARRAY", items: { type: "STRING" } }, note: { type: "STRING" } }, required: ["lines", "note"] };
+export function buildEditPrompt({ profile = {}, script, problems, closing = CLOSING_LINE }) {
+  const gym = profile.display_name || "the gym";
+  return { schema: EDIT_SCHEMA, prompt: [
+    `This is a short script for a talking-to-camera video advert for ${gym}'s programme "${script.offer}", one line for each cut. It breaks the rules below. Propose the SMALLEST edit that mends it, for the owner to approve.`,
+    `THE SCRIPT:\n${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`,
+    `WHAT IS WRONG:\n${problems.map((x) => `- ${x}`).join("\n")}`,
+    `THE RULES. Keep every line that breaks no rule exactly as it is, word for word and in its place; change only what a rule requires, and keep the owner's voice. The last line ends with exactly this sentence, word for word — "${closing}" — after a few words in the same line ("If that sounds like you, ${closing.charAt(0).toLowerCase()}${closing.slice(1)}"); it is the only call to action, so a sentence that says "tap below", names a button or gives another instruction is taken out. The offer is named in its exact words: "${script.offer}". The place is only ever written {AREA}, never the country. The speaker is nobody in particular: no I, we, our, my or us, except inside the closing sentence. Each line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words; a script is ${LINES[0]} to ${LINES[1]} lines. Never: a price, free, before and after, a guarantee, a promised result, a number of kilos, an em dash.`,
+    `Answer with every line of the script after the edit, in order, and a note of one sentence saying what you changed.`,
+  ].join("\n\n") };
+}
+/**
+ * The edit a script needs, proposed by the agent for the owner to approve (2026-11-14: "have the agent propose any
+ * edits required for me to approve, but I can also manually edit it"). One text call, a second only when the first
+ * answer still breaks a rule; every proposal is checked in code and one that still breaks a rule is not offered.
+ * Nothing is saved: { lines, changed (line numbers), note, problems (what was wrong) } — he approves it, edits it
+ * first, or writes his own.
+ */
+export async function proposeEdit({ brandDir, id, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL }) {
+  const profile = readJson(join(brandDir, "gym-profile.json")) || {}, script = readScripts(brandDir).scripts.find((x) => x.id === id), closing = closingLine(libraryDir);
+  if (!script) throw new Error(`no such script: ${id}`);
+  const problems = scriptProblems(script.lines, { offer: script.offer, profile, closing });
+  if (!problems.length) throw new Error("this script needs no edit");
+  let left = problems, calls = 0;
+  for (let round = 0; round < 2; round++) {
+    const { prompt, schema } = buildEditPrompt({ profile, script, problems: left, closing });
+    const answer = await ask(null, prompt, schema, { model }); calls++;
+    const lines = (answer?.lines || []).map((l) => plainDashes(norm(l))).filter(Boolean);
+    left = scriptProblems(lines, { offer: script.offer, profile, closing });
+    if (!left.length) return { lines, changed: lines.map((l, i) => (l === norm(script.lines[i] ?? "") ? 0 : i + 1)).filter(Boolean).concat(script.lines.length > lines.length ? [lines.length] : []).filter((x, i, a) => a.indexOf(x) === i), note: norm(answer?.note), problems, calls };
+  }
+  throw new Error(`the agent's edit still breaks a rule (${left[0]}): edit the script yourself`);
 }
 /** The scripts ready for an offer: kept, and written for these exact words. */
 export const keptScripts = (gymDir, offer = null) => readScripts(gymDir).scripts.filter((s) => s.status === "kept" && (!offer || norm(s.offer).toLowerCase() === norm(offer).toLowerCase()));
@@ -663,13 +703,62 @@ function assemble({ clips, overlays, out }) {
   return out;
 }
 
+// ── where a script's pictures and clips are kept ─────────────────────────────
+/**
+ * Per gym and per script, not per batch (2026-11-14): `brands/{gym}/video-clips/{script id}/` holds the presenter's
+ * pictures, the clips, each clip's check and the prompts. Every file is named for what made it (the picture: its
+ * prompt and the room; the clip: its words and its picture), so a batch that films the script again finds what is
+ * there and makes only the rest. The captions and the finished video stay with the batch.
+ */
+export const CLIPS_DIR = "video-clips";
+export const clipStore = (gymDir, scriptId) => join(gymDir, CLIPS_DIR, scriptId);
+const hasStills = (d) => existsSync(d) && readdirSync(d).some((f) => /^still-.*\.jpg$/.test(f));
+/**
+ * A script filmed before clips were kept per gym has them in its batches' folders: the first time, the pictures and
+ * clips of ONE such folder are brought in — the first of `legacy` that has any (this batch's own, then the newest
+ * other) — never a mix of two, since each batch invented its own presenter. Returns the folder taken from, or null.
+ */
+export function adoptClips(store, legacy = []) {
+  if (existsSync(store)) return null;
+  const from = legacy.find(hasStills); if (!from) return null;
+  mkdirSync(store, { recursive: true }); let n = 0;
+  for (const f of readdirSync(from)) if (/^(still|line)-/.test(f)) { copyFileSync(join(from, f), join(store, f)); n++; }
+  writeFileSync(join(store, "adopted.json"), JSON.stringify({ from, files: n, on: today() }, null, 2) + "\n");
+  return from;
+}
+const stillPromptFor = (i, presenter, profile) => stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[i % FRAMINGS.length], first: i === 0 });
+const stillName = (i, prompt, room) => `still-${i + 1}-${sha(prompt + basename(room)).slice(0, 6)}.jpg`;
+const altOf = (still) => still.replace(/\.jpg$/, "-b.jpg");
+const clipName = (i, line, still, area, perArea) => `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(line + basename(still)).slice(0, 6)}`;
+const passedCheck = (seen, line, profile) => !!seen && sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean) }) && seen.people === 1 && !(seen.on_screen_text || []).length;
+/**
+ * What a script still needs filmed for these locations, by what is on file: { clips[{ line, area, seconds, on_file }],
+ * seconds (to film, one clean pass), reused (seconds already filmed), images (pictures still to make) }. No call, and
+ * nothing is written: before a script's first use of the store it looks where `adoptClips` would bring files from.
+ */
+export function videoNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [] }) {
+  const presenter = presenterOf(profile), said = filmedLines(script.lines, closing), where = existsSync(store) ? store : legacy.find(hasStills) || store;
+  const files = existsSync(where) ? readdirSync(where) : [], clips = []; let images = 0;
+  for (const [i, raw] of said.entries()) {
+    const still = presenter && room ? stillName(i, stillPromptFor(i, presenter, profile), room) : null, perArea = /\{AREA\}/.test(raw);
+    if (!still || !files.includes(still)) images++;
+    for (const area of perArea ? (areas.length ? areas : [""]) : [null]) {
+      const line = fillLine(raw, area || ""), names = still ? [clipName(i, line, still, area, perArea), clipName(i, line, altOf(still), area, perArea)] : [];
+      const on_file = files.some((f) => /\.mp4$/.test(f) && names.some((nm) => f === `${nm}.mp4` || (f.startsWith(`${nm}-take`))) && passedCheck(readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), line, profile));
+      clips.push({ line, area, seconds: clipSeconds(line), on_file });
+    }
+  }
+  const sum = (xs) => xs.reduce((t, c) => t + c.seconds, 0);
+  return { clips, seconds: sum(clips.filter((c) => !c.on_file)), reused: sum(clips.filter((c) => c.on_file)), images };
+}
+
 // ── making the videos of one script ──────────────────────────────────────────
 /**
  * One script → one video for each location. Returns { videos[{ area, file, poster, seconds, lines[], notes[], failed? }], spent{ seconds, images, checks } }.
  * `spent` may be passed in (a batch's running count) and is added to; `caps { seconds, images }` are never passed:
  * a call that would pass one is not made, and the videos that needed it are refused with that as the reason.
  */
-export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), log = () => {}, onProgress = () => {} }) {
+export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [join(outDir, script.id)], log = () => {}, onProgress = () => {} }) {
   const presenter = presenterOf(profile);
   if (!presenter) throw new Error("say who presents first (Ad defaults → Presenter): a woman or a man. Nothing is made until then");
   const errs = scriptProblems(script.lines, { offer, profile, closing }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
@@ -677,7 +766,10 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
   const whole = areas.find((a) => isWholeCountry(a)); if (whole) throw new Error(`"${whole}" is the whole country: a video says the area around the gym, never the country`);
   if (!room || !existsSync(room)) throw new Error("a photo of the gym's room is needed, so the video is in the gym's own room (Photos & assets → a cleaned premises photo)");
   if (!hasFfmpeg()) throw new Error("ffmpeg is not installed on this machine: run `brew install ffmpeg` once");
+  // The captions are this batch's; the pictures and clips are the script's own, whatever batch films it.
   const dir = join(outDir, script.id); mkdirSync(dir, { recursive: true });
+  const adopted = adoptClips(store, legacy); if (adopted) log(`what was already filmed for this script is reused (from ${basename(dirname(dirname(adopted)))})`);
+  mkdirSync(store, { recursive: true });
   const own = !browser; if (own) browser = await launchBrowser();
   const within = (kind, n) => spent[kind] + n <= caps[kind];
   // The script as it is filmed: the closing line, when it is the whole last line, shares a cut with the line before it.
@@ -689,8 +781,8 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
     // A still for each line: the first from the room, the rest from the first (the same person) and the room.
     const stills = [];
     for (const [i] of said.entries()) {
-      const prompt = stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[i % FRAMINGS.length], first: i === 0 });
-      const out = join(dir, `still-${i + 1}-${sha(prompt + basename(room)).slice(0, 6)}.jpg`);
+      const prompt = stillPromptFor(i, presenter, profile);
+      const out = join(store, stillName(i, prompt, room));
       if (!existsSync(out)) {
         if (!within("images", 1)) return { videos: areas.map((area) => ({ area, script_id: script.id, failed: `the cap of ${caps.images} image calls was reached before the presenter's stills were made` })), spent };
         spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`still ${i + 1} of ${said.length}`);
@@ -707,17 +799,16 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
     }
     // A clip for each line — once, or once per location when the line says the area.
     const made = new Map(); // "i|area" or "i|" → { file, takes, passed, check, line, why }
-    const altOf = (still) => still.replace(/\.jpg$/, "-b.jpg");
     const clipFor = async (i, area) => {
       const perArea = /\{AREA\}/.test(said[i]), key = `${i}|${perArea ? area : ""}`; if (made.has(key)) return made.get(key);
       const line = fillLine(said[i], area), seconds = clipSeconds(line);
-      const nameFor = (pic) => `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(line + basename(pic)).slice(0, 6)}`;
+      const nameFor = (pic) => clipName(i, line, pic, area, perArea);
       // The picture this line is filmed from: its own, or — once a clip was refused on that one — the second picture made for it.
-      let still = !existsSync(join(dir, `${nameFor(stills[i])}.mp4`)) && existsSync(altOf(stills[i])) ? altOf(stills[i]) : stills[i];
+      let still = !existsSync(join(store, `${nameFor(stills[i])}.mp4`)) && existsSync(altOf(stills[i])) ? altOf(stills[i]) : stills[i];
       let take = 0, r = null, refused = 0; const passedTakes = [];
       const gaveUp = (why) => { r = { file: null, takes: take, passed: false, refused: true, line, why }; };
       while (take < takes && !(r && r.passed && !(r.check?.faults || []).length)) {
-        take++; const name = nameFor(still), file = join(dir, `${name}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
+        take++; const name = nameFor(still), file = join(store, `${name}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
         if (!(existsSync(file) && statSync(file).size > 1000)) {
           if (!within("seconds", seconds)) { if (!passedTakes.length) r = { file: null, takes: take - 1, passed: false, line, why: `the cap of ${caps.seconds} seconds of video was reached` }; take--; break; }
           spent.seconds += seconds; onProgress({ stage: "clip", line: i + 1, area: perArea ? area : null, take }); log(`${label(i)}${perArea ? ` (${area})` : ""}, take ${take}: ${seconds} s`);
