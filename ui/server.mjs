@@ -52,7 +52,7 @@ import { cycleFrom } from "../skills/references/cycle.mjs";
 import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
 import { plainGemini } from "../skills/references/gemini-busy.mjs";
-import { readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
+import { readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, readStyle, nameStyle, suggestFacts, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -1832,12 +1832,26 @@ const server = createServer(async (req, res) => {
           const count = body.count ?? 3; if (!Number.isInteger(count) || count < 1 || count > 6) return json(res, 400, { error: "how many scripts to draft must be 1 to 6" });
           // The facts typed with the request are saved for this offer first (checked; a refusal drafts nothing), then the drafter is given them.
           if (body.facts != null) { if (!Array.isArray(body.facts)) return json(res, 400, { error: "the facts are a list, one to a line" }); setFacts(dir, body.offer, body.facts, { profile }); }
-          const d = await draftScripts({ brandDir: dir, libraryDir: VIDEO_LIBRARY_DIR, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count });
-          return json(res, 200, { ...view(), drafted: { added: d.added.map((x) => x.id), dropped: d.dropped, sources: d.sources } });
+          // `style`: a sample's id — every draft of the round in that one style; without it the round is spread across the styles.
+          const d = await draftScripts({ brandDir: dir, libraryDir: VIDEO_LIBRARY_DIR, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count, style: typeof body.style === "string" && body.style ? body.style : null });
+          return json(res, 200, { ...view(), drafted: { added: d.added.map((x) => x.id), dropped: d.dropped, sources: d.sources, styles: d.styles } });
         }
-        if (what === "sample" && req.method === "POST" && !x1) { adoptSamples(VIDEO_LIBRARY_DIR, listClients().map((c) => brandDir(c.gym))); addSample(VIDEO_LIBRARY_DIR, body.text, { note: body.note || null, gym }); return json(res, 200, view()); }
-        if (what === "sample" && req.method === "PUT" && x1) { decideSample(VIDEO_LIBRARY_DIR, x1, { retired: body.retired, reason: body.reason }); return json(res, 200, view()); }
+        // A sample is a style (2026-11-14): pasted, it is read at once for how it is built (one text call; a reading that fails leaves the sample on file, unread, to be read again from its card).
+        if (what === "sample" && req.method === "POST" && !x1) {
+          adoptSamples(VIDEO_LIBRARY_DIR, listClients().map((c) => brandDir(c.gym))); const row = addSample(VIDEO_LIBRARY_DIR, body.text, { note: body.note || null, gym });
+          let unread = null; try { await readStyle({ libDir: VIDEO_LIBRARY_DIR, id: row.id }); } catch (e) { unread = scrubTokens(plainGemini(e)); }
+          return json(res, 200, { ...view(), ...(unread ? { style_unread: unread } : {}) });
+        }
+        // PUT /sample/{id}: { name } its style's name (the owner's) · { read: true } read its style again · { retired, reason }.
+        if (what === "sample" && req.method === "PUT" && x1) {
+          if (typeof body.name === "string") nameStyle(VIDEO_LIBRARY_DIR, x1, body.name);
+          else if (body.read === true) await readStyle({ libDir: VIDEO_LIBRARY_DIR, id: x1 });
+          else decideSample(VIDEO_LIBRARY_DIR, x1, { retired: body.retired, reason: body.reason });
+          return json(res, 200, view());
+        }
         if (what === "facts" && req.method === "POST" && !x1) { setFacts(dir, body.offer, body.items, { profile }); return json(res, 200, view()); }
+        // POST /facts/suggest { offer }: facts the samples state, for the owner to tick the ones true of this gym (one text call; nothing is saved).
+        if (what === "facts" && req.method === "POST" && x1 === "suggest") { const r = await suggestFacts({ brandDir: dir, libraryDir: VIDEO_LIBRARY_DIR, offer: body.offer }); return json(res, 200, { suggestions: r.suggestions, dropped: r.dropped, offer: String(body.offer).trim() }); }
         return json(res, 404, { error: "not found" });
       } catch (e) { return json(res, e.duplicate ? 409 : 400, { error: scrubTokens(plainGemini(e)) }); } // a Google error is said in plain words
     }

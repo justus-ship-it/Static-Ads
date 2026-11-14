@@ -848,7 +848,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       const video = join(folder, "9x16", `${name}_9x16_v1.mp4`), poster = join(folder, "9x16", `${name}_9x16_v1.jpg`);
       mkdirSync(dirname(join(out, video)), { recursive: true }); copyFileSync(v.file, join(out, video)); copyFileSync(v.poster, join(out, poster));
       ads.push({ folder, file: poster, video_file: video, candidate: v.id, location: v.area, location_index: li, photos: [], photo_files: [], treatment: "video-presenter", style: "video", palette: null, ratio: "9x16", format: "presenter-video",
-        video: { kind: "presenter", script_id: v.script_id, seconds: v.seconds, words: v.words, notes: v.notes || [] }, crop: [], words: { location: v.area, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
+        video: { kind: "presenter", script_id: v.script_id, style: v.style || null, pain: v.pain || null, seconds: v.seconds, words: v.words, notes: v.notes || [] }, crop: [], words: { location: v.area, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
     }
     // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
     // record of the calls that made its photos (the panel showed "0 image calls" after one).

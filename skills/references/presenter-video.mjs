@@ -54,6 +54,12 @@
  *     the end of his own sample as the model): one sentence that turns to the viewer and names what they want — "If
  *     you're ready to …, now is your time." — and then the closing line. What they will feel or be able to do, never
  *     an ideal body. A script that goes straight into the closing line needs an edit.
+ *   · EACH SAMPLE IS A STYLE, AND A DRAFT FOLLOWS ONE (the owner, 2026-11-14, with seven scripts that have worked: "I
+ *     need more variation for the video scripts … more variation on style"). Shown every sample at once and held to
+ *     one skeleton, the drafter blended them into one shape. Now each sample is read once into how it is BUILT (a
+ *     name, its kind of opening, its parts in order), a round of drafts is spread across the styles — the least used
+ *     first — and each script says the style it follows. The area is said only where the style calls people out by
+ *     place (a script without it is filmed once for every location); the pain point comes within the first two lines.
  *   · THE PLACE IS ONLY EVER {AREA}, and never the whole country (the owner, 2026-11-14: "We can't say the full of
  *     Singapore no matter what").
  *   · A CLIP WITH A NOTED FAULT IS MADE ONCE MORE while takes are left (warped fingers, a hand that moves wrongly),
@@ -237,12 +243,12 @@ export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS
 const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], samples: data.samples || [], facts: data.facts || {}, pains: data.pains || {} }, null, 2) + "\n");
 const shape = (lines) => lines.map(norm).join(" ").toLowerCase().replace(/[^a-z0-9 ]/g, "");
 /** Add a script: the owner's own is kept at once, a drafted one waits for him. Never twice. */
-export function addScript(gymDir, { lines, offer, source = "owner", pain = null }, { profile = {}, closing = closingLine() } = {}) {
+export function addScript(gymDir, { lines, offer, source = "owner", pain = null, style = null }, { profile = {}, closing = closingLine() } = {}) {
   const ls = (lines || []).map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer, profile, closing });
   if (errs.length) throw new Error(errs.join("; "));
   const data = readScripts(gymDir), key = shape(ls);
   if (data.scripts.some((s) => shape(s.lines) === key)) throw Object.assign(new Error("this script is already here"), { duplicate: true });
-  const row = { id: `v-${sha(key).slice(0, 10)}`, lines: ls, offer: norm(offer), status: source === "owner" ? "kept" : "draft", source, ...(pain ? { pain: norm(pain) } : {}), added: today() };
+  const row = { id: `v-${sha(key).slice(0, 10)}`, lines: ls, offer: norm(offer), status: source === "owner" ? "kept" : "draft", source, ...(pain ? { pain: norm(pain) } : {}), ...(style?.id ? { style: { id: style.id, name: norm(style.name) } } : {}), added: today() };
   data.scripts.push(row); writeScripts(gymDir, data); return row;
 }
 /** The owner keeps a draft, edits it (checked again), puts it back, or retires it with a reason — never deleted. A script that breaks today's rules is not kept until it is edited. */
@@ -387,6 +393,58 @@ export function decideSample(libDir, id, { retired, reason } = {}) {
   writeSamples(libDir, data); return row;
 }
 export const liveSamples = (libDir = videoLibraryDir()) => readSamples(libDir).samples.filter((x) => !x.retired);
+/**
+ * A sample's STYLE (2026-11-14): how it is built — a name that tells it from the others, how it opens, its parts in
+ * order (what each part DOES, never its words), and whether it calls people out by where they are. Read once by the
+ * text model (`readStyle`), checked in code, kept on the sample; the owner may rename it. A sample not read yet is
+ * still a style of its own ("Sample 3"): it is followed from its text alone.
+ */
+export const HOOKS = ["question", "call-out", "promise", "interrupt", "reassurance", "myth", "announcement", "other"];
+const STYLE_SCHEMA = { type: "OBJECT", properties: { name: { type: "STRING" }, hook: { type: "STRING", enum: HOOKS }, beats: { type: "ARRAY", items: { type: "STRING" } }, says_area: { type: "BOOLEAN" } }, required: ["name", "hook", "beats", "says_area"] };
+export const buildStylePrompt = (text, taken = []) => ({ schema: STYLE_SCHEMA, prompt: [
+  "This is a script for a talking-to-camera gym advert that has worked. Say how it is BUILT, so that other scripts can be written the same way for other gyms and other programmes.",
+  `name: 2 to 4 plain words that tell this way of building an advert from others ("Week by week", "Question, then the cycle", "It is not your fault")${taken.length ? `; not one of these, which are taken: ${taken.map((t) => `"${t}"`).join(", ")}` : ""}. hook: how it opens — a question, a call-out to people by who or where they are, a promise, an interrupt that stops the scroll, reassurance, a myth put right, an announcement, or other. beats: its parts in order, 3 to 8, each a short phrase saying what that part DOES and never its words ("a question that names the frustration", "what happens in week 1", "who it is for and who it is not for", "the ask"); leave out stage directions such as (Voiceover) and slides. says_area: true only if it calls people out by where they live or work.`,
+  `THE SCRIPT:\n${text}`,
+].join("\n\n") });
+export function styleProblems(st) {
+  const errs = [], name = norm(st?.name);
+  if (name.length < 3 || name.length > 40) errs.push("a style's name is 3 to 40 characters");
+  if (!HOOKS.includes(st?.hook)) errs.push(`how it opens is one of: ${HOOKS.join(", ")}`);
+  const beats = Array.isArray(st?.beats) ? st.beats.map(norm).filter(Boolean) : [];
+  if (beats.length < 3 || beats.length > 9) errs.push("a style has 3 to 9 parts"); else if (beats.some((b) => b.length < 3 || b.length > 110)) errs.push("each part is a short phrase");
+  return errs;
+}
+/** Read one sample's style (one text call) and keep it on the sample. */
+export async function readStyle({ libDir = videoLibraryDir(), id, ask = callVision, model = COPY_MODEL }) {
+  const data = readSamples(libDir), row = data.samples.find((x) => x.id === id); if (!row) throw new Error(`no such sample: ${id}`);
+  const taken = data.samples.filter((x) => x !== row && !x.retired && x.style?.name).map((x) => x.style.name), { prompt, schema } = buildStylePrompt(row.text, taken);
+  const st = await ask(null, prompt, schema, { model }), errs = styleProblems(st); if (errs.length) throw new Error(`the style could not be read (${errs[0]})`);
+  let name = norm(st.name); for (let k = 2; taken.some((t) => t.toLowerCase() === name.toLowerCase()); k++) name = `${norm(st.name)} ${k}`;
+  row.style = { name, hook: st.hook, beats: st.beats.map(norm).filter(Boolean), says_area: st.says_area === true, read: today() };
+  writeSamples(libDir, data); return row;
+}
+/** Read every live sample that has no style yet: { read, failed[{ id, reason }] }. One text call each. */
+export async function readStyles({ libDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL } = {}) {
+  const out = { read: 0, failed: [] };
+  for (const x of liveSamples(libDir).filter((s) => !s.style)) { try { await readStyle({ libDir, id: x.id, ask, model }); out.read++; } catch (e) { out.failed.push({ id: x.id, reason: e.message }); } }
+  return out;
+}
+/** The owner's own name for a style. */
+export function nameStyle(libDir, id, name) {
+  const data = readSamples(libDir), row = data.samples.find((x) => x.id === id), n = norm(name); if (!row) throw new Error(`no such sample: ${id}`);
+  if (n.length < 3 || n.length > 40) throw new Error("a style's name is 3 to 40 characters");
+  if (data.samples.some((x) => x !== row && !x.retired && (x.style?.name || "").toLowerCase() === n.toLowerCase())) throw Object.assign(new Error("another style has this name"), { duplicate: true });
+  row.style = { hook: "other", beats: [], says_area: /\{AREA\}/i.test(row.text), ...(row.style || {}), name: n, named: today() };
+  writeSamples(libDir, data); return row;
+}
+/** The styles a draft may follow: every live sample, read or not. */
+export const liveStyles = (libDir = videoLibraryDir()) => liveSamples(libDir).map((x, i) => ({ id: x.id, name: x.style?.name || `Sample ${i + 1}`, hook: x.style?.hook || null, beats: x.style?.beats || [], says_area: x.style ? x.style.says_area === true : /\{AREA\}/i.test(x.text), read: !!x.style?.read, text: x.text }));
+/** One style for each script of a round: the styles this gym has used least first (then the library's order), round again when there are more scripts than styles. */
+export function pickStyles(styles, count, { used = {} } = {}) {
+  if (!styles.length) return [];
+  const order = styles.map((st, i) => ({ st, i, n: used[st.id] || 0 })).sort((a, b) => a.n - b.n || a.i - b.i).map((x) => x.st);
+  return Array.from({ length: count }, (_, k) => order[k % order.length]);
+}
 /** Samples pasted before the library was shared sit in a gym's own file: each joins the library once, as it is (its id,
  *  its date, retired or not), with the gym it came from. The gym's file is left as it was. Returns how many joined. */
 export function adoptSamples(libDir, gymDirs = []) {
@@ -425,6 +483,29 @@ export function setFacts(gymDir, offer, items, { profile = {} } = {}) {
   writeScripts(gymDir, data); return list;
 }
 export const factsFor = (gymDir, offer) => readScripts(gymDir).facts[offerKey(offer)]?.items || [];
+const FACTS_SCHEMA = { type: "OBJECT", properties: { facts: { type: "ARRAY", items: { type: "STRING" } } }, required: ["facts"] };
+export const buildFactsPrompt = (samples) => ({ schema: FACTS_SCHEMA, prompt: [
+  "These are scripts for gym adverts. List every FACT they state about how a programme or a gym works: what is included, how it starts, how many places there are, who coaches, how many people have been helped.",
+  "Each fact is one short, plain statement of 3 to 12 words, with no gym's name, no place and no programme's name, so the owner of another gym can tick the ones that are true there (\"A full body scan at the start\", \"Only 10 places\"). The same fact said in two scripts is listed once. Leave out anything that is a promise of results, a price, a weight or a number of kilos.",
+  samples.map((x, i) => `--- SCRIPT ${i + 1}\n${x}`).join("\n"),
+].join("\n\n") });
+/**
+ * Facts for an offer, PROPOSED from the samples for the owner to tick (2026-11-14: several styles lean on facts — the
+ * body scan, the places, the people helped — and a fact may only be said for a gym when its owner says it is true
+ * there). One text call; each suggestion is held to the facts' own rules; one already on the offer's list is left out.
+ * Nothing is saved: the ticked ones go through `setFacts`.
+ */
+export async function suggestFacts({ brandDir, offer, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL }) {
+  if (typeof offer !== "string" || norm(offer).length < 3) throw new Error("the offer's exact words are needed");
+  const samples = liveSamples(libraryDir).map((x) => x.text); if (!samples.length) throw new Error("there is no sample script to read facts from: paste one first");
+  const profile = readJson(join(brandDir, "gym-profile.json")) || {}, have = new Set(factsFor(brandDir, offer).map((x) => x.toLowerCase())), { prompt, schema } = buildFactsPrompt(samples);
+  const answer = await ask(null, prompt, schema, { model }), out = [], dropped = [];
+  for (const raw of answer?.facts || []) {
+    const t = plainDashes(norm(raw)).replace(/[.;]+$/, ""), errs = factsProblems([t], profile);
+    if (errs.length) dropped.push({ text: t, reason: errs[0] }); else if (!have.has(t.toLowerCase()) && !out.some((x) => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return { suggestions: out.slice(0, 16), dropped, calls: 1 };
+}
 
 /**
  * Pain points (2026-11-14, the owner on the first video's opening, "keep putting off getting back into shape": "This is
@@ -555,18 +636,27 @@ export function scriptCost(script, areas = [""], { closing = closingLine() } = {
   return { clips, seconds, images: said.length, usd: Math.round((seconds * USD_PER_SECOND + said.length * USD_PER_IMAGE) * 100) / 100, videos: n };
 }
 
-const DRAFT_SCHEMA = { type: "OBJECT", properties: { scripts: { type: "ARRAY", items: { type: "OBJECT", properties: { pain: { type: "STRING" }, lines: { type: "ARRAY", items: { type: "STRING" } } }, required: ["pain", "lines"] } } }, required: ["scripts"] };
+const draftSchema = (letters = []) => ({ type: "OBJECT", properties: { scripts: { type: "ARRAY", items: { type: "OBJECT", properties: { ...(letters.length ? { style: { type: "STRING", enum: letters } } : {}), pain: { type: "STRING" }, lines: { type: "ARRAY", items: { type: "STRING" } } }, required: [...(letters.length ? ["style"] : []), "pain", "lines"] } } }, required: ["scripts"] });
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+/** The styles of a round, lettered by the order they first appear: [{ letter, style, scripts (1-based numbers) }]. */
+export function letteredStyles(assigned = []) {
+  const out = [];
+  assigned.forEach((st, k) => { let row = out.find((r) => r.style.id === st.id); if (!row) out.push((row = { letter: LETTERS[out.length], style: st, scripts: [] })); row.scripts.push(k + 1); });
+  return out;
+}
 /**
  * The drafter's request. `pains`: the owner's own pain points for this offer, used first when he has kept some;
  * `ads` and `library` (`painSources`): what the drafter works the pain points out from when he has not — it is the
  * agent that proposes, and he reviews. Every script says the pain point it opens on.
  */
-export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [], pains = [], ads = [], library = [], closing = CLOSING_LINE }) {
+export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [], styles = [], pains = [], ads = [], library = [], closing = CLOSING_LINE }) {
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean);
   // "Aether Athletics' 6 Week…", never "Athletics's": the possessive as it is said and as the captions show it.
   const gyms = /s$/i.test(gym) ? `${gym}'` : `${gym}'s`;
   // With the owner's samples or his facts for this offer a script may run longer: it follows the sample's beats, cut to what is relevant and true here.
-  const long = samples.length > 0 || facts.length > 0;
+  const long = samples.length > 0 || facts.length > 0 || styles.length > 0;
+  // `styles`: one for each script of the round (2026-11-14). A script follows the one it is given and no other.
+  const lettered = letteredStyles(styles);
   const open = "says where — the place written as {AREA} (it is filled in for each location) — and opens on ONE pain point: what this person is living with and wants gone, said as a moment of their day they will recognise at once";
   const close = `THE ENDING is two beats, both in the last line. First ONE sentence that turns to the viewer and names what they want, tied to the pain the script opened on, in this shape: "If you're ready to [what they want], now is your time." Then exactly this sentence, word for word; it is the ONLY call to action in the script: "${closing}" Never go straight from a benefit into the call to action, and never use a bare lead-in ("If that sounds like you, …"). What they want is what they will FEEL or be able to DO (feel strong and at ease in their clothes again, have energy left for the evening), never an ideal body and never a promised result ("the body you've always wanted" is out). The last line may run to ${LINE_WORDS[1]} words. Never write "tap", never name a button, never add another instruction.`;
   const lines = [
@@ -574,14 +664,16 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
     long
       ? `A script is 3 to ${LINES[1]} lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`
       : `A script is exactly 3 lines. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`,
-    long
+    lettered.length
+      ? `Each script follows ONE style — the one it is given under STYLES below — and no other: its kind of opening, its parts in their order, its rhythm and its tone, so that two scripts in two styles read as two different adverts. A style with more parts than a script has lines is cut to the parts that matter most; a part that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. Whatever the style: within its first two lines the script speaks to ONE pain point — what this person is living with and wants gone, said as a moment of their day they will recognise at once; it names the programme once, in these exact words: "${offer}" (as "${gyms} ${offer}" or "our ${offer}"); and where its style calls people out by where they live or work, the place is written {AREA} (it is filled in for each location) — a style that does not, names no place at all. ${close}`
+      : long
       ? `The first line ${open}. One of the first two lines names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. The lines between are the beats worth keeping${samples.length ? " from the sample you follow" : ""}: each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. ${close}`
       : `Line 1 ${open}. Line 2 names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. Line 3 is the ending. ${close}`,
     `Speak about BENEFITS, never features. A benefit is what changes for the person: feeling stronger, more energy for the day, clothes fitting better, confidence, keeping up with the children, a body that does what is asked of it. A feature is how the gym runs, and the script says NONE: nothing about how training is organised (no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size), because a wrong one is a false claim about this gym.${facts.length ? ` The only facts about the gym or the programme that may be stated are these, in the owner's words: ${facts.map((x) => `"${x}"`).join("; ")}. Say them as given, and nothing else about how the programme works.` : ""} A benefit is what the programme is built to help with, never a promised result.`,
     `The speaker speaks for the gym, as nobody in particular: "we", "our" and "us" mean ${gym} and its coaches, and are said the way a gym speaks ("we'll guide you through every step"). The speaker is NOT a named coach, NOT a member and NOT the owner: the script never says I, my or me, and never tells a personal story ("I joined", "my clients", "when I started"). The closing sentence is said word for word as given.`,
     `The place is only ever {AREA}, the area around the gym: the script never names the country, and never speaks to a whole city or island.`,
     `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark (the closing sentence keeps its own); an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
-    `Write ${count} script${count === 1 ? "" : "s"}, each opening on a different pain point, and say for each the pain point it opens on (pain: a short phrase, as it would stand in a list — "work clothes fitting tighter lately").`,
+    `Write ${count} script${count === 1 ? "" : "s"}, each opening on a different pain point, and say for each the pain point it opens on (pain: a short phrase, as it would stand in a list — "work clothes fitting tighter lately")${lettered.length ? " and the style it follows (style: its letter)" : ""}.`,
     `PAIN POINTS. A pain point is something that HAPPENS to this person — work clothes fitting tighter, out of breath on the stairs, no energy left by mid-afternoon, starting a routine and dropping it within weeks — said the way they would say it to a friend. Never a judgement or a label of their body, weight, looks or health, nothing that shames, no medical condition; and never softened into something vague: "getting back into shape", "putting off fitness", "starting a fitness journey" are NOT pain points.${pains.length
       ? ` The owner's own list comes first — open on these, close to his words, one for each script${pains.length < count ? "; for the scripts beyond the list, work out further ones yourself the same way" : ""}:\n${pains.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
       : ` Work them out yourself before you write: who this advert is for, and what they are living with${ads.length || library.length ? ", drawing on the adverts below" : ""}.`}`,
@@ -590,8 +682,10 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
   if (library.length) lines.push(`Pain-led adverts that have worked for other gyms. The same: the pain they speak to, in your own words:\n${library.map((x, i) => `--- LIBRARY ${i + 1}\n${x}`).join("\n")}`);
   // The owner's own proven scripts, when he has given some: their structure, rhythm and voice are followed; their sentences and their facts are not copied.
   if (samples.length) lines.push(`These scripts have worked for this owner. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact (a place, a programme name, a number, how a gym runs) or their call to action. A sample may mark in braces what changes from gym to gym ({AREA}, {CHALLENGE NAME}, {GYM NAME} and the like): where it marks the place, write {AREA}; where it marks the programme, write its exact words, "${offer}"; where it marks the gym, write "${gym}"; where the sample says we or our, it may stay — the speaker speaks for the gym. No other braces may appear in a script:\n${samples.map((x, i) => `--- SAMPLE ${i + 1}\n${x}`).join("\n")}`);
+  // The styles: the owner's own scripts that have worked, each a way of building an advert — how it is built is taken, nothing it says.
+  if (lettered.length) lines.push(`STYLES — the owner's own scripts that have worked, each one a way of building an advert. Take from a style HOW it is built, never its sentences, and never its facts, names, places, numbers, promises of results, stage directions ("(Voiceover)", slides) or its call to action. Where a style has someone introduce themselves by name, the script speaks as "we" for the gym instead. Where a style marks in braces what changes from gym to gym ({AREA}, {CHALLENGE NAME}, {GYM NAME}), the place is {AREA}, the programme is "${offer}" and the gym is "${gym}"; no other braces may appear in a script.\n${lettered.map((r) => `SCRIPT${r.scripts.length === 1 ? "" : "S"} ${r.scripts.join(" and ")} follow${r.scripts.length === 1 ? "s" : ""} STYLE ${r.letter}.`).join(" ")}\n${lettered.map((r) => `--- STYLE ${r.letter} — "${r.style.name}"${r.style.hook && r.style.hook !== "other" ? ` (it opens with ${/^[aeiou]/.test(r.style.hook) ? "an" : "a"} ${r.style.hook})` : ""}${r.style.beats?.length ? `\nIts parts, in order: ${r.style.beats.map((b, i) => `${i + 1}) ${b}`).join("; ")}` : ""}\nThe owner's script in this style:\n${r.style.text}`).join("\n")}`);
   if (existing.length) lines.push(`Already written — do not repeat or closely rephrase:\n${existing.map((e) => `- ${e}`).join("\n")}`);
-  return { prompt: lines.join("\n\n"), schema: DRAFT_SCHEMA };
+  return { prompt: lines.join("\n\n"), schema: draftSchema(lettered.map((r) => r.letter)) };
 }
 /**
  * Draft scripts for an offer: one text call, every draft checked in code, a broken or repeated one dropped with the
@@ -600,21 +694,27 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
  * works the pain points out from the gym's own best adverts and the library's pain-led ones, his own kept ones first
  * when he has given some, and each draft carries the pain point it opens on, held to the pain points' own rules.
  */
-export async function draftScripts({ brandDir, offer, audience = null, count = 3, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, log = () => {} }) {
+export async function draftScripts({ brandDir, offer, audience = null, count = 3, style = null, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, log = () => {} }) {
   if (typeof offer !== "string" || offer.trim().length < 3) throw new Error("the offer's exact words are needed");
   if (!Number.isInteger(count) || count < 1 || count > 6) throw new Error("count must be 1 to 6");
   const profile = readJson(join(brandDir, "gym-profile.json")) || {}, pains = painsFor(brandDir, offer), closing = closingLine(libraryDir), src = painSources(brandDir, libraryDir);
-  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: readScripts(brandDir).scripts.map((x) => x.lines.join(" / ")), samples: liveSamples(libraryDir).map((x) => x.text), facts: factsFor(brandDir, offer), pains, ...src, closing });
+  // One style for each script: the one asked for, else spread across the styles, the ones this gym has used least first.
+  const all = liveStyles(libraryDir), mine = readScripts(brandDir).scripts, used = {}; for (const x of mine) if (x.status !== "retired" && x.style?.id) used[x.style.id] = (used[x.style.id] || 0) + 1;
+  const one = style ? all.find((x) => x.id === style) : null; if (style && !one) throw new Error("no such style: pick one of the sample scripts on file");
+  const assigned = one ? Array.from({ length: count }, () => one) : pickStyles(all, count, { used }), lettered = letteredStyles(assigned);
+  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: mine.map((x) => x.lines.join(" / ")), styles: assigned, facts: factsFor(brandDir, offer), pains, ...src, closing });
   const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [];
-  for (const d of answer?.scripts || []) {
+  for (const [k, d] of (answer?.scripts || []).entries()) {
+    // The style a draft says it follows; one that says none is taken to be the one its place in the round was given.
+    const st = lettered.find((r) => r.letter === String(d.style || "").trim().toUpperCase())?.style || assigned[k] || null;
     try {
       const pain = plainDashes(norm(d.pain)).replace(/[.;,]+$/, "");
       if (!pain) throw new Error("it does not say which pain point it opens on");
       const bad = painProblems(pain, profile); if (bad.length) throw new Error(`the pain point it opens on ("${pain}"): ${bad[0]}`);
-      added.push(addScript(brandDir, { lines: d.lines, offer: offer.trim(), source: "drafted", pain }, { profile, closing }));
+      added.push(addScript(brandDir, { lines: d.lines, offer: offer.trim(), source: "drafted", pain, style: st }, { profile, closing }));
     } catch (e) { dropped.push({ text: (d.lines || []).join(" / "), reason: e.message }); log(`  dropped: ${e.message}`); }
   }
-  return { added, dropped, calls: 1, sources: { pains: pains.length, ads: src.ads.length, library: src.library.length } };
+  return { added, dropped, calls: 1, styles: lettered.map((r) => r.style.name), sources: { pains: pains.length, ads: src.ads.length, library: src.library.length } };
 }
 
 // ── the model calls (each can be replaced: the tests make no call) ───────────
@@ -948,7 +1048,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       if (outside.length) { videos.push({ area, script_id: script.id, lines, failed: `the words do not fit Meta's live area: "${outside[0].text}"` }); continue; }
       const file = assemble({ clips: cuts, overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`) });
       const poster = file.replace(/\.mp4$/, ".jpg"); ff(["-ss", "0.8", "-i", file, "-frames:v", "1", "-q:v", "3", poster]);
-      videos.push({ area, script_id: script.id, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), notes: [...new Set(lines.flatMap((l) => l.check?.faults || []))] });
+      videos.push({ area, script_id: script.id, style: script.style?.name || null, pain: script.pain || null, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), notes: [...new Set(lines.flatMap((l) => l.check?.faults || []))] });
     }
     return { videos, spent };
   } finally { if (own) await browser.close(); }

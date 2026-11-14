@@ -235,10 +235,10 @@ test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the 
     // The drafter is shown the live samples, and no retired one. (A script opens on a pain point, so one is kept first.)
     addPain(g, OFFER, PAIN, { profile });
     const seen = []; await draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
-    assert.match(seen[0], /--- SAMPLE 1\nHey, if you live in Katong/);
+    assert.match(seen[0], /--- STYLE A — "Sample 1"\nThe owner's script in this style:\nHey, if you live in Katong/, "a sample not read yet is still a style of its own, followed from its text");
     decideSample(L, s1.id, { retired: true, reason: "an old offer" }); assert.deepEqual(liveSamples(L), []);
     await draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
-    assert.ok(!/SAMPLE 1/.test(seen[1])); assert.equal(readSamples(L).samples.length, 1, "retired, never deleted");
+    assert.ok(!/STYLE A|Sample 1/.test(seen[1])); assert.equal(readSamples(L).samples.length, 1, "retired, never deleted");
     assert.equal(decideSample(L, s1.id, { retired: false }).retired, undefined);
     // A batch's videos: how many, and which scripts.
     assert.deepEqual([videosProblems(undefined), videosProblems({ presenter: 2 }), videoCount({ presenter: 2 }), videoCount(null), MAX_VIDEOS], [[], [], 2, 0, 3]);
@@ -270,7 +270,7 @@ test("PV6 the owner's template for every gym (2026-11-12: share samples across g
     assert.deepEqual([row.from, existsSync(join(L, SAMPLES_FILE)), liveSamples(L).length], ["gym-a", true, 1]);
     addPain(a.g, OFFER, PAIN, { profile: a.profile }); addPain(b.g, OFFER, PAIN, { profile: b.profile });
     const seen = []; await draftScripts({ brandDir: b.g, libraryDir: L, offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
-    assert.match(seen[0], /--- SAMPLE 1\nIf you are in the \{AREA\} area, we have just launched our \{CHALLENGE NAME\}/);
+    assert.match(seen[0], /--- STYLE A — "Sample 1"\nThe owner's script in this style:\nIf you are in the \{AREA\} area, we have just launched our \{CHALLENGE NAME\}/);
     // A sample from before, in a gym's own file: it joins the library once, as it is; the gym's file is untouched.
     const legacy = join(b.g, SCRIPTS_FILE), old = { schema: 1, scripts: [], samples: [{ id: "vs-old0000001", text: "Hey Katong, tired of starting over every January? This one is about feeling strong again.", added: "2026-11-12" }, { id: row.id, text: T, added: "2026-11-12" }] };
     writeFileSync(legacy, JSON.stringify(old));
@@ -293,7 +293,7 @@ test("PV6 the owner's template for every gym (2026-11-12: share samples across g
     await draftScripts({ brandDir: a.g, libraryDir: L, offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
     const P = seen[1];
     assert.match(P, /A script is 3 to 7 lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better\./);
-    assert.match(P, /each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given \(an assessment, a number of places, how many people were helped\) is left out, never invented\. THE ENDING is two beats, both in the last line\./);
+    assert.match(P, /a part that needs a fact you were NOT given \(an assessment, a number of places, how many people were helped\) is left out, never invented\./); assert.match(P, /THE ENDING is two beats, both in the last line\./);
     assert.match(P, /may be stated are these, in the owner's words: "A full body scan assessment at the start"; "Only 10 places"\. Say them as given, and nothing else about how the programme works\./);
     assert.match(P, /"we", "our" and "us" mean Test Gym and its coaches, and are said the way a gym speaks/);
     assert.ok(!/may be stated are these/.test(seen[0]), "the other gym gave no facts, so its drafter is given none");
@@ -552,5 +552,68 @@ test("PV10 how a word is said, and an ending in two beats (2026-11-14, the owner
     assert.deepEqual(end(`If you're ready to get the body that you've always wanted, now is your time. ${C}`), ['line 3 promises an ideal body ("body that you\'ve always wanted"): say what the person will feel or be able to do']);
     assert.match(end(`If you are ready for your dream body by summer, now is your time. ${C}`).join(), /promises an ideal body \("dream body"\)/);
     assert.deepEqual(end(`If you are ready to feel at home in your own body again, now is your time. ${C}`), []);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("PV11 each sample is a style, and a draft follows one (2026-11-14, the owner, with seven scripts that have worked: \"I need more variation for the video scripts … more variation on style\"): a sample is read once into how it is built — a name, how it opens, its parts in order — checked in code and his to rename; a round of drafts is spread across the styles, the ones this gym has used least first, or written all in one he picks; each script says the style it follows; the drafter is given each style's parts and its script and told to take how it is built and nothing it says; the area is said only where a style calls people out by place; and the facts the samples state are proposed for the owner to tick, never said until he does", async () => {
+  const { addSample, readStyle, readStyles, nameStyle, liveStyles, pickStyles, letteredStyles, styleProblems, buildStylePrompt, HOOKS, suggestFacts, buildFactsPrompt, setFacts, factsFor } = await import("./presenter-video.mjs");
+  const { d, g, profile } = gym(), L = join(d, "lib"), C = "Click the link below and we'll be in touch!";
+  try {
+    const T1 = "Give us 6 weeks and you will go from feeling tired to feeling strong.\n\nIn Week 1, we will start with a full body diagnosis. (Voiceover)\n\nBy week 6, you will feel as energetic as you have ever been.\n\nClick the link now, let's get started!";
+    const T2 = "To all my friends in the {AREA} area, in just 6 weeks from now, you could feel completely different.\n\nWe're looking for 10 individuals who want the best version of themselves.\n\nClick the button down below and we'll be in touch.";
+    const T3 = "Quick question - have you started a routine full of energy, and stopped a few weeks later?\n\nThis is for you if you are done going round that cycle. This is not for you if you want a quick fix.\n\nClick that link below.";
+    const a = addSample(L, T1), b = addSample(L, T2), c = addSample(L, T3);
+    // Not read yet: each is still a style of its own, named by its place.
+    assert.deepEqual(liveStyles(L).map((x) => [x.name, x.read, x.says_area, x.beats.length]), [["Sample 1", false, false, 0], ["Sample 2", false, true, 0], ["Sample 3", false, false, 0]]);
+    // Read: one text call a sample, told the names already taken; checked in code.
+    const answers = { [a.id]: { name: "Week by week", hook: "promise", beats: ["the promise for the whole programme", "what happens in week 1", "how it feels by the last week", "the ask"], says_area: false }, [b.id]: { name: "Local casting call", hook: "call-out", beats: ["a call-out to people by where they are", "who the gym is looking for", "the ask"], says_area: true }, [c.id]: { name: "Week by week", hook: "question", beats: ["a question that names the cycle", "who it is for and who it is not for", "the ask"], says_area: false } };
+    const asked = [], ask = async (i, p, schema) => { asked.push({ p, schema }); const id = [a, b, c].find((x) => p.includes(x.text)).id; return answers[id]; };
+    const r = await readStyles({ libDir: L, ask });
+    assert.deepEqual([r, asked.length, liveStyles(L).map((x) => [x.name, x.hook, x.read, x.says_area, x.beats.length])], [{ read: 3, failed: [] }, 3, [["Week by week", "promise", true, false, 4], ["Local casting call", "call-out", true, true, 3], ["Week by week 2", "question", true, false, 3]]], "a name already taken is told apart");
+    assert.match(asked[0].p, /Say how it is BUILT, so that other scripts can be written the same way for other gyms and other programmes\./); assert.match(asked[0].p, /each a short phrase saying what that part DOES and never its words/); assert.match(asked[2].p, /not one of these, which are taken: "Week by week", "Local casting call"/);
+    assert.deepEqual([asked[0].schema.properties.hook.enum, buildStylePrompt("x").schema.required], [HOOKS, ["name", "hook", "beats", "says_area"]]);
+    assert.deepEqual([styleProblems(answers[a.id]), styleProblems({ name: "x", hook: "shout", beats: ["one"] })], [[], ["a style's name is 3 to 40 characters", `how it opens is one of: ${HOOKS.join(", ")}`, "a style has 3 to 9 parts"]]);
+    await assert.rejects(readStyle({ libDir: L, id: a.id, ask: async () => ({ name: "", hook: "promise", beats: [], says_area: false }) }), /the style could not be read \(a style's name is 3 to 40 characters\)/);
+    assert.equal((await readStyles({ libDir: L, ask })).read, 0, "read once: a second pass has nothing to read");
+    // His own name for one; never two alike.
+    assert.equal(nameStyle(L, c.id, "Question, then the cycle").style.name, "Question, then the cycle");
+    assert.throws(() => nameStyle(L, c.id, "week by week"), /another style has this name/); assert.throws(() => nameStyle(L, c.id, "x"), /3 to 40 characters/);
+    // One style a script: the least used first, round again past the last; one picked style for a whole round.
+    const st = liveStyles(L), ids = (xs) => xs.map((x) => x.name);
+    assert.deepEqual([ids(pickStyles(st, 3)), ids(pickStyles(st, 5)), ids(pickStyles(st, 2, { used: { [a.id]: 2, [b.id]: 1 } })), pickStyles([], 3)], [["Week by week", "Local casting call", "Question, then the cycle"], ["Week by week", "Local casting call", "Question, then the cycle", "Week by week", "Local casting call"], ["Question, then the cycle", "Local casting call"], []]);
+    assert.deepEqual(letteredStyles([st[0], st[1], st[0]]).map((x) => [x.letter, x.style.name, x.scripts]), [["A", "Week by week", [1, 3]], ["B", "Local casting call", [2]]]);
+    // The drafter: each script given its style — its parts, its script — and told to take how it is built and nothing it says.
+    const line2 = "Our 12 Week Full Body Transformation is built for exactly that, and we stay beside you every week.";
+    const seen = [], dr = await draftScripts({ brandDir: g, libraryDir: L, offer: OFFER, count: 3, ask: async (i, p, schema) => { seen.push({ p, schema }); return { scripts: [
+      { style: "A", pain: "energy gone by mid-afternoon", lines: ["Give us twelve weeks, and that flat feeling by mid-afternoon stops running your whole day for you.", line2, `If you are ready to feel strong again, now is your time. ${C}`] },
+      { style: "B", pain: "work clothes fitting tighter", lines: ["To everyone in {AREA} whose work clothes have been fitting tighter lately, this one is for you.", line2.replace("exactly that", "just that"), `If you are ready to feel at ease again, now is your time. ${C}`] },
+      { pain: "starting and stopping", lines: ["Quick question: have you started a routine full of energy and dropped it a few weeks later?", line2.replace("exactly that", "that cycle"), `If you are ready to stop going round it, now is your time. ${C}`] }] }; } });
+    assert.deepEqual([dr.added.map((x) => [x.style.name, x.style.id, x.pain, /\{AREA\}/.test(x.lines[0])]), dr.dropped, dr.styles], [[["Week by week", a.id, "energy gone by mid-afternoon", false], ["Local casting call", b.id, "work clothes fitting tighter", true], ["Question, then the cycle", c.id, "starting and stopping", false]], [], ["Week by week", "Local casting call", "Question, then the cycle"]], "a draft that names no style takes the one its place in the round was given; only the call-out style says the area");
+    const P = seen[0].p;
+    assert.match(P, /Each script follows ONE style — the one it is given under STYLES below — and no other: its kind of opening, its parts in their order, its rhythm and its tone, so that two scripts in two styles read as two different adverts\./);
+    assert.match(P, /within its first two lines the script speaks to ONE pain point/); assert.match(P, /where its style calls people out by where they live or work, the place is written \{AREA\} \(it is filled in for each location\) — a style that does not, names no place at all\./);
+    assert.match(P, /Take from a style HOW it is built, never its sentences, and never its facts, names, places, numbers, promises of results, stage directions \("\(Voiceover\)", slides\) or its call to action\. Where a style has someone introduce themselves by name, the script speaks as "we" for the gym instead\./);
+    assert.match(P, /SCRIPT 1 follows STYLE A\. SCRIPT 2 follows STYLE B\. SCRIPT 3 follows STYLE C\.\n--- STYLE A — "Week by week" \(it opens with a promise\)\nIts parts, in order: 1\) the promise for the whole programme; 2\) what happens in week 1; 3\) how it feels by the last week; 4\) the ask\nThe owner's script in this style:\nGive us 6 weeks/);
+    assert.match(P, /--- STYLE B — "Local casting call" \(it opens with a call-out\)/); assert.match(P, /and the style it follows \(style: its letter\)\./);
+    assert.ok(!/Line 1 says where|The first line says where/.test(P), "the one fixed skeleton is gone when there are styles");
+    assert.deepEqual([seen[0].schema.properties.scripts.items.properties.style.enum, seen[0].schema.properties.scripts.items.required], [["A", "B", "C"], ["style", "pain", "lines"]]);
+    // The next round starts with the styles used least; a round all in one style he picks; a style that is not there is refused.
+    const seen2 = []; await draftScripts({ brandDir: g, libraryDir: L, offer: OFFER, count: 1, ask: async (i, p) => { seen2.push(p); return { scripts: [] }; } });
+    decideScript(g, dr.added[1].id, { status: "retired", reason: "only for the test" }, { profile, closing: C });
+    await draftScripts({ brandDir: g, libraryDir: L, offer: OFFER, count: 1, ask: async (i, p) => { seen2.push(p); return { scripts: [] }; } });
+    assert.match(seen2[0], /SCRIPT 1 follows STYLE A\.\n--- STYLE A — "Week by week"/); assert.match(seen2[1], /SCRIPT 1 follows STYLE A\.\n--- STYLE A — "Local casting call"/, "a retired script does not count as a use of its style: that style is the least used again");
+    await draftScripts({ brandDir: g, libraryDir: L, offer: OFFER, count: 2, style: c.id, ask: async (i, p) => { seen2.push(p); return { scripts: [] }; } });
+    assert.match(seen2[2], /SCRIPTS 1 and 2 follow STYLE A\.\n--- STYLE A — "Question, then the cycle"/); assert.ok(!/Week by week|Local casting call/.test(seen2[2]));
+    await assert.rejects(draftScripts({ brandDir: g, libraryDir: L, offer: OFFER, count: 1, style: "vs-nope", ask: async () => ({ scripts: [] }) }), /no such style/);
+    // No sample at all: the three-line script, with no style to name.
+    const g2 = gym(); const seen3 = []; await draftScripts({ brandDir: g2.g, libraryDir: join(g2.d, "empty"), offer: OFFER, count: 1, ask: async (i, p, schema) => { seen3.push({ p, schema }); return { scripts: [] }; } });
+    assert.ok(/A script is exactly 3 lines\./.test(seen3[0].p) && !/STYLES —/.test(seen3[0].p) && !seen3[0].schema.properties.scripts.items.properties.style); rmSync(g2.d, { recursive: true, force: true });
+    // Facts the samples state, proposed for him to tick: held to the facts' rules, the ones already on the list left out, nothing saved.
+    setFacts(g, OFFER, ["Only 10 places"], { profile });
+    const fa = [], sf = await suggestFacts({ brandDir: g, libraryDir: L, offer: OFFER, ask: async (i, p, schema) => { fa.push({ p, schema }); return { facts: ["A full body diagnosis at the start.", "Only 10 places", "only 10 places", "A free trial week first", "A full body diagnosis at the start", "ok"] }; } });
+    assert.deepEqual([sf.suggestions, sf.dropped.map((x) => x.text), sf.calls, factsFor(g, OFFER)], [["A full body diagnosis at the start"], ["A free trial week first", "ok"], 1, ["Only 10 places"]]);
+    assert.match(fa[0].p, /List every FACT they state about how a programme or a gym works/); assert.match(fa[0].p, /with no gym's name, no place and no programme's name, so the owner of another gym can tick the ones that are true there/); assert.match(fa[0].p, /--- SCRIPT 1\nGive us 6 weeks/);
+    assert.equal(buildFactsPrompt(["x"]).schema.required.join(), "facts");
+    await assert.rejects(suggestFacts({ brandDir: g, libraryDir: join(d, "empty"), offer: OFFER, ask: async () => ({ facts: [] }) }), /there is no sample script to read facts from/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

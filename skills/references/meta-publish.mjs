@@ -365,7 +365,7 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
       folder: a.folder, ...(a.format ? { format: a.format } : {}), adset: callout, name, copies: bodies.map((t) => t.id), headlines: titles.map((t) => t.id),
       image: { file: a.file, name: `${batch.batch_id}__${basename(a.file)}` }, // a video's poster frame
       story: !a.video && a.story ? { file: a.story, name: `${batch.batch_id}__${basename(a.story)}` } : null,
-      ...(a.video ? { video: { file: a.video, name: `${batch.batch_id}__${basename(a.video)}`, seconds: a.seconds ?? null } } : {}),
+      ...(a.video ? { video: { file: a.video, name: `${batch.batch_id}__${basename(a.video)}`, seconds: a.seconds ?? null, ...(a.video_style ? { style: a.video_style } : {}) } } : {}),
       creative: a.video
         ? videoCreativeFor({ name: name.slice(0, 400), page_id, instagram_user_id, website: profile.website, form_id: lead_form_id, words, texts })
         : creativeFor({ name: name.slice(0, 400), page_id, instagram_user_id, website: profile.website, form_id: lead_form_id, words, story: !!a.story, texts }),
@@ -448,7 +448,7 @@ export function keptAds(batchDir) {
   const storyOf = new Map((stories?.ads || []).filter((s) => existsSync(join(batchDir, s.file))).map((s) => [s.folder, s.file]));
   const excludedPhotos = new Set(Object.entries(review.photos || {}).filter(([, v]) => v === "exclude").map(([k]) => k));
   return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)))
-    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null } : {}) }));
+    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null, ...(a.video?.style ? { video_style: a.video.style } : {}) } : {}) }));
 }
 
 /** POST a creative; a feature Meta refuses by name is dropped and the post retried; the opt-out as a whole refused → made without it, said so. */
@@ -573,7 +573,7 @@ export async function createPlan(plan, { client, batchDir, record, log = console
   const adsToMake = first ? plan.ads.slice(0, first) : plan.ads;
   const callouts = [...new Set(adsToMake.map((a) => a.adset))];
   const setFacts = (set) => ({ callout: set.callout, audience: set.audience, pin: set.pin?.label || set.pin?.place_name || null, place_key: set.pin?.place_key || null, radius_km: set.pin?.radius_km ?? null, age_min: set.age_min, age_max: set.age_max, gender: set.gender, preset: set.preset?.name || null, preset_id: set.preset?.id || null, level: plan.budget.level, daily: set.budget?.daily ?? plan.budget.daily, bid_strategy: plan.budget.bid_strategy });
-  const adFacts = (ad) => ({ ...(ad.format ? { format: ad.format } : {}), ...(ad.video ? { video: true, seconds: ad.video.seconds ?? null } : {}), has_story: !!ad.story, form_id: plan.lead_form_id, instagram_user_id: plan.instagram_user_id, cta: plan.words.cta, headline: plan.words.headline, message: plan.words.message, description: plan.words.description, placeholders: plan.words.placeholders.length > 0, copies: ad.copies || [], headlines: ad.headlines || [], text_options: (ad.copies || []).length || 1, title_options: (ad.headlines || []).length || 1, name: ad.name });
+  const adFacts = (ad) => ({ ...(ad.format ? { format: ad.format } : {}), ...(ad.video ? { video: true, seconds: ad.video.seconds ?? null, ...(ad.video.style ? { video_style: ad.video.style } : {}) } : {}), has_story: !!ad.story, form_id: plan.lead_form_id, instagram_user_id: plan.instagram_user_id, cta: plan.words.cta, headline: plan.words.headline, message: plan.words.message, description: plan.words.description, placeholders: plan.words.placeholders.length > 0, copies: ad.copies || [], headlines: ad.headlines || [], text_options: (ad.copies || []).length || 1, title_options: (ad.headlines || []).length || 1, name: ad.name });
   for (const callout of callouts) {
     const set = plan.adsets.find((x) => x.callout === callout);
     const key = adsetKey(set.payload);

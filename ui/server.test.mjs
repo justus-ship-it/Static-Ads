@@ -678,12 +678,20 @@ test("U11 the review screen: the 4:5 feed ad and its 9:16 side by side on one sc
   { const t = Date.now(); while (sel().excluded.length && Date.now() - t < 5000) await new Promise((r) => setTimeout(r, 100)); }
   assert.deepEqual(sel().excluded, []);
   // Dragging the ad: a short drag springs back and picks nothing; past the mark to the right keeps, to the left excludes.
+  // (The ad must be on the stage, laid out, with no card still flying off over it, before its middle is measured: the drag starts there.)
+  await until("(() => { const i = document.querySelector('#rvStage img'); return !!i && i.complete && i.getBoundingClientRect().width > 50 && !document.querySelector('.rv-ghost'); })()", "the ad is laid out and nothing is flying over it");
   const at = await ev("(()=>{ const b = document.querySelector('#rvStage img').getBoundingClientRect(); return [Math.round(b.left + b.width / 2), Math.round(b.top + b.height / 2)]; })()");
   const drag = async (dx) => { const mouse = (type, x) => cdp.send("Input.dispatchMouseEvent", { type, x, y: at[1], button: "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1 }, sessionId); await mouse("mousePressed", at[0]); for (const k of [0.25, 0.5, 0.75, 1]) await mouse("mouseMoved", Math.round(at[0] + dx * k)); const mid = await ev("[document.querySelector('#rvCards').style.transform, getComputedStyle(document.querySelector('#rvCards .rv-stamp.keep')).opacity, getComputedStyle(document.querySelector('#rvCards .rv-stamp.excl')).opacity]"); await mouse("mouseReleased", at[0] + dx); return mid; };
   let mid = await drag(50);
   assert.match(mid[0], /^translateX\(50px\) rotate\(/, "the ad follows the drag"); assert.ok(Number(mid[1]) > 0.3 && Number(mid[1]) < 0.6 && Number(mid[2]) === 0, `the KEEP stamp shows as it nears the mark: ${mid}`);
   await new Promise((r) => setTimeout(r, 120));
   assert.deepEqual(await ev("[R.i, R.list[3].status, document.querySelector('#rvCards').style.transform]"), [3, null, ""], "a short drag picks nothing");
+  // A repaint that comes while a card is being dragged (a save's answer arriving) waits for the drag to end: the card stays under the hand.
+  { const mouse = (type, x) => cdp.send("Input.dispatchMouseEvent", { type, x, y: at[1], button: "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1 }, sessionId);
+    await mouse("mousePressed", at[0]); await mouse("mouseMoved", at[0] + 30); await mouse("mouseMoved", at[0] + 60);
+    const held = await ev("(() => { const el = document.querySelector('#rvCards'); paintStage(); return [document.querySelector('#rvCards') === el, el.style.transform.startsWith('translateX(60px)'), SW.repaint]; })()");
+    await mouse("mouseReleased", at[0] + 60); await new Promise((r) => setTimeout(r, 120));
+    assert.deepEqual([held, await ev("[SW.repaint, R.list[3].status, document.querySelector('#rvCards').style.transform]")], [[true, true, true], [false, null, ""]], "the repaint is held until the drag ends, then done"); }
   mid = await drag(170);
   assert.equal(Number(mid[1]), 1, "past the mark the stamp is full");
   await until(`R.i===4 && R.list[3].status==='keep'`, "dragged right: kept");
@@ -3771,6 +3779,17 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     assert.equal((await V("/sample", { method: "POST", body: { text: "too short" } }))[0], 400);
     const SAMPLE = "Hey, if you live in Katong and you are tired of starting over every January, listen up.\n\nThis is about feeling strong in your own body again, and having the energy to keep up with your kids.\n\nTap below and tell us about you.";
     [st, D] = await V("/sample", { method: "POST", body: { text: SAMPLE } }); assert.deepEqual([st, D.samples.length, D.samples[0].text], [200, 1, SAMPLE]);
+    // A sample is a style (2026-11-14: "more variation on style"). Pasted, it is read for how it is built — there is no model in the tests, so it is kept unread and that is said; its name is the owner's to give; a round may be drafted all in one style; a style that is not there is refused.
+    assert.ok(/network blocked|GEMINI_KEY/.test(D.style_unread) && !D.samples[0].style, D.style_unread);
+    { const sid = D.samples[0].id;
+      assert.equal((await V(`/sample/${sid}`, { method: "PUT", body: { read: true } }))[0], 400);
+      assert.equal((await V(`/sample/${sid}`, { method: "PUT", body: { name: "x" } }))[0], 400);
+      [st, D] = await V(`/sample/${sid}`, { method: "PUT", body: { name: "Tired of starting over" } }); assert.deepEqual([st, D.samples[0].style.name, !!D.samples[0].style.read], [200, "Tired of starting over", false]);
+      const no = await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 1, style: "vs-nope" } }); assert.equal(no[0], 400); assert.match(no[1].error, /no such style/);
+      const yes = await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 1, style: sid } }); assert.equal(yes[0], 400); assert.match(yes[1].error, /network blocked|GEMINI_KEY/);
+      // Facts the samples state are proposed for him to tick: one text call (none here), nothing saved.
+      const sf = await V("/facts/suggest", { method: "POST", body: { offer: BRIEF.offer } }); assert.equal(sf[0], 400); assert.match(sf[1].error, /network blocked|GEMINI_KEY/);
+      assert.equal((await call(`/api/client/${GYM}/video/facts/suggest`, { method: "POST", body: { offer: BRIEF.offer }, token: null })).status, 403); }
     assert.equal((await V(`/sample/${D.samples[0].id}`, { method: "PUT", body: { retired: true } }))[0], 400);
     // Samples are one library for every gym (2026-11-12): another gym sees this one, and a sample that sat in a gym's own file joins the library as it is.
     assert.deepEqual([D.samples[0].from, JSON.parse(readFileSync(samplesFile, "utf-8")).samples.length, JSON.parse(readFileSync(scriptsFile, "utf-8")).samples], [GYM, 1, []]);
@@ -3914,6 +3933,23 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await ev("document.querySelector('#gModal').innerHTML = ''; document.querySelector('#vsClosingGo').click(); true");
     assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelector('#vsClosingIn').value]"), ["The closing line", "Click the link below and we'll be in touch!"]);
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // Each sample is a style on the card: its name, its script folded under it, and Draft in this style…, which opens the draft dialog on that style; with none picked a round is spread across the styles.
+    assert.deepEqual(await ev("[[...document.querySelectorAll('#vsCard [data-sample] [data-style-name]')].map(x => x.textContent), document.querySelector('#vsStylesNote').innerText, document.querySelectorAll('#vsCard [data-sample] details').length, document.querySelectorAll('#vsCard [data-read-style]').length]"), [["Style: Tired of starting over", "Style: Sample 2"], "2 on file, each one a style: a round of drafts is spread across them, one style a script, the least used first.", 2, 2]);
+    await ev("document.querySelector('#vsCard [data-sample] [data-draft-style]').click(); true");
+    assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, [...document.querySelectorAll('#vsStyleIn option')].map(o => o.textContent), document.querySelector('#vsStyleIn').selectedIndex]"), ["Draft scripts", ["A different style for each draft (2 on file, the least used first)", "Every draft in: Tired of starting over", "Every draft in: Sample 2"], 1]);
+    await ev("document.querySelector('#gModal').innerHTML = ''; document.querySelector('#vsDraftGo').click(); true");
+    assert.equal(await ev("document.querySelector('#vsStyleIn').selectedIndex"), 0, "a round is spread across the styles unless one is picked");
+    // The facts the samples state, to tick (the model's answer is stood in for here): nothing is ticked for him, and only the ticked ones are added.
+    await ev(`(() => { const real = window.fetch; window.fetch = async (u, o) => /\\/facts\\/suggest$/.test(String(u)) ? new Response(JSON.stringify({ suggestions: ["Nutrition help with recipes and shopping lists", "Only 16 places"], dropped: [], offer: ${JSON.stringify(BRIEF.offer)} }), { status: 200, headers: { "content-type": "application/json" } }) : real(u, o); document.querySelector('#gModal').innerHTML = ''; document.querySelector('#vsFactsSuggest').click(); return true; })()`);
+    assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelector('#vsGo').textContent]"), ["Suggest facts from the samples", "Suggest"]);
+    await ev(`document.querySelector('#vsOfferIn').value = ${JSON.stringify(BRIEF.offer)}; document.querySelector('#vsGo').click(); true`);
+    await until("!!document.querySelector('#vsFactTicks')");
+    assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, [...document.querySelectorAll('#gModal input[type=checkbox]')].map(c => [c.checked, c.parentElement.innerText.trim()]), /Already on the list: A full body scan assessment at the start\\./.test(document.querySelector('#vsFactTicks').innerText)]"), ["Which of these are true of this gym?", [[false, "Nutrition help with recipes and shopping lists"], [false, "Only 16 places"]], true]);
+    await ev("document.querySelector('#vsFactTick1').checked = true; document.querySelector('#vsGo').click(); true");
+    await until("document.querySelectorAll('#vsFacts [data-facts] li').length === 2");
+    assert.deepEqual((await V())[1].facts[0].items, ["A full body scan assessment at the start", "Only 16 places"]);
+    await V("/facts", { method: "POST", body: { offer: BRIEF.offer, items: ["A full body scan assessment at the start"] } });
+    await open("scenes", "!!document.querySelector('#vsCard [data-script]')");
     // How words are said is on the card: the standing word, Add a word…, and a word of his own saved from the dialog.
     assert.deepEqual(await ev("[[...document.querySelectorAll('#vsSaid [data-said]')].map(x => x.innerText.replace(/\\s+/g, ' ').trim()), document.querySelector('#vsSaidAdd').textContent]"), [["“Quay” is said “kee” Change… Remove"], "Add a word…"]);
     await ev("document.querySelector('#vsSaidAdd').click(); document.querySelector('#vsSaidWord').value = 'Tampines'; document.querySelector('#vsSaidSay').value = 'tam-pin-ees'; document.querySelector('#vsGo').click(); true");
