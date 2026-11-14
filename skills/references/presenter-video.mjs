@@ -6,8 +6,11 @@
  * The shape is the gyms' own best videos (F45 Jurong West's "Intro", Sculpt Society's "Treadmill Intro"): someone
  * talks to a phone camera across a few spots in the gym's own room, with jump cuts and bold captions. Here:
  *
- *   · THE PRESENTER IS NOBODY IN PARTICULAR. An invented person who never claims to be staff or a member, so a script
- *     may not say I, we, our, my or us. Who presents (a woman or a man, about what age, any look) is the gym's own
+ *   · THE PRESENTER SPEAKS FOR THE GYM, AS NOBODY IN PARTICULAR. An invented person: "we", "our" and "us" are the
+ *     gym's voice and may be said (the owner, 2026-11-14, on "line 4 speaks as the gym or a member (\"We\")": "Remove
+ *     this - allow the presenter to say 'we' representing the gym" — until then no first person was allowed at all).
+ *     What stays out is one person's own voice — I, my, me — because the presenter is not a real coach or member and
+ *     has no story of their own to tell. Who presents (a woman or a man, about what age, any look) is the gym's own
  *     choice — `creative_defaults.presenter` — and nothing is made until it is set: Sculpt Society has no female
  *     coaches, so a woman presenting there would mislead.
  *   · THE WORDS ARE THE OWNER'S. A script is two to four lines of one breath each, typed by the owner or drafted by the
@@ -92,8 +95,12 @@ export const SCRIPTS_FILE = "video-scripts.json";
 export const LINES = [2, 7], LINE_WORDS = [6, 26], CLIP_SECONDS = [5, 15], WORDS_PER_SECOND = 2.8;
 /** What a second of 720p video costs (Google's pricing page, 2026-11-12) and an image call, for the estimate shown before a run. */
 export const USD_PER_SECOND = 0.07, USD_PER_IMAGE = 0.15;
-/** A presenter who is nobody in particular never speaks as the gym or as a member. */
-export const FIRST_PERSON = /\b(i|i'm|im|i've|i'll|i'd|we|we're|we've|we'll|our|ours|my|mine|me|us|myself|ourselves)\b/i;
+/**
+ * One person's own voice. The presenter may speak for the gym — we, our, us (the owner, 2026-11-14) — and never as a
+ * person with a story of their own: an invented presenter is not a real coach or member, so "I joined" or "my clients"
+ * would be a made-up testimony.
+ */
+export const FIRST_PERSON = /\b(i|i'm|im|i've|i'll|i'd|my|mine|me|myself)\b/i;
 const W = 720, H = 1280, FPS = 24;
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
@@ -155,8 +162,7 @@ export function presenterWords(p, profile = {}) {
 /**
  * The closing line (2026-11-14, the owner: "Don't say 'tap below'. CTA is always 'click the link below and we'll be in
  * touch!'"): the last words of every script, word for word, for every gym — kept in the shared library beside the
- * samples (`closing`), this sentence until he changes it. It is the one place a script says "we": the presenter is
- * nobody in particular everywhere else.
+ * samples (`closing`), this sentence until he changes it.
  */
 export const CLOSING_LINE = "Click the link below and we'll be in touch!", CLOSING_WORDS = [4, 14];
 const apos = (x) => String(x ?? "").replace(/[’‘]/g, "'");
@@ -210,9 +216,9 @@ export function scriptProblems(lines, { offer = null, profile = {}, closing = cl
     const n = wordCount(fillLine(l, "Ang Mo Kio"));
     if (n < LINE_WORDS[0] || n > LINE_WORDS[1]) errs.push(`line ${i + 1} is ${n} words: a line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words`);
     const odd = (l.match(/\{[^}]*\}/g) || []).filter((x) => x !== "{AREA}"); if (odd.length) errs.push(`line ${i + 1}: only {AREA} may stand in for a word (found ${odd.join(", ")})`);
-    // The closing line is the owner's own sentence and the one place "we" is said.
+    // "We", "our" and "us" are the gym's voice; one person's own (I, my, me) is not the presenter's to use. The closing line is the owner's own sentence, as it is.
     const own = (i === last ? withoutClosing(l, closing) : l).replace(/\{AREA\}/g, "");
-    if (FIRST_PERSON.test(own)) errs.push(`line ${i + 1} speaks as the gym or a member ("${own.match(FIRST_PERSON)[0]}"): the presenter is nobody in particular, so no I, we, our, my or us`);
+    if (FIRST_PERSON.test(own)) errs.push(`line ${i + 1} speaks as one person ("${own.match(FIRST_PERSON)[0]}"): the presenter may speak for the gym (we, our, us), never as a coach or a member with a story of their own (I, my, me)`);
     if (TAP.test(l)) errs.push(`line ${i + 1} says "${l.match(TAP)[0]}": the only call to action is the closing line`);
     const ideal = apos(l).match(IDEAL_BODY); if (ideal) errs.push(`line ${i + 1} promises an ideal body ("${ideal[0]}"): say what the person will feel or be able to do`);
     const country = countryNamed(l, { profile, offer }); if (country) errs.push(`line ${i + 1} names the whole country ("${country}"): the place is only ever {AREA}, the area around the gym`);
@@ -260,7 +266,7 @@ export function buildEditPrompt({ profile = {}, script, problems, closing = CLOS
     `This is a short script for a talking-to-camera video advert for ${gym}'s programme "${script.offer}", one line for each cut. It breaks the rules below. Propose the SMALLEST edit that mends it, for the owner to approve.`,
     `THE SCRIPT:\n${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`,
     `WHAT IS WRONG:\n${problems.map((x) => `- ${x}`).join("\n")}`,
-    `THE RULES. Keep every line that breaks no rule exactly as it is, word for word and in its place; change only what a rule requires, and keep the owner's voice. The ending is two beats in the last line: first ONE sentence of its own that turns to the viewer and names what they want, in this shape — "If you're ready to [what they want], now is your time." (what they will feel or be able to do, never an ideal body, never a promised result) — and then exactly this sentence, word for word: "${closing}". That sentence is the only call to action, so a sentence that says "tap below", names a button or gives another instruction is taken out. When the script goes straight into the closing sentence, add the bridge sentence before it and change nothing else. The offer is named in its exact words: "${script.offer}". The place is only ever written {AREA}, never the country. The speaker is nobody in particular: no I, we, our, my or us, except inside the closing sentence. Each line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words; a script is ${LINES[0]} to ${LINES[1]} lines. Never: a price, free, before and after, a guarantee, a promised result, a number of kilos, an em dash.`,
+    `THE RULES. Keep every line that breaks no rule exactly as it is, word for word and in its place; change only what a rule requires, and keep the owner's voice. The ending is two beats in the last line: first ONE sentence of its own that turns to the viewer and names what they want, in this shape — "If you're ready to [what they want], now is your time." (what they will feel or be able to do, never an ideal body, never a promised result) — and then exactly this sentence, word for word: "${closing}". That sentence is the only call to action, so a sentence that says "tap below", names a button or gives another instruction is taken out. When the script goes straight into the closing sentence, add the bridge sentence before it and change nothing else. The offer is named in its exact words: "${script.offer}". The place is only ever written {AREA}, never the country. The speaker speaks for the gym: "we", "our" and "us" are fine; never "I", "my" or "me", and never a personal story. Each line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words; a script is ${LINES[0]} to ${LINES[1]} lines. Never: a price, free, before and after, a guarantee, a promised result, a number of kilos, an em dash.`,
     `Answer with every line of the script after the edit, in order, and a note of one sentence saying what you changed.`,
   ].join("\n\n") };
 }
@@ -572,7 +578,7 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
       ? `The first line ${open}. One of the first two lines names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. The lines between are the beats worth keeping${samples.length ? " from the sample you follow" : ""}: each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. ${close}`
       : `Line 1 ${open}. Line 2 names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. Line 3 is the ending. ${close}`,
     `Speak about BENEFITS, never features. A benefit is what changes for the person: feeling stronger, more energy for the day, clothes fitting better, confidence, keeping up with the children, a body that does what is asked of it. A feature is how the gym runs, and the script says NONE: nothing about how training is organised (no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size), because a wrong one is a false claim about this gym.${facts.length ? ` The only facts about the gym or the programme that may be stated are these, in the owner's words: ${facts.map((x) => `"${x}"`).join("; ")}. Say them as given, and nothing else about how the programme works.` : ""} A benefit is what the programme is built to help with, never a promised result.`,
-    `The speaker is nobody in particular: NOT a coach, NOT a member, NOT the owner. So the script never says I, we, our, my or us, and never claims an experience ("I joined", "we built"): where a gym would say we, the script says "${gym}", "the coaches" or "the team". The closing sentence is the one exception: it is said word for word as given.`,
+    `The speaker speaks for the gym, as nobody in particular: "we", "our" and "us" mean ${gym} and its coaches, and are said the way a gym speaks ("we'll guide you through every step"). The speaker is NOT a named coach, NOT a member and NOT the owner: the script never says I, my or me, and never tells a personal story ("I joined", "my clients", "when I started"). The closing sentence is said word for word as given.`,
     `The place is only ever {AREA}, the area around the gym: the script never names the country, and never speaks to a whole city or island.`,
     `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark (the closing sentence keeps its own); an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
     `Write ${count} script${count === 1 ? "" : "s"}, each opening on a different pain point, and say for each the pain point it opens on (pain: a short phrase, as it would stand in a list — "work clothes fitting tighter lately").`,
@@ -583,7 +589,7 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
   if (ads.length) lines.push(`This gym's own adverts that earned the most leads. Find the pain each one speaks to and say it plainly in your own words; never copy a sentence, a price or an offer from them:\n${ads.map((a, i) => `--- ADVERT ${i + 1} (${a.leads} leads)\n${a.text}`).join("\n")}`);
   if (library.length) lines.push(`Pain-led adverts that have worked for other gyms. The same: the pain they speak to, in your own words:\n${library.map((x, i) => `--- LIBRARY ${i + 1}\n${x}`).join("\n")}`);
   // The owner's own proven scripts, when he has given some: their structure, rhythm and voice are followed; their sentences and their facts are not copied.
-  if (samples.length) lines.push(`These scripts have worked for this owner. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact (a place, a programme name, a number, how a gym runs) or their call to action. A sample may mark in braces what changes from gym to gym ({AREA}, {CHALLENGE NAME}, {GYM NAME} and the like): where it marks the place, write {AREA}; where it marks the programme, write its exact words, "${offer}"; where it marks the gym, or where the sample says we or our, write "${gym}". No other braces may appear in a script:\n${samples.map((x, i) => `--- SAMPLE ${i + 1}\n${x}`).join("\n")}`);
+  if (samples.length) lines.push(`These scripts have worked for this owner. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact (a place, a programme name, a number, how a gym runs) or their call to action. A sample may mark in braces what changes from gym to gym ({AREA}, {CHALLENGE NAME}, {GYM NAME} and the like): where it marks the place, write {AREA}; where it marks the programme, write its exact words, "${offer}"; where it marks the gym, write "${gym}"; where the sample says we or our, it may stay — the speaker speaks for the gym. No other braces may appear in a script:\n${samples.map((x, i) => `--- SAMPLE ${i + 1}\n${x}`).join("\n")}`);
   if (existing.length) lines.push(`Already written — do not repeat or closely rephrase:\n${existing.map((e) => `- ${e}`).join("\n")}`);
   return { prompt: lines.join("\n\n"), schema: DRAFT_SCHEMA };
 }

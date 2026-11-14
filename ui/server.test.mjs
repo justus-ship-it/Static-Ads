@@ -3737,8 +3737,8 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     [st, D] = await V("/presenter", { method: "POST", body: { gender: "man", age: 36, look: "short hair, a navy tee" } });
     assert.deepEqual([st, D.presenter, JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.presenter], [200, { gender: "man", age: 36, look: "short hair, a navy tee" }, { gender: "man", age: 36, look: "short hair, a navy tee" }]);
     // The scripts: the rules, in words; the owner's own is kept at once.
-    [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0], `We built the ${BRIEF.offer} for exactly that, with a coach beside you every week.`, LINES[2]] } });
-    assert.equal(st, 400); assert.match(D.error, /line 2 speaks as the gym or a member \("We"\)/);
+    [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0], `I built the ${BRIEF.offer} for exactly that, with a coach beside you every week.`, LINES[2]] } });
+    assert.equal(st, 400); assert.match(D.error, /line 2 speaks as one person \("I"\): the presenter may speak for the gym \(we, our, us\)/, "the gym's voice — we, our, us — is the presenter's to use (2026-11-14); one person's own is not");
     [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0], "The programme is built for exactly that, with a coach beside you and a plan.", LINES[2]] } });
     assert.equal(st, 400); assert.match(D.error, /must name the offer in its exact words/);
     [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: LINES } });

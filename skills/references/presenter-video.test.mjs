@@ -53,13 +53,16 @@ test("PV1 who presents, and the script's rules: the presenter is the gym's own c
     assert.deepEqual(scriptProblems(GOOD, { offer: OFFER, profile }), []);
     assert.deepEqual(scriptProblems(["One line only, and it is long enough to be a line."], { offer: OFFER, profile }), [`a script is ${LINES[0]} to ${LINES[1]} lines, one for each cut`]);
     const bad = (lines) => scriptProblems(lines, { offer: OFFER, profile }).join(" | ");
-    assert.match(bad([GOOD[0], "We built the 12 Week Full Body Transformation for exactly that, with a coach beside you.", GOOD[2]]), /line 2 speaks as the gym or a member \("We"\): the presenter is nobody in particular/);
+    // The presenter speaks for the gym (2026-11-14, the owner: "allow the presenter to say 'we' representing the gym"): we, our and us are said; one person's own voice — I, my, me — is not, since the presenter is no real coach or member.
+    assert.deepEqual(scriptProblems([GOOD[0], "We built the 12 Week Full Body Transformation for exactly that, and our coaches stay with you.", GOOD[2]], { offer: OFFER, profile }), []);
+    assert.match(bad([GOOD[0], "I built the 12 Week Full Body Transformation for exactly that, with a coach beside you.", GOOD[2]]), /line 2 speaks as one person \("I"\): the presenter may speak for the gym \(we, our, us\), never as a coach or a member with a story of their own \(I, my, me\)/);
+    assert.match(bad([GOOD[0], "The 12 Week Full Body Transformation changed my life, and it can change the week ahead of you.", GOOD[2]]), /line 2 speaks as one person \("my"\)/);
     assert.match(bad([GOOD[0], "Our coaches run it.", GOOD[2]]), /line 2 is 4 words: a line is one breath, 6 to 26 words/);
     assert.match(bad([GOOD[0], "Test Gym's twelve week plan is built for exactly that, with a coach beside you every time.", GOOD[2]]), /must name the offer in its exact words: "12 Week Full Body Transformation"/);
     assert.match(bad([GOOD[0].replace("{AREA}", "{CITY}"), GOOD[1], GOOD[2]]), /only \{AREA\} may stand in for a word \(found \{CITY\}\)/);
     assert.match(bad([GOOD[0], GOOD[1], "Start with a free trial this week and see how it feels. Click the link below and we'll be in touch!"]), /free/i);
     assert.match(bad([GOOD[0], GOOD[1], "People lose 5kg in the first month here, every single time. Click the link below and we'll be in touch!"]), /weight-loss number/);
-    assert.ok(FIRST_PERSON.test("that is what our plan does") && !FIRST_PERSON.test("a tour of the gym, with music"), "whole words only");
+    assert.ok(FIRST_PERSON.test("that is what my plan does") && FIRST_PERSON.test("I'm here every day") && !FIRST_PERSON.test("that is what our plan does, and we mean it for all of us") && !FIRST_PERSON.test("a tour of the gym, with music, in time"), "one person's voice, whole words only");
     // Kept, drafted, never twice, edited, retired.
     const mine = addScript(g, { lines: GOOD, offer: OFFER }, { profile });
     assert.deepEqual([mine.status, mine.source, mine.offer, /^v-[0-9a-f]{10}$/.test(mine.id), mine.lines], ["kept", "owner", OFFER, true, GOOD]);
@@ -99,15 +102,15 @@ test("PV2 scripts drafted for the owner: one text call that is told the shape, t
   try {
     const { prompt, schema } = buildScriptPrompt({ profile, offer: OFFER, audience: "LADIES WANTED", count: 3, existing: ["an old one"] });
     assert.match(prompt, /talking-to-camera video advert for Test Gym's programme: "12 Week Full Body Transformation"\. The advert is for: LADIES WANTED\./);
-    assert.match(prompt, /written as \{AREA\}/); assert.match(prompt, /in these exact words — "Test Gym's 12 Week Full Body Transformation"/); assert.match(prompt, /never says I, we, our, my or us/);
+    assert.match(prompt, /written as \{AREA\}/); assert.match(prompt, /in these exact words — "Test Gym's 12 Week Full Body Transformation"/); assert.match(prompt, /"we", "our" and "us" mean Test Gym and its coaches/); assert.match(prompt, /the script never says I, my or me, and never tells a personal story/);
     assert.match(prompt, /NEVER: a price or any money; free or a free trial; before and after; a guarantee/); assert.match(prompt, /Already written — do not repeat or closely rephrase:\n- an old one/);
     assert.equal(schema.properties.scripts.items.properties.lines.type, "ARRAY");
     const asked = [];
-    const ask = async (img, p, s, o) => { asked.push({ img, p, model: o.model }); return { scripts: [{ pain: PAIN, lines: GOOD }, { pain: PAIN, lines: [GOOD[0], "We built the 12 Week Full Body Transformation for exactly that, with a coach beside you.", GOOD[2]] }, { pain: PAIN, lines: [GOOD[0], "The programme is built for exactly that, with a coach beside you and a plan for the week.", GOOD[2]] }, { pain: PAIN, lines: GOOD }] }; };
+    const ask = async (img, p, s, o) => { asked.push({ img, p, model: o.model }); return { scripts: [{ pain: PAIN, lines: GOOD }, { pain: PAIN, lines: [GOOD[0], "I built the 12 Week Full Body Transformation for exactly that, with a coach beside you.", GOOD[2]] }, { pain: PAIN, lines: [GOOD[0], "The programme is built for exactly that, with a coach beside you and a plan for the week.", GOOD[2]] }, { pain: PAIN, lines: GOOD }] }; };
     addPain(g, OFFER, PAIN, { profile });
     const r = await draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, audience: "LADIES WANTED", count: 4, ask });
     assert.deepEqual([asked.length, asked[0].img, r.calls, r.added.length, r.added[0].status, r.added[0].source, r.added[0].pain], [1, null, 1, 1, "draft", "drafted", PAIN]);
-    assert.deepEqual(r.dropped.map((x) => x.reason.slice(0, 36)), ["line 2 speaks as the gym or a member", "the script must name the offer in it", "this script is already here"]);
+    assert.deepEqual(r.dropped.map((x) => x.reason.slice(0, 36)), ['line 2 speaks as one person ("I"): t', "the script must name the offer in it", "this script is already here"]);
     assert.deepEqual(keptScripts(g, OFFER), [], "a draft is not made into a video until the owner keeps it");
     await assert.rejects(draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: "", ask }), /exact words are needed/); await assert.rejects(draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, count: 9, ask }), /count must be 1 to 6/);
   } finally { rmSync(d, { recursive: true, force: true }); }
@@ -220,7 +223,7 @@ test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the 
     assert.match(prompt, /The only facts about the gym or the programme that may be stated are these, in the owner's words: "Every session is one to one with a coach"\. Say them as given, and nothing else about how the programme works\./); assert.match(prompt, /A benefit is what the programme is built to help with, never a promised result\./);
     assert.match(prompt, /These scripts have worked for this owner\. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact[^\n]*\n--- SAMPLE 1\nHey Katong\.\nTired of starting over\?\nTap below\./);
     // The owner's samples mark what changes from gym to gym in braces (2026-11-12: "area and challenge name, as well as gym name must be custom"): the drafter is told what each becomes for this gym.
-    assert.match(prompt, new RegExp(`where it marks the place, write \\{AREA\\}; where it marks the programme, write its exact words, "${OFFER}"; where it marks the gym, or where the sample says we or our, write "${profile.display_name}"\\. No other braces may appear in a script:`));
+    assert.match(prompt, new RegExp(`where it marks the place, write \\{AREA\\}; where it marks the programme, write its exact words, "${OFFER}"; where it marks the gym, write "${profile.display_name}"; where the sample says we or our, it may stay — the speaker speaks for the gym\\. No other braces may appear in a script:`));
     assert.ok(!/SAMPLE 1/.test(buildScriptPrompt({ profile, offer: OFFER }).prompt) && !/The only facts about the gym/.test(buildScriptPrompt({ profile, offer: OFFER }).prompt), "no samples and no facts: neither is mentioned");
     // Samples.
     assert.throws(() => addSample(L, "too short"), new RegExp(`a sample script is ${SAMPLE_LIMIT[0]} to ${SAMPLE_LIMIT[1]} characters`));
@@ -292,7 +295,7 @@ test("PV6 the owner's template for every gym (2026-11-12: share samples across g
     assert.match(P, /A script is 3 to 7 lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better\./);
     assert.match(P, /each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given \(an assessment, a number of places, how many people were helped\) is left out, never invented\. THE ENDING is two beats, both in the last line\./);
     assert.match(P, /may be stated are these, in the owner's words: "A full body scan assessment at the start"; "Only 10 places"\. Say them as given, and nothing else about how the programme works\./);
-    assert.match(P, /where a gym would say we, the script says "Test Gym", "the coaches" or "the team"\./);
+    assert.match(P, /"we", "our" and "us" mean Test Gym and its coaches, and are said the way a gym speaks/);
     assert.ok(!/may be stated are these/.test(seen[0]), "the other gym gave no facts, so its drafter is given none");
     // No sample and no facts: the three-line script, as it was.
     const plain = buildScriptPrompt({ profile: a.profile, offer: OFFER }).prompt;
@@ -301,7 +304,7 @@ test("PV6 the owner's template for every gym (2026-11-12: share samples across g
   } finally { rmSync(a.d, { recursive: true, force: true }); rmSync(b.d, { recursive: true, force: true }); }
 });
 
-test("PV7 a script opens on a pain point and ends on one closing line, and the place is never the whole country (2026-11-14, the owner on the first video from the panel: \"'Keep putting off getting back into shape' … is not a pain point\", \"Don't say 'tap below'. CTA is always 'click the link below and we'll be in touch!'\", \"We can't say the full of Singapore no matter what\"): the closing line is one sentence for every gym, the last words of every script and the one place it says we; 'tap below' and the country's name are refused; a script kept before the rule needs one edit and is not filmed until then; pain points are the owner's per offer — typed and kept at once, or suggested from the gym's best adverts and the library and kept by him, never a judgement of the person; the agent proposes — with none kept it works them out itself from the gym's best adverts and the library — and every draft says the one it opens on", async () => {
+test("PV7 a script opens on a pain point and ends on one closing line, and the place is never the whole country (2026-11-14, the owner on the first video from the panel: \"'Keep putting off getting back into shape' … is not a pain point\", \"Don't say 'tap below'. CTA is always 'click the link below and we'll be in touch!'\", \"We can't say the full of Singapore no matter what\"): the closing line is one sentence for every gym, the last words of every script; 'tap below' and the country's name are refused; a script kept before the rule needs one edit and is not filmed until then; pain points are the owner's per offer — typed and kept at once, or suggested from the gym's best adverts and the library and kept by him, never a judgement of the person; the agent proposes — with none kept it works them out itself from the gym's best adverts and the library — and every draft says the one it opens on", async () => {
   const { CLOSING_LINE, closingLine, closingProblems, setClosing, endsWithClosing, scriptIssues, readyScripts, noScriptWhy, pickScripts, painProblems, decidePain, painsFor, readPains, painSources, buildPainsPrompt, suggestPains, PAIN_LIMITS } = await import("./presenter-video.mjs");
   const { isWholeCountry } = await import("./render-composites.mjs");
   const { d, g, profile, room } = gym(), L = join(d, "lib"), C = CLOSING_LINE;
@@ -312,14 +315,14 @@ test("PV7 a script opens on a pain point and ends on one closing line, and the p
     const probs = (lines) => scriptProblems(lines, { offer: OFFER, profile, closing: C });
     assert.deepEqual(probs(GOOD), []);
     assert.deepEqual(probs([GOOD[0], GOOD[1], "You train in small groups, with people just like you. Tap below to see if this fits."]), ['line 3 says "Tap below": the only call to action is the closing line', `the last line ends with the closing line, word for word: "${C}"`]);
-    assert.deepEqual(probs([GOOD[0], GOOD[1], "If you are ready, we will look after you from the first day. Click the link below and we'll be in touch!"]), ['line 3 speaks as the gym or a member ("we"): the presenter is nobody in particular, so no I, we, our, my or us'], "the closing line is the one place a script says we");
+    assert.deepEqual([probs([GOOD[0], GOOD[1], "If you are ready, we will look after you from the first day. Click the link below and we'll be in touch!"]), probs([GOOD[0], GOOD[1], "If you are ready, I will look after you from the first day. Click the link below and we'll be in touch!"])], [[], ['line 3 speaks as one person ("I"): the presenter may speak for the gym (we, our, us), never as a coach or a member with a story of their own (I, my, me)']], "the gym's voice is the presenter's to use; one person's own is not");
     assert.deepEqual(probs(["If you live in Singapore and your work clothes have been fitting tighter lately, keep watching.", GOOD[1], GOOD[2]]), ['line 1 names the whole country ("Singapore"): the place is only ever {AREA}, the area around the gym']);
     assert.deepEqual(scriptProblems([GOOD[0], "Singapore Strength Club's 12 Week Full Body Transformation is built for exactly that, with a coach beside you.", GOOD[2]], { offer: OFFER, profile: { ...profile, display_name: "Singapore Strength Club" }, closing: C }), [], "the gym's own name may carry the word");
     // His to change, for every gym: the scripts kept with the old one then need an edit, and are not filmed until they have it.
     const mine = addScript(g, { lines: GOOD, offer: OFFER }, { profile, closing: C });
     assert.throws(() => setClosing(L, "Tap below now"), /4 to 14 words/); assert.throws(() => setClosing(L, "Tap the button below and the team will call you"), /does not say "tap"/);
     assert.equal(setClosing(L, "Click the link below and the team will be in touch."), "Click the link below and the team will be in touch."); const C2 = closingLine(L);
-    assert.deepEqual([C2, scriptIssues(mine, { profile, closing: C2 }), readyScripts(g, OFFER, { profile, closing: C2 }).length, readyScripts(g, OFFER, { profile, closing: C }).length], ["Click the link below and the team will be in touch.", ['line 3 speaks as the gym or a member ("we"): the presenter is nobody in particular, so no I, we, our, my or us', `the last line ends with the closing line, word for word: "${C2}"`], 0, 1], "the old closing's we is no longer the closing line's");
+    assert.deepEqual([C2, scriptIssues(mine, { profile, closing: C2 }), readyScripts(g, OFFER, { profile, closing: C2 }).length, readyScripts(g, OFFER, { profile, closing: C }).length], ["Click the link below and the team will be in touch.", [`the last line ends with the closing line, word for word: "${C2}"`], 0, 1]);
     assert.deepEqual([noScriptWhy(g, OFFER, { libraryDir: L, profile }).state, noScriptWhy(g, OFFER, { libraryDir: L, profile }).text], ["needs_edit", `the script kept for this offer needs an edit first — the last line ends with the closing line, word for word: "${C2}": press Edit… there`]);
     assert.throws(() => pickScripts(g, { count: 1, offer: OFFER, libraryDir: L }), /^Error: 1 presenter video asked for, but no script is ready for "12 Week Full Body Transformation": the script kept for this offer needs an edit first — the last line ends with the closing line, word for word: "Click the link below and the team will be in touch\.": press Edit… there \(Draft Scenes → Video scripts\)$/);
     await assert.rejects(makePresenterVideos({ gymDir: g, outDir: join(g, "o"), store: join(g, "o", "clips"), script: mine, areas: ["BISHAN"], offer: OFFER, room, profile, closing: C2, models: fakes().models }), /this script cannot be made: .*the last line ends with the closing line/);
@@ -371,7 +374,7 @@ test("PV7 a script opens on a pain point and ends on one closing line, and the p
     assert.match(P, new RegExp(`The owner's own list comes first — open on these, close to his words, one for each script; for the scripts beyond the list, work out further ones yourself the same way:\\n1\\. ${PAIN}\\n2\\. you have been avoiding fitted clothes(\\n|$)`));
     assert.match(P, /THE ENDING is two beats, both in the last line\. First ONE sentence that turns to the viewer and names what they want, tied to the pain the script opened on, in this shape: "If you're ready to \[what they want\], now is your time\." Then exactly this sentence, word for word; it is the ONLY call to action in the script: "Click the link below and the team will be in touch\." Never go straight from a benefit into the call to action, and never use a bare lead-in/);
     assert.match(P, /never an ideal body and never a promised result \("the body you've always wanted" is out\)\. The last line may run to 26 words\. Never write "tap", never name a button/);
-    assert.match(P, /The closing sentence is the one exception: it is said word for word as given\./); assert.match(P, /The place is only ever \{AREA\}, the area around the gym: the script never names the country/);
+    assert.match(P, /The closing sentence is said word for word as given\./); assert.match(P, /The place is only ever \{AREA\}, the area around the gym: the script never names the country/);
     assert.match(P, /Write 4 scripts, each opening on a different pain point, and say for each the pain point it opens on \(pain: a short phrase/);
     assert.deepEqual(seen[0].schema.properties.scripts.items.required, ["pain", "lines"]);
   } finally { rmSync(d, { recursive: true, force: true }); }
