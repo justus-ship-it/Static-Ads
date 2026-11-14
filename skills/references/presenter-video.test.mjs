@@ -6,18 +6,20 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { presenterOf, presenterWords, presenterProblems, PRESENTER_GENDERS, scriptProblems, addScript, decideScript, readScripts, keptScripts, scriptCost, buildScriptPrompt, draftScripts, sameWords, fillLine, clipSeconds, captions, captionChunks, speechFrom, speechOf, LEAD, TAIL, lockWords, stillPrompt, clipPrompt, makePresenterVideos, durationOf, hasFfmpeg, SCRIPTS_FILE, LINES, LINE_WORDS, CLIP_SECONDS, END_CARD_SECONDS, FIRST_PERSON, LIVE, USD_PER_SECOND } from "./presenter-video.mjs";
+import { presenterOf, presenterWords, presenterProblems, PRESENTER_GENDERS, scriptProblems, addScript, decideScript, readScripts, keptScripts, scriptCost, buildScriptPrompt, draftScripts, sameWords, fillLine, clipSeconds, captions, captionChunks, speechFrom, speechOf, LEAD, TAIL, END_HOLD, captionWords, CAPTION_ACCENT, addPain, stillPrompt, clipPrompt, makePresenterVideos, durationOf, hasFfmpeg, SCRIPTS_FILE, LINES, LINE_WORDS, CLIP_SECONDS, FIRST_PERSON, LIVE, USD_PER_SECOND } from "./presenter-video.mjs";
 import { PROFILE_STARTER, validateProfile } from "./client-config.mjs";
 
-const OFFER = "12 Week Full Body Transformation";
+// The shared library (the samples and the closing line) is never the real one in a test.
+process.env.VIDEO_LIBRARY_DIR = mkdtempSync(join(tmpdir(), "pv-lib-"));
+const OFFER = "12 Week Full Body Transformation", PAIN = "your work clothes have been fitting tighter lately";
 const GOOD = [
   "People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.",
   "Test Gym's 12 Week Full Body Transformation is built for exactly that. A coach beside you, and a plan that fits your week.",
-  "You train in small groups, with people just like you. Tap below to find out more.",
+  "You train in small groups, with people just like you. Click the link below and we'll be in touch!",
 ];
 const S = (line, area) => clipSeconds(fillLine(line, area)), S1 = S(GOOD[0], "BISHAN"), S1B = S(GOOD[0], "ANG MO KIO"), S2 = S(GOOD[1], ""), S3 = S(GOOD[2], "");
 const QUIET_START = 0.8, QUIET_END = 1.5, KEPT = (seconds) => seconds - QUIET_START - QUIET_END + LEAD + TAIL; // what is left of a fake clip once it is cut to its "speech"
-const plain = (p) => p.split("/").pop().replace(/-[0-9a-f]{6}(?=(-take\d+)?\.(mp4|jpg)$)/, ""); // a file's name without the mark of what it is of
+const plain = (p) => p.split("/").pop().replace(/-[0-9a-f]{6}(?=(-take\d+|-b)?\.(mp4|jpg)$)/, ""); // a file's name without the mark of what it is of ("-b": a second picture made after a refusal)
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 function gym({ presenter = { gender: "man", age: 36 } } = {}) {
   const d = mkdtempSync(join(tmpdir(), "pv-")), g = join(d, "brands", "testgym"); mkdirSync(join(g, "brand-assets", "facility-clean"), { recursive: true });
@@ -55,8 +57,8 @@ test("PV1 who presents, and the script's rules: the presenter is the gym's own c
     assert.match(bad([GOOD[0], "Our coaches run it.", GOOD[2]]), /line 2 is 4 words: a line is one breath, 6 to 26 words/);
     assert.match(bad([GOOD[0], "Test Gym's twelve week plan is built for exactly that, with a coach beside you every time.", GOOD[2]]), /must name the offer in its exact words: "12 Week Full Body Transformation"/);
     assert.match(bad([GOOD[0].replace("{AREA}", "{CITY}"), GOOD[1], GOOD[2]]), /only \{AREA\} may stand in for a word \(found \{CITY\}\)/);
-    assert.match(bad([GOOD[0], GOOD[1], "Start with a free trial this week and see how it feels. Tap below to find out more."]), /free/i);
-    assert.match(bad([GOOD[0], GOOD[1], "People lose 5kg in the first month here, every single time. Tap below to find out more."]), /weight-loss number/);
+    assert.match(bad([GOOD[0], GOOD[1], "Start with a free trial this week and see how it feels. Click the link below and we'll be in touch!"]), /free/i);
+    assert.match(bad([GOOD[0], GOOD[1], "People lose 5kg in the first month here, every single time. Click the link below and we'll be in touch!"]), /weight-loss number/);
     assert.ok(FIRST_PERSON.test("that is what our plan does") && !FIRST_PERSON.test("a tour of the gym, with music"), "whole words only");
     // Kept, drafted, never twice, edited, retired.
     const mine = addScript(g, { lines: GOOD, offer: OFFER }, { profile });
@@ -72,10 +74,10 @@ test("PV1 who presents, and the script's rules: the presenter is the gym's own c
     assert.ok(existsSync(join(g, SCRIPTS_FILE)));
     // What it costs: the line that says the area is made once a location; the others once.
     const c = scriptCost(mine, ["BISHAN", "ANG MO KIO"]);
-    assert.deepEqual([S1, S2, S3], [10, 10, 7], "lines of 23, 23 and 15 words");
+    assert.deepEqual([S1, S2, S3], [10, 10, 8], "lines of 23, 23 and 19 words");
     assert.deepEqual([c.clips.map((x) => [x.per_area, x.seconds]), c.seconds, c.images, c.videos], [[[true, S1], [false, S2], [false, S3]], S1 * 2 + S2 + S3, 3, 2]);
     assert.equal(c.usd, Math.round(((S1 * 2 + S2 + S3) * USD_PER_SECOND + 3 * 0.15) * 100) / 100);
-    assert.deepEqual([fillLine("People in {AREA}, hello", "ANG MO KIO"), fillLine("In {AREA} now", "CBD"), clipSeconds("one two three"), clipSeconds(Array(40).fill("word").join(" ")), CLIP_SECONDS, LINE_WORDS], ["People in Ang Mo Kio, hello", "In CBD now", 5, 12, [5, 12], [6, 26]]);
+    assert.deepEqual([fillLine("People in {AREA}, hello", "ANG MO KIO"), fillLine("In {AREA} now", "CBD"), clipSeconds("one two three"), clipSeconds(Array(40).fill("word").join(" ")), CLIP_SECONDS, LINE_WORDS], ["People in Ang Mo Kio, hello", "In CBD now", 5, 15, [5, 15], [6, 26]]);
     assert.ok(sameWords("Test Gym’s 12-week Full Body Transformation is built for exactly that.", "Test Gym's twelve week full body transformation is built for exactly that") && !sameWords("a plan that fits your weak", "a plan that fits your week") && !sameWords("keep watching now", "keep watching"));
     // What a listener cannot hear is not a difference (2026-11-12: a good take of "Aether Athletics's 6 Week…" was refused twice): a possessive, the spelling of the gym's own name, where a name's spaces fall. Every other word must be the word.
     const AE = "Aether Athletics's 6 Week Full Body Transformation is designed to help you regain your daily energy and confidence.", NM = { names: ["Aether Athletics"] };
@@ -101,9 +103,10 @@ test("PV2 scripts drafted for the owner: one text call that is told the shape, t
     assert.match(prompt, /NEVER: a price or any money; free or a free trial; before and after; a guarantee/); assert.match(prompt, /Already written — do not repeat or closely rephrase:\n- an old one/);
     assert.equal(schema.properties.scripts.items.properties.lines.type, "ARRAY");
     const asked = [];
-    const ask = async (img, p, s, o) => { asked.push({ img, p, model: o.model }); return { scripts: [{ lines: GOOD }, { lines: [GOOD[0], "We built the 12 Week Full Body Transformation for exactly that, with a coach beside you.", GOOD[2]] }, { lines: [GOOD[0], "The programme is built for exactly that, with a coach beside you and a plan for the week.", GOOD[2]] }, { lines: GOOD }] }; };
+    const ask = async (img, p, s, o) => { asked.push({ img, p, model: o.model }); return { scripts: [{ pain: PAIN, lines: GOOD }, { pain: PAIN, lines: [GOOD[0], "We built the 12 Week Full Body Transformation for exactly that, with a coach beside you.", GOOD[2]] }, { pain: PAIN, lines: [GOOD[0], "The programme is built for exactly that, with a coach beside you and a plan for the week.", GOOD[2]] }, { pain: PAIN, lines: GOOD }] }; };
+    addPain(g, OFFER, PAIN, { profile });
     const r = await draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, audience: "LADIES WANTED", count: 4, ask });
-    assert.deepEqual([asked.length, asked[0].img, r.calls, r.added.length, r.added[0].status, r.added[0].source], [1, null, 1, 1, "draft", "drafted"]);
+    assert.deepEqual([asked.length, asked[0].img, r.calls, r.added.length, r.added[0].status, r.added[0].source, r.added[0].pain], [1, null, 1, 1, "draft", "drafted", PAIN]);
     assert.deepEqual(r.dropped.map((x) => x.reason.slice(0, 36)), ["line 2 speaks as the gym or a member", "the script must name the offer in it", "this script is already here"]);
     assert.deepEqual(keptScripts(g, OFFER), [], "a draft is not made into a video until the owner keeps it");
     await assert.rejects(draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: "", ask }), /exact words are needed/); await assert.rejects(draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, count: 9, ask }), /count must be 1 to 6/);
@@ -138,12 +141,12 @@ test("PV3 one script, a video for each location: a still for each line (the firs
     for (const v of R.videos) {
       assert.ok(existsSync(v.file) && existsSync(v.poster));
       // Each clip is cut to its speech (a breath either side), so the silence the model leaves at both ends is gone: no dead air before a cut.
-      assert.ok(Math.abs(durationOf(v.file) - (KEPT(v.area === "BISHAN" ? S1 : S1B) + KEPT(S2) + KEPT(S3) + END_CARD_SECONDS)) < 0.5, `the three spoken parts and the end card: ${durationOf(v.file)}`);
+      assert.ok(Math.abs(durationOf(v.file) - (KEPT(v.area === "BISHAN" ? S1 : S1B) + KEPT(S2) + KEPT(S3) - TAIL + END_HOLD)) < 0.3, `the three spoken parts and nothing after them — no end card (2026-11-14), the last word held a moment: ${durationOf(v.file)}`);
       assert.deepEqual(v.lines.map((l) => [l.speech.start, Math.round(l.speech.kept[0] * 100) / 100]), v.lines.map(() => [QUIET_START, Math.round((QUIET_START - LEAD) * 100) / 100]), "where the speech starts, and where the clip is cut"); assert.equal(v.seconds, Math.round(durationOf(v.file) * 10) / 10);
       assert.equal(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,codec_name", "-of", "csv=p=0", v.file]).toString().trim(), "h264,720,1280");
       assert.ok(execFileSync("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", v.file]).toString().trim() === "aac", "it has sound");
     }
-    // The words on screen are software's: captions a few words at a time, the end card from the brief's own words.
+    // The words on screen are software's: captions a few words at a time, the word being said in a warm yellow.
     // Captions follow the voice: a few words at a time, never across a clause's end, timed over the SPOKEN time, and changing at the pause where a clause ends.
     assert.deepEqual(captionChunks("One two three four, five six. Seven.").map((c) => [c.text, c.ends]), [["One two three", false], ["four", true], ["five six", true], ["Seven", true]]);
     assert.deepEqual(captions("One two three. Four five.", [[0.5, 2.5], [3.5, 4.5]]), [{ text: "One two three", from: 0.5, to: 2.5 }, { text: "Four five", from: 3.5, to: 4.5 }], "the second caption waits for the second sentence to be spoken");
@@ -155,8 +158,12 @@ test("PV3 one script, a video for each location: a still for each line (the firs
     assert.deepEqual(speechFrom("silence_start: 0\nsilence_end: 0.86\nsilence_start: 5.1\nsilence_end: 5.8\nsilence_start: 8.55\nsilence_end: 9.88", 10.03), { start: 0.86, end: 8.55, spans: [[0.86, 5.1], [5.8, 8.55]], duration: 10.03 });
     assert.deepEqual([speechFrom("", 6).spans, speechFrom("silence_start: 0\nsilence_end: 6", 6).spans], [[[0, 6]], [[0, 6]]]);
     const heard = speechOf(R.videos[0].lines[0].file); assert.ok(Math.abs(heard.start - QUIET_START) < 0.06 && Math.abs(heard.end - (S1 - QUIET_END)) < 0.06, JSON.stringify(heard));
-    assert.deepEqual(lockWords({ offer: OFFER, location: "BISHAN", audience: "LADIES WANTED" }), { audience: "LADIES WANTED", location: "BISHAN", duration: "12 WEEK", rest: "FULL BODY TRANSFORMATION" });
-    assert.ok(existsSync(join(out, script.id, "lock-bishan.png")) && existsSync(join(out, script.id, "cap-bishan-1-00.png")));
+    // The caption's look (2026-11-14, the owner's pick): one picture of a block for each of its words, that word lit; the block's time is shared between its words by their letters.
+    assert.deepEqual(captionWords({ text: "your daily energy", from: 1, to: 2.2 }), [{ i: 0, word: "your", from: 1, to: 1.33 }, { i: 1, word: "daily", from: 1.33, to: 1.73 }, { i: 2, word: "energy", from: 1.73, to: 2.2 }]);
+    assert.ok(!existsSync(join(out, script.id, "lock-bishan.png")) && ["0", "1", "2"].every((w) => existsSync(join(out, script.id, `cap-bishan-1-00-${w}.png`))), "no end card; a picture for each word of the first block");
+    const frame = execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-ss", "0.5", "-i", R.videos[0].file, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], { maxBuffer: 16 * 1024 * 1024 });
+    let yellow = 0, white = 0; for (let i = 0; i < frame.length; i += 3) { const [r, g2, b] = [frame[i], frame[i + 1], frame[i + 2]]; if (r > 225 && g2 > 185 && g2 < 235 && b < 130) yellow++; else if (r > 235 && g2 > 235 && b > 235) white++; }
+    assert.ok(CAPTION_ACCENT === "#FFD84A" && yellow > 400 && white > 400, `half a second in, one word is yellow and the others white (${yellow} yellow, ${white} white pixels)`);
     assert.deepEqual(LIVE, { left: 0.06, right: 0.94, top: 0.14, bottom: 0.65 });
     // Run again: everything is on disk, so nothing is made and nothing is spent.
     const F2 = fakes(), again = await makePresenterVideos({ gymDir: g, outDir: out, script, areas: ["BISHAN"], offer: OFFER, room, profile, caps: { seconds: 80, images: 5 }, models: F2.models });
@@ -222,7 +229,8 @@ test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the 
     assert.deepEqual([/^vs-[0-9a-f]{10}$/.test(s1.id), s1.text, s1.note], [true, text.replace(/\n{3,}/, "\n\n"), "the best one"], "kept as pasted: its line breaks stay, a wall of blank lines does not");
     assert.throws(() => addSample(L, text.toUpperCase()), /already here/);
     assert.throws(() => decideSample(L, s1.id, { retired: true }), /needs a reason/);
-    // The drafter is shown the live samples, and no retired one.
+    // The drafter is shown the live samples, and no retired one. (A script opens on a pain point, so one is kept first.)
+    addPain(g, OFFER, PAIN, { profile });
     const seen = []; await draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
     assert.match(seen[0], /--- SAMPLE 1\nHey, if you live in Katong/);
     decideSample(L, s1.id, { retired: true, reason: "an old offer" }); assert.deepEqual(liveSamples(L), []);
@@ -236,8 +244,8 @@ test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the 
     const { noScriptWhy } = await import("./presenter-video.mjs");
     assert.throws(() => pickScripts(g, { count: 1, offer: OFFER, libraryDir: L }), /1 presenter video asked for, but no script is kept for "12 Week Full Body Transformation": keep 1 more on Draft Scenes → Video scripts \(nothing is written for this offer yet\. The sample script there is a template, not a script to film: press Draft scripts…, read the drafts and keep one\)$/);
     assert.deepEqual([noScriptWhy(g, OFFER, { libraryDir: L }).state, noScriptWhy(g, OFFER, { libraryDir: join(d, "empty-lib") }).state, noScriptWhy(g, OFFER, { libraryDir: join(d, "empty-lib") }).text], ["sample_only", "none", "nothing is written for this offer yet: press Draft scripts… there, or write your own"]);
-    const a = addScript(g, { lines: GOOD, offer: OFFER }, { profile }), b = addScript(g, { lines: [GOOD[0], GOOD[1], "Feel stronger and have more energy for your day. Tap below to find out more."], offer: OFFER }, { profile });
-    addScript(g, { lines: [GOOD[0], GOOD[1], "Walk into your week with more energy than last month. Tap below to find out more."], offer: OFFER, source: "drafted" }, { profile });
+    const a = addScript(g, { lines: GOOD, offer: OFFER }, { profile }), b = addScript(g, { lines: [GOOD[0], GOOD[1], "Feel stronger and have more energy for your day. Click the link below and we'll be in touch!"], offer: OFFER }, { profile });
+    addScript(g, { lines: [GOOD[0], GOOD[1], "Walk into your week with more energy than last month. Click the link below and we'll be in touch!"], offer: OFFER, source: "drafted" }, { profile });
     assert.throws(() => pickScripts(g, { count: 3, offer: OFFER, libraryDir: L }), /3 presenter videos asked for, but only 2 scripts are kept for "12 Week Full Body Transformation": keep 1 more on Draft Scenes → Video scripts$/);
     // Scripts kept for other words, and a draft waiting for these.
     assert.deepEqual([noScriptWhy(g, "6 Week Reset", { libraryDir: L }).state, noScriptWhy(g, "6 Week Reset", { libraryDir: L }).text], ["other_offer", `the scripts kept there are for "${OFFER}": a script is written for one offer's exact words, so press Draft scripts… there for this one`]);
@@ -257,6 +265,7 @@ test("PV6 the owner's template for every gym (2026-11-12: share samples across g
     const T = "If you are in the {AREA} area, we have just launched our {CHALLENGE NAME} to help you feel healthy, strong, and confident again.\n\nHere's the catch. We're only taking on 10 people.";
     const row = addSample(L, T, { gym: "gym-a" });
     assert.deepEqual([row.from, existsSync(join(L, SAMPLES_FILE)), liveSamples(L).length], ["gym-a", true, 1]);
+    addPain(a.g, OFFER, PAIN, { profile: a.profile }); addPain(b.g, OFFER, PAIN, { profile: b.profile });
     const seen = []; await draftScripts({ brandDir: b.g, libraryDir: L, offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
     assert.match(seen[0], /--- SAMPLE 1\nIf you are in the \{AREA\} area, we have just launched our \{CHALLENGE NAME\}/);
     // A sample from before, in a gym's own file: it joins the library once, as it is; the gym's file is untouched.
@@ -264,7 +273,7 @@ test("PV6 the owner's template for every gym (2026-11-12: share samples across g
     writeFileSync(legacy, JSON.stringify(old));
     assert.deepEqual([adoptSamples(L, [a.g, b.g]), adoptSamples(L, [a.g, b.g]), readSamples(L).samples.map((x) => [x.id, x.from]), JSON.parse(readFileSync(legacy, "utf-8")).samples.length], [1, 0, [[row.id, "gym-a"], ["vs-old0000001", "testgym"]], 2]);
     // Two to seven lines.
-    const seven = [GOOD[0], GOOD[1], "The coaches start with a full body scan, so the plan is built on what is really there.", "Then the food side is sorted, with recipes, shopping lists and a guide for eating out.", "Only ten places are open, so every person gets real attention from a coach.", "If feeling strong and confident again is what you want, now is the time.", "Tap below to see if this is a fit for you."];
+    const seven = [GOOD[0], GOOD[1], "The coaches start with a full body scan, so the plan is built on what is really there.", "Then the food side is sorted, with recipes, shopping lists and a guide for eating out.", "Only ten places are open, so every person gets real attention from a coach.", "If feeling strong and confident again is what you want, now is the time.", "If that sounds like you, click the link below and we'll be in touch!"];
     assert.deepEqual([LINES, scriptProblems(seven, { offer: OFFER, profile: a.profile }), scriptProblems([...seven, "One line more than a script may have, to be refused."], { offer: OFFER, profile: a.profile }), SPOTS.length >= 7], [[2, 7], [], ["a script is 2 to 7 lines, one for each cut"], true]);
     assert.equal(addScript(a.g, { lines: seven, offer: OFFER }, { profile: a.profile }).lines.length, 7);
     assert.deepEqual([scriptCost({ lines: seven }, ["BISHAN"]).images, scriptCost({ lines: seven }, ["BISHAN"]).seconds > 50], [7, true], "seven cuts, about a minute");
@@ -281,13 +290,142 @@ test("PV6 the owner's template for every gym (2026-11-12: share samples across g
     await draftScripts({ brandDir: a.g, libraryDir: L, offer: OFFER, count: 1, ask: async (i, p) => { seen.push(p); return { scripts: [] }; } });
     const P = seen[1];
     assert.match(P, /A script is 3 to 7 lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better\./);
-    assert.match(P, /each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given \(an assessment, a number of places, how many people were helped\) is left out, never invented\. The last line tells them what to do and ends with "Tap below" and a few words/);
+    assert.match(P, /each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given \(an assessment, a number of places, how many people were helped\) is left out, never invented\. The last line ends with exactly this sentence, word for word; it is the ONLY call to action in the script: "Click the link below and we'll be in touch!"/);
     assert.match(P, /may be stated are these, in the owner's words: "A full body scan assessment at the start"; "Only 10 places"\. Say them as given, and nothing else about how the programme works\./);
     assert.match(P, /where a gym would say we, the script says "Test Gym", "the coaches" or "the team"\./);
     assert.ok(!/may be stated are these/.test(seen[0]), "the other gym gave no facts, so its drafter is given none");
     // No sample and no facts: the three-line script, as it was.
     const plain = buildScriptPrompt({ profile: a.profile, offer: OFFER }).prompt;
-    assert.match(plain, /A script is exactly 3 lines\./); assert.match(plain, /Line 3 says one more thing they will get from it and ends with exactly: "Tap below to find out more\."/);
+    assert.match(plain, /A script is exactly 3 lines\./); assert.match(plain, /Line 3 says, in a few words, one more thing they will get from it, and then closes\. The last line ends with exactly this sentence, word for word; it is the ONLY call to action in the script: "Click the link below and we'll be in touch!"/);
     setFacts(a.g, OFFER, [], { profile: a.profile }); assert.deepEqual([factsFor(a.g, OFFER), Object.keys(readScripts(a.g).facts)], [[], []], "an empty list clears it");
   } finally { rmSync(a.d, { recursive: true, force: true }); rmSync(b.d, { recursive: true, force: true }); }
+});
+
+test("PV7 a script opens on a pain point and ends on one closing line, and the place is never the whole country (2026-11-14, the owner on the first video from the panel: \"'Keep putting off getting back into shape' … is not a pain point\", \"Don't say 'tap below'. CTA is always 'click the link below and we'll be in touch!'\", \"We can't say the full of Singapore no matter what\"): the closing line is one sentence for every gym, the last words of every script and the one place it says we; 'tap below' and the country's name are refused; a script kept before the rule needs one edit and is not filmed until then; pain points are the owner's per offer — typed and kept at once, or suggested from the gym's best adverts and the library and kept by him, never a judgement of the person; the agent proposes — with none kept it works them out itself from the gym's best adverts and the library — and every draft says the one it opens on", async () => {
+  const { CLOSING_LINE, closingLine, closingProblems, setClosing, endsWithClosing, scriptIssues, readyScripts, noScriptWhy, pickScripts, painProblems, decidePain, painsFor, readPains, painSources, buildPainsPrompt, suggestPains, PAIN_LIMITS } = await import("./presenter-video.mjs");
+  const { isWholeCountry } = await import("./render-composites.mjs");
+  const { d, g, profile, room } = gym(), L = join(d, "lib"), C = CLOSING_LINE;
+  try {
+    // The closing line.
+    assert.deepEqual([C, closingLine(L), closingProblems(C)], ["Click the link below and we'll be in touch!", C, []]);
+    assert.deepEqual(["Click the link below and we'll be in touch!", "If that sounds like you, click the link below and we’ll be in touch.", "click the link below, and we'll be in touch", "Click the link below and we will be in touch!", "Click the link below and we'll be in touch today!", "Unclick the link below and we'll be in touch!"].map((l) => endsWithClosing(l, C)), [true, true, true, false, false, false], "word for word; case, spacing and punctuation aside");
+    const probs = (lines) => scriptProblems(lines, { offer: OFFER, profile, closing: C });
+    assert.deepEqual(probs(GOOD), []);
+    assert.deepEqual(probs([GOOD[0], GOOD[1], "You train in small groups, with people just like you. Tap below to see if this fits."]), ['line 3 says "Tap below": the only call to action is the closing line', `the last line ends with the closing line, word for word: "${C}"`]);
+    assert.deepEqual(probs([GOOD[0], GOOD[1], "We will look after you from the first day. Click the link below and we'll be in touch!"]), ['line 3 speaks as the gym or a member ("We"): the presenter is nobody in particular, so no I, we, our, my or us'], "the closing line is the one place a script says we");
+    assert.deepEqual(probs(["If you live in Singapore and your work clothes have been fitting tighter lately, keep watching.", GOOD[1], GOOD[2]]), ['line 1 names the whole country ("Singapore"): the place is only ever {AREA}, the area around the gym']);
+    assert.deepEqual(scriptProblems([GOOD[0], "Singapore Strength Club's 12 Week Full Body Transformation is built for exactly that, with a coach beside you.", GOOD[2]], { offer: OFFER, profile: { ...profile, display_name: "Singapore Strength Club" }, closing: C }), [], "the gym's own name may carry the word");
+    // His to change, for every gym: the scripts kept with the old one then need an edit, and are not filmed until they have it.
+    const mine = addScript(g, { lines: GOOD, offer: OFFER }, { profile, closing: C });
+    assert.throws(() => setClosing(L, "Tap below now"), /4 to 14 words/); assert.throws(() => setClosing(L, "Tap the button below and the team will call you"), /does not say "tap"/);
+    assert.equal(setClosing(L, "Click the link below and the team will be in touch."), "Click the link below and the team will be in touch."); const C2 = closingLine(L);
+    assert.deepEqual([C2, scriptIssues(mine, { profile, closing: C2 }), readyScripts(g, OFFER, { profile, closing: C2 }).length, readyScripts(g, OFFER, { profile, closing: C }).length], ["Click the link below and the team will be in touch.", ['line 3 speaks as the gym or a member ("we"): the presenter is nobody in particular, so no I, we, our, my or us', `the last line ends with the closing line, word for word: "${C2}"`], 0, 1], "the old closing's we is no longer the closing line's");
+    assert.deepEqual([noScriptWhy(g, OFFER, { libraryDir: L, profile }).state, noScriptWhy(g, OFFER, { libraryDir: L, profile }).text], ["needs_edit", `the script kept for this offer needs an edit first — the last line ends with the closing line, word for word: "${C2}": press Edit… there`]);
+    assert.throws(() => pickScripts(g, { count: 1, offer: OFFER, libraryDir: L }), /^Error: 1 presenter video asked for, but no script is ready for "12 Week Full Body Transformation": the script kept for this offer needs an edit first — the last line ends with the closing line, word for word: "Click the link below and the team will be in touch\.": press Edit… there \(Draft Scenes → Video scripts\)$/);
+    await assert.rejects(makePresenterVideos({ gymDir: g, outDir: join(g, "o"), script: mine, areas: ["BISHAN"], offer: OFFER, room, profile, closing: C2, models: fakes().models }), /this script cannot be made: .*the last line ends with the closing line/);
+    decideScript(g, mine.id, { status: "draft" }, { profile, closing: C2 });
+    assert.throws(() => decideScript(g, mine.id, { status: "kept" }, { profile, closing: C2 }), /^Error: edit it first: .*the last line ends with the closing line/, "a draft that breaks today's rules is not kept as it is");
+    const fixed = decideScript(g, mine.id, { status: "kept", lines: [GOOD[0], GOOD[1], "You train with people just like you. Click the link below and the team will be in touch."] }, { profile, closing: C2 }); assert.equal(fixed.status, "kept");
+    assert.equal(pickScripts(g, { count: 1, offer: OFFER, libraryDir: L })[0].id, mine.id);
+    // The place is never the whole country: a location, an area passed to the maker.
+    assert.deepEqual(["SINGAPORE", "Singapore", "SG", "ALL OF SINGAPORE", "ISLANDWIDE", "新加坡", "TAIWAN", "台灣", "SINGAPORE NORTH EAST", "BOAT QUAY", "CBD", "信義區"].map(isWholeCountry), [true, true, true, true, true, true, true, true, false, false, false, false]);
+    await assert.rejects(makePresenterVideos({ gymDir: g, outDir: join(g, "o"), script: fixed, areas: ["SINGAPORE"], offer: OFFER, room, profile, closing: C2, models: fakes().models }), /"SINGAPORE" is the whole country: a video says the area around the gym, never the country/);
+    // Pain points: the owner's own is kept at once; never a judgement of the person; the ad rules; never twice; retired with a reason.
+    assert.deepEqual([painProblems(PAIN, profile), painProblems("you feel fat and ashamed in fitted clothes", profile).length, /judges the person/.test(painProblems("being overweight", profile).join()), painProblems("short", profile).length, /weight-loss number/.test(painProblems("you want to lose 5kg before the holidays", profile).join())], [[], 1, true, 1, true]);
+    assert.deepEqual(painsFor(g, OFFER), []);
+    const p1 = addPain(g, OFFER, `  ${PAIN}. `, { profile });
+    assert.deepEqual([p1.text, p1.status, p1.source, /^p-[0-9a-f]{10}$/.test(p1.id), painsFor(g, OFFER.toUpperCase()), painsFor(g, "6 Week Reset")], [PAIN, "kept", "owner", true, [PAIN], []], "by the offer's words, case aside");
+    assert.throws(() => addPain(g, OFFER, PAIN.toUpperCase(), { profile }), /already here/);
+    // Suggested from the gym's best adverts and the library's pain-led ones: drafts until he keeps them.
+    writeFileSync(join(g, "copy-references.json"), JSON.stringify({ refs: [{ id: "a", message: "If you've been avoiding fitted clothes or hiding behind the blazer lately, you are not alone.", results: { leads: 74 } }, { id: "b", message: "Four classes for a small price, limited time only, message us now to grab it.", results: { leads: 80 } }, { id: "c", message: "An old one that was retired by the owner some time ago, kept on file.", results: { leads: 500 }, retired: "2026-01-01" }] }));
+    mkdirSync(L, { recursive: true }); writeFileSync(join(L, "copy-library.json"), JSON.stringify({ entries: [{ id: "l1", kind: "copy", angle: "pain", text: "Losing strength does not happen overnight. It happens little by little." }, { id: "l2", kind: "copy", angle: "call-out", text: "Ladies of {AREA}, this one is for you." }, { id: "l3", kind: "headline", angle: "pain", text: "Tired of starting over?" }] }));
+    assert.deepEqual([painSources(g, L).ads.map((x) => x.leads), painSources(g, L).library.length], [[80, 74], 1], "the adverts with the most leads, no retired one; the library's pain-led copies only");
+    const asked = []; const sug = await suggestPains({ brandDir: g, libraryDir: L, offer: OFFER, audience: "busy professionals", count: 4, ask: async (i, p, schema) => { asked.push({ p, schema }); return { pains: [{ text: "you have been avoiding fitted clothes", from: "this gym's adverts" }, { text: "everyday things feel harder than they used to", from: "the library" }, { text: "being overweight and unhappy about it", from: "the audience" }, { text: PAIN, from: "the audience" }] }; } });
+    assert.deepEqual([sug.added.map((x) => [x.text, x.status, x.source, x.from]), sug.dropped.map((x) => /judges the person|already here/.test(x.reason)), sug.calls, sug.sources], [[["you have been avoiding fitted clothes", "draft", "suggested", "this gym's adverts"], ["everyday things feel harder than they used to", "draft", "suggested", "the library"]], [true, true], 1, { ads: 2, library: 1 }]);
+    assert.match(asked[0].p, /Say what HAPPENS to the person, never what they ARE/); assert.match(asked[0].p, /--- ADVERT 1 \(80 leads\)\nFour classes/); assert.match(asked[0].p, /--- LIBRARY 1\nLosing strength/); assert.match(asked[0].p, /It is for: busy professionals\./); assert.match(asked[0].p, new RegExp(`Already on the list — do not repeat or closely rephrase:\\n- ${PAIN}`));
+    assert.deepEqual(painsFor(g, OFFER), [PAIN], "a suggestion is not used until it is kept");
+    const s1 = sug.added[0], s2 = sug.added[1];
+    assert.equal(decidePain(g, OFFER, s1.id, { status: "kept" }, { profile }).status, "kept");
+    assert.throws(() => decidePain(g, OFFER, s2.id, { text: "you are fat" }, { profile }), /judges the person/); assert.throws(() => decidePain(g, OFFER, s2.id, { status: "retired" }, { profile }), /needs a reason/);
+    assert.deepEqual([decidePain(g, OFFER, s2.id, { status: "retired", reason: "not what clients say" }, { profile }).status, painsFor(g, OFFER), readPains(g)[0].items.length, PAIN_LIMITS.kept], ["retired", [PAIN, "you have been avoiding fitted clothes"], 3, 8], "retired, never deleted");
+    assert.match(buildPainsPrompt({ profile, offer: OFFER }).prompt, /"getting back into shape", "wanting to be healthier", "putting off fitness" are NOT pain points/);
+    // The drafter — the agent proposes (the owner, the same day: "the agent proposes the scripts for me to review and edit (if necessary), not I tell the agent what to say"): with no pain point kept it is still drafted — the agent works the pain points out from the gym's best adverts and the library's pain-led ones — and every draft says the one it opens on, held to the pain points' own rules.
+    const g2 = gym(); writeFileSync(join(g2.g, "copy-references.json"), readFileSync(join(g, "copy-references.json")));
+    const opening = "If you live in {AREA} and you have been avoiding fitted clothes lately, this one is for you.", CL = "If that sounds like you, click the link below and the team will be in touch.";
+    const seen2 = [], d2 = await draftScripts({ brandDir: g2.g, libraryDir: L, offer: OFFER, count: 3, ask: async (i2, p, schema) => { seen2.push({ p, schema }); return { scripts: [
+      { pain: "avoiding fitted clothes lately.", lines: [opening, GOOD[1], CL] },
+      { pain: "being overweight", lines: [opening.replace("this one is for you", "keep watching"), GOOD[1], CL] },
+      { pain: "", lines: [opening.replace("this one is for you", "stay with this"), GOOD[1], CL] }] }; } });
+    assert.deepEqual([d2.added.map((x) => [x.status, x.source, x.pain]), d2.dropped.map((x) => x.reason.slice(0, 60)), d2.calls, d2.sources], [[["draft", "drafted", "avoiding fitted clothes lately"]], ['the pain point it opens on ("being overweight"): "overweight', "it does not say which pain point it opens on"], 1, { pains: 0, ads: 2, library: 1 }]);
+    assert.match(seen2[0].p, /PAIN POINTS\. A pain point is something that HAPPENS to this person[^\n]*"getting back into shape", "putting off fitness", "starting a fitness journey" are NOT pain points\. Work them out yourself before you write: who this advert is for, and what they are living with, drawing on the adverts below\./);
+    assert.match(seen2[0].p, /--- ADVERT 1 \(80 leads\)\nFour classes/); assert.match(seen2[0].p, /--- LIBRARY 1\nLosing strength/); assert.ok(!/The owner's own list comes first/.test(seen2[0].p));
+    rmSync(g2.d, { recursive: true, force: true });
+    // His own kept pain points come first; the closing line follows a few words, never a line on its own; the rules are checked on every draft.
+    const seen = [], dr = await draftScripts({ brandDir: g, libraryDir: L, offer: OFFER, count: 4, ask: async (i2, p, schema) => { seen.push({ p, schema }); return { scripts: [
+      { pain: "you have been avoiding fitted clothes", lines: [opening, GOOD[1], "Feel at ease in your own clothes again. Click the link below and the team will be in touch."] },
+      { pain: PAIN, lines: [opening.replace("this one is for you", "stay with this"), GOOD[1], "Feel at ease in your own clothes again. Tap below to find out more today."] },
+      { pain: PAIN, lines: ["If you live in Singapore and your work clothes have been fitting tighter lately, this is for you.", GOOD[1], "Feel stronger for the day ahead. Click the link below and the team will be in touch."] }] }; } });
+    assert.deepEqual([dr.added.map((x) => [x.status, x.pain]), dr.dropped.map((x) => x.reason.slice(0, 44))], [[["draft", "you have been avoiding fitted clothes"]], ['line 3 says "Tap below": the only call to ac', 'line 1 names the whole country ("Singapore")']]);
+    const P = seen[0].p;
+    assert.match(P, /Line 1 says where — the place written as \{AREA\} \(it is filled in for each location\) — and opens on ONE pain point: what this person is living with and wants gone/);
+    assert.match(P, new RegExp(`The owner's own list comes first — open on these, close to his words, one for each script; for the scripts beyond the list, work out further ones yourself the same way:\\n1\\. ${PAIN}\\n2\\. you have been avoiding fitted clothes(\\n|$)`));
+    assert.match(P, /it is the ONLY call to action in the script: "Click the link below and the team will be in touch\." It follows a few words in the same line \("If that sounds like you, click the link below and the team will be in touch\."\): it is never a line on its own\. Never write "tap", never name a button/);
+    assert.match(P, /The closing sentence is the one exception: it is said word for word as given\./); assert.match(P, /The place is only ever \{AREA\}, the area around the gym: the script never names the country/);
+    assert.match(P, /Write 4 scripts, each opening on a different pain point, and say for each the pain point it opens on \(pain: a short phrase/);
+    assert.deepEqual(seen[0].schema.properties.scripts.items.required, ["pain", "lines"]);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("PV8 Google may refuse a clip (2026-11-14: Aether Athletics' closing line, filmed as a clip of its own, came back \"Request blocked due to prohibited content guidelines\" and the run died on the raw JSON; tested: the bare sentence is refused on any picture and passes after a few words in the same clip): the closing line is never a clip of its own — where it is a script's whole last line it is filmed with the line before it, as one cut, the words unchanged; a refusal is a failed take, not a crash — asked once more, then on a fresh picture of the presenter, then that video is refused in words with what to do, its seconds never counted; and every Google error has a plain sentence", { skip: !hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+  const { filmedLines, closingAlone, CLOSING_LINE, JOINED_WORDS } = await import("./presenter-video.mjs");
+  const { isRefusal, explainGemini, plainGemini, isBusy } = await import("./gemini-busy.mjs");
+  const { d, g, profile, room } = gym(), C = CLOSING_LINE;
+  const REFUSED = () => new Error('video line.mp4 failed (400): {"error":{"message":"Request blocked due to prohibited content guidelines. Please modify your input and retry.","code":"prohibited_content"}}');
+  try {
+    // The closing line alone is filmed with the line before it: one cut, one picture and one clip fewer.
+    const ALONE = [GOOD[0], GOOD[1], "You will feel stronger and your clothes will fit better.", C];
+    assert.deepEqual([closingAlone(C, C), closingAlone("click the link below and we’ll be in touch", C), closingAlone(GOOD[2], C), filmedLines(GOOD, C), filmedLines(ALONE, C)], [true, true, false, GOOD, [GOOD[0], GOOD[1], `You will feel stronger and your clothes will fit better. ${C}`]]);
+    assert.deepEqual(scriptProblems(ALONE, { offer: OFFER, profile, closing: C }), []);
+    const longLine = "You will feel stronger, sleep better, move more easily, have more energy for your whole day and feel at ease in every single piece of clothing.";
+    // With the standing closing line the two always fit one cut; a longer closing of his own may not, and that is said.
+    const C12 = "Click the link below and the whole team will be in touch soon.";
+    assert.deepEqual([scriptProblems([GOOD[0], GOOD[1], longLine, C], { offer: OFFER, profile, closing: C }), scriptProblems([GOOD[0], GOOD[1], longLine, C12], { offer: OFFER, profile, closing: C12 }), JOINED_WORDS], [[], ["line 3 and the closing line are filmed as one cut (the closing line cannot be a clip of its own) and together they are 39 words: at most 36, so shorten line 3"], 36]);
+    const cost = scriptCost({ lines: ALONE }, ["BISHAN"], { closing: C });
+    assert.deepEqual([cost.clips.length, cost.images, cost.clips[2].line, cost.clips[2].seconds], [3, 3, `${ALONE[2]} ${C}`, clipSeconds(`${ALONE[2]} ${C}`)]);
+    const script = addScript(g, { lines: ALONE, offer: OFFER }, { profile, closing: C }), log = [];
+    const F = fakes(), R = await makePresenterVideos({ gymDir: g, outDir: join(g, "o1"), script, areas: ["BISHAN"], offer: OFFER, room, profile, closing: C, caps: { seconds: 80, images: 5 }, takes: 1, models: F.models, log: (m) => log.push(m) });
+    assert.deepEqual([R.videos[0].failed, F.calls.image.length, F.calls.clip.map((c) => plain(c.out)), R.videos[0].words[2], R.spent.images], [undefined, 3, ["line-1-bishan.mp4", "line-2.mp4", "line-3.mp4"], `${ALONE[2]} ${C}`, 3]);
+    assert.ok(F.calls.clip[2].prompt.includes(`"${ALONE[2]} ${C}"`) && log.includes("the closing line is filmed with line 3 as one cut: Google's video model refuses it as a clip of its own"), log.join("\n"));
+    // A refusal: what counts as one, and what it is in plain words.
+    assert.deepEqual([isRefusal(REFUSED()), isRefusal(new Error("Blocked by safety filter: PROHIBITED_CONTENT")), isRefusal(Object.assign(new Error("no video came back for x.mp4"), { refused: true })), isRefusal(new Error("vision check failed (503): overloaded")), isBusy(REFUSED())], [true, true, true, false, false]);
+    assert.deepEqual([explainGemini(REFUSED()).kind, explainGemini(new Error("GEMINI_KEY not found (.env or environment)")).kind, explainGemini(new Error('Gemini API error (429): {"error":{"status":"RESOURCE_EXHAUSTED"}}')).kind, explainGemini(new Error("vision check failed (403): PERMISSION_DENIED")).kind, explainGemini(new Error("Gemini API error (404): models/x is not found for API version v1beta")).kind, explainGemini(new Error("vision check failed (503): The model is overloaded")).kind, explainGemini(new Error("fetch failed")).kind, explainGemini(Object.assign(new Error("x"), { name: "TimeoutError" })).kind, explainGemini(new Error("no approved scenes yet"))], ["refused", "key", "quota", "access", "model", "busy", "network", "timeout", null]);
+    assert.equal(plainGemini(REFUSED()), "Google's model refused this request under its content rules. Nothing else is lost: run again to try it once more, and if it is refused again change the words or the picture it was asked for. (Google said: Request blocked due to prohibited content guidelines. Please modify your input and retry.)");
+    assert.equal(plainGemini(new Error("no approved scenes yet")), "no approved scenes yet", "anything else is said as it is");
+    // Refused once (a misfire): asked once more, and it is made. Nothing is counted for the refused request, and it is no take.
+    const s2 = addScript(g, { lines: [GOOD[0].replace("keep watching", "stay with this"), GOOD[1], GOOD[2]], offer: OFFER }, { profile, closing: C });
+    const base = { gymDir: g, script: s2, areas: ["BISHAN"], offer: OFFER, room, profile, closing: C, caps: { seconds: 80, images: 6 }, takes: 1 };
+    let n = 0; const A = fakes(), clipA = A.models.clip; A.models.clip = async (x) => { if (/built for exactly that/.test(x.prompt) && n++ === 0) throw REFUSED(); return clipA(x); };
+    const logA = [], ra = await makePresenterVideos({ ...base, outDir: join(g, "o2"), models: A.models, log: (m) => logA.push(m) });
+    assert.deepEqual([ra.videos[0].failed, A.calls.clip.length, A.calls.image.length, ra.spent.seconds, ra.videos[0].lines[1].takes], [undefined, 3, 3, S(s2.lines[0], "BISHAN") + S2 + S3, 1]);
+    assert.ok(logA.some((l) => /line-2-[0-9a-f]{6}\.mp4: refused by Google's video model under its content rules — asked once more$/.test(l)), logA.join("\n"));
+    // Refused twice on its picture: a fresh picture of the presenter is made for that line, and it is filmed on that one; a later run goes straight to it.
+    const B = fakes(), clipB = B.models.clip; B.models.clip = async (x) => { if (/built for exactly that/.test(x.prompt) && !/-b\.jpg$/.test(x.image)) throw REFUSED(); return clipB(x); };
+    const logB = [], rb = await makePresenterVideos({ ...base, outDir: join(g, "o3"), models: B.models, log: (m) => logB.push(m) });
+    assert.deepEqual([rb.videos[0].failed, B.calls.image.length, plain(B.calls.image[3].out), B.calls.image[3].refs.map(plain), B.calls.clip.map((c) => plain(c.image)), rb.spent.images, rb.spent.seconds], [undefined, 4, "still-2-b.jpg", ["still-1.jpg", "room.png"], ["still-1.jpg", "still-2-b.jpg", "still-3.jpg"], 4, S(s2.lines[0], "BISHAN") + S2 + S3]);
+    assert.ok(logB.includes("  a fresh picture of the presenter for line 2"), logB.join("\n"));
+    const B2 = fakes(), clipB2 = B2.models.clip; let asked = 0; B2.models.clip = async (x) => { asked++; return clipB2(x); };
+    const rb2 = await makePresenterVideos({ ...base, outDir: join(g, "o3"), models: B2.models });
+    assert.deepEqual([rb2.videos[0].failed, asked, B2.calls.image.length, rb2.spent], [undefined, 0, 0, { seconds: 0, images: 0, checks: 0 }], "again: the clip on the second picture is found, nothing is asked for");
+    // Refused every time: that video is refused in words, with what to do; the other lines are made and kept; nothing is thrown; the refused seconds are not counted.
+    const Cc = fakes(), clipC = Cc.models.clip; let tries = 0; Cc.models.clip = async (x) => { if (/built for exactly that/.test(x.prompt)) { tries++; throw REFUSED(); } return clipC(x); };
+    const rc = await makePresenterVideos({ ...base, outDir: join(g, "o4"), models: Cc.models });
+    assert.deepEqual([rc.videos[0].failed, rc.videos[0].refused, tries, Cc.calls.clip.length, rc.spent.seconds, rc.videos[0].file], ["line 2: refused by Google's video model under its content rules, 3 times and on two pictures of the presenter. Nothing else is lost: Run again tries only this cut; if it is refused again, change its words", true, 3, 2, S(s2.lines[0], "BISHAN") + S3, undefined]);
+    // Any other fault from Google still stops the run as it did (it is not a refusal to work around).
+    const Dd = fakes(); Dd.models.clip = async () => { throw new Error('video x.mp4 failed (400): {"error":{"message":"Invalid duration"}}'); };
+    await assert.rejects(makePresenterVideos({ ...base, outDir: join(g, "o5"), models: Dd.models }), /Invalid duration/);
+    // The presenter's picture refused twice: nothing is filmed, and that is said.
+    const E = fakes(); E.models.image = async () => { throw new Error("Blocked by safety filter: PROHIBITED_CONTENT"); };
+    const re = await makePresenterVideos({ ...base, outDir: join(g, "o6"), models: E.models });
+    assert.deepEqual([re.videos[0].failed, E.calls.clip.length], ["Google's image model refused the presenter's picture for line 1 twice, under its content rules. Nothing else is lost: Run again asks once more; if it is refused again, change the presenter's look on Ad defaults", 0]);
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });

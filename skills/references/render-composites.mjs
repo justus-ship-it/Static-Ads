@@ -54,6 +54,21 @@ const DIVIDER_CONTRAST = 3; // a divider is a mark, not text: WCAG's non-text co
 /** Does the text carry a Chinese, Japanese or Korean character (ideographs, kana, hangul, CJK punctuation, full-width forms)? */
 export const hasCJK = (s) => /[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(String(s ?? ""));
 
+/**
+ * A location that names the whole country (the owner's rule, 2026-11-14: "We can't say the full of Singapore no matter
+ * what" — a gym's advert speaks to the people around it, and Aether Athletics' first video said "If you live in
+ * Singapore"). The country by any of its names, alone or after "all of", "whole of", "across" and the like, and the
+ * words that mean it (islandwide, nationwide). "SINGAPORE NORTH EAST" is an area and passes.
+ */
+const COUNTRY_NAMES = ["singapore", "s'pore", "spore", "sg", "sgp", "新加坡", "taiwan", "台灣", "臺灣", "台湾", "全台", "全台灣", "全臺", "全國", "全島", "malaysia", "馬來西亞"];
+const COUNTRY_WIDE = /^(?:island[ -]?wide|nation[ -]?wide|country[ -]?wide|everywhere|anywhere)$/;
+export function isWholeCountry(text) {
+  const t = String(text ?? "").toLowerCase().replace(/[’‘]/g, "'").replace(/[.,!]+/g, " ").replace(/\s+/g, " ").trim()
+    .replace(/^(?:the )?(?:whole|all|rest|entire) (?:of )?/, "").replace(/^(?:across|around|all over|anywhere in|everywhere in) /, "").replace(/^the /, "").replace(/ (?:island|wide|islandwide|nationwide)$/, "").trim();
+  return !!t && (COUNTRY_NAMES.includes(t) || COUNTRY_WIDE.test(t));
+}
+export const WHOLE_COUNTRY_WHY = "names the whole country: an ad says the area around the gym (BOAT QUAY, BISHAN), never the country";
+
 export function validateInputs({ location, audience, offer }) {
   const errors = [];
   const check = (label, v, required) => {
@@ -65,6 +80,7 @@ export function validateInputs({ location, audience, offer }) {
     if (v.length > LIMITS[label]) errors.push(`${label} is ${v.length} characters; the limit is ${LIMITS[label]}`);
   };
   check("location", location, true);
+  if (typeof location === "string" && isWholeCountry(location)) errors.push(`location ${WHOLE_COUNTRY_WHY}`);
   check("audience", audience, false);
   check("offer", offer, true);
   return errors;

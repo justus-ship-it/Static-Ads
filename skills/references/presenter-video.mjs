@@ -16,15 +16,29 @@
  *     result promised, the gym's never-list), it names the offer in its exact words, and `{AREA}` stands where the
  *     location is said, so one script serves every location of a batch.
  *   · TWO LAYERS, as for the stills. The model makes footage with no words in it; software sets every word on screen
- *     (captions a few words at a time, the area and offer at the end), inside Meta's 9:16 live area.
+ *     (captions a few words at a time, the word being said in a warm yellow), inside Meta's 9:16 live area.
  *   · EVERY SPOKEN LINE IS CHECKED. One call watches each clip: the words said must be the line's words, in order
  *     (a number may be said or written: "12 week" is "twelve week"); exactly one person is in it (the model walks
  *     people into empty space); no lettering appears. A clip that fails is made again (`takes`), then the video is
  *     refused and the reason said. The check's "looks real" score is NOT a gate — it scored a clip with an extra
  *     person 10 of 10 in the test — its faults are shown to the owner, whose pick is the final check.
- *   · THE END CARD IS A PLAIN CARD (the area, the audience, the offer on a dark ground for 2.2 seconds): a line of
- *     words never lies across a face, and the first real video's end card, laid over the last frame, put the offer
- *     across the presenter's forehead.
+ *   · NO END CARD (the owner, 2026-11-14: "Don't need the black screen … at the end"): the video ends on the
+ *     presenter's last word, held a moment (`END_HOLD`). The offer and the area are said, and so shown in the captions.
+ *   · A SCRIPT OPENS ON A PAIN POINT AND ENDS ON ONE CLOSING LINE (the owner, 2026-11-14: "'Keep putting off getting
+ *     back into shape' … is not a pain point. We need to speak to the client's pain point"; "Don't say 'tap below'.
+ *     CTA is always 'click the link below and we'll be in touch!'"). The pain points are the owner's, per gym and per
+ *     offer when he gives some (typed, or suggested and kept); otherwise THE AGENT WORKS THEM OUT ITSELF from the gym's
+ *     own best adverts and the copy library's pain-led ones, and every draft says the one it opens on. The agent
+ *     proposes the scripts and he reviews and edits them — he is never asked what to say first (his word, the same day). The closing line is one sentence for every gym
+ *     (`closingLine`), the last words of every script, and the one place a script may say "we".
+ *   · GOOGLE MAY REFUSE A CLIP (2026-11-14: the closing line, asked for as a clip of its own, was refused under its
+ *     content rules — twice more in a test, on two pictures — and passed with a few words before it in the same clip).
+ *     So (1) THE CLOSING LINE IS NEVER A CLIP OF ITS OWN: where it is a script's whole last line it is filmed with the
+ *     line before it, as one cut (`filmedLines`) — the words stay exactly as they are; (2) A REFUSAL IS A FAILED
+ *     TAKE, NOT A CRASH: the clip is asked for once more, then on a fresh picture of the presenter, and only then is
+ *     that video refused, in words; a refused request made nothing, so its seconds are not counted.
+ *   · THE PLACE IS ONLY EVER {AREA}, and never the whole country (the owner, 2026-11-14: "We can't say the full of
+ *     Singapore no matter what").
  *   · A CLIP WITH A NOTED FAULT IS MADE ONCE MORE while takes are left (warped fingers, a hand that moves wrongly),
  *     and the cleaner take is kept: a fault is no refusal, but the owner's bar is that borderline-real fails.
  *   · EACH CLIP IS CUT TO ITS SPEECH, AND THE CAPTIONS FOLLOW THE VOICE (the owner on the first real video: "subtitles
@@ -49,10 +63,10 @@ import { parseArgs } from "util";
 import { fileURLToPath } from "url";
 import { execFileSync, spawnSync } from "child_process";
 import { loadGeminiKey, generateImage } from "./generate_ads_gemini.mjs";
-import { whenGeminiFree } from "./gemini-busy.mjs";
+import { whenGeminiFree, isRefusal } from "./gemini-busy.mjs";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
 import { imageModelFor, countryRules, profileCountry, titleCase, PRESENTER_GENDERS, presenterProblems } from "./client-config.mjs";
-import { launchBrowser, splitOffer } from "./render-composites.mjs";
+import { launchBrowser, isWholeCountry } from "./render-composites.mjs";
 import { onAdProblems } from "./cards.mjs";
 import { COPY_MODEL, plainDashes } from "./draft-copy.mjs";
 
@@ -61,7 +75,7 @@ const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 export const OMNI = "gemini-omni-1.2-flash", INTERACTIONS = "https://generativelanguage.googleapis.com/v1beta/interactions";
 export const SCRIPTS_FILE = "video-scripts.json";
 /** A script is 2 to 4 lines; a line is one breath (6 to 26 words) and becomes one clip of 5 to 12 seconds. */
-export const LINES = [2, 7], LINE_WORDS = [6, 26], CLIP_SECONDS = [5, 12], WORDS_PER_SECOND = 2.8, END_CARD_SECONDS = 2.2;
+export const LINES = [2, 7], LINE_WORDS = [6, 26], CLIP_SECONDS = [5, 15], WORDS_PER_SECOND = 2.8;
 /** What a second of 720p video costs (Google's pricing page, 2026-11-12) and an image call, for the estimate shown before a run. */
 export const USD_PER_SECOND = 0.07, USD_PER_IMAGE = 0.15;
 /** A presenter who is nobody in particular never speaks as the gym or as a member. */
@@ -123,50 +137,94 @@ export function presenterWords(p, profile = {}) {
 }
 
 // ── scripts: the owner's words, kept before anything is made ─────────────────
-/** What is wrong with a script's lines, in words; empty when it may be made. `offer`: the exact words it must name. */
-export function scriptProblems(lines, { offer = null, profile = {} } = {}) {
+/**
+ * The closing line (2026-11-14, the owner: "Don't say 'tap below'. CTA is always 'click the link below and we'll be in
+ * touch!'"): the last words of every script, word for word, for every gym — kept in the shared library beside the
+ * samples (`closing`), this sentence until he changes it. It is the one place a script says "we": the presenter is
+ * nobody in particular everywhere else.
+ */
+export const CLOSING_LINE = "Click the link below and we'll be in touch!", CLOSING_WORDS = [4, 14];
+const apos = (x) => String(x ?? "").replace(/[’‘]/g, "'");
+const closingRe = (closing) => new RegExp("(?<![A-Za-z0-9'])" + apos(closing).split(/\s+/).map((w) => w.replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, "")).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^A-Za-z0-9']+") + "[^A-Za-z0-9']*$", "i");
+/** Does a line end with the closing line? Case, spacing and punctuation aside; every word must be there, in order. */
+export const endsWithClosing = (line, closing = CLOSING_LINE) => closingRe(closing).test(apos(line).trim());
+const withoutClosing = (line, closing) => apos(line).trim().replace(closingRe(closing), "");
+/** Another call to action than the closing line: "tap below", "tap the button". */
+const TAP = /\btap (?:below|the|on|here|now|this|that)\b/i;
+/** The country's own names, for a line that says the whole country as the place. */
+const COUNTRY_WORDS = { SG: ["Singapore", "新加坡"], TW: ["Taiwan", "台灣", "臺灣"], MY: ["Malaysia"] };
+function countryNamed(line, { profile = {}, offer = null } = {}) {
+  let t = String(line);
+  for (const own of [profile.display_name, offer].filter(Boolean)) t = t.split(new RegExp(String(own).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")).join(" ");
+  return (COUNTRY_WORDS[profileCountry(profile)] || []).find((w) => (/^[A-Za-z]/.test(w) ? new RegExp(`\\b${w}\\b`, "i").test(t) : t.includes(w))) || null;
+}
+/**
+ * The closing line as a script's whole last line. Google's video model refuses that sentence as a clip of its own
+ * (2026-11-14, three times on two pictures) and films it after a few words in the same clip, so it is filmed with the
+ * line before it: one cut for the two. `filmedLines` is the script as it is filmed — the words unchanged.
+ */
+export const closingAlone = (line, closing = CLOSING_LINE) => endsWithClosing(line, closing) && !/[A-Za-z0-9]/.test(withoutClosing(line, closing));
+export const JOINED_WORDS = 36;
+export function filmedLines(lines, closing = closingLine()) {
+  const ls = (lines || []).map(norm), n = ls.length;
+  return n >= 2 && closingAlone(ls[n - 1], closing) ? [...ls.slice(0, n - 2), `${ls[n - 2]} ${ls[n - 1]}`] : ls;
+}
+/** What is wrong with a script's lines, in words; empty when it may be made. `offer`: the exact words it must name; `closing`: the sentence it must end on. */
+export function scriptProblems(lines, { offer = null, profile = {}, closing = closingLine() } = {}) {
   const errs = [];
   if (!Array.isArray(lines) || lines.length < LINES[0] || lines.length > LINES[1]) return [`a script is ${LINES[0]} to ${LINES[1]} lines, one for each cut`];
-  const ls = lines.map(norm);
+  const ls = lines.map(norm), last = ls.length - 1;
   ls.forEach((l, i) => {
     const n = wordCount(fillLine(l, "Ang Mo Kio"));
     if (n < LINE_WORDS[0] || n > LINE_WORDS[1]) errs.push(`line ${i + 1} is ${n} words: a line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words`);
     const odd = (l.match(/\{[^}]*\}/g) || []).filter((x) => x !== "{AREA}"); if (odd.length) errs.push(`line ${i + 1}: only {AREA} may stand in for a word (found ${odd.join(", ")})`);
-    if (FIRST_PERSON.test(l.replace(/\{AREA\}/g, ""))) errs.push(`line ${i + 1} speaks as the gym or a member ("${l.match(FIRST_PERSON)[0]}"): the presenter is nobody in particular, so no I, we, our, my or us`);
+    // The closing line is the owner's own sentence and the one place "we" is said.
+    const own = (i === last ? withoutClosing(l, closing) : l).replace(/\{AREA\}/g, "");
+    if (FIRST_PERSON.test(own)) errs.push(`line ${i + 1} speaks as the gym or a member ("${own.match(FIRST_PERSON)[0]}"): the presenter is nobody in particular, so no I, we, our, my or us`);
+    if (TAP.test(l)) errs.push(`line ${i + 1} says "${l.match(TAP)[0]}": the only call to action is the closing line`);
+    const country = countryNamed(l, { profile, offer }); if (country) errs.push(`line ${i + 1} names the whole country ("${country}"): the place is only ever {AREA}, the area around the gym`);
     if (/[\n\r]/.test(String(lines[i]))) errs.push(`line ${i + 1} is two lines: one line is one cut`);
   });
+  if (!endsWithClosing(ls[last], closing)) errs.push(`the last line ends with the closing line, word for word: "${closing}"`);
+  else if (closingAlone(ls[last], closing) && wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio")) > JOINED_WORDS) errs.push(`line ${last} and the closing line are filmed as one cut (the closing line cannot be a clip of its own) and together they are ${wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio"))} words: at most ${JOINED_WORDS}, so shorten line ${last}`);
   const all = ls.join(" ");
   if (offer && !all.toLowerCase().includes(norm(offer).toLowerCase())) errs.push(`the script must name the offer in its exact words: "${norm(offer)}"`);
   for (const e of onAdProblems(fillLine(all, "Bishan"), profile)) if (!errs.includes(e)) errs.push(e);
   return errs;
 }
-export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [], samples: Array.isArray(j?.samples) ? j.samples : [], facts: j?.facts && typeof j.facts === "object" && !Array.isArray(j.facts) ? j.facts : {} }; };
-const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], samples: data.samples || [], facts: data.facts || {} }, null, 2) + "\n");
+const objOf = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : {});
+export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [], samples: Array.isArray(j?.samples) ? j.samples : [], facts: objOf(j?.facts), pains: objOf(j?.pains) }; };
+const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], samples: data.samples || [], facts: data.facts || {}, pains: data.pains || {} }, null, 2) + "\n");
 const shape = (lines) => lines.map(norm).join(" ").toLowerCase().replace(/[^a-z0-9 ]/g, "");
 /** Add a script: the owner's own is kept at once, a drafted one waits for him. Never twice. */
-export function addScript(gymDir, { lines, offer, source = "owner" }, { profile = {} } = {}) {
-  const ls = (lines || []).map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer, profile });
+export function addScript(gymDir, { lines, offer, source = "owner", pain = null }, { profile = {}, closing = closingLine() } = {}) {
+  const ls = (lines || []).map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer, profile, closing });
   if (errs.length) throw new Error(errs.join("; "));
   const data = readScripts(gymDir), key = shape(ls);
   if (data.scripts.some((s) => shape(s.lines) === key)) throw Object.assign(new Error("this script is already here"), { duplicate: true });
-  const row = { id: `v-${sha(key).slice(0, 10)}`, lines: ls, offer: norm(offer), status: source === "owner" ? "kept" : "draft", source, added: today() };
+  const row = { id: `v-${sha(key).slice(0, 10)}`, lines: ls, offer: norm(offer), status: source === "owner" ? "kept" : "draft", source, ...(pain ? { pain: norm(pain) } : {}), added: today() };
   data.scripts.push(row); writeScripts(gymDir, data); return row;
 }
-/** The owner keeps a draft, edits it (checked again), puts it back, or retires it with a reason — never deleted. */
-export function decideScript(gymDir, id, { status, lines, reason } = {}, { profile = {} } = {}) {
+/** The owner keeps a draft, edits it (checked again), puts it back, or retires it with a reason — never deleted. A script that breaks today's rules is not kept until it is edited. */
+export function decideScript(gymDir, id, { status, lines, reason } = {}, { profile = {}, closing = closingLine() } = {}) {
   const data = readScripts(gymDir), row = data.scripts.find((s) => s.id === id);
   if (!row) throw new Error(`no such script: ${id}`);
-  if (lines != null) { const ls = lines.map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer: row.offer, profile }); if (errs.length) throw new Error(errs.join("; ")); row.lines = ls; row.edited = today(); }
+  if (lines != null) { const ls = lines.map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer: row.offer, profile, closing }); if (errs.length) throw new Error(errs.join("; ")); row.lines = ls; row.edited = today(); }
   if (status != null) {
     if (!["kept", "draft", "retired"].includes(status)) throw new Error("status must be kept, draft or retired");
     if (status === "retired") { if (typeof reason !== "string" || reason.trim().length < 3) throw new Error("retiring a script needs a reason"); row.reason = reason.trim(); row.retired_on = today(); }
     else { delete row.reason; delete row.retired_on; }
+    if (status === "kept" && row.status !== "kept") { const errs = scriptProblems(row.lines, { offer: row.offer, profile, closing }); if (errs.length) throw new Error(`edit it first: ${errs.join("; ")}`); }
     row.status = status;
   }
   writeScripts(gymDir, data); return row;
 }
 /** The scripts ready for an offer: kept, and written for these exact words. */
 export const keptScripts = (gymDir, offer = null) => readScripts(gymDir).scripts.filter((s) => s.status === "kept" && (!offer || norm(s.offer).toLowerCase() === norm(offer).toLowerCase()));
+/** What a script on file breaks by today's rules (the closing line came after some were kept): empty when it may be filmed. */
+export const scriptIssues = (script, { profile = {}, closing = closingLine() } = {}) => scriptProblems(script.lines, { offer: script.offer, profile, closing });
+/** The scripts that may be filmed for an offer: kept, and passing today's rules. */
+export const readyScripts = (gymDir, offer = null, opts = {}) => keptScripts(gymDir, offer).filter((x) => !scriptIssues(x, opts).length);
 /**
  * Samples (2026-11-12, the owner: "we talk about BENEFITS not features … we have many [scripts] for you to use"): scripts
  * of his that have worked, pasted as they are. They are reference, never made into a video and never changed: the
@@ -180,10 +238,26 @@ export const SAMPLE_LIMIT = [40, 1500];
  * libraries; `VIDEO_LIBRARY_DIR`, else `COPY_LIBRARY_DIR`, points tests elsewhere). A sample marks what changes from
  * gym to gym in braces — {AREA}, {CHALLENGE NAME}, {GYM NAME} — and the drafter is told what each becomes.
  */
-export const VIDEO_LIBRARY_DIR = resolve(process.env.VIDEO_LIBRARY_DIR || process.env.COPY_LIBRARY_DIR || join(REPO_ROOT, "library"));
+export const videoLibraryDir = () => resolve(process.env.VIDEO_LIBRARY_DIR || process.env.COPY_LIBRARY_DIR || join(REPO_ROOT, "library"));
+export const VIDEO_LIBRARY_DIR = videoLibraryDir();
 export const SAMPLES_FILE = "video-samples.json";
-export const readSamples = (libDir = VIDEO_LIBRARY_DIR) => { const j = readJson(join(libDir, SAMPLES_FILE)); return { schema: 1, samples: Array.isArray(j?.samples) ? j.samples : [] }; };
-const writeSamples = (libDir, data) => { mkdirSync(libDir, { recursive: true }); writeFileSync(join(libDir, SAMPLES_FILE), JSON.stringify({ schema: 1, samples: data.samples }, null, 2) + "\n"); };
+export const readSamples = (libDir = videoLibraryDir()) => { const j = readJson(join(libDir, SAMPLES_FILE)); return { schema: 1, samples: Array.isArray(j?.samples) ? j.samples : [], closing: j?.closing && typeof j.closing.text === "string" ? j.closing : null }; };
+const writeSamples = (libDir, data) => { mkdirSync(libDir, { recursive: true }); writeFileSync(join(libDir, SAMPLES_FILE), JSON.stringify({ schema: 1, samples: data.samples, ...(data.closing ? { closing: data.closing } : {}) }, null, 2) + "\n"); };
+/** The closing line every script ends on: the owner's own when he has changed it, else the standing sentence. */
+export function closingLine(libDir = videoLibraryDir()) { return norm(readSamples(libDir).closing?.text) || CLOSING_LINE; }
+export function closingProblems(text, profile = {}) {
+  const t = norm(text), n = wordCount(t), errs = [];
+  if (n < CLOSING_WORDS[0] || n > CLOSING_WORDS[1]) errs.push(`the closing line is one short sentence, ${CLOSING_WORDS[0]} to ${CLOSING_WORDS[1]} words (this is ${n})`);
+  if (/[{}]/.test(t)) errs.push("the closing line is said as it is for every gym: no braces");
+  if (TAP.test(t)) errs.push('the closing line does not say "tap"');
+  for (const e of onAdProblems(t, profile)) errs.push(e);
+  return errs;
+}
+/** Change the closing line, for every gym. Scripts kept with the old one need an edit before they are filmed again. */
+export function setClosing(libDir, text) {
+  const t = plainDashes(norm(text)), errs = closingProblems(t); if (errs.length) throw new Error(errs.join("; "));
+  const data = readSamples(libDir); data.closing = { text: t, updated: today() }; writeSamples(libDir, data); return t;
+}
 const sampleKey = (t) => String(t).toLowerCase().replace(/[^a-z0-9]/g, "");
 /** Add a sample to the shared library, exactly as pasted. `gym`: where it was pasted (for the record only). Never twice. */
 export function addSample(libDir, text, { note = null, gym = null } = {}) {
@@ -201,7 +275,7 @@ export function decideSample(libDir, id, { retired, reason } = {}) {
   else if (retired === false) { delete row.retired; delete row.reason; }
   writeSamples(libDir, data); return row;
 }
-export const liveSamples = (libDir = VIDEO_LIBRARY_DIR) => readSamples(libDir).samples.filter((x) => !x.retired);
+export const liveSamples = (libDir = videoLibraryDir()) => readSamples(libDir).samples.filter((x) => !x.retired);
 /** Samples pasted before the library was shared sit in a gym's own file: each joins the library once, as it is (its id,
  *  its date, retired or not), with the gym it came from. The gym's file is left as it was. Returns how many joined. */
 export function adoptSamples(libDir, gymDirs = []) {
@@ -241,6 +315,91 @@ export function setFacts(gymDir, offer, items, { profile = {} } = {}) {
 }
 export const factsFor = (gymDir, offer) => readScripts(gymDir).facts[offerKey(offer)]?.items || [];
 
+/**
+ * Pain points (2026-11-14, the owner on the first video's opening, "keep putting off getting back into shape": "This is
+ * not a pain point. We need to speak to the client's pain point"). What the person an offer is for is living with and
+ * wants gone, in the owner's words, per gym and per offer — typed by him (kept at once), or suggested from the gym's
+ * own best adverts and the copy library's pain-led skeletons (a draft until he keeps it). A drafted script opens on
+ * one and says which; nothing is drafted until one is kept. A pain point is a situation ("work clothes fitting
+ * tighter"), never a judgement of the viewer's body or health: Meta refuses adverts that assert a personal attribute
+ * or set out to make someone feel bad about themselves, and `BODY_JUDGEMENT` holds the plainest of those words out.
+ */
+export const PAIN_LIMITS = { kept: 8, chars: [8, 120] };
+const BODY_JUDGEMENT = /\b(overweight|obese|obesity|fat|fatter|flabby|chubby|ugly|disgusting|ashamed|embarrass(?:ed|ing)|hate (?:your|their)|depress(?:ed|ion)|lazy)\b/i;
+const painKey = (t) => String(t).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
+export function painProblems(text, profile = {}) {
+  const t = norm(text), errs = [];
+  if (t.length < PAIN_LIMITS.chars[0] || t.length > PAIN_LIMITS.chars[1]) errs.push(`a pain point is one short phrase, ${PAIN_LIMITS.chars[0]} to ${PAIN_LIMITS.chars[1]} characters (this is ${t.length})`);
+  const j = t.match(BODY_JUDGEMENT); if (j) errs.push(`"${j[0]}" judges the person: say it as something that happens to them ("work clothes fitting tighter"), which is also what Meta allows`);
+  if (/[{}]/.test(t)) errs.push("no braces in a pain point");
+  for (const e of onAdProblems(t, profile)) errs.push(e);
+  return errs;
+}
+/** Every offer's pain points on file: [{ offer, items[{ id, text, status: kept | draft | retired, source, from?, added, reason? }] }]. */
+export const readPains = (gymDir) => Object.values(readScripts(gymDir).pains).filter((x) => x && Array.isArray(x.items));
+/** The pain points a script for this offer may open on: the kept ones, in the order they were kept. */
+export const painsFor = (gymDir, offer) => (readScripts(gymDir).pains[offerKey(offer)]?.items || []).filter((x) => x.status === "kept").map((x) => x.text);
+/** Add a pain point for an offer: the owner's own is kept at once, a suggested one waits for him. Never twice. */
+export function addPain(gymDir, offer, text, { profile = {}, source = "owner", from = null } = {}) {
+  if (typeof offer !== "string" || norm(offer).length < 3) throw new Error("the offer's exact words are needed");
+  const t = plainDashes(norm(text)).replace(/[.;,]+$/, ""), errs = painProblems(t, profile); if (errs.length) throw new Error(errs.join("; "));
+  const data = readScripts(gymDir), slot = (data.pains[offerKey(offer)] ||= { offer: norm(offer), items: [] });
+  if (slot.items.some((x) => painKey(x.text) === painKey(t))) throw Object.assign(new Error("this pain point is already here"), { duplicate: true });
+  if (source === "owner" && slot.items.filter((x) => x.status === "kept").length >= PAIN_LIMITS.kept) throw new Error(`at most ${PAIN_LIMITS.kept} pain points are kept for one offer: retire one first`);
+  const row = { id: `p-${sha(offerKey(offer) + "|" + painKey(t)).slice(0, 10)}`, text: t, status: source === "owner" ? "kept" : "draft", source, ...(from ? { from: norm(from).slice(0, 60) } : {}), added: today() };
+  slot.items.push(row); slot.updated = today(); writeScripts(gymDir, data); return row;
+}
+/** The owner keeps a suggestion, edits one (checked again), puts it back, or retires it with a reason — never deleted. */
+export function decidePain(gymDir, offer, id, { status, text, reason } = {}, { profile = {} } = {}) {
+  const data = readScripts(gymDir), slot = data.pains[offerKey(offer)], row = slot?.items.find((x) => x.id === id);
+  if (!row) throw new Error(`no such pain point: ${id}`);
+  if (text != null) { const t = plainDashes(norm(text)).replace(/[.;,]+$/, ""), errs = painProblems(t, profile); if (errs.length) throw new Error(errs.join("; ")); if (slot.items.some((x) => x !== row && painKey(x.text) === painKey(t))) throw Object.assign(new Error("this pain point is already here"), { duplicate: true }); row.text = t; row.edited = today(); }
+  if (status != null) {
+    if (!["kept", "draft", "retired"].includes(status)) throw new Error("status must be kept, draft or retired");
+    if (status === "retired") { if (typeof reason !== "string" || reason.trim().length < 3) throw new Error("retiring a pain point needs a reason"); row.reason = reason.trim(); row.retired_on = today(); }
+    else { delete row.reason; delete row.retired_on; }
+    if (status === "kept" && row.status !== "kept" && slot.items.filter((x) => x.status === "kept").length >= PAIN_LIMITS.kept) throw new Error(`at most ${PAIN_LIMITS.kept} pain points are kept for one offer: retire one first`);
+    row.status = status;
+  }
+  slot.updated = today(); writeScripts(gymDir, data); return row;
+}
+const PAINS_SCHEMA = { type: "OBJECT", properties: { pains: { type: "ARRAY", items: { type: "OBJECT", properties: { text: { type: "STRING" }, from: { type: "STRING", enum: ["this gym's adverts", "the library", "the audience"] } }, required: ["text", "from"] } } }, required: ["pains"] };
+/** What the suggestion is drawn from: the gym's own adverts that earned the most leads, and the copy library's pain-led skeletons. Read straight from the files: reading material only. */
+export function painSources(gymDir, libDir = videoLibraryDir()) {
+  const refs = (readJson(join(gymDir, "copy-references.json"))?.refs || []).filter((r) => !r.retired && typeof r.message === "string" && r.message.trim().length >= 40)
+    .sort((a, b) => (b.results?.leads || 0) - (a.results?.leads || 0)).slice(0, 5).map((r) => ({ leads: r.results?.leads || 0, text: r.message.trim().slice(0, 700) }));
+  const lib = (readJson(join(libDir, "copy-library.json"))?.entries || []).filter((e) => !e.retired && e.kind === "copy" && e.angle === "pain" && typeof e.text === "string").slice(0, 5).map((e) => e.text.trim().slice(0, 600));
+  return { ads: refs, library: lib };
+}
+export function buildPainsPrompt({ profile = {}, offer, audience = null, count = 6, ads = [], library = [], existing = [] }) {
+  const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean);
+  const lines = [
+    `List pain points for a talking-to-camera advert for ${gym}'s programme: "${offer}". ${audience ? `It is for: ${audience}.` : "It is for adults near the gym who are not training yet."} A pain point is what this person is living with now and wants gone: a moment of their ordinary day they would recognise at once and wince at.`,
+    `Each is ONE short phrase of 5 to 14 words, with no full stop, written so it can follow "If you live in the area and …" — for example: "your work clothes have been fitting tighter lately", "you are out of breath after two flights of stairs", "your energy is gone by mid-afternoon", "you keep starting a routine and dropping it after two weeks". Concrete and specific: never vague ("getting back into shape", "wanting to be healthier", "putting off fitness" are NOT pain points).`,
+    `Say what HAPPENS to the person, never what they ARE: nothing that judges or labels their body, weight, looks or health, nothing that shames, no medical condition, no number of kilos or sizes. NEVER: a price, free, before and after, a guarantee${never.length ? `, any of: ${never.join(", ")}` : ""}.`,
+    `Give ${count}, each a different part of life (clothes, energy, strength for everyday things, sticking with it, time, confidence in a room).`,
+  ];
+  if (ads.length) lines.push(`This gym's own adverts that earned the most leads. Find the pain each one speaks to and say it plainly in your own words; never copy a sentence, a price or an offer from them:\n${ads.map((a, i) => `--- ADVERT ${i + 1} (${a.leads} leads)\n${a.text}`).join("\n")}`);
+  if (library.length) lines.push(`Pain-led adverts that have worked for other gyms. The same: the pain they speak to, in your own words:\n${library.map((x, i) => `--- LIBRARY ${i + 1}\n${x}`).join("\n")}`);
+  lines.push(`For each, say where it came from: "this gym's adverts", "the library", or "the audience" when it is from neither.`);
+  if (existing.length) lines.push(`Already on the list — do not repeat or closely rephrase:\n${existing.map((e) => `- ${e}`).join("\n")}`);
+  return { prompt: lines.join("\n\n"), schema: PAINS_SCHEMA };
+}
+/** Suggest pain points for an offer: one text call, every suggestion checked in code, each a draft until the owner keeps it. */
+export async function suggestPains({ brandDir, offer, audience = null, count = 6, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, log = () => {} }) {
+  if (typeof offer !== "string" || offer.trim().length < 3) throw new Error("the offer's exact words are needed");
+  if (!Number.isInteger(count) || count < 1 || count > 8) throw new Error("count must be 1 to 8");
+  const profile = readJson(join(brandDir, "gym-profile.json")) || {}, src = painSources(brandDir, libraryDir);
+  const existing = (readScripts(brandDir).pains[offerKey(offer)]?.items || []).map((x) => x.text);
+  const { prompt, schema } = buildPainsPrompt({ profile, offer: offer.trim(), audience, count, ...src, existing });
+  const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [];
+  for (const d of answer?.pains || []) {
+    try { added.push(addPain(brandDir, offer.trim(), d.text, { profile, source: "suggested", from: d.from })); }
+    catch (e) { dropped.push({ text: norm(d.text), reason: e.message }); log(`  dropped: ${e.message}`); }
+  }
+  return { added, dropped, calls: 1, sources: { ads: src.ads.length, library: src.library.length } };
+}
+
 /** How many presenter videos a batch may ask for (each is one script, made once for every location). */
 export const MAX_VIDEOS = 3;
 export const videoCount = (videos) => (Number.isInteger(videos?.presenter) ? videos.presenter : 0);
@@ -258,8 +417,11 @@ export function videosProblems(videos) {
  * was told "no script is kept" — a sample is a template, not a script). `state`: `drafts` (drafts for this offer wait
  * to be kept) · `other_offer` (scripts are kept, for other words) · `sample_only` (only a template is on file) · `none`.
  */
-export function noScriptWhy(gymDir, offer, { libraryDir = VIDEO_LIBRARY_DIR } = {}) {
+export function noScriptWhy(gymDir, offer, { libraryDir = videoLibraryDir(), profile = readJson(join(gymDir, "gym-profile.json")) || {} } = {}) {
   const all = readScripts(gymDir).scripts.filter((s) => s.status !== "retired"), key = norm(offer).toLowerCase();
+  // Kept for this offer, but written before a rule it now breaks (the closing line): one edit, then it is filmed.
+  const stale = all.filter((s) => s.status === "kept" && norm(s.offer).toLowerCase() === key).map((s) => scriptIssues(s, { profile, closing: closingLine(libraryDir) })).filter((e) => e.length).map((e) => [e.find((x) => /closing line/.test(x)) || e[0], ...e]);
+  if (stale.length) return { state: "needs_edit", scripts: stale.length, issues: stale[0], text: `${stale.length === 1 ? "the script kept for this offer needs" : `${stale.length} scripts kept for this offer need`} an edit first — ${stale[0][0]}: press Edit… there` };
   const drafts = all.filter((s) => s.status === "draft" && norm(s.offer).toLowerCase() === key).length;
   if (drafts) return { state: "drafts", drafts, text: `${drafts} draft${drafts === 1 ? " for this offer is" : "s for this offer are"} waiting there: read ${drafts === 1 ? "it" : "them"} and press Keep` };
   const others = [...new Set(all.filter((s) => s.status === "kept").map((s) => s.offer))];
@@ -269,55 +431,79 @@ export function noScriptWhy(gymDir, offer, { libraryDir = VIDEO_LIBRARY_DIR } = 
   return { state: "none", text: "nothing is written for this offer yet: press Draft scripts… there, or write your own" };
 }
 /** The scripts a batch makes: that many of the ones kept for its offer, in an order the seed fixes (a re-run picks the same). Too few is refused by name. */
-export function pickScripts(gymDir, { count, offer, seed = "batch", libraryDir = VIDEO_LIBRARY_DIR } = {}) {
-  const kept = keptScripts(gymDir, offer);
+export function pickScripts(gymDir, { count, offer, seed = "batch", libraryDir = videoLibraryDir() } = {}) {
+  const profile = readJson(join(gymDir, "gym-profile.json")) || {}, all = keptScripts(gymDir, offer), kept = readyScripts(gymDir, offer, { profile, closing: closingLine(libraryDir) });
+  if (kept.length < count && all.length > kept.length) throw new Error(`${count} presenter video${count === 1 ? "" : "s"} asked for, but ${kept.length ? `only ${kept.length} script${kept.length === 1 ? " is" : "s are"}` : "no script is"} ready for "${norm(offer)}": ${noScriptWhy(gymDir, offer, { libraryDir, profile }).text} (Draft Scenes → Video scripts)`);
   if (kept.length < count) throw new Error(`${count} presenter video${count === 1 ? "" : "s"} asked for, but ${kept.length ? `only ${kept.length} script${kept.length === 1 ? " is" : "s are"}` : "no script is"} kept for "${norm(offer)}": keep ${count - kept.length} more on Draft Scenes → Video scripts${kept.length ? "" : ` (${noScriptWhy(gymDir, offer, { libraryDir }).text})`}`);
   return kept.map((s2) => ({ s: s2, k: sha(`${seed}|${s2.id}`) })).sort((a, b) => a.k.localeCompare(b.k)).slice(0, count).map((x) => x.s);
 }
 /** A script with what making it would take: its lines, each clip's length, and the seconds and image calls for a set of locations. */
-export function scriptCost(script, areas = [""]) {
-  const n = Math.max(1, areas.length), clips = script.lines.map((l) => ({ line: l, per_area: /\{AREA\}/.test(l), seconds: clipSeconds(fillLine(l, areas[0] || "Ang Mo Kio")) }));
+export function scriptCost(script, areas = [""], { closing = closingLine() } = {}) {
+  const n = Math.max(1, areas.length), said = filmedLines(script.lines, closing), clips = said.map((l) => ({ line: l, per_area: /\{AREA\}/.test(l), seconds: clipSeconds(fillLine(l, areas[0] || "Ang Mo Kio")) }));
   const seconds = clips.reduce((t, c) => t + c.seconds * (c.per_area ? n : 1), 0);
-  return { clips, seconds, images: script.lines.length, usd: Math.round((seconds * USD_PER_SECOND + script.lines.length * USD_PER_IMAGE) * 100) / 100, videos: n };
+  return { clips, seconds, images: said.length, usd: Math.round((seconds * USD_PER_SECOND + said.length * USD_PER_IMAGE) * 100) / 100, videos: n };
 }
 
-const DRAFT_SCHEMA = { type: "OBJECT", properties: { scripts: { type: "ARRAY", items: { type: "OBJECT", properties: { lines: { type: "ARRAY", items: { type: "STRING" } } }, required: ["lines"] } } }, required: ["scripts"] };
-export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [] }) {
+const DRAFT_SCHEMA = { type: "OBJECT", properties: { scripts: { type: "ARRAY", items: { type: "OBJECT", properties: { pain: { type: "STRING" }, lines: { type: "ARRAY", items: { type: "STRING" } } }, required: ["pain", "lines"] } } }, required: ["scripts"] };
+/**
+ * The drafter's request. `pains`: the owner's own pain points for this offer, used first when he has kept some;
+ * `ads` and `library` (`painSources`): what the drafter works the pain points out from when he has not — it is the
+ * agent that proposes, and he reviews. Every script says the pain point it opens on.
+ */
+export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [], pains = [], ads = [], library = [], closing = CLOSING_LINE }) {
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean);
   // "Aether Athletics' 6 Week…", never "Athletics's": the possessive as it is said and as the captions show it.
   const gyms = /s$/i.test(gym) ? `${gym}'` : `${gym}'s`;
   // With the owner's samples or his facts for this offer a script may run longer: it follows the sample's beats, cut to what is relevant and true here.
   const long = samples.length > 0 || facts.length > 0;
+  const open = "says where — the place written as {AREA} (it is filled in for each location) — and opens on ONE pain point: what this person is living with and wants gone, said as a moment of their day they will recognise at once";
+  const close = `The last line ends with exactly this sentence, word for word; it is the ONLY call to action in the script: "${closing}" It follows a few words in the same line ("If that sounds like you, ${closing.charAt(0).toLowerCase()}${closing.slice(1)}"): it is never a line on its own. Never write "tap", never name a button, never add another instruction.`;
   const lines = [
     `You write short scripts for a talking-to-camera video advert for ${gym}'s programme: "${offer}". ${audience ? `The advert is for: ${audience}.` : "The advert is for adults near the gym who are not training yet."} Someone stands in the gym, talks to a phone camera the way a friend would, and the video cuts to a new spot for each line.`,
     long
       ? `A script is 3 to ${LINES[1]} lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`
       : `A script is exactly 3 lines. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`,
     long
-      ? `The first line says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. One of the first two lines names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. The lines between are the beats worth keeping${samples.length ? " from the sample you follow" : ""}: each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. The last line tells them what to do and ends with "Tap below" and a few words (for example: "Tap below to see if this is a fit for you.").`
-      : `Line 1 says who this is for and where, with the place written as {AREA} (it is filled in for each location), and gives them a reason to keep watching. Line 2 names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. Line 3 says one more thing they will get from it and ends with exactly: "Tap below to find out more."`,
+      ? `The first line ${open}. One of the first two lines names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. The lines between are the beats worth keeping${samples.length ? " from the sample you follow" : ""}: each fact you were given gets its own short line, said plainly; a beat that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. ${close}`
+      : `Line 1 ${open}. Line 2 names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. Line 3 says, in a few words, one more thing they will get from it, and then closes. ${close}`,
     `Speak about BENEFITS, never features. A benefit is what changes for the person: feeling stronger, more energy for the day, clothes fitting better, confidence, keeping up with the children, a body that does what is asked of it. A feature is how the gym runs, and the script says NONE: nothing about how training is organised (no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size), because a wrong one is a false claim about this gym.${facts.length ? ` The only facts about the gym or the programme that may be stated are these, in the owner's words: ${facts.map((x) => `"${x}"`).join("; ")}. Say them as given, and nothing else about how the programme works.` : ""} A benefit is what the programme is built to help with, never a promised result.`,
-    `The speaker is nobody in particular: NOT a coach, NOT a member, NOT the owner. So the script never says I, we, our, my or us, and never claims an experience ("I joined", "we built"): where a gym would say we, the script says "${gym}", "the coaches" or "the team".`,
-    `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark; an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
-    `Write ${count} scripts, each opening a different way (what they keep putting off, what they are unsure about, who they would be training with, how it fits a busy week).`,
+    `The speaker is nobody in particular: NOT a coach, NOT a member, NOT the owner. So the script never says I, we, our, my or us, and never claims an experience ("I joined", "we built"): where a gym would say we, the script says "${gym}", "the coaches" or "the team". The closing sentence is the one exception: it is said word for word as given.`,
+    `The place is only ever {AREA}, the area around the gym: the script never names the country, and never speaks to a whole city or island.`,
+    `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark (the closing sentence keeps its own); an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
+    `Write ${count} script${count === 1 ? "" : "s"}, each opening on a different pain point, and say for each the pain point it opens on (pain: a short phrase, as it would stand in a list — "work clothes fitting tighter lately").`,
+    `PAIN POINTS. A pain point is something that HAPPENS to this person — work clothes fitting tighter, out of breath on the stairs, no energy left by mid-afternoon, starting a routine and dropping it within weeks — said the way they would say it to a friend. Never a judgement or a label of their body, weight, looks or health, nothing that shames, no medical condition; and never softened into something vague: "getting back into shape", "putting off fitness", "starting a fitness journey" are NOT pain points.${pains.length
+      ? ` The owner's own list comes first — open on these, close to his words, one for each script${pains.length < count ? "; for the scripts beyond the list, work out further ones yourself the same way" : ""}:\n${pains.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
+      : ` Work them out yourself before you write: who this advert is for, and what they are living with${ads.length || library.length ? ", drawing on the adverts below" : ""}.`}`,
   ];
+  if (ads.length) lines.push(`This gym's own adverts that earned the most leads. Find the pain each one speaks to and say it plainly in your own words; never copy a sentence, a price or an offer from them:\n${ads.map((a, i) => `--- ADVERT ${i + 1} (${a.leads} leads)\n${a.text}`).join("\n")}`);
+  if (library.length) lines.push(`Pain-led adverts that have worked for other gyms. The same: the pain they speak to, in your own words:\n${library.map((x, i) => `--- LIBRARY ${i + 1}\n${x}`).join("\n")}`);
   // The owner's own proven scripts, when he has given some: their structure, rhythm and voice are followed; their sentences and their facts are not copied.
-  if (samples.length) lines.push(`These scripts have worked for this owner. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact (a place, a programme name, a number, how a gym runs). A sample may mark in braces what changes from gym to gym ({AREA}, {CHALLENGE NAME}, {GYM NAME} and the like): where it marks the place, write {AREA}; where it marks the programme, write its exact words, "${offer}"; where it marks the gym, or where the sample says we or our, write "${gym}". No other braces may appear in a script:\n${samples.map((x, i) => `--- SAMPLE ${i + 1}\n${x}`).join("\n")}`);
+  if (samples.length) lines.push(`These scripts have worked for this owner. Follow how they are built, how they sound and what they choose to talk about — never copy a sentence, and never carry over a fact (a place, a programme name, a number, how a gym runs) or their call to action. A sample may mark in braces what changes from gym to gym ({AREA}, {CHALLENGE NAME}, {GYM NAME} and the like): where it marks the place, write {AREA}; where it marks the programme, write its exact words, "${offer}"; where it marks the gym, or where the sample says we or our, write "${gym}". No other braces may appear in a script:\n${samples.map((x, i) => `--- SAMPLE ${i + 1}\n${x}`).join("\n")}`);
   if (existing.length) lines.push(`Already written — do not repeat or closely rephrase:\n${existing.map((e) => `- ${e}`).join("\n")}`);
   return { prompt: lines.join("\n\n"), schema: DRAFT_SCHEMA };
 }
-/** Draft scripts for an offer: one text call, every draft checked in code, a broken or repeated one dropped with the reason. Drafts wait for the owner. */
-export async function draftScripts({ brandDir, offer, audience = null, count = 3, libraryDir = VIDEO_LIBRARY_DIR, ask = callVision, model = COPY_MODEL, log = () => {} }) {
+/**
+ * Draft scripts for an offer: one text call, every draft checked in code, a broken or repeated one dropped with the
+ * reason. Drafts wait for the owner. THE AGENT PROPOSES (2026-11-14, the owner: "the agent proposes the scripts for me
+ * to review and edit (if necessary), not I tell the agent what to say"): nothing has to be typed first — the drafter
+ * works the pain points out from the gym's own best adverts and the library's pain-led ones, his own kept ones first
+ * when he has given some, and each draft carries the pain point it opens on, held to the pain points' own rules.
+ */
+export async function draftScripts({ brandDir, offer, audience = null, count = 3, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, log = () => {} }) {
   if (typeof offer !== "string" || offer.trim().length < 3) throw new Error("the offer's exact words are needed");
   if (!Number.isInteger(count) || count < 1 || count > 6) throw new Error("count must be 1 to 6");
-  const profile = readJson(join(brandDir, "gym-profile.json")) || {};
-  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: readScripts(brandDir).scripts.map((s) => s.lines.join(" / ")), samples: liveSamples(libraryDir).map((x) => x.text), facts: factsFor(brandDir, offer) });
+  const profile = readJson(join(brandDir, "gym-profile.json")) || {}, pains = painsFor(brandDir, offer), closing = closingLine(libraryDir), src = painSources(brandDir, libraryDir);
+  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: readScripts(brandDir).scripts.map((x) => x.lines.join(" / ")), samples: liveSamples(libraryDir).map((x) => x.text), facts: factsFor(brandDir, offer), pains, ...src, closing });
   const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [];
   for (const d of answer?.scripts || []) {
-    try { added.push(addScript(brandDir, { lines: d.lines, offer: offer.trim(), source: "drafted" }, { profile })); }
-    catch (e) { dropped.push({ text: (d.lines || []).join(" / "), reason: e.message }); log(`  dropped: ${e.message}`); }
+    try {
+      const pain = plainDashes(norm(d.pain)).replace(/[.;,]+$/, "");
+      if (!pain) throw new Error("it does not say which pain point it opens on");
+      const bad = painProblems(pain, profile); if (bad.length) throw new Error(`the pain point it opens on ("${pain}"): ${bad[0]}`);
+      added.push(addScript(brandDir, { lines: d.lines, offer: offer.trim(), source: "drafted", pain }, { profile, closing }));
+    } catch (e) { dropped.push({ text: (d.lines || []).join(" / "), reason: e.message }); log(`  dropped: ${e.message}`); }
   }
-  return { added, dropped, calls: 1 };
+  return { added, dropped, calls: 1, sources: { pains: pains.length, ads: src.ads.length, library: src.library.length } };
 }
 
 // ── the model calls (each can be replaced: the tests make no call) ───────────
@@ -338,7 +524,7 @@ export function realModels(profile = {}) {
     async clip({ out, image, prompt, seconds }) {
       const r = await interact({ model: OMNI, input: [{ type: "image", data: readFileSync(image).toString("base64"), mime_type: mimeOf(image) }, { type: "text", text: prompt }], response_format: { type: "video", aspect_ratio: "9:16", resolution: "720p", duration: `${seconds}s` } }, { label: `video ${basename(out)}` });
       let v = null; for (const s of [...(r.steps || [])].reverse()) for (const c of s.content || []) if (!v && c.type === "video") v = c;
-      if (!v) throw new Error(`no video came back for ${basename(out)}`);
+      if (!v) throw Object.assign(new Error(`no video came back for ${basename(out)}`), { refused: true });
       if (v.data) writeFileSync(out, Buffer.from(v.data, "base64"));
       else if (v.uri) { const res = await fetch(v.uri.includes("alt=media") ? v.uri : `${v.uri}${v.uri.includes("?") ? "&" : "?"}alt=media`, { headers: { "x-goog-api-key": loadGeminiKey() } }); if (!res.ok) throw new Error(`the video could not be downloaded (${res.status})`); writeFileSync(out, Buffer.from(await res.arrayBuffer())); }
       else throw new Error("the video part carried neither data nor a uri");
@@ -374,21 +560,25 @@ export function clipPrompt({ presenter, profile, line, seconds }) {
 }
 
 // ── the text layer and the cut (software: no model) ──────────────────────────
+/**
+ * The captions' look (2026-11-14, the owner: "I like the classic simple look. But propose some variation either in
+ * color or style, slightly" — he picked the third of five): white capitals with a thin outline and a soft shadow,
+ * and the word being said in a warm yellow. No brand colour: it is the same on every gym's videos.
+ */
+export const CAPTION_ACCENT = "#FFD84A";
 const FONTS = `@font-face{font-family:Anton;src:url("file://${join(REPO_ROOT, "assets/fonts/anton/Anton-Regular.ttf")}")}@font-face{font-family:Mont;src:url("file://${join(REPO_ROOT, "assets/fonts/montserrat/Montserrat[wght].ttf")}");font-weight:100 900}`;
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 /** A transparent 720 × 1280 PNG of the words. Meta's 9:16 live area is x 6–94%, y 14–65%: every block is laid inside it, and the page reports where each landed. */
 async function overlay(browser, out, inner) {
   const html = `<!doctype html><meta charset="utf-8"><style>${FONTS}html,body{margin:0;width:${W}px;height:${H}px;background:transparent;overflow:hidden}
-    .lock{position:absolute;left:6%;right:6%;top:25%;text-align:center;color:#fff}
-    .lock small{display:block;font:800 26px/1.2 Mont;letter-spacing:5px;margin-bottom:8px}.lock .a{font:400 54px/1.05 Anton;letter-spacing:1px}
-    .lock .d{font:400 88px/1 Anton;letter-spacing:1px;margin-top:26px}.lock .o{font:800 32px/1.15 Mont;letter-spacing:3px;margin-top:6px}
-    .cap{position:absolute;left:8%;right:8%;top:54%;text-align:center;font:400 58px/1.12 Anton;color:#fff;letter-spacing:.5px;-webkit-text-stroke:7px #000;paint-order:stroke fill}</style>${inner}`;
+    .cap{position:absolute;left:8%;right:8%;top:54%;text-align:center;font:400 58px/1.12 Anton;color:#fff;letter-spacing:1px;-webkit-text-stroke:3px rgba(0,0,0,.85);paint-order:stroke fill;text-shadow:0 4px 16px rgba(0,0,0,.55)}
+    .cap b{font-weight:400;color:${CAPTION_ACCENT}}</style>${inner}`;
   const page = join(browser.work, `${basename(out)}.html`); writeFileSync(page, html);
   const { cdp, sessionId } = browser;
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: false }, sessionId);
   await cdp.send("Emulation.setDefaultBackgroundColorOverride", { color: { r: 0, g: 0, b: 0, a: 0 } }, sessionId);
   const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `file://${page}` }, sessionId); await loaded;
-  const box = await cdp.send("Runtime.evaluate", { expression: `document.fonts.ready.then(() => JSON.stringify([...document.querySelectorAll('.cap,.lock')].map(e => { const r = e.getBoundingClientRect(); return { text: e.innerText.replace(/\\s+/g, ' ').trim(), top: r.top / ${H}, bottom: r.bottom / ${H}, left: r.left / ${W}, right: r.right / ${W} }; })))`, awaitPromise: true, returnByValue: true }, sessionId);
+  const box = await cdp.send("Runtime.evaluate", { expression: `document.fonts.ready.then(() => JSON.stringify([...document.querySelectorAll('.cap')].map(e => { const r = e.getBoundingClientRect(); return { text: e.innerText.replace(/\\s+/g, ' ').trim(), top: r.top / ${H}, bottom: r.bottom / ${H}, left: r.left / ${W}, right: r.right / ${W} }; })))`, awaitPromise: true, returnByValue: true }, sessionId);
   const shot = await cdp.send("Page.captureScreenshot", { format: "png" }, sessionId);
   writeFileSync(out, Buffer.from(shot.data, "base64"));
   return { png: out, blocks: JSON.parse(box.result.value || "[]") };
@@ -449,19 +639,26 @@ export function captions(text, spans, per = 3) {
   }
   return out;
 }
-/** The area, the audience and the offer as the end card sets them: the brief's own words. */
-export function lockWords({ offer, location, audience = null }) { const s = splitOffer(String(offer)); return { audience: audience || "", location: String(location), duration: (s.duration || "").toUpperCase(), rest: String(s.offer_name || offer).toUpperCase() }; }
-const lockHtml = (w) => `<div class="lock"><small>${esc(w.audience)}</small><div class="a">${esc(w.location)}</div><div class="d">${esc(w.duration)}</div><div class="o">${esc(w.rest)}</div></div>`;
-/** The end card's ground: a plain near-black — no gym's colour, and not the panel's own (no brand colour on an ad unless the gym asks). */
-export const CARD_COLOUR = "0x101114";
-/** Cut the clips together — each { file, from, to }, its spoken part — at one size and rate, end on a plain card of `tail` seconds, and lay the timed words over it all. */
-function assemble({ clips, overlays, out, tail }) {
+/**
+ * The words of one caption block with when each is said: the block's time shared between its words by their letters
+ * (an estimate — the voice is measured by its pauses, not word by word). Each { i, word, from, to }.
+ */
+export function captionWords(c) {
+  const ws = String(c.text).split(" ").filter(Boolean), total = ws.reduce((t, w) => t + w.length + 1, 0), r2 = (x) => Math.round(x * 100) / 100; let at = c.from;
+  return ws.map((w, i) => { const d = ((w.length + 1) / total) * (c.to - c.from), o = { i, word: w, from: r2(at), to: i === ws.length - 1 ? c.to : r2(at + d) }; at += d; return o; });
+}
+/** A caption block in capitals, the word at `lit` marked as the one being said. */
+const capHtml = (text, lit) => `<div class="cap">${String(text).toUpperCase().split(" ").filter(Boolean).map((w, i) => (i === lit ? `<b>${esc(w)}</b>` : esc(w))).join(" ")}</div>`;
+/** How long the last clip is held after its last word, so the video does not end on a clipped syllable (there is no end card). */
+export const END_HOLD = 0.45;
+/** Cut the clips together — each { file, from, to }, its spoken part — at one size and rate, and lay the timed words over it all. The video ends on the last clip. */
+function assemble({ clips, overlays, out }) {
   const inputs = clips.flatMap((c) => ["-i", c.file]), n = clips.length;
   let chain = clips.map((c, i) => `[${i}:v]trim=${c.from}:${c.to},setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1[c${i}];[${i}:a]atrim=${c.from}:${c.to},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a${i}]`).join(";")
-    + `;color=c=${CARD_COLOUR}:s=${W}x${H}:r=${FPS}:d=${tail},setsar=1[card];anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${tail}[quiet];`
-    + clips.map((_, i) => `[c${i}][a${i}]`).join("") + `[card][quiet]concat=n=${n + 1}:v=1:a=1[v0][a]`;
+    + ";" + clips.map((_, i) => `[c${i}][a${i}]`).join("") + `concat=n=${n}:v=1:a=1[v0][a]`;
   let last = "[v0]";
-  overlays.forEach((o, i) => { const next = `[v${i + 1}]`; chain += `;${last}[${n + i}:v]overlay=0:0:enable='between(t,${o.from},${o.to})'${next}`; last = next; });
+  // From its start up to, not including, its end: two words are never lit in one frame.
+  overlays.forEach((o, i) => { const next = `[v${i + 1}]`; chain += `;${last}[${n + i}:v]overlay=0:0:enable='gte(t,${o.from})*lt(t,${o.to})'${next}`; last = next; });
   ff([...inputs, ...overlays.flatMap((o) => ["-i", o.png]), "-filter_complex", chain, "-map", last, "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-preset", "medium", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out]);
   return out;
 }
@@ -472,47 +669,85 @@ function assemble({ clips, overlays, out, tail }) {
  * `spent` may be passed in (a batch's running count) and is added to; `caps { seconds, images }` are never passed:
  * a call that would pass one is not made, and the videos that needed it are refused with that as the reason.
  */
-export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, log = () => {}, onProgress = () => {} }) {
+export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), log = () => {}, onProgress = () => {} }) {
   const presenter = presenterOf(profile);
   if (!presenter) throw new Error("say who presents first (Ad defaults → Presenter): a woman or a man. Nothing is made until then");
-  const errs = scriptProblems(script.lines, { offer, profile }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
+  const errs = scriptProblems(script.lines, { offer, profile, closing }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
   if (!areas?.length) throw new Error("a video needs a location");
+  const whole = areas.find((a) => isWholeCountry(a)); if (whole) throw new Error(`"${whole}" is the whole country: a video says the area around the gym, never the country`);
   if (!room || !existsSync(room)) throw new Error("a photo of the gym's room is needed, so the video is in the gym's own room (Photos & assets → a cleaned premises photo)");
   if (!hasFfmpeg()) throw new Error("ffmpeg is not installed on this machine: run `brew install ffmpeg` once");
   const dir = join(outDir, script.id); mkdirSync(dir, { recursive: true });
   const own = !browser; if (own) browser = await launchBrowser();
   const within = (kind, n) => spent[kind] + n <= caps[kind];
+  // The script as it is filmed: the closing line, when it is the whole last line, shares a cut with the line before it.
+  const said = filmedLines(script.lines, closing), joined = said.length < script.lines.length;
+  const label = (i) => (joined && i === said.length - 1 ? `lines ${i + 1} and ${i + 2} (one cut)` : `line ${i + 1}`);
+  if (joined) log(`the closing line is filmed with line ${said.length} as one cut: Google's video model refuses it as a clip of its own`);
+  const refusedAll = (why) => ({ videos: areas.map((area) => ({ area, script_id: script.id, failed: why })), spent });
   try {
     // A still for each line: the first from the room, the rest from the first (the same person) and the room.
     const stills = [];
-    for (const [i] of script.lines.entries()) {
+    for (const [i] of said.entries()) {
       const prompt = stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[i % FRAMINGS.length], first: i === 0 });
       const out = join(dir, `still-${i + 1}-${sha(prompt + basename(room)).slice(0, 6)}.jpg`);
       if (!existsSync(out)) {
         if (!within("images", 1)) return { videos: areas.map((area) => ({ area, script_id: script.id, failed: `the cap of ${caps.images} image calls was reached before the presenter's stills were made` })), spent };
-        spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`still ${i + 1} of ${script.lines.length}`);
+        spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`still ${i + 1} of ${said.length}`);
         writeFileSync(out.replace(/\.jpg$/, ".prompt.txt"), prompt + "\n");
-        await models.image({ out, prompt, refs: i === 0 ? [room] : [stills[0], room] });
+        // A picture Google refuses is asked for once more; refused again, nothing is filmed and that is said.
+        try { await models.image({ out, prompt, refs: i === 0 ? [room] : [stills[0], room] }); }
+        catch (e) {
+          if (!isRefusal(e)) throw e; log(`  still ${i + 1}: refused by Google's image model — asked once more`);
+          try { await models.image({ out, prompt, refs: i === 0 ? [room] : [stills[0], room] }); }
+          catch (e2) { if (!isRefusal(e2)) throw e2; return refusedAll(`Google's image model refused the presenter's picture for ${label(i)} twice, under its content rules. Nothing else is lost: Run again asks once more; if it is refused again, change the presenter's look on Ad defaults`); }
+        }
       }
       stills.push(out);
     }
     // A clip for each line — once, or once per location when the line says the area.
     const made = new Map(); // "i|area" or "i|" → { file, takes, passed, check, line, why }
+    const altOf = (still) => still.replace(/\.jpg$/, "-b.jpg");
     const clipFor = async (i, area) => {
-      const perArea = /\{AREA\}/.test(script.lines[i]), key = `${i}|${perArea ? area : ""}`; if (made.has(key)) return made.get(key);
-      const line = fillLine(script.lines[i], area), seconds = clipSeconds(line), name = `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(line + basename(stills[i])).slice(0, 6)}`;
-      let take = 0, r = null; const passedTakes = [];
+      const perArea = /\{AREA\}/.test(said[i]), key = `${i}|${perArea ? area : ""}`; if (made.has(key)) return made.get(key);
+      const line = fillLine(said[i], area), seconds = clipSeconds(line);
+      const nameFor = (pic) => `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(line + basename(pic)).slice(0, 6)}`;
+      // The picture this line is filmed from: its own, or — once a clip was refused on that one — the second picture made for it.
+      let still = !existsSync(join(dir, `${nameFor(stills[i])}.mp4`)) && existsSync(altOf(stills[i])) ? altOf(stills[i]) : stills[i];
+      let take = 0, r = null, refused = 0; const passedTakes = [];
+      const gaveUp = (why) => { r = { file: null, takes: take, passed: false, refused: true, line, why }; };
       while (take < takes && !(r && r.passed && !(r.check?.faults || []).length)) {
-        take++; const file = join(dir, `${name}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
+        take++; const name = nameFor(still), file = join(dir, `${name}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
         if (!(existsSync(file) && statSync(file).size > 1000)) {
           if (!within("seconds", seconds)) { if (!passedTakes.length) r = { file: null, takes: take - 1, passed: false, line, why: `the cap of ${caps.seconds} seconds of video was reached` }; take--; break; }
-          spent.seconds += seconds; onProgress({ stage: "clip", line: i + 1, area: perArea ? area : null, take }); log(`line ${i + 1}${perArea ? ` (${area})` : ""}, take ${take}: ${seconds} s`);
+          spent.seconds += seconds; onProgress({ stage: "clip", line: i + 1, area: perArea ? area : null, take }); log(`${label(i)}${perArea ? ` (${area})` : ""}, take ${take}: ${seconds} s`);
           const prompt = clipPrompt({ presenter, profile, line, seconds }); writeFileSync(file.replace(/\.mp4$/, ".prompt.txt"), prompt + "\n");
-          await models.clip({ out: file, image: stills[i], prompt, seconds });
+          try { await models.clip({ out: file, image: still, prompt, seconds }); }
+          catch (e) {
+            // Google refused the request (its content rules): nothing was made, so nothing is counted and it is no take.
+            // Asked once more as it is; then on a fresh picture of the presenter; then this video is refused, in words.
+            if (!isRefusal(e)) throw e;
+            spent.seconds -= seconds; take--; refused++;
+            log(`  ${basename(file)}: refused by Google's video model under its content rules${refused === 1 && !passedTakes.length ? " — asked once more" : ""}`);
+            if (passedTakes.length) break; // a take already passed: it is kept
+            if (refused === 1) continue;
+            if (refused === 2 && still === stills[i]) {
+              const alt = altOf(stills[i]);
+              if (!existsSync(alt)) {
+                if (!within("images", 1)) { gaveUp(`refused by Google's video model under its content rules (twice), and the cap of ${caps.images} image calls leaves none for a fresh picture to try it on`); break; }
+                spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`  a fresh picture of the presenter for ${label(i)}`);
+                const again = stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[(i + 1) % FRAMINGS.length], first: false });
+                try { await models.image({ out: alt, prompt: again, refs: [stills[0], room] }); }
+                catch (e2) { if (!isRefusal(e2)) throw e2; gaveUp("refused by Google's video model under its content rules (twice), and its image model refused a fresh picture to try it on"); break; }
+              }
+              still = alt; continue;
+            }
+            gaveUp(`refused by Google's video model under its content rules, ${refused} times and on two pictures of the presenter`); break;
+          }
         }
         let seen = readJson(checkFile); if (!seen) { spent.checks++; seen = await models.watch(file); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
-        const said = sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean) }), alone = seen.people === 1, clean = !(seen.on_screen_text || []).length;
-        r = { file, takes: take, passed: said && alone && clean, line, check: seen, why: !said ? `it said "${norm(seen.spoken)}"` : !alone ? `${seen.people} people are in it` : !clean ? `words appear in the picture: ${seen.on_screen_text.join(", ")}` : null };
+        const heard = sameWords(seen.spoken, line, { names: [profile.display_name].filter(Boolean) }), alone = seen.people === 1, clean = !(seen.on_screen_text || []).length;
+        r = { file, takes: take, passed: heard && alone && clean, line, check: seen, why: !heard ? `it said "${norm(seen.spoken)}"` : !alone ? `${seen.people} people are in it` : !clean ? `words appear in the picture: ${seen.on_screen_text.join(", ")}` : null };
         if (r.passed) passedTakes.push(r);
         log(`  ${basename(file)}: ${r.passed ? "said as written, one person, no lettering" : r.why}${(seen.faults || []).length ? ` · noted: ${seen.faults.join("; ")}${r.passed && take < takes ? " — made once more" : ""}` : ""}`);
       }
@@ -522,22 +757,29 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
     };
     const videos = [];
     for (const area of areas) {
-      const lines = []; for (const [i] of script.lines.entries()) lines.push(await clipFor(i, area));
+      const lines = []; for (const [i] of said.entries()) lines.push(await clipFor(i, area));
       const bad = lines.findIndex((l) => !l.passed);
-      if (bad >= 0) { videos.push({ area, script_id: script.id, lines, failed: `line ${bad + 1} did not pass after ${lines[bad].takes} take${lines[bad].takes === 1 ? "" : "s"}: ${lines[bad].why}` }); continue; }
+      if (bad >= 0) {
+        const l = lines[bad];
+        // A refusal is said as what it is, with what to do; anything else as before.
+        videos.push({ area, script_id: script.id, lines, ...(l.refused ? { refused: true } : {}), failed: l.refused ? `${label(bad)}: ${l.why}. Nothing else is lost: Run again tries only this cut; if it is refused again, change its words` : `line ${bad + 1} did not pass after ${l.takes} take${l.takes === 1 ? "" : "s"}: ${l.why}` }); continue;
+      }
       onProgress({ stage: "cut", area });
       const overlays = [], blocks = []; let at = 0;
       const cuts = [];
       for (const [i, l] of lines.entries()) {
         // Where he speaks, measured from the sound; the clip is kept from a breath before to a breath after, and the captions follow the voice inside it.
-        const sp = speechOf(l.file), from = Math.max(0, sp.start - LEAD), to = Math.min(sp.duration, sp.end + TAIL); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
-        for (const [k, c] of captions(l.line, sp.spans.map(([a, b]) => [at + a - from, at + b - from])).entries()) { const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}.png`), `<div class="cap">${esc(c.text.toUpperCase())}</div>`); overlays.push({ png: o.png, from: c.from, to: c.to }); blocks.push(...o.blocks); }
+        const sp = speechOf(l.file), from = Math.max(0, sp.start - LEAD), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? END_HOLD : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
+        // One picture of the block for each of its words, that word lit while it is said.
+        for (const [k, c] of captions(l.line, sp.spans.map(([a, b]) => [at + a - from, at + b - from])).entries()) for (const w of captionWords(c)) {
+          if (!(w.to > w.from)) continue;
+          const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}-${w.i}.png`), capHtml(c.text, w.i)); overlays.push({ png: o.png, from: w.from, to: w.to }); if (w.i === 0) blocks.push(...o.blocks);
+        }
         at += cuts[i].to - cuts[i].from;
       }
-      const lock = await overlay(browser, join(dir, `lock-${slug(area)}.png`), lockHtml(lockWords({ offer, location: area, audience }))); overlays.push({ png: lock.png, from: at + 0.1, to: at + END_CARD_SECONDS }); blocks.push(...lock.blocks);
       const outside = blocks.filter((b) => !inLive(b));
       if (outside.length) { videos.push({ area, script_id: script.id, lines, failed: `the words do not fit Meta's live area: "${outside[0].text}"` }); continue; }
-      const file = assemble({ clips: cuts, overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`), tail: END_CARD_SECONDS });
+      const file = assemble({ clips: cuts, overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`) });
       const poster = file.replace(/\.mp4$/, ".jpg"); ff(["-ss", "0.8", "-i", file, "-frames:v", "1", "-q:v", "3", poster]);
       videos.push({ area, script_id: script.id, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), notes: [...new Set(lines.flatMap((l) => l.check?.faults || []))] });
     }

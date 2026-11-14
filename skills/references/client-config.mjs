@@ -23,7 +23,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
-import { loadCatalogue, validateInputs, LOOKS } from "./render-composites.mjs";
+import { loadCatalogue, validateInputs, LOOKS, isWholeCountry, WHOLE_COUNTRY_WHY } from "./render-composites.mjs";
 import { SCENE_FORMATS, DEFAULT_MIX, mixProblems } from "./scene-library.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -550,6 +550,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
     if (pin.callouts != null && !Array.isArray(pin.callouts)) errors.push(`${name}: callouts must be a list`);
     for (const c of Array.isArray(pin.callouts) ? pin.callouts : []) {
       const key = String(c).trim().toUpperCase();
+      if (isWholeCountry(c)) errors.push(`${name}: location callout "${c}" ${WHOLE_COUNTRY_WHY}`);
       if (claimed[key] != null) errors.push(`location callout "${c}" is on two pins (${claimed[key]} and ${name}) — one pin per callout`);
       claimed[key] = name;
     }
@@ -592,7 +593,7 @@ export function profileCompleteness(profile, { gymDir = null, cleanPhotos = 0, r
     S("rooms", "Rooms", "photos", [["which room a premises photo shows", Object.keys(cd.room_references || {}).length > 0]], { for: "learning" }),
     S("scenes", "Scene library", "scenes", [["an approved scene library", !!scenes?.exists && !!scenes?.approved], ...audiences.filter((a, i, all) => all.indexOf(a) === i && a !== "any").map((a) => [`scenes for ${a}`, sceneFor(a)])]),
     S("offers", "Offer wording", "offer", [["at least one offer wording", wordings > 0]]),
-    S("defaults", "Ad defaults", "defaults", [["at least one location callout", (cd.locations || []).length > 0]]),
+    S("defaults", "Ad defaults", "defaults", [["at least one location callout", (cd.locations || []).some((l) => !isWholeCountry(l))]]),
     S("targeting", "Targeting & budget", "targeting", [["a radius pin", pinUsable(pin)], ["an age range", dem.age_min != null && dem.age_max != null], ["a budget", p.campaign_defaults?.budget?.amount > 0]], { for: "publishing" }),
     S("meta", "Meta link", "meta", [["ad account id", !!m.ad_account_id], ["Facebook page id", !!m.page_id], ["business portfolio id", !!m.business_id], ["pixel id", !!m.pixel_id], ["lead form id", !!m.lead_form_id]], { for: "publishing" }),
   ];

@@ -41,3 +41,30 @@ export async function whenGeminiFree(fn, { label = "Gemini", log = (m) => consol
     }
   }
 }
+
+/**
+ * Google refused what was asked under its content rules (2026-11-14: Aether Athletics' closing line, filmed as a clip
+ * of its own, came back "Request blocked due to prohibited content guidelines" — and the run died on the raw JSON).
+ * It is no fault to wait out: asking again as it is may or may not pass, and nothing was made.
+ */
+export const isRefusal = (err) => err?.refused === true || /prohibited[_ ]content|blocked due to|Blocked by safety filter|\bSAFETY\b|content polic|RAI filter|responsible ai/i.test(String(err?.message || err || ""));
+
+/**
+ * A Google error in plain words (as explainError does for Meta's): { kind, text } — what happened and what to do —
+ * or null when the error is not one of Google's. `kind`: refused · quota · key · access · model · timeout · busy ·
+ * network. The text never carries a key; Google's own sentence is `shortReason(err)`.
+ */
+export function explainGemini(err) {
+  const m = String(err?.message || err || "");
+  if (isRefusal(err)) return { kind: "refused", text: "Google's model refused this request under its content rules. Nothing else is lost: run again to try it once more, and if it is refused again change the words or the picture it was asked for" };
+  if (err?.name === "TimeoutError" || err?.cause?.name === "TimeoutError" || /no answer in|TimeoutError|DEADLINE_EXCEEDED|ETIMEDOUT|network timeout/i.test(m)) return { kind: "timeout", text: "Google did not answer in time. Nothing is lost: run again" };
+  if (/GEMINI_KEY not found|API key not valid|API_KEY_INVALID|\b401\b|UNAUTHENTICATED/i.test(m)) return { kind: "key", text: "The Gemini key is missing or not valid: check GEMINI_KEY in the .env file" };
+  if (/RESOURCE_EXHAUSTED|\b429\b|quota|rate limit/i.test(m)) return { kind: "quota", text: "Google's limit for this key is used up for now. Wait a few minutes and run again; if it keeps happening, the limit on the Google account needs raising" };
+  if (/PERMISSION_DENIED|\b403\b|billing/i.test(m)) return { kind: "access", text: "This Gemini key is not allowed to use the model this step asks for (billing or access on the Google account)" };
+  if (/\b404\b|NOT_FOUND|is not found for API version|is not supported for/i.test(m)) return { kind: "model", text: "Google does not offer the model this step asks for to this key (it may have been retired)" };
+  if (/\b(500|502|503|504)\b|overloaded|high demand|UNAVAILABLE|INTERNAL/i.test(m) && /Gemini|vision|video|image|check|generativelanguage/i.test(m)) return { kind: "busy", text: "Google's service was busy or had a fault. Nothing is lost: run again in a few minutes" };
+  if (/fetch failed|ECONNRESET|ENOTFOUND|socket hang up/i.test(m)) return { kind: "network", text: "There was no connection to Google. Check the internet connection and run again" };
+  return null;
+}
+/** The error as one sentence for the owner: what happened, what to do, and Google's own words after it — or the message as it is. */
+export function plainGemini(err) { const g = explainGemini(err); return g ? `${g.text}. (Google said: ${shortReason(err)})` : String(err?.message || err || ""); }

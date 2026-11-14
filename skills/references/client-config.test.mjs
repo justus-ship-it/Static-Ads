@@ -312,3 +312,17 @@ test("P22 a callout in words (2026-10-10): title case for place names, capitals 
   assert.ok(KEEP_CAPS.includes("NUS") && !KEEP_CAPS.includes("CBD"), "CBD needs no listing: no vowel");
   assert.equal(titleCase(""), ""); assert.equal(titleCase(null), "");
 });
+
+test("P23 a location is never the whole country (2026-11-14, the owner: \"We can't say the full of Singapore no matter what\" — a gym's first video said \"If you live in Singapore\" because its Ad defaults carried the country, taken from the Facebook Page's city): a callout that names the country, by any of its names or as islandwide / nationwide / all of it, is refused on Ad defaults and on a pin, and does not count as the gym's location callout; an area that carries the word is an area", async () => {
+  const { isWholeCountry, validateInputs } = await import("./render-composites.mjs");
+  assert.deepEqual(["SINGAPORE", "Singapore", "SG", "S'PORE", "ALL OF SINGAPORE", "THE WHOLE OF SINGAPORE", "ACROSS SINGAPORE", "ISLANDWIDE", "Island-wide", "NATIONWIDE", "新加坡", "TAIWAN", "台灣", "全台", "MALAYSIA"].filter((x) => !isWholeCountry(x)), []);
+  assert.deepEqual(["SINGAPORE NORTH EAST", "EAST SINGAPORE", "BOAT QUAY", "CBD", "BISHAN", "LITTLE INDIA", "JURONG WEST", "信義區", "JOHOR BAHRU", ""].filter((x) => isWholeCountry(x)), []);
+  assert.deepEqual(validateInputs({ location: "SINGAPORE", audience: null, offer: "6 Week Reset" }), ["location names the whole country: an ad says the area around the gym (BOAT QUAY, BISHAN), never the country"]);
+  const base = PROFILE_STARTER("p23", "P23 Gym", "SG");
+  const withLocs = (locations, pins = []) => ({ ...base, creative_defaults: { ...(base.creative_defaults || {}), locations }, targeting_defaults: { ...(base.targeting_defaults || {}), geo: { ...(base.targeting_defaults?.geo || {}), radius_pins: pins } } });
+  assert.ok(validateProfile(withLocs(["BOAT QUAY", "SINGAPORE"])).errors.includes('location callout "SINGAPORE": names the whole country: an ad says the area around the gym (BOAT QUAY, BISHAN), never the country'));
+  assert.ok(!validateProfile(withLocs(["BOAT QUAY"])).errors.some((e) => /whole country/.test(e)));
+  assert.ok(validateProfile(withLocs(["BOAT QUAY"], [{ label: "The gym", lat: 1.286, lng: 103.849, radius_km: 1, callouts: ["Singapore"] }])).errors.some((e) => /location callout "Singapore" names the whole country/.test(e)), "a pin's callouts too");
+  const item = (p) => profileCompleteness(p).sections.find((x) => x.id === "defaults").items.find((i) => /location callout/.test(i.what)).ok;
+  assert.deepEqual([item(withLocs(["SINGAPORE"])), item(withLocs(["BOAT QUAY"])), item(withLocs([]))], [false, true, false], "the country alone is no location callout");
+});

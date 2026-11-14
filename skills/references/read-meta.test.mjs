@@ -34,7 +34,8 @@ const gymDir = (profile) => { const d = mkdtempSync(join(tmpdir(), "readmeta-"))
 test("RM1 the pieces: hours as one line, the callout from a Chinese address (the district) or the city, offer names from ad-set names (the date, a version tag, a gender prefix, a photo/video suffix and the test labels off; a bare duration is nothing), whole-unit currencies", () => {
   assert.equal(hoursLine(PAGE.hours), "Mon 06:00-21:00; Sat 08:00-12:00");
   assert.equal(hoursLine(null), "");
-  assert.deepEqual([calloutFrom(PAGE.location), calloutFrom({ street: "26 Sin Ming Lane", city: "Singapore" }), calloutFrom({})], ["信義區", "Singapore", ""]);
+  // A city that is the whole country is no callout (2026-11-14: a Singapore Page's city is "Singapore", and the ads then said the whole country); a real city is.
+  assert.deepEqual([calloutFrom(PAGE.location), calloutFrom({ street: "26 Sin Ming Lane", city: "Singapore" }), calloutFrom({ street: "1 Jalan Besar", city: "Johor Bahru" }), calloutFrom({})], ["信義區", "", "Johor Bahru", ""]);
   assert.deepEqual(["0713 6 Week 中年體態雕塑", "0404 Male - 40天川字肌計畫 | Audience: Luxury + Fitness, 28-53, 4.5KM", "0713 六週女生蜜桃臀計畫 照片3", "0427 6 Week - Gender Neutral, 28-45, 3KM", "0121 6 Week | FS UT | Retest - TOF Widenet", "(v2) 6Week", "Jan 8 2025 - Text Creative Testing - Blue", "1221 6Week | Video: Girls Battle Ropes", "0915 12 Week Total Body Reset | Audience: Broad"].map(offerNameFrom),
     ["6 Week 中年體態雕塑", "40天川字肌計畫", "六週女生蜜桃臀計畫", "", "", "", "", "", "12 Week Total Body Reset"]);
   assert.deepEqual([budgetUnits("TWD"), budgetUnits("SGD"), budgetUnits("jpy"), budgetUnits(null)], [1, 100, 1, 100]);

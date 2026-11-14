@@ -1048,12 +1048,13 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
   const dir = brandSetup();
   try {
     await realPhotos(dir);
-    const { addScript, clipSeconds, fillLine, END_CARD_SECONDS } = await import("./presenter-video.mjs");
+    process.env.VIDEO_LIBRARY_DIR = join(dir, "video-library"); // the shared library (samples, the closing line) is never the real one in a test
+    const { addScript, clipSeconds, fillLine } = await import("./presenter-video.mjs");
     const { execFileSync } = await import("node:child_process");
     const { videoPlan, VIDEO_SPEND, MAX_VIDEO_SECONDS } = await import("./plan-offer-batch.mjs");
     const profile = { ...JSON.parse(readFileSync(join(dir, "gym-profile.json"), "utf-8")), creative_defaults: { presenter: { gender: "man", age: 36 } } };
     writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(profile));
-    const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "Feel stronger and have more energy for your day. Tap below to find out more."];
+    const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "Feel stronger and have more energy for your day. Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "with-videos", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN", "ANG MO KIO"], videos: { presenter: 1 } };
     // The brief's own rules.
     assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 9, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter)', "videos.presenter must be a whole number from 0 to 3", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
@@ -1070,7 +1071,7 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     // No script kept for this offer yet: refused by name, before any call.
     await assert.rejects(run(brief), /1 presenter video asked for, but no script is kept for "12 Week Total Body Reset": keep 1 more on Draft Scenes → Video scripts/);
     const script = addScript(dir, { lines: LINES, offer: brief.offer }, { profile });
-    addScript(dir, { lines: [LINES[0], LINES[1], "Walk into your week with more energy than you have had in years. Tap below to find out more."], offer: "6 Week Other Thing".length ? brief.offer : "", source: "drafted" }, { profile }); // a draft is not made
+    addScript(dir, { lines: [LINES[0], LINES[1], "Walk into your week with more energy than you have had in years. Click the link below and we'll be in touch!"], offer: "6 Week Other Thing".length ? brief.offer : "", source: "drafted" }, { profile }); // a draft is not made
     const S = (i, area) => clipSeconds(fillLine(LINES[i], area)), pass = S(0, "BISHAN") + S(0, "ANG MO KIO") + S(1, "") + S(2, "");
     const plan = videoPlan(dir, brief);
     assert.deepEqual([plan.count, plan.videos, plan.seconds, plan.images, plan.takes, plan.max_seconds, plan.scripts.map((x) => x.id), plan.usd], [1, 2, pass, 3, 2, pass * 2, [script.id], Math.round(pass * 0.07 * 100) / 100]);
@@ -1082,7 +1083,7 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
       assert.match(a.video_file, /^10\d-v01-(bishan|ang-mo-kio)-presenter-video\/9x16\/v01-(bishan|ang-mo-kio)_9x16_v1\.mp4$/); assert.equal(a.file, a.video_file.replace(/\.mp4$/, ".jpg"), "the ad's still is a frame of its own video");
       assert.ok(existsSync(join(r.out, a.video_file)) && existsSync(join(r.out, a.file)));
       assert.equal(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", join(r.out, a.video_file)]).toString().trim(), "720,1280");
-      assert.ok(a.video.seconds > END_CARD_SECONDS && a.video.words[0].includes(a.location === "BISHAN" ? "Bishan" : "Ang Mo Kio"));
+      assert.ok(a.video.seconds > 3 && a.video.words[0].includes(a.location === "BISHAN" ? "Bishan" : "Ang Mo Kio"));
     }
     assert.deepEqual(JSON.parse(readFileSync(join(r.out, VIDEO_SPEND), "utf-8")), { seconds: pass, images: 3, checks: 4, max_seconds: pass * 2 });
     assert.ok(logs.some((l) => /· v01: presenter video from script v-[0-9a-f]{10} \(2 locations\)/.test(l)));
@@ -1104,6 +1105,12 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     for (const f of readdirSync(join(dir, "outputs", "with-videos-5", "videos", script.id)).filter((x) => /^line-2.*check\.json$/.test(x))) { const p = join(dir, "outputs", "with-videos-5", "videos", script.id, f), c = JSON.parse(readFileSync(p, "utf-8")); writeFileSync(p, JSON.stringify({ ...c, spoken: /take2/.test(f) ? LINES[1].replace("Test Gym's", "Tess Gym") : LINES[1].replace("Test Gym's", "Test Gyms") })); }
     const n6 = made.clip.length, r5 = await run5(videoModels());
     assert.deepEqual([made.clip.length - n6, r5.batch.ads.length, r5.batch.ads[0].location, r5.batch.failed, galleries], [0, 1, "BISHAN", [], 1]);
+    // A clip Google refuses every time (2026-11-14: "Request blocked due to prohibited content guidelines" ended a run on the raw JSON): the batch ends in words with what to do, what was made is kept, and a fault that is not a refusal is said in plain words on the progress file.
+    const b6 = { ...brief, batch_id: "with-videos-6", locations: ["BISHAN"] }, refuse = (models, err) => ({ ...models, async clip(x) { if (/built for exactly that/.test(x.prompt)) throw err(); return models.clip(x); } });
+    const run6 = (b, models) => runBatch({ brandDir: dir, brief: b, deps: { ...fakes(calls), gallery: () => {}, browser, videoModels: models }, log: (m) => logs.push(m) });
+    await assert.rejects(run6(b6, refuse(videoModels(), () => new Error('video line-2.mp4 failed (400): {"error":{"message":"Request blocked due to prohibited content guidelines. Please modify your input and retry.","code":"prohibited_content"}}'))), /^Error: no ad was made\. v01 \(BISHAN\): line 2: refused by Google's video model under its content rules, 3 times and on two pictures of the presenter\. Nothing else is lost: Run again tries only this cut; if it is refused again, change its words\. Everything made so far is kept: Run again reuses it\.$/);
+    await assert.rejects(run6({ ...b6, batch_id: "with-videos-7" }, refuse(videoModels(), () => new Error('video line-2.mp4 failed (429): {"error":{"message":"You exceeded your current quota.","status":"RESOURCE_EXHAUSTED"}}'))), /RESOURCE_EXHAUSTED/);
+    assert.equal(JSON.parse(readFileSync(join(dir, "outputs", "with-videos-7", "progress.json"), "utf-8")).error, "Google's limit for this key is used up for now. Wait a few minutes and run again; if it keeps happening, the limit on the Google account needs raising. (Google said: You exceeded your current quota.)");
     // With photo ads: the videos are numbered on after them; a square batch takes none; no presenter is refused in words.
     const r4 = await run({ ...brief, batch_id: "with-videos-3", generated: 1, max_calls: 2 });
     assert.ok(Math.min(...r4.batch.ads.filter((a) => a.video_file).map((a) => Number(a.folder.split("-")[0]))) > Math.max(...r4.batch.ads.filter((a) => !a.video_file).map((a) => Number(a.folder.split("-")[0]))));

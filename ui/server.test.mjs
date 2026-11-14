@@ -3723,7 +3723,7 @@ const HAS_FFMPEG = (() => { try { execFileSync("ffmpeg", ["-version"], { stdio: 
 test("U63 presenter videos through the panel (2026-11-12): who presents is the gym's own setting, saved on Ad defaults and refused when it is not a woman or a man; a script is the owner's — his own kept at once, checked by the rules (the offer's exact words, no I / we / our), edited, put back, retired with a reason, never twice — and a sample of his is kept for the drafter; a brief may ask for videos only once someone presents and that many scripts are kept for its offer, and the check says what they take in seconds and dollars; a video ad plays on Pick Ads, is served in parts, goes into the picks file and the zip as the 9:16 it is, and is left out of the Facebook plan with the reason; the scripts sit on Draft Scenes and the count on Generate Creatives", { skip: !HAS_FFMPEG && "ffmpeg is not installed" }, async () => {
   const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8"), scriptsFile = join(g, "video-scripts.json"), out = join(g, "outputs", "u63-batch"), samplesFile = join(dirname(brands), "library", "video-samples.json"), other = join(brands, "u63-other");
   const V = async (path = "", opts) => { const r = await call(`/api/client/${GYM}/video${path}`, opts); return [r.status, await r.json()]; };
-  const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", `Test Gym's ${BRIEF.offer} is built for exactly that. A coach beside you, and a plan that fits your week.`, "Feel stronger and have more energy for your day. Tap below to find out more."];
+  const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", `Test Gym's ${BRIEF.offer} is built for exactly that. A coach beside you, and a plan that fits your week.`, "Feel stronger and have more energy for your day. Click the link below and we'll be in touch!"];
   try {
     rmSync(scriptsFile, { force: true }); rmSync(samplesFile, { force: true });
     { const p = JSON.parse(before); if (p.creative_defaults) delete p.creative_defaults.presenter; writeFileSync(pf, JSON.stringify(p, null, 2)); }
@@ -3749,6 +3749,21 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     assert.equal((await V(`/script/${id}`, { method: "PUT", body: { status: "retired" } }))[0], 400, "retiring needs a reason");
     [st, D] = await V(`/script/${id}`, { method: "PUT", body: { status: "draft" } }); assert.deepEqual([st, D.scripts[0].status], [200, "draft"]);
     [st, D] = await V(`/script/${id}`, { method: "PUT", body: { status: "kept" } }); assert.equal(D.scripts[0].status, "kept");
+    // Pain points (2026-11-14: "We need to speak to the client's pain point"): a script opens on one. The agent proposes ("the agent proposes the scripts for me to review and edit (if necessary), not I tell the agent what to say"), so a draft needs none typed first: with none kept it goes to the text model all the same (there is none in the tests, and that is said in plain words).
+    const PAIN = "your work clothes have been fitting tighter lately";
+    [st, D] = await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 2 } });
+    assert.equal(st, 400); assert.ok(!D.no_pains && /network blocked|GEMINI_KEY/.test(D.error), D.error);
+    [st, D] = await V("/pains", { method: "POST", body: { offer: BRIEF.offer, text: "you feel fat in fitted clothes" } }); assert.equal(st, 400); assert.match(D.error, /"fat" judges the person/);
+    [st, D] = await V("/pains", { method: "POST", body: { offer: BRIEF.offer, text: PAIN } });
+    assert.deepEqual([st, D.pains.map((p) => [p.offer, p.items.map((x) => [x.text, x.status, x.source])]), D.limits.pains.kept], [200, [[BRIEF.offer, [[PAIN, "kept", "owner"]]]], 8]);
+    const painId = D.pains[0].items[0].id;
+    assert.equal((await V("/pains", { method: "POST", body: { offer: BRIEF.offer, text: PAIN } }))[0], 409, "never twice");
+    assert.equal((await call(`/api/client/${GYM}/video/pains`, { method: "POST", body: { offer: BRIEF.offer, text: "you are out of breath after two flights of stairs" }, token: null })).status, 403);
+    // Suggesting is the text model's (none in the tests): said, and nothing is added.
+    [st, D] = await V("/pains/suggest", { method: "POST", body: { offer: BRIEF.offer } }); assert.equal(st, 400); assert.match(D.error, /network blocked|GEMINI_KEY/);
+    assert.equal((await V("/pains/suggest", { method: "POST", body: { offer: BRIEF.offer, count: 20 } }))[0], 400);
+    assert.equal((await V(`/pains/${painId}`, { method: "PUT", body: { offer: BRIEF.offer, status: "retired" } }))[0], 400, "retiring needs a reason");
+    [st, D] = await V(`/pains/${painId}`, { method: "PUT", body: { offer: BRIEF.offer, text: "your work clothes have been feeling tighter lately" } }); assert.deepEqual([st, D.pains[0].items[0].text], [200, "your work clothes have been feeling tighter lately"]);
     // Drafting is the text model's: there is none in the tests, and that is said (nothing is added).
     [st, D] = await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 2 } }); assert.equal(st, 400); assert.match(D.error, /network blocked|GEMINI_KEY/);
     assert.equal((await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 9 } }))[0], 400);
@@ -3772,6 +3787,22 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     assert.deepEqual((await V())[1].facts[0].items, ["A full body scan assessment at the start"]);
     assert.equal((await V("/draft", { method: "POST", body: { offer: BRIEF.offer, count: 1, facts: "a scan" } }))[0], 400);
     assert.equal((await (await call("/api/client/u63-other/video")).json()).facts.length, 0, "another gym's programme is its own");
+    // The closing line (2026-11-14: "CTA is always 'click the link below and we'll be in touch!'"): one sentence for every gym, his to change; "tap below" is refused; a script kept with another closing needs one edit, and is not offered to a batch until then.
+    const CLOSE = "Click the link below and we'll be in touch!";
+    [st, D] = await V(); assert.deepEqual([D.closing, D.scripts[0].problems], [{ text: CLOSE, standing: true }, []]);
+    [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0], LINES[1], "Feel stronger and have more energy for your whole day. Tap below to find out more."] } }); assert.equal(st, 400); assert.match(D.error, /line 3 says "Tap below": the only call to action is the closing line; the last line ends with the closing line, word for word: "Click the link below and we'll be in touch!"/);
+    [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: ["If you live in Singapore and your work clothes feel tighter lately, this one is for you.", LINES[1], LINES[2]] } }); assert.equal(st, 400); assert.match(D.error, /line 1 names the whole country \("Singapore"\)/);
+    assert.equal((await V("/closing", { method: "POST", body: { text: "Tap the button below and the team will call" } }))[0], 400);
+    [st, D] = await V("/closing", { method: "POST", body: { text: "Click the link below and the team will be in touch." } });
+    assert.deepEqual([st, D.closing, D.scripts[0].status, D.scripts[0].problems.some((x) => /the last line ends with the closing line, word for word: "Click the link below and the team will be in touch\."/.test(x))], [200, { text: "Click the link below and the team will be in touch.", standing: false }, "kept", true]);
+    { const su = await (await call(`/api/client/${GYM}/batch-setup`)).json(); assert.deepEqual([su.videos.kept, su.videos.needs_edit], [[], [{ id, offer: BRIEF.offer }]]);
+      const c0 = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u63-new", videos: { presenter: 1 } } } })).json();
+      assert.ok(c0.errors.some((e) => /1 presenter video asked for, but no script is ready for "12 Week Total Body Reset": the script kept for this offer needs an edit first — the last line ends with the closing line/.test(e)), c0.errors.join(" | ")); }
+    [st, D] = await V("/closing", { method: "POST", body: { text: CLOSE } }); assert.deepEqual([st, D.closing.text, D.scripts[0].problems], [200, CLOSE, []]);
+    // The closing line as a script's whole last line (2026-11-14: Google's video model refuses that sentence as a clip of its own): it is filmed with the line before it — one cut, one picture fewer — and the script says so.
+    [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0].replace("keep watching", "stay with this"), LINES[1], "Feel stronger and have more energy for your whole day.", CLOSE] } });
+    { const alone = D.scripts.find((x) => x.lines.length === 4); assert.deepEqual([st, alone.joined, alone.cost.images, alone.problems, D.scripts.find((x) => x.id === id).joined], [200, true, 3, [], false]);
+      const j = JSON.parse(readFileSync(scriptsFile, "utf-8")); j.scripts = j.scripts.filter((x) => x.id !== alone.id); writeFileSync(scriptsFile, JSON.stringify(j, null, 2)); } // the test's own script, taken out again
     // The brief: videos need a presenter and that many scripts kept for this offer; the check says what they take.
     const check = async (over) => (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u63-new", ...over } } })).json();
     let c = await check({ videos: { presenter: 1 } });
@@ -3780,7 +3811,14 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     c = await check({ videos: { presenter: 2 } }); assert.ok(c.errors.some((e) => /2 presenter videos asked for, but only 1 script is kept for "12 Week Total Body Reset": keep 1 more on Draft Scenes → Video scripts/.test(e)), c.errors.join(" | "));
     c = await check({ videos: { presenter: 9 } }); assert.ok(c.errors.some((e) => /videos\.presenter must be a whole number from 0 to 3/.test(e)));
     const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
-    assert.deepEqual([setup.videos.presenter.gender, setup.videos.kept, setup.videos.max, setup.videos.ffmpeg], ["man", [{ id, offer: BRIEF.offer }], 3, true]);
+    assert.deepEqual([setup.videos.presenter.gender, setup.videos.kept, setup.videos.needs_edit, setup.videos.max, setup.videos.ffmpeg], ["man", [{ id, offer: BRIEF.offer }], [], 3, true]);
+    // Never the whole country (2026-11-14: "We can't say the full of Singapore no matter what"): a location that names it is refused for every kind of ad, and the areas a gym has used before are offered, never the country.
+    c = await check({ locations: ["SINGAPORE"] }); assert.ok(c.errors.some((e) => /"SINGAPORE": location names the whole country: an ad says the area around the gym \(BOAT QUAY, BISHAN\), never the country/.test(e)), c.errors.join(" | "));
+    c = await check({ locations: ["BISHAN", "Islandwide"] }); assert.ok(c.errors.some((e) => /"Islandwide": location names the whole country/.test(e)));
+    mkdirSync(join(g, "batches", "u63-sg"), { recursive: true }); writeFileSync(join(g, "batches", "u63-sg", "brief.json"), JSON.stringify({ ...BRIEF, batch_id: "u63-sg", locations: ["SINGAPORE", "U63 QUAY"] }));
+    { const su = await (await call(`/api/client/${GYM}/batch-setup`)).json(); assert.ok(su.used_locations.includes("U63 QUAY") && !su.used_locations.includes("SINGAPORE") && su.used_locations.length <= 6, JSON.stringify(su.used_locations)); }
+    { const p = JSON.parse(readFileSync(pf, "utf-8")); p.creative_defaults = { ...(p.creative_defaults || {}), locations: ["SINGAPORE"] };
+      const sv = await call(`/api/client/${GYM}`, { method: "PUT", body: p }); assert.equal(sv.status, 400); assert.match(JSON.stringify(await sv.json()), /location callout \\"SINGAPORE\\": names the whole country/); }
     await V("/presenter", { method: "POST", body: { clear: true } });
     c = await check({ videos: { presenter: 1 } }); assert.ok(c.errors.some((e) => /say who presents the videos first: Ad defaults → Presenter/.test(e)));
     await V("/presenter", { method: "POST", body: { gender: "man", age: 36 } });
@@ -3828,6 +3866,20 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await until("document.querySelector('#vsWhy') && document.querySelector('#vsWhy').textContent.length > 5");
     assert.match(await ev("document.querySelector('#vsWhy').textContent"), /line 1/); assert.equal(await ev("document.querySelectorAll('#gModal textarea').length"), 7, "a refused script keeps what was typed");
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // Pain points and the closing line are on the card; the draft dialog lists the owner's pain points for the offer typed (they come first), and for an offer with none says the agent works them out itself — nothing has to be typed first.
+    assert.deepEqual(await ev("[document.querySelectorAll('#vsPains [data-pain-id]').length, document.querySelector('#vsPains [data-pain-id]').dataset.status, document.querySelector('#vsPains [data-pain-id] .pill').textContent, document.querySelector('#vsClosingText').textContent, !!document.querySelector('#vsPainAdd'), document.querySelector('#vsPainSuggest').textContent]"), [1, "kept", "kept", "“Click the link below and we'll be in touch!”", true, "Suggest pain points…"]);
+    await ev(`document.querySelector('#vsDraftGo').click(); document.querySelector('#vsOfferIn').value = ${JSON.stringify(BRIEF.offer)}; document.querySelector('#vsOfferIn').oninput(); true`);
+    assert.deepEqual(await ev("[[...document.querySelectorAll('#vsPainsFor li')].map(li => li.textContent), document.querySelector('#vsGo').disabled, !!document.querySelector('#vsPainsAuto')]"), [["your work clothes have been feeling tighter lately"], false, false]);
+    await ev("document.querySelector('#vsOfferIn').value = '6 Week Something Else'; document.querySelector('#vsOfferIn').oninput(); true");
+    assert.deepEqual(await ev("[document.querySelector('#vsPainsAuto').innerText, document.querySelector('#vsGo').disabled, /The agent proposes the scripts; you read them and edit what you want/.test(document.querySelector('#gModal').innerText)]"), ["Each script opens on a pain point the agent works out itself, from this gym’s adverts that earned the most leads and the copy library, and says which one. You have nothing to type first.", false, true]);
+    await ev("document.querySelector('#gModal').innerHTML = ''; document.querySelector('#vsPainAdd').click(); document.querySelector('#vsOfferIn').value = '6 Week Something Else'; true");
+    assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelector('#vsOfferIn').value, document.querySelector('#vsGo').textContent, /Pain points · optional/.test(document.querySelector('#vsPains').innerText)]"), ["A pain point", "6 Week Something Else", "Keep it", true]);
+    await ev("document.querySelector('#vsPainIn').value = 'being overweight'; document.querySelector('#vsGo').click(); true");
+    await until("document.querySelector('#vsWhy') && document.querySelector('#vsWhy').textContent.length > 5");
+    assert.match(await ev("document.querySelector('#vsWhy').textContent"), /"overweight" judges the person/); assert.equal(await ev("document.querySelector('#vsPainIn').value"), "being overweight", "a refused pain point keeps what was typed");
+    await ev("document.querySelector('#gModal').innerHTML = ''; document.querySelector('#vsClosingGo').click(); true");
+    assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelector('#vsClosingIn').value]"), ["The closing line", "Click the link below and we'll be in touch!"]);
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
     // The samples say they are shared; the offer's facts are listed and come up in the draft dialog, where another offer shows its own (none).
     assert.deepEqual(await ev("[document.querySelector('#vsShared').textContent, document.querySelectorAll('#vsFacts [data-facts]').length, [...document.querySelectorAll('#vsFacts [data-facts] li')].map(li => li.textContent)]"), ["shared by every gym", 1, ["A full body scan assessment at the start"]]);
     await ev(`document.querySelector('#vsDraftGo').click(); document.querySelector('#vsOfferIn').value = ${JSON.stringify(BRIEF.offer)}; document.querySelector('#vsOfferIn').oninput(); true`);
@@ -3844,11 +3896,16 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await V("/presenter", { method: "POST", body: { gender: "man", age: 36 } });
     // Generate Creatives: the count, who presents and how many scripts are kept for the offer; the summary says the seconds and the dollars.
     await open("batch", "!!document.querySelector('#bVideos')");
-    assert.match(await ev("document.querySelector('#bVideosHint').innerText"), /^1 script kept · presented by a man$/);
+    assert.match(await ev("document.querySelector('#bVideosHint').innerText"), /^1 script ready · presented by a man$/);
+    // No location given: the areas used before are chips to tick — never filled in by themselves, never the country.
+    await ev("B.draft.locations = ['']; paintLocs(); true");
+    assert.deepEqual(await ev("[document.querySelector('#bLocUsed').textContent, [...document.querySelectorAll('#bLocs [data-used]')].map(c => c.dataset.used).includes('U63 QUAY'), [...document.querySelectorAll('#bLocs [data-used]')].some(c => c.dataset.used === 'SINGAPORE'), document.querySelector('#bLoc0').value]"), ["used before:", true, false, ""]);
+    await ev("document.querySelector('#bLocs [data-used=\"U63 QUAY\"]').click(); true");
+    assert.deepEqual(await ev("[B.draft.locations, document.querySelector('#bLoc0').value, !!document.querySelector('#bLocs [data-used=\"U63 QUAY\"]')]"), [["U63 QUAY"], "U63 QUAY", false]);
     await ev(`B.draft.offer = ${JSON.stringify(BRIEF.offer)}; B.draft.locations = ["BISHAN", "ANG MO KIO"]; B.draft.generated = 0; B.draft.real = ${JSON.stringify(BRIEF.real)}; B.touched = true; document.querySelector('#bVideos').value = '1'; bVideoSet(1); true`);
     await until("!!document.querySelector('#bVideoSum')");
     assert.match(await ev("document.querySelector('#bVideoSum').innerText"), /^1 presenter video × 2 locations: about \d+ s of video \(US\$\d+\.\d\d\), never more than \d+ s \(US\$\d+\.\d\d\)$/);
-    assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "1 script kept for this offer · presented by a man");
+assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "1 script ready for this offer · presented by a man");
     // An offer nothing is written for (the owner, 2026-11-12: a sample on the screen, "no script is kept", and nothing to press): the count's own line says a sample is a template and gives the one thing to press — Draft Scenes opens on the scripts with the draft dialog up for that offer.
     await ev("B.draft.offer = '6 Week Full Body Transformation'; bVideoSet(1); true");
     assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "no script written for this offer yet (the 1 kept is for another offer: a script is written for one offer's exact words) · Draft scripts for it… · presented by a man");

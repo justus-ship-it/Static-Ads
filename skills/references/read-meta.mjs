@@ -13,6 +13,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from "fs";
 import { join } from "path";
 import { countryRules, profileCountry, pinUsable, validateProfile } from "./client-config.mjs";
+import { isWholeCountry } from "./render-composites.mjs";
 import { addWording, wordingProblems } from "./ad-wordings.mjs";
 
 export const META_DIR = "onboarding/meta";
@@ -45,7 +46,9 @@ export function calloutFrom(location = {}) {
   const street = oneLine(location.street), city = oneLine(location.city);
   // Taiwan: the district after the city or county (台北市信義區 → 信義區); a street that starts with the district still answers.
   const d = street.match(/(?:市|縣)([一-鿿]{1,3}區)/) || street.match(/^([一-鿿]{1,3}區)/);
-  return d ? d[1] : city || "";
+  // A city that is the whole country is no callout (2026-11-14: a Singapore Page's city is "Singapore", and Aether
+  // Athletics' ads then said the whole country): the owner names the area.
+  return d ? d[1] : city && !isWholeCountry(city) ? city : "";
 }
 
 /**
@@ -160,7 +163,7 @@ export function acceptMetaFacts(gymDir, body = {}, { profile: given = null } = {
     if (body.pin && r.pin) {
       const pins = (((profile.targeting_defaults ||= {}).geo ||= {}).radius_pins ||= []);
       const km = num(body.pin.radius_km) ?? r.pin.radius_km ?? 5;
-      const pin = { label: r.pin.name || r.page?.name || "the gym", ...(r.pin.kind === "place" ? { place_key: r.pin.key, place_name: r.pin.name || "" } : {}), lat: r.pin.lat, lng: r.pin.lng, radius_km: km, location_types: r.pin.location_types || ["home", "recent"], callouts: Array.isArray(body.callouts) ? body.callouts.map(oneLine).filter(Boolean).map((c) => c.toUpperCase()) : [] };
+      const pin = { label: r.pin.name || r.page?.name || "the gym", ...(r.pin.kind === "place" ? { place_key: r.pin.key, place_name: r.pin.name || "" } : {}), lat: r.pin.lat, lng: r.pin.lng, radius_km: km, location_types: r.pin.location_types || ["home", "recent"], callouts: Array.isArray(body.callouts) ? body.callouts.map(oneLine).filter(Boolean).filter((c) => !isWholeCountry(c)).map((c) => c.toUpperCase()) : [] };
       const had = pins.findIndex((p) => (pin.place_key && p.place_key === pin.place_key) || (p.lat != null && Math.abs(p.lat - pin.lat) < 0.0005 && Math.abs(p.lng - pin.lng) < 0.0005));
       if (had >= 0) pins[had] = { ...pins[had], ...pin, callouts: [...new Set([...(pins[had].callouts || []), ...pin.callouts])] }; else pins.push(pin);
       if (!pinUsable(pin)) throw new Error("the pin from the account has no place and no point");
@@ -168,7 +171,7 @@ export function acceptMetaFacts(gymDir, body = {}, { profile: given = null } = {
     }
     if (body.ages && r.adsets?.ages?.length) { const a = r.adsets.ages[0], dem = ((profile.targeting_defaults ||= {}).demographics ||= {}); dem.age_min = num(body.ages.min) ?? a.min; dem.age_max = num(body.ages.max) ?? a.max; say(`ages ${dem.age_min}-${dem.age_max}`); }
     if (body.budget != null && r.adsets?.daily_budget) { const b = ((profile.campaign_defaults ||= {}).budget ||= {}); const amt = num(body.budget) ?? r.adsets.daily_budget.median; if (!(amt > 0)) throw new Error("the daily budget must be a number above 0"); b.amount = amt; b.currency = r.adsets.daily_budget.currency || b.currency; b.level = b.level || "adset"; b.type = "daily"; say(`daily budget ${b.currency} ${amt}`); }
-    if (Array.isArray(body.callouts) && body.callouts.length) { const cd = (profile.creative_defaults ||= {}); const have = new Set((cd.locations || []).map((x) => String(x).toUpperCase())); const add = body.callouts.map(oneLine).filter(Boolean).map((c) => c.toUpperCase()).filter((c) => !have.has(c)); if (add.length) { cd.locations = [...(cd.locations || []), ...add]; say(`location callout${add.length === 1 ? "" : "s"} ${add.join(", ")}`); } }
+    if (Array.isArray(body.callouts) && body.callouts.length) { const cd = (profile.creative_defaults ||= {}); const have = new Set((cd.locations || []).map((x) => String(x).toUpperCase())); const add = body.callouts.map(oneLine).filter(Boolean).filter((c) => !isWholeCountry(c)).map((c) => c.toUpperCase()).filter((c) => !have.has(c)); if (add.length) { cd.locations = [...(cd.locations || []), ...add]; say(`location callout${add.length === 1 ? "" : "s"} ${add.join(", ")}`); } }
     return profile;
   };
   const trial = edit(JSON.parse(JSON.stringify(base)), () => {});

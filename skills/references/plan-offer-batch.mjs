@@ -46,6 +46,7 @@ import { catalogueFor, imageModelFor, mixOf, FEED_RATIOS, CREATIVE_DEFAULTS } fr
 import { cardsProblems, cardCount, pickCards } from "./cards.mjs";
 import { renderCard, loadCards } from "./render-cards.mjs";
 import { videosProblems, videoCount, pickScripts, makePresenterVideos, scriptCost, USD_PER_SECOND } from "./presenter-video.mjs";
+import { plainGemini } from "./gemini-busy.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { ROOMS, SCENE_OPTIONAL_TAGS, SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
@@ -846,13 +847,13 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     // No ad at all (2026-11-12: a batch of one video whose one line was refused ended "Command failed: … gallery-selector"):
     // there is nothing for a gallery to show, so the run ends here, in words, with what was refused and why. What was
     // made is on disk and is reused by Run again.
-    if (!ads.length) throw new Error(`no ad was made. ${failed.length ? failed.map((f) => `${f.candidate}${f.location ? ` (${f.location})` : ""}: ${[].concat(f.failures || []).join("; ")}`).join(" · ") : "Nothing in this batch passed its checks."} Everything made so far is kept: Run again reuses it.`);
+    if (!ads.length) { const why = failed.length ? failed.map((f) => `${f.candidate}${f.location ? ` (${f.location})` : ""}: ${[].concat(f.failures || []).join("; ")}`).join(" · ") : "Nothing in this batch passed its checks."; throw new Error(`no ad was made. ${why}${/[.!?"”]$/.test(why) ? "" : "."} Everything made so far is kept: Run again reuses it.`); }
     const gallery = deps.gallery || ((dir) => execFileSync(process.execPath, [join(HERE, "gallery-selector.mjs"), "--output-dir", dir], { stdio: "ignore" }));
     gallery(out);
     prog.set({ stage: "done", ads: ads.length, failed: failed.length, image_calls: spent });
     log(`· ${ads.length} ad(s) in ${out} (${results.filter((r) => !r.failed).length} looks × ${brief.locations.length} location(s))${failed.length ? `; ${failed.length} look(s) failed to verify and are left out` : ""}; ${calls} image call(s) this run, ${batch.image_calls} for the batch in all`);
     return { out, batch, calls, results };
-  } catch (e) { prog.set({ stage: "failed", error: e.message }); throw e; }
+  } catch (e) { prog.set({ stage: "failed", error: plainGemini(e) }); throw e; } // a Google error is said in plain words, with Google's own after it
 }
 
 
