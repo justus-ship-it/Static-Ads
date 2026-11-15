@@ -1057,7 +1057,7 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "with-videos", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN", "ANG MO KIO"], videos: { presenter: 1 } };
     // The brief's own rules.
-    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 9, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter)', "videos.presenter must be a whole number from 0 to 3", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 9, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter, active)', "videos.presenter must be a whole number from 0 to 3", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
     assert.deepEqual(validateBrief(brief, { brandDir: dir }), [], "videos alone are a batch");
     // The models: a still is a small picture; a clip is real video with a tone for speech between two silences; the watching pass hears the line.
     const made = { image: 0, clip: [], watch: 0 }, said = new Map();
@@ -1139,5 +1139,40 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     assert.ok(Math.min(...r4.batch.ads.filter((a) => a.video_file).map((a) => Number(a.folder.split("-")[0]))) > Math.max(...r4.batch.ads.filter((a) => !a.video_file).map((a) => Number(a.folder.split("-")[0]))));
     writeFileSync(join(dir, "gym-profile.json"), JSON.stringify({ ...profile, creative_defaults: {} }));
     await assert.rejects(run({ ...brief, batch_id: "with-videos-4" }), /say who presents first \(Ad defaults → Presenter\)/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("B17 presenter videos with exercises in a batch (2026-11-15): a brief asks for the two kinds with one total — the scripts picked first are filmed talking, the rest with exercises; what it would take counts the seconds of each move; the ad says its kind and the move of each cut, in batch.json and on to the publish plan", { skip: !(await import("./presenter-video.mjs")).hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    process.env.VIDEO_LIBRARY_DIR = join(dir, "video-library");
+    const { addScript, clipSeconds, fillLine, movesFor, moveLabel, MOVE_LEAD, KIT } = await import("./presenter-video.mjs");
+    const { execFileSync } = await import("node:child_process");
+    const { videoPlan } = await import("./plan-offer-batch.mjs");
+    const { keptAds } = await import("./meta-publish.mjs");
+    const profile = { ...JSON.parse(readFileSync(join(dir, "gym-profile.json"), "utf-8")), creative_defaults: { presenter: { gender: "woman", age: 34 } } };
+    writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(profile));
+    const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
+    const brief = { ...BRIEF, batch_id: "with-moves", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN"], videos: { active: 1 } };
+    assert.deepEqual(validateBrief(brief, { brandDir: dir }), []);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 2, active: 2 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 3 presenter videos in all, talking and with exercises together"]);
+    const script = addScript(dir, { lines: LINES, offer: brief.offer }, { profile });
+    const S = (i) => clipSeconds(fillLine(LINES[i], "BISHAN")), plan = videoPlan(dir, brief);
+    assert.deepEqual([plan.kinds, plan.active, plan.count, plan.seconds, plan.images], [["active"], 1, 1, S(0) + S(1) + S(2) + 2 * MOVE_LEAD, 4]);
+    assert.deepEqual(videoPlan(dir, { ...brief, videos: { presenter: 1 } }).seconds, S(0) + S(1) + S(2), "the same script filmed talking is the words alone");
+    const made = { image: 0, clip: [] }, said = new Map(), logs = [];
+    const videoModels = {
+      async image({ out }) { made.image++; writeFileSync(out, readFileSync(join(dir, "brand-assets", "real", "r1.png"))); },
+      async clip({ out, prompt, seconds }) { made.clip.push([seconds, /For the first two seconds she says nothing and does two/.test(prompt)]); said.set(out, prompt.match(/pace: "([^"]+)"/)[1]);
+        execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `color=c=gray:s=180x320:r=24:d=${seconds}`, "-f", "lavfi", "-i", `sine=frequency=330:duration=${seconds - 2}`, "-af", "adelay=700|700,apad=whole_dur=" + seconds, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", String(seconds), out]); },
+      async watch(file) { return { spoken: said.get(file), lettering: [], people: 1, lips_match_speech: true, faults: [], looks_real: 9, did_move: true }; },
+    };
+    const r = await runBatch({ brandDir: dir, brief, deps: { ...fakes([]), browser, videoModels }, log: (m) => logs.push(m) });
+    const batch = JSON.parse(readFileSync(join(r.out, "batch.json"), "utf-8")), ad = batch.ads[0], picks = movesFor(script, { kit: KIT }).map(moveLabel);
+    assert.ok(logs.some((m) => /· v01: presenter video with exercises from script /.test(m)), logs.join("\n"));
+    assert.deepEqual([made.image, made.clip], [4, [[S(0) + MOVE_LEAD, true], [S(1), false], [S(2) + MOVE_LEAD, true]]]);
+    assert.deepEqual([batch.ads.length, batch.videos, /-exercise-video$/.test(ad.folder), ad.treatment, ad.format, ad.video.kind, ad.video.moves, ad.video.parts.map((p) => p.move)], [1, { presenter: 0, active: 1 }, true, "video-presenter-active", "presenter-video", "active", picks.map((move, i) => ({ line: i + 1, move })), picks]);
+    assert.equal(keptAds(r.out)[0].video_kind, "active", "the kind goes on to the publish plan");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

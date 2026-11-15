@@ -3994,6 +3994,16 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await until("!!document.querySelector('#bVideoSum')");
     assert.match(await ev("document.querySelector('#bVideoSum').innerText"), /^1 presenter video × 2 locations: about \d+ s of video \(US\$\d+\.\d\d\), never more than \d+ s \(US\$\d+\.\d\d\)$/);
 assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "1 script ready for this offer · presented by a man");
+    // The second kind (2026-11-15): "of which with exercises" — never more than the videos asked for; the brief says the two kinds; the summary says it and counts the seconds of the moves.
+    { const talking = Number((await ev("document.querySelector('#bVideoSum').innerText")).match(/about (\d+) s/)[1]);
+      assert.deepEqual(await ev("[!!document.querySelector('#bVideosActive'), document.querySelector('#bVideosActive').value, JSON.stringify(briefFromDraft().videos)]"), [true, "0", '{"presenter":1}']);
+      await ev("document.querySelector('#bVideosActive').value = '5'; bVideoActiveSet(5); true");
+      assert.deepEqual(await ev("[document.querySelector('#bVideosActive').value, JSON.stringify(briefFromDraft().videos)]"), ["1", '{"active":1}'], "never more than the videos asked for");
+      await until("/with exercises/.test(document.querySelector('#bVideoSum')?.innerText || '')");
+      const sum = await ev("document.querySelector('#bVideoSum').innerText"); assert.match(sum, /^1 presenter video \(1 with exercises\) × 2 locations: about \d+ s of video/);
+      assert.ok(Number(sum.match(/about (\d+) s/)[1]) > talking, "a move takes seconds of its own");
+      await ev("bVideoSet(0); true"); assert.deepEqual(await ev("[B.draft.videos_active, document.querySelector('#bVideosActive').value, briefFromDraft().videos === undefined]"), [0, "0", true]);
+      await ev("document.querySelector('#bVideos').value = '1'; bVideoSet(1); true"); await until("!!document.querySelector('#bVideoSum') && !/with exercises/.test(document.querySelector('#bVideoSum').innerText)"); }
     // An offer nothing is written for (the owner, 2026-11-12: a sample on the screen, "no script is kept", and nothing to press): the count's own line says a sample is a template and gives the one thing to press — Draft Scenes opens on the scripts with the draft dialog up for that offer.
     await ev("B.draft.offer = '6 Week Full Body Transformation'; bVideoSet(1); true");
     assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "no script written for this offer yet (the 1 kept is for another offer: a script is written for one offer's exact words) · Draft scripts for it… · presented by a man");

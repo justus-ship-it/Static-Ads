@@ -727,14 +727,18 @@ export async function suggestPains({ brandDir, offer, audience = null, count = 6
 
 /** How many presenter videos a batch may ask for (each is one script, made once for every location). */
 export const MAX_VIDEOS = 3;
-export const videoCount = (videos) => (Number.isInteger(videos?.presenter) ? videos.presenter : 0);
-/** What is wrong with a brief's `videos`: { presenter: 0…MAX_VIDEOS }. */
+const kindCount = (videos, k) => (Number.isInteger(videos?.[k]) && videos[k] > 0 ? videos[k] : 0);
+export const videoCount = (videos) => kindCount(videos, "presenter") + kindCount(videos, "active");
+/** The kind of each video of a batch, in the order its scripts are picked: the talking ones, then the ones with exercises. */
+export const videoKinds = (videos) => [...Array(kindCount(videos, "presenter")).fill("presenter"), ...Array(kindCount(videos, "active")).fill("active")];
+/** What is wrong with a brief's `videos`: { presenter: talking to camera, active: with exercises } — `MAX_VIDEOS` between them. */
 export function videosProblems(videos) {
   if (videos == null) return [];
   if (typeof videos !== "object" || Array.isArray(videos)) return ["videos must say how many of each kind: { presenter: 1 }"];
   const errs = [];
-  for (const k of Object.keys(videos)) if (k !== "presenter") errs.push(`videos: "${k}" is not a kind of video (presenter)`);
-  if (videos.presenter != null && !(Number.isInteger(videos.presenter) && videos.presenter >= 0 && videos.presenter <= MAX_VIDEOS)) errs.push(`videos.presenter must be a whole number from 0 to ${MAX_VIDEOS}`);
+  for (const k of Object.keys(videos)) if (!VIDEO_KINDS.includes(k)) errs.push(`videos: "${k}" is not a kind of video (presenter, active)`);
+  for (const k of VIDEO_KINDS) if (videos[k] != null && !(Number.isInteger(videos[k]) && videos[k] >= 0 && videos[k] <= MAX_VIDEOS)) errs.push(`videos.${k} must be a whole number from 0 to ${MAX_VIDEOS}`);
+  if (!errs.length && videoCount(videos) > MAX_VIDEOS) errs.push(`a batch makes at most ${MAX_VIDEOS} presenter videos in all, talking and with exercises together`);
   return errs;
 }
 /**
@@ -892,13 +896,15 @@ const staleCheck = (seen) => !Array.isArray(seen?.lettering) && (seen?.on_screen
  * that a viewer might: a note, and the reason for the one retake), marks (lettering that is the room's own: a note,
  * never a retake), lettering }. Pure: the same check is judged again by today's rules on every run.
  */
-export function judgeClip(seen, line, { profile = {}, say = [] } = {}) {
+export function judgeClip(seen, line, { profile = {}, say = [], move = null } = {}) {
   const heard = sameWords(seen?.spoken || "", line, { names: [profile.display_name].filter(Boolean), sounds: soundsOf(say) }), alone = seen?.people === 1, L = letteringOf(seen);
-  const kind = !heard ? "words" : !alone ? "people" : L.fails.length ? "lettering" : null;
-  const why = kind === "words" ? `it said "${norm(seen?.spoken)}"` : kind === "people" ? `${seen?.people} people are in it` : kind === "lettering" ? `words appear in the picture: ${L.fails.map((x) => `${x.text}${LETTER_WHERE[x.on] ? ` (${LETTER_WHERE[x.on]})` : ""}`).join(", ")}` : null;
+  // With exercises: the move is done before the line (asked of the check only for a move cut; a check that does not say is not held against the take).
+  const moved = !(move?.m.kind === "move" && seen?.did_move === false);
+  const kind = !heard ? "words" : !alone ? "people" : !moved ? "move" : L.fails.length ? "lettering" : null;
+  const why = kind === "move" ? `the move (${moveLabel(move)}) was not done before the line` : kind === "words" ? `it said "${norm(seen?.spoken)}"` : kind === "people" ? `${seen?.people} people are in it` : kind === "lettering" ? `words appear in the picture: ${L.fails.map((x) => `${x.text}${LETTER_WHERE[x.on] ? ` (${LETTER_WHERE[x.on]})` : ""}`).join(", ")}` : null;
   return { passed: !kind, why, kind, faults: (seen?.faults || []).filter(Boolean), marks: L.notes.map((x) => `${x.on === "screen" ? "on a screen in the room" : "the maker's name on the equipment"}: ${x.text}`), lettering: L };
 }
-const WATCH_SCHEMA = { type: "OBJECT", properties: { spoken: { type: "STRING" }, lettering: { type: "ARRAY", items: { type: "OBJECT", properties: { text: { type: "STRING" }, on: { type: "STRING", enum: LETTERING_ON } }, required: ["text", "on"] } }, people: { type: "INTEGER" }, lips_match_speech: { type: "BOOLEAN" }, faults: { type: "ARRAY", items: { type: "STRING" } }, looks_real: { type: "INTEGER" } }, required: ["spoken", "lettering", "people", "lips_match_speech", "faults", "looks_real"] };
+const WATCH_SCHEMA = { type: "OBJECT", properties: { spoken: { type: "STRING" }, lettering: { type: "ARRAY", items: { type: "OBJECT", properties: { text: { type: "STRING" }, on: { type: "STRING", enum: LETTERING_ON } }, required: ["text", "on"] } }, people: { type: "INTEGER" }, lips_match_speech: { type: "BOOLEAN" }, faults: { type: "ARRAY", items: { type: "STRING" } }, looks_real: { type: "INTEGER" }, did_move: { type: "BOOLEAN" } }, required: ["spoken", "lettering", "people", "lips_match_speech", "faults", "looks_real"] };
 const WATCH_QUESTION = "Watch and listen to this short video. spoken: transcribe exactly every word spoken, in order, with nothing added; an empty string if nobody speaks. lettering: every word, name, logo, number or letter visible anywhere in the picture at any point, one entry each, empty if none — text: what it says; on: what it is on: \"equipment\" (a maker's name, model or number printed on a machine, rack, weight, bench or mat), \"screen\" (the display of a machine, or a television or clock in the room), \"clothing\" (anything a person is wearing), \"sign\" (a sign, poster, board, or writing on a wall, door, window or mirror), \"overlay\" (a caption, subtitle, title, watermark or logo laid over the picture rather than part of the room), \"other\" (none of these, or you cannot tell). people: how many people are visible at any point. lips_match_speech: true only if the visible person's mouth moves in time with the spoken words. faults: every visible fault that would make a viewer think this is not real footage — warped hands or faces, objects that melt or pass through each other, impossible movement, a face that changes — each as a short phrase; empty if none. looks_real: 1 to 10, how convincingly this passes as phone footage shot in a real gym.";
 /** The real models: a still from the gym's image model, a clip from Omni, a watching pass by the check model. */
 export function realModels(profile = {}) {
@@ -912,13 +918,17 @@ export function realModels(profile = {}) {
       else if (v.uri) { const res = await fetch(v.uri.includes("alt=media") ? v.uri : `${v.uri}${v.uri.includes("?") ? "&" : "?"}alt=media`, { headers: { "x-goog-api-key": loadGeminiKey() } }); if (!res.ok) throw new Error(`the video could not be downloaded (${res.status})`); writeFileSync(out, Buffer.from(await res.arrayBuffer())); }
       else throw new Error("the video part carried neither data nor a uri");
     },
-    async watch(file) {
+    /** The kit one photo of the room shows (a vision call). */
+    async kit(photo) { const r = await callVision(photo, KIT_QUESTION, KIT_SCHEMA); return KIT.filter((k) => r?.[k] === true); },
+    async watch(file, { move = null } = {}) {
+      // With exercises: was the move done before the line? Asked only of a move cut.
+      const moveQ = move?.m.kind === "move" ? ` did_move: before the person speaks, do they do this exercise at least once — ${move.m.name}? true or false.` : "";
       // A name is spelt the gym's way when it is heard ("Aether", not "Ether"; "F45", not "F forty-five"): nothing else about the line is told.
       // How a listed word sounded is not asked (2026-11-15): the check wrote "kee" for a clip the owner heard as "kway", so its ear is no judge of that.
       const named = profile.display_name ? ` The business is called "${profile.display_name}": where that name is spoken, write it exactly that way.` : "";
       const out = await whenGeminiFree(async () => {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHECK_MODEL}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": loadGeminiKey() }, signal: AbortSignal.timeout(240000),
-          body: JSON.stringify({ contents: [{ parts: [{ text: WATCH_QUESTION + named }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: WATCH_SCHEMA, temperature: 0 } }) });
+          body: JSON.stringify({ contents: [{ parts: [{ text: WATCH_QUESTION + moveQ + named }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: WATCH_SCHEMA, temperature: 0 } }) });
         if (!res.ok) throw new Error(`the video check failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
         return res.json();
       }, { label: "video check" });
@@ -946,6 +956,144 @@ export const spokenLine = (line, said = []) => said.reduce((s, x) => s.replace(n
 export function clipPrompt({ presenter, profile, line, seconds, said = [] }) {
   const she = presenter.gender === "man" ? "The man" : "The woman", pron = presenter.gender === "man" ? "His" : "Her", their = presenter.gender === "man" ? "his" : "her", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`;
   return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${pron} mouth forms exactly these words, in time with ${their} voice, and says nothing else; the sentence is finished before the clip ends. ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
+}
+
+// ── with exercises: a move, then the line ────────────────────────────────────
+/**
+ * The second kind of presenter video (2026-11-15, the owner, with a coach's video — two medicine-ball twists in
+ * silence, then she stops and talks holding the ball; a cut sitting on a bike; two standing; a burst of skipping, then
+ * the ending holding the rope: "it's like the Aether ones … but the coach is doing associated exercises too"; tested
+ * the same day on three clips he approved). The same scripts, filmed another way: MOVE, STOP, TALK — nobody talks
+ * while lifting. Each cut is one of three things: a **move** (a rep or two in silence, then the line said in place,
+ * still holding the kit), a **hold** (sitting or standing with the kit, talking), or standing as in the first kind.
+ *
+ * **The agent picks the moves** (his ruling: "agent must pick the moves … exercises that are common in most gyms and
+ * look simple for the user to do. A clean and jerk is too hard … a bench press is not suitable since functional
+ * training gyms don't really do bench press … Russian twists with a plate or kettlebell squats would be highly
+ * adaptable") from `MOVES`, the list he pre-approved: only what a beginner looks at and thinks "I could do that",
+ * with kit most gyms have, done in one spot with the face in view. Only kit the gym's own room photos show is used
+ * (`readKit`: each cleaned premises photo read once), the same move with another weight where the first is not there
+ * (a goblet squat with a dumbbell where the room has no kettlebell). Left out for good: barbell lifts, Olympic lifts,
+ * kettlebell swings, burpees, box jumps, pull-ups, push-ups, planks, ropes, machines.
+ */
+export const VIDEO_KINDS = ["presenter", "active"];
+/** Seconds added to a move cut's clip for the move itself (asked for two, the model takes three to four), and how much of the move the cut keeps before the first word. */
+export const MOVE_LEAD = 4, MOVE_KEEP = 1.6;
+export const KIT = ["dumbbell", "kettlebell", "plate", "box", "bench"];
+const G = (presenter) => (presenter.gender === "man" ? { He: "He", he: "he", his: "his" } : { He: "She", he: "she", his: "her" });
+const CLOSE = (g) => `The camera is close: ${g.he} fills most of the frame.`;
+const FULL = (g) => `The camera is a few steps back, close enough that ${g.his} whole body, from head to feet, fills the height of the frame.`;
+const ITEM = { plate: "one round black weight plate", kettlebell: "one kettlebell", dumbbell: "one dumbbell, held by its two ends" };
+/**
+ * The moves (kind `move`) and the holds (kind `hold`). `kit`: any one of these, the first the room has (empty: none
+ * needed). `pose`: the picture a clip starts from; `does`: the reps, in silence; `rest`: how the move ends before the
+ * line; `stays`: what holds for the rest of the clip; `label`: how it reads on the owner's screen.
+ */
+export const MOVES = [
+  { id: "russian-twist", name: "Russian twists", kind: "move", kit: ["plate", "kettlebell", "dumbbell"], label: (k) => `Russian twists with a ${k}`,
+    pose: (g, k) => `${g.He} sits on the gym floor, side-on to the camera, knees bent with ${g.his} heels on the floor, leaning back a little with a straight back, holding ${ITEM[k]} in both hands in front of ${g.his} chest, ${g.his} shoulders turned toward one hip, eyes on the ${k}, mid-exercise. The camera is low, at the height of ${g.his} chest, and close: ${g.his} whole body is in the picture and fills the width of the frame.`,
+    does: (g, k) => `does two smooth Russian twists: ${g.he} turns ${g.his} shoulders and carries the ${k} to one side of ${g.his} hips, then to the other side`,
+    rest: (g, k) => `holds the ${k} still against ${g.his} chest, turns ${g.his} face to the camera`, stays: (g) => `${g.He} stays seated on the floor.` },
+  { id: "goblet-squat", name: "goblet squats", kind: "move", kit: ["kettlebell", "dumbbell"], label: (k) => `goblet squats with a ${k}`,
+    pose: (g, k) => `${g.He} stands on the open floor facing the camera, feet a little wider than ${g.his} shoulders, holding ONE ${k} against ${g.his} chest with both hands${k === "dumbbell" ? ", upright, cupped under its top end" : ", by the sides of its handle"}, elbows down — the start of a goblet squat — looking ahead with easy focus. ${FULL(g)}`,
+    does: (g, k) => `does two slow, easy goblet squats: ${g.he} bends ${g.his} knees and sits back until ${g.his} thighs are level with the floor, then stands up tall, the ${k} staying against ${g.his} chest the whole time`,
+    rest: () => "stands still", stays: (g) => `${g.He} stays where ${g.he} is: no walking, and the camera does not move closer.` },
+  { id: "shoulder-press", name: "shoulder presses", kind: "move", kit: ["dumbbell"], label: () => "shoulder presses with two dumbbells",
+    pose: (g) => `${g.He} stands on the open floor facing the camera, feet under ${g.his} hips, holding a dumbbell in each hand at shoulder height, palms forward, elbows bent — the start of a shoulder press — looking ahead with easy focus. Framed from head to thighs, with room above ${g.his} head for the dumbbells to go up. ${CLOSE(g)}`,
+    does: (g) => `does two slow shoulder presses: ${g.he} presses both dumbbells straight up over ${g.his} head and lowers them back to ${g.his} shoulders`,
+    rest: (g) => `lowers the dumbbells to ${g.his} sides and stands still`, stays: (g) => `${g.He} stays where ${g.he} is: no walking, and the camera does not move closer.` },
+  { id: "bicep-curl", name: "bicep curls", kind: "move", kit: ["dumbbell"], label: () => "bicep curls with two dumbbells",
+    pose: (g) => `${g.He} stands on the open floor facing the camera, feet under ${g.his} hips, a dumbbell in each hand at ${g.his} sides, arms straight, palms forward — the start of a bicep curl — looking ahead with easy focus. Framed from head to thighs. ${CLOSE(g)}`,
+    does: (g) => `does two slow bicep curls: ${g.he} curls both dumbbells up to ${g.his} shoulders and lowers them again, ${g.his} elbows staying at ${g.his} sides`,
+    rest: (g) => `holds the dumbbells still at ${g.his} sides`, stays: (g) => `${g.He} stays where ${g.he} is: no walking, and the camera does not move closer.` },
+  { id: "deadlift", name: "deadlifts", kind: "move", kit: ["kettlebell", "dumbbell"], label: (k) => (k === "kettlebell" ? "deadlifts with a kettlebell" : "deadlifts with two dumbbells"),
+    pose: (g, k) => `${g.He} stands on the open floor, turned a little to one side of the camera, feet under ${g.his} hips, standing tall and holding ${k === "kettlebell" ? "one kettlebell with both hands in front of" : "a dumbbell in each hand in front of"} ${g.his} thighs, arms straight — the top of a deadlift — looking ahead with easy focus. ${FULL(g)}`,
+    does: (g, k) => `does two slow, easy deadlifts: with a flat back ${g.he} pushes ${g.his} hips back and lowers the ${k === "kettlebell" ? "kettlebell" : "dumbbells"} down past ${g.his} knees, then stands up tall again`,
+    rest: () => "stands tall and still", stays: (g) => `${g.He} stays where ${g.he} is: no walking, and the camera does not move closer.` },
+  { id: "reverse-lunge", name: "reverse lunges", kind: "move", kit: ["dumbbell"], label: () => "reverse lunges with two dumbbells",
+    pose: (g) => `${g.He} stands on the open floor facing the camera, feet together, a dumbbell in each hand at ${g.his} sides, arms straight — the start of a reverse lunge — looking ahead with easy focus. ${FULL(g)}`,
+    does: (g) => `does two slow reverse lunges: ${g.he} steps one foot back and bends both knees, then steps back up to standing, and does the same with the other leg`,
+    rest: () => "stands still with both feet together", stays: (g) => `${g.He} stays where ${g.he} is: no walking, and the camera does not move closer.` },
+  { id: "step-up", name: "step-ups", kind: "move", kit: ["box", "bench"], label: (k) => `step-ups onto a ${k}`,
+    pose: (g, k) => `${g.He} stands side-on to the camera in front of a low ${k === "box" ? "black wooden box" : "flat training bench"}, one foot flat on top of it and the other on the floor, arms relaxed — the start of a step-up — eyes on the ${k}. ${FULL(g)}`,
+    does: (g, k) => `does two easy step-ups: ${g.he} steps up to stand tall on the ${k}, then steps back down to the floor`,
+    rest: (g, k) => `stands on the floor beside the ${k}, turns to face the camera`, stays: (g) => `${g.He} stays beside it: no walking away, and the camera does not move closer.` },
+  { id: "squat", name: "squats", kind: "move", kit: [], label: () => "bodyweight squats",
+    pose: (g) => `${g.He} stands on the open floor facing the camera, feet a little wider than ${g.his} shoulders, both arms held straight out in front of ${g.his} chest — the start of a squat — looking ahead with easy focus. ${FULL(g)}`,
+    does: (g) => `does two slow, easy squats: ${g.he} bends ${g.his} knees and sits back until ${g.his} thighs are level with the floor, arms out in front, then stands up tall`,
+    rest: (g) => `stands still and lets ${g.his} arms rest at ${g.his} sides`, stays: (g) => `${g.He} stays where ${g.he} is: no walking, and the camera does not move closer.` },
+  { id: "seated", name: "seated", kind: "hold", kit: ["box", "bench"], label: (k) => `sitting on a ${k}`,
+    pose: (g, k, has) => `${g.He} sits on a ${k === "box" ? "black wooden box" : "flat training bench"} on the gym floor, facing the camera, leaning forward a little with ${g.his} forearms resting on ${g.his} thighs, ${has("dumbbell") ? `one dumbbell held loosely in one hand between ${g.his} knees` : `${g.his} hands loosely together`}, as if resting between sets, looking straight into the lens, relaxed and friendly, mid-sentence. Framed from the knees up. ${CLOSE(g)}`,
+    stays: (g) => `${g.He} stays seated and keeps ${g.his} hands low and still; at most one small nod.` },
+  { id: "chest-hold", name: "holding a weight", kind: "hold", kit: ["kettlebell", "dumbbell"], label: (k) => `standing with a ${k} held at the chest`,
+    pose: (g, k) => `${g.He} stands on the open floor facing the camera, holding one ${k} against ${g.his} chest with both hands, as if between sets, looking straight into the lens, relaxed and friendly, mid-sentence. Framed from the waist up. ${CLOSE(g)}`,
+    stays: (g, k) => `${g.He} holds the ${k} still against ${g.his} chest the whole time: no walking.` },
+  { id: "foot-up", name: "one foot up", kind: "hold", kit: ["box", "bench"], label: (k) => `one foot up on a ${k}`,
+    pose: (g, k) => `${g.He} stands with one foot up on a low ${k === "box" ? "black wooden box" : "flat training bench"}, leaning forward a little with one forearm resting on that knee, as if between sets, looking straight into the lens, relaxed and friendly, mid-sentence. Framed from the knees up. ${CLOSE(g)}`,
+    stays: (g) => `${g.He} stays as ${g.he} is, ${g.his} foot on it and ${g.his} arm resting on ${g.his} knee: no walking.` },
+];
+/** The kit a move uses in a room: the first of its own the room has; "" when it needs none; null when the room has none of it. */
+export const kitFor = (move, kit = KIT) => (move.kit.length ? move.kit.find((k) => kit.includes(k)) ?? null : "");
+/** How a picked move reads: "Russian twists with a plate", "sitting on a box". */
+export const moveLabel = (mv) => (mv ? mv.m.label(mv.k) : null);
+/** Seconds of video a cut is asked for: its words, and — for a move — the move before them; never past the model's limit. */
+const cutSeconds = (line, mv) => Math.min(CLIP_SECONDS[1], clipSeconds(line) + (mv?.m.kind === "move" ? MOVE_LEAD : 0));
+/**
+ * The agent's pick for each cut of a script filmed with exercises: [{ m (the move), k (its kit) } | null (standing)].
+ * As in the owner's reference: the first cut and the last open on a move, the second is a hold, the rest stand. By
+ * the script's id, so every run picks the same (what is filmed is reused); two cuts never show the same move; a cut
+ * whose words leave no room for a move inside the model's longest clip is a hold instead.
+ */
+export function movesFor(script, { kit = KIT, closing = closingLine() } = {}) {
+  const cuts = filmedLines(script.lines, closing), n = cuts.length, order = (kind) => MOVES.filter((m) => m.kind === kind && kitFor(m, kit) != null).map((m) => ({ m, k: kitFor(m, kit), key: sha(`${script.id}|${m.id}`) })).sort((a, b) => a.key.localeCompare(b.key)).map(({ m, k }) => ({ m, k }));
+  const moves = order("move"), holds = order("hold"), fits = (i) => clipSeconds(fillLine(cuts[i], "Ang Mo Kio")) + MOVE_LEAD <= CLIP_SECONDS[1];
+  const out = cuts.map(() => null), hold = (i) => { if (holds.length) out[i] = holds.shift(); };
+  const move = (i) => { if (moves.length && fits(i)) out[i] = moves.shift(); else hold(i); };
+  move(0);
+  if (n >= 3) { move(n - 1); hold(1); } else if (n === 2) hold(1);
+  return out;
+}
+/** The picture a move's clip starts from: the same invented presenter, in the start position, in the gym's own room. */
+export function moveStillPrompt({ presenter, profile, move, kit = KIT }) {
+  const g = G(presenter), has = (k) => kit.includes(k);
+  return `A real photograph taken on a phone held upright, 9:16. The person is the SAME person as in the first image: the same face, hair and clothes. ${g.He} is ${presenterWords(presenter, profile)}. ${move.m.pose(g, move.k, has)} The room is the gym in the second image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, and ${g.he} is alone. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; ${g.his} hands and what ${g.he} holds look natural and solid. ${NO_WORDS}`;
+}
+/** The clip of a move or a hold: the move in silence, then the line said in place; a hold is said as it is held. */
+export function moveClipPrompt({ presenter, profile, line, seconds, said = [], move }) {
+  const g = G(presenter), she = presenter.gender === "man" ? "The man" : "The woman", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`, m = move.m, k = move.k;
+  const says = `says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${g.He === "He" ? "His" : "Her"} mouth forms exactly these words, in time with ${g.his} voice, and says nothing else; the sentence is finished before the clip ends.`;
+  const body = m.kind === "move"
+    ? `For the first two seconds ${g.he} says nothing and ${m.does(g, k)}. Then ${g.he} stops, ${m.rest(g, k)}, looks into the lens and ${says} ${m.stays(g, k)}`
+    : `${she} keeps looking into the camera and ${says} ${m.stays(g, k)}`;
+  return `Bring this photograph to life as ${seconds} seconds of video. ${body} Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${g.his} face, hair, clothes and the room exactly as they are in the photograph; what ${g.he} holds stays one solid object. ${PHONE} ${NO_WORDS} Sound: ${g.his} voice, close and clear, over the quiet of an empty gym. No music.`;
+}
+/**
+ * The kit a gym's room shows, read from its own photos (the room reference and its cleaned premises photos, six at
+ * most): one vision call a photo, once, kept by the photo's content in `video-clips/room-kit.json`. `knownKit` is
+ * what is on file (null before any photo was read: a plan then counts on every kit, and the run reads the photos).
+ */
+const KIT_FILE = "room-kit.json", KIT_PHOTOS = 6;
+const KIT_SCHEMA = { type: "OBJECT", properties: Object.fromEntries(KIT.map((k) => [k, { type: "BOOLEAN" }])), required: KIT };
+const KIT_QUESTION = "This is a photo of a gym. For each kind of equipment say whether at least one is clearly visible in the room: dumbbell (dumbbells, on a rack or the floor), kettlebell (kettlebells: a ball of iron with a handle on top), plate (loose round weight plates, stacked or on a peg, not only those on a barbell), box (a wooden or foam box for stepping or jumping on), bench (a flat or adjustable training bench). true only when you can see it.";
+export function kitPhotos(gymDir, room = null) {
+  const d = join(gymDir, "brand-assets", "facility-clean"), rest = existsSync(d) ? readdirSync(d).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).sort().map((f) => join(d, f)) : [];
+  return [...new Set([room, ...rest].filter((p) => p && existsSync(p)))].slice(0, KIT_PHOTOS);
+}
+const kitShaOf = (p) => createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 16);
+export function knownKit(gymDir, room = null) {
+  const data = readJson(join(gymDir, CLIPS_DIR, KIT_FILE))?.photos || {}, read = kitPhotos(gymDir, room).map((p) => data[kitShaOf(p)]).filter(Boolean);
+  return read.length ? KIT.filter((k) => read.some((r) => r.kit.includes(k))) : null;
+}
+export async function readKit({ gymDir, room = null, models, spent = null, log = () => {} }) {
+  if (!models?.kit) return knownKit(gymDir, room) || [...KIT]; // stand-in models (the tests): every kit, unless some is on file
+  const file = join(gymDir, CLIPS_DIR, KIT_FILE), data = readJson(file) || { photos: {} };
+  for (const p of kitPhotos(gymDir, room)) {
+    const key = kitShaOf(p); if (data.photos[key]) continue;
+    if (spent) spent.checks++;
+    const seen = await models.kit(p); data.photos[key] = { file: basename(p), kit: KIT.filter((k) => (seen || []).includes(k)), on: today() };
+    mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(data, null, 2) + "\n"); log(`the room's kit, from ${basename(p)}: ${data.photos[key].kit.join(", ") || "none seen"}`);
+  }
+  return knownKit(gymDir, room) || [];
 }
 
 // ── the text layer and the cut (software: no model) ──────────────────────────
@@ -1080,7 +1228,9 @@ const stillName = (i, prompt, room) => `still-${i + 1}-${sha(prompt + basename(r
 const altOf = (still) => still.replace(/\.jpg$/, "-b.jpg");
 const clipName = (i, line, still, area, perArea, note = "") => `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(line + basename(still) + (note ? `|said:${note}` : "")).slice(0, 6)}`;
 /** A clip's saved check passes by today's rules. */
-const passedCheck = (seen, line, profile, say = []) => !!seen && judgeClip(seen, line, { profile, say }).passed;
+const passedCheck = (seen, line, profile, say = [], move = null) => !!seen && judgeClip(seen, line, { profile, say, move }).passed;
+/** The prompt of a cut's picture: the move's start position, or the standing presenter. */
+const cutStillPrompt = (i, presenter, profile, mv, kit) => (mv ? moveStillPrompt({ presenter, profile, move: mv, kit }) : stillPromptFor(i, presenter, profile));
 /**
  * What a script still needs filmed for these locations, by what is on file: { clips[{ line, area, seconds, on_file,
  * flagged }], seconds (to film, one clean pass), reused (seconds already filmed), flagged (lines whose takes are used
@@ -1088,17 +1238,21 @@ const passedCheck = (seen, line, profile, say = []) => !!seen && judgeClip(seen,
  * still to make) }. No call, and nothing is written: before a script's first use of the store it looks where
  * `adoptClips` would bring files from. A take set aside is not on file; one kept on the owner's word is.
  */
-export function videoNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [], saidList = saidAs(), takes = 2 }) {
+export function videoNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [], saidList = saidAs(), takes = 2, kind = "presenter" }) {
   const presenter = presenterOf(profile), said = filmedLines(script.lines, closing), where = existsSync(store) ? store : legacy.find(hasStills) || store;
   const files = existsSync(where) ? readdirSync(where) : [], aside = asideOf(where), clips = []; let images = 0;
+  // With exercises: the agent's pick for each cut, by the kit on file for the room (every kit until its photos are read).
+  const kit = kind === "active" ? knownKit(gymDir, room) || [...KIT] : null, moves = kind === "active" ? movesFor(script, { kit, closing }) : said.map(() => null);
+  // The presenter's own picture, which every other picture is made from: a cut that opens on a move still needs it.
+  if (moves[0] && !(presenter && room && files.includes(stillName(0, stillPromptFor(0, presenter, profile), room)))) images++;
   for (const [i, raw] of said.entries()) {
-    const still = presenter && room ? stillName(i, stillPromptFor(i, presenter, profile), room) : null, perArea = /\{AREA\}/.test(raw);
+    const mv = moves[i], still = presenter && room ? stillName(i, cutStillPrompt(i, presenter, profile, mv, kit), room) : null, perArea = /\{AREA\}/.test(raw);
     if (!still || !files.includes(still)) images++;
     for (const area of perArea ? (areas.length ? areas : [""]) : [null]) {
       const line = fillLine(raw, area || ""), say = saidIn(line, saidList), note = saidNote(say), names = still ? [clipName(i, line, still, area, perArea, note), clipName(i, line, altOf(still), area, perArea, note)] : [];
       const mine = files.filter((f) => /\.mp4$/.test(f) && names.some((nm) => f === `${nm}.mp4` || f.startsWith(`${nm}-take`))), live = mine.filter((f) => !aside.has(f));
-      const on_file = live.some((f) => passedCheck(readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), line, profile, say) || !!ownerKeptClip(where, join(where, f)));
-      clips.push({ line, area, seconds: clipSeconds(line), on_file, flagged: !on_file && live.length > 0 && mine.length >= takes + (mine.length - live.length) });
+      const on_file = live.some((f) => passedCheck(readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), line, profile, say, mv) || !!ownerKeptClip(where, join(where, f)));
+      clips.push({ line, area, seconds: cutSeconds(line, mv), ...(mv ? { move: moveLabel(mv) } : {}), on_file, flagged: !on_file && live.length > 0 && mine.length >= takes + (mine.length - live.length) });
     }
   }
   const sum = (xs) => xs.reduce((t, c) => t + c.seconds, 0);
@@ -1137,8 +1291,9 @@ export function keepTake(store, name, why = "") {
  * `spent` may be passed in (a batch's running count) and is added to; `caps { seconds, images }` are never passed:
  * a call that would pass one is not made, and the videos that needed it are refused with that as the reason.
  */
-export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [join(outDir, script.id)], saidList = saidAs(), log = () => {}, onProgress = () => {} }) {
+export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [join(outDir, script.id)], saidList = saidAs(), kind = "presenter", log = () => {}, onProgress = () => {} }) {
   const presenter = presenterOf(profile);
+  if (!VIDEO_KINDS.includes(kind)) throw new Error(`no such kind of presenter video: ${kind}`);
   if (!presenter) throw new Error("say who presents first (Ad defaults → Presenter): a woman or a man. Nothing is made until then");
   const errs = scriptProblems(script.lines, { offer, profile, closing, allow: factsFor(gymDir, offer) }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
   if (!areas?.length) throw new Error("a video needs a location");
@@ -1155,33 +1310,36 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
   const said = filmedLines(script.lines, closing), joined = said.length < script.lines.length;
   const label = (i) => (joined && i === said.length - 1 ? `lines ${i + 1} and ${i + 2} (one cut)` : `line ${i + 1}`);
   if (joined) log(`the closing line is filmed with line ${said.length} as one cut: Google's video model refuses it as a clip of its own`);
-  const refusedAll = (why) => ({ videos: areas.map((area) => ({ area, script_id: script.id, failed: why })), spent });
+  const refusedAll = (why) => ({ videos: areas.map((area) => ({ area, script_id: script.id, kind, failed: why })), spent });
   try {
-    // A still for each line: the first from the room, the rest from the first (the same person) and the room.
-    const stills = [];
-    for (const [i] of said.entries()) {
-      const prompt = stillPromptFor(i, presenter, profile);
+    // With exercises: the kit the room shows (its photos read once), then the agent's pick for each cut.
+    const kit = kind === "active" ? await readKit({ gymDir, room, models, spent, log }) : null, moves = kind === "active" ? movesFor(script, { kit, closing }) : said.map(() => null);
+    if (kind === "active") log(`with exercises — ${moves.map((mv, i) => `${label(i)}: ${mv ? `${moveLabel(mv)}${mv.m.kind === "move" ? ", then the line" : ""}` : "standing"}`).join(" · ")}`);
+    // A still for each line: the first from the room, the rest from the first (the same person) and the room. A cut
+    // that opens on a move is pictured in its start position; the presenter's own picture is made first all the same.
+    const stills = []; let anchor = null;
+    for (const { i, prompt, only } of [...(moves[0] ? [{ i: 0, prompt: stillPromptFor(0, presenter, profile), only: true }] : []), ...said.map((_, k) => ({ i: k, prompt: cutStillPrompt(k, presenter, profile, moves[k], kit) }))]) {
       const out = join(store, stillName(i, prompt, room));
       if (!existsSync(out)) {
         if (!within("images", 1)) return { videos: areas.map((area) => ({ area, script_id: script.id, failed: `the cap of ${caps.images} image calls was reached before the presenter's stills were made` })), spent };
         spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`still ${i + 1} of ${said.length}`);
         writeFileSync(out.replace(/\.jpg$/, ".prompt.txt"), prompt + "\n");
         // A picture Google refuses is asked for once more; refused again, nothing is filmed and that is said.
-        try { await models.image({ out, prompt, refs: i === 0 ? [room] : [stills[0], room] }); }
+        try { await models.image({ out, prompt, refs: anchor ? [anchor, room] : [room] }); }
         catch (e) {
           if (!isRefusal(e)) throw e; log(`  still ${i + 1}: refused by Google's image model — asked once more`);
-          try { await models.image({ out, prompt, refs: i === 0 ? [room] : [stills[0], room] }); }
+          try { await models.image({ out, prompt, refs: anchor ? [anchor, room] : [room] }); }
           catch (e2) { if (!isRefusal(e2)) throw e2; return refusedAll(`Google's image model refused the presenter's picture for ${label(i)} twice, under its content rules. Nothing else is lost: Run again asks once more; if it is refused again, change the presenter's look on Ad defaults`); }
         }
       }
-      stills.push(out);
+      anchor ||= out; if (!only) stills.push(out);
     }
     // A clip for each line — once, or once per location when the line says the area.
     const made = new Map(); // "i|area" or "i|" → { file, takes, passed, flagged?, check, line, why, all[] }
     const aside = asideOf(store), filmedNow = new Map(); // what this call filmed: file → seconds
     const clipFor = async (i, area) => {
       const perArea = /\{AREA\}/.test(said[i]), key = `${i}|${perArea ? area : ""}`; if (made.has(key)) return made.get(key);
-      const line = fillLine(said[i], area), seconds = clipSeconds(line);
+      const mv = moves[i], line = fillLine(said[i], area), seconds = cutSeconds(line, mv);
       const say = saidIn(line, saidList), nameFor = (pic) => clipName(i, line, pic, area, perArea, saidNote(say));
       // Takes the owner set aside (Film this line again) are counted and never used: each makes room for a fresh one.
       const mine = (f) => [stills[i], altOf(stills[i])].some((pic) => f === `${nameFor(pic)}.mp4` || f.startsWith(`${nameFor(pic)}-take`));
@@ -1195,8 +1353,8 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         if (!existsSync(alt)) {
           if (!within("images", 1)) return "cap";
           spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`  a fresh picture of the presenter for ${label(i)}`);
-          const again = stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[(i + 1) % FRAMINGS.length], first: false });
-          try { await models.image({ out: alt, prompt: again, refs: [stills[0], room] }); }
+          const again = mv ? cutStillPrompt(i, presenter, profile, mv, kit) : stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[(i + 1) % FRAMINGS.length], first: false });
+          try { await models.image({ out: alt, prompt: again, refs: [anchor, room] }); }
           catch (e2) { if (!isRefusal(e2)) throw e2; return "refused"; }
         }
         still = alt; return "ok";
@@ -1212,7 +1370,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         if (!(existsSync(file) && statSync(file).size > 1000)) {
           if (!within("seconds", seconds)) { stopped = { why: `the cap of ${caps.seconds} seconds of video was reached` }; take--; break; }
           spent.seconds += seconds; onProgress({ stage: "clip", line: i + 1, area: perArea ? area : null, take }); log(`${label(i)}${perArea ? ` (${area})` : ""}, take ${take}: ${seconds} s`);
-          const prompt = clipPrompt({ presenter, profile, line, seconds, said: say }); writeFileSync(file.replace(/\.mp4$/, ".prompt.txt"), prompt + "\n");
+          const prompt = mv ? moveClipPrompt({ presenter, profile, line, seconds, said: say, move: mv }) : clipPrompt({ presenter, profile, line, seconds, said: say }); writeFileSync(file.replace(/\.mp4$/, ".prompt.txt"), prompt + "\n");
           try { await models.clip({ out: file, image: still, prompt, seconds }); filmedNow.set(file, seconds); }
           catch (e) {
             // Google refused the request (its content rules): nothing was made, so nothing is counted and it is no take.
@@ -1230,8 +1388,8 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
           }
         }
         // The check on file is judged again by today's rules; one made before lettering said what it is on is watched again (a check call, no filming).
-        let seen = readJson(checkFile); if (!seen || staleCheck(seen)) { spent.checks++; seen = normalSeen(await models.watch(file, { said: say })); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
-        let j = judgeClip(seen, line, { profile, say });
+        let seen = readJson(checkFile); if (!seen || staleCheck(seen)) { spent.checks++; seen = normalSeen(await models.watch(file, { said: say, move: mv })); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
+        let j = judgeClip(seen, line, { profile, say, move: mv });
         // The owner's "Use this take anyway": that file, unchanged since, passes on his word.
         if (!j.passed && ownerKeptClip(store, file)) j = { ...j, passed: true, kept: j.why, why: null, kind: null };
         judged.push({ file, take, ...j, check: seen });
@@ -1245,9 +1403,9 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       if (ok.length) { const best = ok.reduce((b, x) => (x.faults.length <= b.faults.length ? x : b)); r = { file: best.file, takes: take, passed: true, line, check: best.check, marks: best.marks, ...(best.kept ? { kept: best.kept } : {}), all }; }
       // None passed, but there is a take: the one nearest right (the words said as written before anything else) goes
       // into the cut, flagged, for the owner to watch and decide (2026-11-15: "I don't even see the final output").
-      else if (judged.length) { const rank = (t) => ({ lettering: 0, people: 1, words: 2 })[t.kind] ?? 3, best = judged.reduce((b, x) => (rank(x) < rank(b) || (rank(x) === rank(b) && x.faults.length <= b.faults.length) ? x : b)); r = { file: best.file, takes: take, passed: false, flagged: true, kind: best.kind, why: best.why, line, check: best.check, marks: best.marks, all }; }
+      else if (judged.length) { const rank = (t) => ({ lettering: 0, people: 1, move: 2, words: 3 })[t.kind] ?? 4, best = judged.reduce((b, x) => (rank(x) < rank(b) || (rank(x) === rank(b) && x.faults.length <= b.faults.length) ? x : b)); r = { file: best.file, takes: take, passed: false, flagged: true, kind: best.kind, why: best.why, line, check: best.check, marks: best.marks, all }; }
       else r = { file: null, takes: take, passed: false, line, why: stopped?.why || "no take was made", ...(stopped?.refused ? { refused: true } : {}), all };
-      r.seconds = seconds; r.per_area = perArea; r.judged = judged.map((t) => ({ file: t.file, passed: t.passed }));
+      r.seconds = seconds; r.per_area = perArea; r.move = mv; r.judged = judged.map((t) => ({ file: t.file, passed: t.passed }));
       made.set(key, r); return r;
     };
     const videos = [];
@@ -1264,7 +1422,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       const cuts = [], starts = [];
       for (const [i, l] of lines.entries()) {
         // Where he speaks, measured from the sound; the clip is kept from a breath before to a breath after, and the captions follow the voice inside it.
-        const sp = speechOf(l.file), from = Math.max(0, sp.start - LEAD), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? END_HOLD : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
+        const sp = speechOf(l.file), from = Math.max(0, sp.start - (l.move?.m.kind === "move" ? MOVE_KEEP : LEAD)), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? END_HOLD : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
         // One picture of the block for each of its words, that word lit while it is said.
         for (const [k, c] of captions(l.line, sp.spans.map(([a, b]) => [at + a - from, at + b - from])).entries()) for (const w of captionWords(c)) {
           if (!(w.to > w.from)) continue;
@@ -1277,9 +1435,9 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       const file = assemble({ clips: cuts, overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`) });
       const poster = file.replace(/\.mp4$/, ".jpg"); ff(["-ss", "0.8", "-i", file, "-frames:v", "1", "-q:v", "3", poster]);
       // Every line of the cut, for the owner's screen: where it starts, the take in it, the takes on file, what a fresh take costs, a word to listen for, and — where no take passed — why.
-      const parts = lines.map((l, i) => ({ line: i + 1, label: label(i), text: l.line, clip: basename(l.file), takes: l.all, seconds: l.seconds, at: starts[i], ...(l.per_area ? { per_area: true } : {}), ...(saidIn(l.line, saidList).length ? { listen: saidIn(l.line, saidList).map((x) => ({ word: x.word, say: x.say })) } : {}), ...(l.kept ? { kept: l.kept } : {}), ...(l.passed ? {} : { flag: { why: l.why, kind: l.kind } }) }));
+      const parts = lines.map((l, i) => ({ line: i + 1, label: label(i), text: l.line, clip: basename(l.file), takes: l.all, seconds: l.seconds, at: starts[i], ...(l.move ? { move: moveLabel(l.move) } : {}), ...(l.per_area ? { per_area: true } : {}), ...(saidIn(l.line, saidList).length ? { listen: saidIn(l.line, saidList).map((x) => ({ word: x.word, say: x.say })) } : {}), ...(l.kept ? { kept: l.kept } : {}), ...(l.passed ? {} : { flag: { why: l.why, kind: l.kind } }) }));
       const flags = parts.filter((p) => p.flag).map((p) => ({ line: p.line, label: p.label, why: p.flag.why, kind: p.flag.kind }));
-      videos.push({ area, script_id: script.id, style: script.style?.name || null, pain: script.pain || null, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), parts, ...(flags.length ? { flags } : {}),
+      videos.push({ area, script_id: script.id, kind, ...(kind === "active" ? { moves: parts.filter((p) => p.move).map((p) => ({ line: p.line, move: p.move })) } : {}), style: script.style?.name || null, pain: script.pain || null, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), parts, ...(flags.length ? { flags } : {}),
         notes: [...new Set([...lines.flatMap((l) => l.check?.faults || []), ...lines.flatMap((l) => l.marks || []), ...parts.filter((p) => p.kept).map((p) => `${p.label} kept on your word (${p.kept})`)])] });
     }
     // What this call filmed, and what became of it: in a video, replaced by a retake, failed its check, or waiting on a video that could not be cut.
