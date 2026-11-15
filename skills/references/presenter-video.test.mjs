@@ -593,7 +593,7 @@ test("PV10 how a word is said, and an ending in two beats (2026-11-14, the owner
     assert.deepEqual(end(`You will feel stronger and your clothes will fit better. ${C}`), [BRIDGE_WHY], "straight from a benefit into the closing line");
     assert.deepEqual(end(`If that sounds like you, ${C.charAt(0).toLowerCase()}${C.slice(1)}`), [BRIDGE_WHY], "a bare lead-in is no bridge");
     assert.deepEqual(end(`If you want it, go. ${C}`), [BRIDGE_WHY], "a bridge is a sentence of eight words or more");
-    assert.deepEqual([end(`When you are ready to feel stronger in your own body, now is the moment. ${C}`), end(`So if you are tired of feeling flat by mid-afternoon, now is your time. ${C}`)], [[], []], "it turns to the viewer: an if, or being ready");
+    assert.deepEqual([end(`When you are ready to feel stronger in your own body, now is the moment. ${C}`), end(`So if you are tired of feeling flat after lunch, now is your time. ${C}`)], [[], []], "it turns to the viewer: an if, or being ready");
     assert.equal(BRIDGE_WHY, 'the script goes straight into the closing line: just before it, in the same cut, one sentence turns to the viewer and names what they want — "If you\'re ready to …, now is your time." (8 words or more)');
     // The closing line as a line of its own: the bridge is the line before it, in the same cut.
     assert.deepEqual([scriptProblems([GOOD[0], GOOD[1], "If you are ready to feel stronger and more at ease, now is your time.", C], { offer: OFFER, profile, closing: C }), scriptProblems([GOOD[0], GOOD[1], "You will feel stronger and your clothes will fit better.", C], { offer: OFFER, profile, closing: C })], [[], [BRIDGE_WHY]]);
@@ -635,7 +635,7 @@ test("PV11 each sample is a style, and a draft follows one (2026-11-14, the owne
     // The drafter: each script given its style — its parts, its script — and told to take how it is built and nothing it says.
     const line2 = "Our 12 Week Full Body Transformation is built for exactly that, and we stay beside you every week.";
     const seen = [], dr = await draftScripts({ brandDir: g, libraryDir: L, offer: OFFER, count: 3, ask: async (i, p, schema) => { seen.push({ p, schema }); return { scripts: [
-      { style: "A", pain: "energy gone by mid-afternoon", lines: ["Give us twelve weeks, and that flat feeling by mid-afternoon stops running your whole day for you.", line2, `If you are ready to feel strong again, now is your time. ${C}`] },
+      { style: "A", pain: "energy gone by mid-afternoon", lines: ["Give us twelve weeks, and that flat feeling after lunch stops running your whole day for you.", line2, `If you are ready to feel strong again, now is your time. ${C}`] },
       { style: "B", pain: "work clothes fitting tighter", lines: ["To everyone in {AREA} whose work clothes have been fitting tighter lately, this one is for you.", line2.replace("exactly that", "just that"), `If you are ready to feel at ease again, now is your time. ${C}`] },
       { pain: "starting and stopping", lines: ["Quick question: have you started a routine full of energy and dropped it a few weeks later?", line2.replace("exactly that", "that cycle"), `If you are ready to stop going round it, now is your time. ${C}`] }] }; } });
     assert.deepEqual([dr.added.map((x) => [x.style.name, x.style.id, x.pain, /\{AREA\}/.test(x.lines[0])]), dr.dropped, dr.styles], [[["Week by week", a.id, "energy gone by mid-afternoon", false], ["Local casting call", b.id, "work clothes fitting tighter", true], ["Question, then the cycle", c.id, "starting and stopping", false]], [], ["Week by week", "Local casting call", "Question, then the cycle"]], "a draft that names no style takes the one its place in the round was given; only the call-out style says the area");
@@ -665,5 +665,63 @@ test("PV11 each sample is a style, and a draft follows one (2026-11-14, the owne
     assert.match(fa[0].p, /List every FACT they state about how a programme or a gym works/); assert.match(fa[0].p, /with no gym's name, no place and no programme's name, so the owner of another gym can tick the ones that are true there/); assert.match(fa[0].p, /--- SCRIPT 1\nGive us 6 weeks/);
     assert.equal(buildFactsPrompt(["x"]).schema.required.join(), "facts");
     await assert.rejects(suggestFacts({ brandDir: g, libraryDir: join(d, "empty"), offer: OFFER, ask: async () => ({ facts: [] }) }), /there is no sample script to read facts from/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("PV12 plain words (2026-11-15, the owner: \"the vocabulary in the video … must be third grade reading and below. 'mid-afternoon slumps', 'vitality', 'functional muscle', 'baseline', 'oversized jackets' should be 'jackets that are too big'\"): a script is in words a nine-year-old knows — a word on the list is named with the plain way to say it, a long word is named, and the programme's name, the gym's name and the owner's facts are said as they are; the list is his to add to, a long word his to call fine; the drafter, the editor and the pain points are told the rule, and a draft whose only fault is its words is said again in small words before it is dropped", async () => {
+  const { hardWords, plainWords, setPlain, plainProblems, syllables, PLAIN_RULE, HARD_WORDS, LONG_SYLLABLES, buildPainsPrompt, buildEditPrompt, proposeEdit, setFacts, readSamples, scriptIssues, readyScripts, CLOSING_LINE } = await import("./presenter-video.mjs");
+  const { d, g, profile } = gym(), lib = join(d, "lib");
+  try {
+    // His five, each with the plain way to say it; a word is found with its endings, and once.
+    assert.deepEqual(hardWords("Beat the mid-afternoon slumps, get your vitality back with functional muscle, a new baseline, and no more oversized jackets. Slumps again.", { plain: plainWords(lib) }).map((h) => [h.word, h.say, h.why]),
+      [["vitality", "energy", "listed"], ["functional", "for everyday things", "listed"], ["baseline", "where you are now", "listed"], ["slumps", "feeling tired", "listed"], ["oversized", "too big", "listed"], ["mid-afternoon", "after lunch", "listed"]]);
+    assert.deepEqual(hardWords("We'll help you achieve more, sustainably, with accountability and a tailored plan.", { plain: plainWords(lib) }).map((h) => h.word), ["sustainably", "accountability", "tailored", "achieve"]);
+    assert.ok(HARD_WORDS.length >= 80 && HARD_WORDS.every((x) => x.word && x.say && !hardWords(x.say, { plain: plainWords(lib) }).length), "what to say instead is itself plain");
+    // A long word, by its syllables: a rule of thumb with the everyday ones let through.
+    assert.deepEqual(["tired", "clothes", "stairs", "energy", "completely", "everything", "movement", "vitality", "motivation", "accountability"].map(syllables), [1, 1, 1, 3, 3, 3, 2, 4, 4, 6]);
+    assert.equal(LONG_SYLLABLES, 4);
+    assert.deepEqual(hardWords("You lose motivation and it gets uncomfortable, especially when everybody is exercising.", { plain: plainWords(lib) }), [{ word: "motivation", say: null, why: "long" }]);
+    assert.deepEqual(hardWords("You feel tired after lunch and your jackets are too big. You want energy for the day.", { plain: plainWords(lib) }), []);
+    // What is said as it is: the offer's own words, the gym's name, a fact the owner typed — and {AREA}.
+    assert.deepEqual(hardWords("A real transformation in {AREA}.", { plain: plainWords(lib) }).map((h) => h.word), ["transformation"]);
+    assert.deepEqual(hardWords("A real transformation in {AREA}.", { plain: plainWords(lib), allow: [OFFER] }), []);
+    // In a script: the line, the word, what to say; the good script passes as it is.
+    assert.deepEqual(scriptProblems(GOOD, { offer: OFFER, profile, closing: CLOSING_LINE, plain: plainWords(lib) }), []);
+    const HARD = [GOOD[0], "Test Gym's 12 Week Full Body Transformation is built to bring back your vitality. A coach beside you, and real accountability.", GOOD[2]];
+    assert.deepEqual(scriptProblems(HARD, { offer: OFFER, profile, closing: CLOSING_LINE, plain: plainWords(lib) }), ['line 2: "vitality" is not a plain word — say "energy"', 'line 2: "accountability" is not a plain word — say "someone to keep you going"']);
+    assert.throws(() => addScript(g, { lines: HARD, offer: OFFER }, { profile, plain: plainWords(lib) }), /line 2: "vitality" is not a plain word/);
+    const LONG = [GOOD[0], "Test Gym's 12 Week Full Body Transformation is built for exactly that. A coach beside you, and help with motivation.", GOOD[2]];
+    assert.deepEqual(scriptProblems(LONG, { offer: OFFER, profile, closing: CLOSING_LINE, plain: plainWords(lib) }), ['line 2: "motivation" is a long word — say it in small words']);
+    setFacts(g, OFFER, ["Help with motivation every week"], { profile });
+    assert.equal(addScript(g, { lines: LONG, offer: OFFER }, { profile, plain: plainWords(lib) }).status, "kept", "a fact the owner typed is said as he typed it");
+    assert.deepEqual([scriptIssues(readScripts(g).scripts[0], { profile, plain: plainWords(lib), gymDir: g }), readyScripts(g, OFFER, { profile }).length], [[], 1]);
+    // The list is the owner's: a word of his own with what to say, a long word that is fine, a standing word taken off — for every gym, kept in the shared library.
+    assert.deepEqual(plainProblems("x", { say: "y" }).length, 2); assert.match(plainProblems("journey", { say: "vitality" })[0], /itself not a plain word/); assert.match(plainProblems("two words", { fine: true })[0], /one word/);
+    assert.throws(() => setPlain(lib, "journey", {}), /say what to use in its place/);
+    setPlain(lib, "journey", { say: "road" }); setPlain(lib, "Motivation", { fine: true }); setPlain(lib, "however", { remove: true });
+    const P = plainWords(lib);
+    assert.deepEqual([P.never.find((x) => x.word === "journey").say, P.never.find((x) => x.word === "journey").standing, P.fine, P.never.some((x) => x.word === "however"), P.never.length], ["road", false, ["motivation"], false, HARD_WORDS.length]);
+    assert.deepEqual(hardWords("However long the journeys, keep your motivation and your vitality.", { plain: P }).map((h) => [h.word, h.say]), [["vitality", "energy"], ["journeys", "road"]]);
+    assert.deepEqual(readSamples(lib).plain.map((x) => [x.word, x.say || (x.fine ? "fine" : "removed")]), [["journey", "road"], ["motivation", "fine"], ["however", "removed"]]);
+    setPlain(lib, "journey", { remove: true }); setPlain(lib, "however", { remove: true });
+    assert.deepEqual([plainWords(lib).never.some((x) => x.word === "journey"), readSamples(lib).plain.length], [false, 2], "his own word is taken off whole; a standing one stays off");
+    // What the three writers are told.
+    assert.match(PLAIN_RULE, /reading level of a nine-year-old \(third grade\)/); assert.match(PLAIN_RULE, /"jackets that are too big", not "oversized jackets"/);
+    for (const p of [buildScriptPrompt({ profile, offer: OFFER }).prompt, buildPainsPrompt({ profile, offer: OFFER }).prompt, buildEditPrompt({ profile, script: { lines: HARD, offer: OFFER }, problems: ["x"] }).prompt]) assert.ok(p.includes(PLAIN_RULE));
+    assert.doesNotMatch(buildScriptPrompt({ profile, offer: OFFER }).prompt + buildPainsPrompt({ profile, offer: OFFER }).prompt, /mid-afternoon(?! slumps")/, "the writers' own examples are in small words");
+    assert.match(buildScriptPrompt({ profile, offer: OFFER, styles: [{ id: "vs-1", name: "Week by week", text: "Give us 6 weeks…", beats: [] }] }).prompt, /A style's or a sample's own big words are NOT carried over/);
+    // The drafter: a draft whose only fault is its words is said again in small words (one more text call); one that is still not plain, or that breaks another rule too, is dropped with the reason.
+    const asked = [], SECOND = [GOOD[0].replace("stronger", "fitter"), HARD[1].replace("vitality", "energy").replace("real accountability", "someone to keep you going"), GOOD[2]];
+    const ask = async (img, p) => { asked.push(p);
+      if (/Propose the SMALLEST edit/.test(p)) return /bring back your vitality\. A coach/.test(p) && /fitter/.test(p) ? { lines: SECOND, note: "small words" } : { lines: p.match(/^\d\. .*$/gm).map((l) => l.replace(/^\d\. /, "")), note: "nothing" };
+      return { scripts: [{ pain: PAIN, lines: [SECOND[0], HARD[1], GOOD[2]] }, { pain: PAIN, lines: [GOOD[0].replace("stronger", "leaner"), HARD[1], GOOD[2]] }, { pain: PAIN, lines: [GOOD[0].replace("stronger", "better"), "I built the 12 Week Full Body Transformation to bring back your vitality, with a coach beside you.", GOOD[2]] }] }; };
+    const r = await draftScripts({ brandDir: g, libraryDir: join(d, "lib2"), offer: OFFER, count: 3, ask });
+    assert.deepEqual([r.calls, r.mended, r.added.length, r.added[0].lines[1], asked.length], [3, 1, 1, SECOND[1], 3]);
+    assert.deepEqual(r.dropped.map((x) => x.reason.slice(0, 26)), ['line 2: "vitality" is not ', 'line 2 speaks as one perso']);
+    // A script kept before the rule needs an edit, and the agent proposes it: the hard words swapped, the rest as it was.
+    const data = JSON.parse(readFileSync(join(g, SCRIPTS_FILE), "utf-8")); data.scripts.push({ id: "v-old", lines: HARD, offer: OFFER, status: "kept", source: "drafted", added: "2026-11-14" }); writeFileSync(join(g, SCRIPTS_FILE), JSON.stringify(data));
+    assert.equal(readyScripts(g, OFFER, { profile }).some((x) => x.id === "v-old"), false, "not filmed until it is edited");
+    const prop = await proposeEdit({ brandDir: g, id: "v-old", libraryDir: join(d, "lib2"), ask: async (img, p) => { assert.match(p, /line 2: "vitality" is not a plain word/); assert.ok(p.includes(PLAIN_RULE)); return { lines: [HARD[0], SECOND[1].replace("someone to keep you going", "someone to keep you on track"), HARD[2]], note: "Said in small words." }; } });
+    assert.deepEqual([prop.changed, prop.problems.length, prop.calls], [[2], 2, 1]);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

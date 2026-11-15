@@ -3956,6 +3956,17 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await until("document.querySelectorAll('#vsSaid [data-said]').length === 2");
     assert.deepEqual((await V())[1].said, [{ word: "Quay", say: "Key" }, { word: "Tampines", say: "tam-pin-ees" }]);
     await V("/said", { method: "POST", body: { word: "Tampines", say: "" } });
+    // Plain words are on the card (2026-11-15: "it must be third grade reading and below"): the rule, the standing words folded away, a word of his own saved from the dialog with what to say instead, a long word called fine; a word with nothing to say in its place is refused, and so is a write without the token.
+    assert.deepEqual(await ev("[/words a nine-year-old knows/.test(document.querySelector('#vsPlain').innerText), /^\\d+ standing words never used$/.test(document.querySelector('#vsPlainStanding summary').textContent), document.querySelectorAll('#vsPlainStanding [data-plain]').length > 80, document.querySelector('#vsPlainStanding [data-plain=\"vitality\"] .body').textContent, document.querySelector('#vsPlainAdd').textContent, document.querySelector('#vsPlainFine').textContent]"), [true, true, true, "“vitality” → say “energy”", "Add a word never used…", "A long word that is fine…"]);
+    await ev("document.querySelector('#vsPlainAdd').click(); document.querySelector('#vsPlainWord').value = 'journey'; document.querySelector('#vsPlainSay').value = 'road'; document.querySelector('#vsGo').click(); true");
+    await until("!!document.querySelector('#vsPlain > [data-plain=\"journey\"]')");
+    await ev("document.querySelector('#vsPlainFine').click(); document.querySelector('#vsPlainWord').value = 'motivation'; document.querySelector('#vsGo').click(); true");
+    await until("!!document.querySelector('#vsPlainFineList [data-fine=\"motivation\"]')");
+    { const P = (await V())[1].plain; assert.deepEqual([P.never.find((x) => x.word === "journey"), P.fine, P.long, P.never.filter((x) => x.standing).length > 80], [{ word: "journey", say: "road", standing: false }, ["motivation"], 4, true]);
+      const bad = await V("/plain", { method: "POST", body: { word: "stamina" } }); assert.equal(bad[0], 400); assert.match(bad[1].error, /say what to use in its place/);
+      assert.equal((await call(`/api/client/${GYM}/video/plain`, { method: "POST", body: { word: "journey", remove: true }, token: null })).status, 403);
+      await V("/plain", { method: "POST", body: { word: "journey", remove: true } }); const [, back] = await V("/plain", { method: "POST", body: { word: "motivation", remove: true } });
+      assert.deepEqual([back.plain.never.some((x) => x.word === "journey"), back.plain.fine], [false, []]); }
     // The samples say they are shared; the offer's facts are listed and come up in the draft dialog, where another offer shows its own (none).
     assert.deepEqual(await ev("[document.querySelector('#vsShared').textContent, document.querySelectorAll('#vsFacts [data-facts]').length, [...document.querySelectorAll('#vsFacts [data-facts] li')].map(li => li.textContent)]"), ["shared by every gym", 1, ["A full body scan assessment at the start"]]);
     await ev(`document.querySelector('#vsDraftGo').click(); document.querySelector('#vsOfferIn').value = ${JSON.stringify(BRIEF.offer)}; document.querySelector('#vsOfferIn').oninput(); true`);

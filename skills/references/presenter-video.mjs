@@ -245,8 +245,8 @@ export function bridgeOf(lines, closing = CLOSING_LINE) {
 export const isBridge = (sentence) => wordCount(sentence) >= BRIDGE_WORDS && /\byou(?:'re|r)?\b/i.test(apos(sentence)) && (/^(?:so |and |but )?if\b/i.test(sentence) || /\bready\b/i.test(sentence));
 export const BRIDGE_WHY = `the script goes straight into the closing line: just before it, in the same cut, one sentence turns to the viewer and names what they want — "If you're ready to …, now is your time." (${BRIDGE_WORDS} words or more)`;
 /** What is wrong with a script's lines, in words; empty when it may be made. `offer`: the exact words it must name; `closing`: the sentence it must end on. */
-export function scriptProblems(lines, { offer = null, profile = {}, closing = closingLine() } = {}) {
-  const errs = [];
+export function scriptProblems(lines, { offer = null, profile = {}, closing = closingLine(), plain = plainWords(), allow = [] } = {}) {
+  const errs = [], asIs = [offer, profile.display_name, closing, ...(allow || [])].filter(Boolean);
   if (!Array.isArray(lines) || lines.length < LINES[0] || lines.length > LINES[1]) return [`a script is ${LINES[0]} to ${LINES[1]} lines, one for each cut`];
   const ls = lines.map(norm), last = ls.length - 1;
   ls.forEach((l, i) => {
@@ -260,6 +260,7 @@ export function scriptProblems(lines, { offer = null, profile = {}, closing = cl
     const ideal = apos(l).match(IDEAL_BODY); if (ideal) errs.push(`line ${i + 1} promises an ideal body ("${ideal[0]}"): say what the person will feel or be able to do`);
     const country = countryNamed(l, { profile, offer }); if (country) errs.push(`line ${i + 1} names the whole country ("${country}"): the place is only ever {AREA}, the area around the gym`);
     if (/[\n\r]/.test(String(lines[i]))) errs.push(`line ${i + 1} is two lines: one line is one cut`);
+    for (const h of hardWordsIn(l, plain, asIs)) errs.push(plainWhy(i, h));
   });
   if (!endsWithClosing(ls[last], closing)) errs.push(`the last line ends with the closing line, word for word: "${closing}"`);
   else if (!isBridge(bridgeOf(ls, closing))) errs.push(BRIDGE_WHY);
@@ -274,8 +275,8 @@ export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS
 const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], samples: data.samples || [], facts: data.facts || {}, pains: data.pains || {} }, null, 2) + "\n");
 const shape = (lines) => lines.map(norm).join(" ").toLowerCase().replace(/[^a-z0-9 ]/g, "");
 /** Add a script: the owner's own is kept at once, a drafted one waits for him. Never twice. */
-export function addScript(gymDir, { lines, offer, source = "owner", pain = null, style = null }, { profile = {}, closing = closingLine() } = {}) {
-  const ls = (lines || []).map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer, profile, closing });
+export function addScript(gymDir, { lines, offer, source = "owner", pain = null, style = null }, { profile = {}, closing = closingLine(), plain = plainWords() } = {}) {
+  const ls = (lines || []).map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer, profile, closing, plain, allow: factsFor(gymDir, offer) });
   if (errs.length) throw new Error(errs.join("; "));
   const data = readScripts(gymDir), key = shape(ls);
   if (data.scripts.some((s) => shape(s.lines) === key)) throw Object.assign(new Error("this script is already here"), { duplicate: true });
@@ -286,12 +287,12 @@ export function addScript(gymDir, { lines, offer, source = "owner", pain = null,
 export function decideScript(gymDir, id, { status, lines, reason } = {}, { profile = {}, closing = closingLine() } = {}) {
   const data = readScripts(gymDir), row = data.scripts.find((s) => s.id === id);
   if (!row) throw new Error(`no such script: ${id}`);
-  if (lines != null) { const ls = lines.map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer: row.offer, profile, closing }); if (errs.length) throw new Error(errs.join("; ")); row.lines = ls; row.edited = today(); }
+  if (lines != null) { const ls = lines.map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer: row.offer, profile, closing, allow: factsFor(gymDir, row.offer) }); if (errs.length) throw new Error(errs.join("; ")); row.lines = ls; row.edited = today(); }
   if (status != null) {
     if (!["kept", "draft", "retired"].includes(status)) throw new Error("status must be kept, draft or retired");
     if (status === "retired") { if (typeof reason !== "string" || reason.trim().length < 3) throw new Error("retiring a script needs a reason"); row.reason = reason.trim(); row.retired_on = today(); }
     else { delete row.reason; delete row.retired_on; }
-    if (status === "kept" && row.status !== "kept") { const errs = scriptProblems(row.lines, { offer: row.offer, profile, closing }); if (errs.length) throw new Error(`edit it first: ${errs.join("; ")}`); }
+    if (status === "kept" && row.status !== "kept") { const errs = scriptProblems(row.lines, { offer: row.offer, profile, closing, allow: factsFor(gymDir, row.offer) }); if (errs.length) throw new Error(`edit it first: ${errs.join("; ")}`); }
     row.status = status;
   }
   writeScripts(gymDir, data); return row;
@@ -304,6 +305,7 @@ export function buildEditPrompt({ profile = {}, script, problems, closing = CLOS
     `THE SCRIPT:\n${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`,
     `WHAT IS WRONG:\n${problems.map((x) => `- ${x}`).join("\n")}`,
     `THE RULES. Keep every line that breaks no rule exactly as it is, word for word and in its place; change only what a rule requires, and keep the owner's voice. The ending is two beats in the last line: first ONE sentence of its own that turns to the viewer and names what they want, in this shape — "If you're ready to [what they want], now is your time." (what they will feel or be able to do, never an ideal body, never a promised result) — and then exactly this sentence, word for word: "${closing}". That sentence is the only call to action, so a sentence that says "tap below", names a button or gives another instruction is taken out. When the script goes straight into the closing sentence, add the bridge sentence before it and change nothing else. The offer is named in its exact words: "${script.offer}". The place is only ever written {AREA}, never the country. The speaker speaks for the gym: "we", "our" and "us" are fine; never "I", "my" or "me", and never a personal story. Each line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words; a script is ${LINES[0]} to ${LINES[1]} lines. Never: a price, free, before and after, a guarantee, a promised result, a number of kilos, an em dash.`,
+    `${PLAIN_RULE} Where a word is named above as not plain, swap it for small words that mean the same and leave the rest of its line as it is; the programme's name, the gym's name and the closing sentence stay as they are.`,
     `Answer with every line of the script after the edit, in order, and a note of one sentence saying what you changed.`,
   ].join("\n\n") };
 }
@@ -317,14 +319,14 @@ export function buildEditPrompt({ profile = {}, script, problems, closing = CLOS
 export async function proposeEdit({ brandDir, id, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL }) {
   const profile = readJson(join(brandDir, "gym-profile.json")) || {}, script = readScripts(brandDir).scripts.find((x) => x.id === id), closing = closingLine(libraryDir);
   if (!script) throw new Error(`no such script: ${id}`);
-  const problems = scriptProblems(script.lines, { offer: script.offer, profile, closing });
+  const allow = factsFor(brandDir, script.offer), plain = plainWords(libraryDir), problems = scriptProblems(script.lines, { offer: script.offer, profile, closing, plain, allow });
   if (!problems.length) throw new Error("this script needs no edit");
   let left = problems, calls = 0;
   for (let round = 0; round < 2; round++) {
     const { prompt, schema } = buildEditPrompt({ profile, script, problems: left, closing });
     const answer = await ask(null, prompt, schema, { model }); calls++;
     const lines = (answer?.lines || []).map((l) => plainDashes(norm(l))).filter(Boolean);
-    left = scriptProblems(lines, { offer: script.offer, profile, closing });
+    left = scriptProblems(lines, { offer: script.offer, profile, closing, plain, allow });
     if (!left.length) return { lines, changed: lines.map((l, i) => (l === norm(script.lines[i] ?? "") ? 0 : i + 1)).filter(Boolean).concat(script.lines.length > lines.length ? [lines.length] : []).filter((x, i, a) => a.indexOf(x) === i), note: norm(answer?.note), problems, calls };
   }
   throw new Error(`the agent's edit still breaks a rule (${left[0]}): edit the script yourself`);
@@ -332,9 +334,9 @@ export async function proposeEdit({ brandDir, id, libraryDir = videoLibraryDir()
 /** The scripts ready for an offer: kept, and written for these exact words. */
 export const keptScripts = (gymDir, offer = null) => readScripts(gymDir).scripts.filter((s) => s.status === "kept" && (!offer || norm(s.offer).toLowerCase() === norm(offer).toLowerCase()));
 /** What a script on file breaks by today's rules (the closing line came after some were kept): empty when it may be filmed. */
-export const scriptIssues = (script, { profile = {}, closing = closingLine() } = {}) => scriptProblems(script.lines, { offer: script.offer, profile, closing });
+export const scriptIssues = (script, { profile = {}, closing = closingLine(), gymDir = null } = {}) => scriptProblems(script.lines, { offer: script.offer, profile, closing, allow: gymDir ? factsFor(gymDir, script.offer) : [] });
 /** The scripts that may be filmed for an offer: kept, and passing today's rules. */
-export const readyScripts = (gymDir, offer = null, opts = {}) => keptScripts(gymDir, offer).filter((x) => !scriptIssues(x, opts).length);
+export const readyScripts = (gymDir, offer = null, opts = {}) => keptScripts(gymDir, offer).filter((x) => !scriptIssues(x, { gymDir, ...opts }).length);
 /**
  * Samples (2026-11-12, the owner: "we talk about BENEFITS not features … we have many [scripts] for you to use"): scripts
  * of his that have worked, pasted as they are. They are reference, never made into a video and never changed: the
@@ -351,8 +353,8 @@ export const SAMPLE_LIMIT = [40, 1500];
 export const videoLibraryDir = () => resolve(process.env.VIDEO_LIBRARY_DIR || process.env.COPY_LIBRARY_DIR || join(REPO_ROOT, "library"));
 export const VIDEO_LIBRARY_DIR = videoLibraryDir();
 export const SAMPLES_FILE = "video-samples.json";
-export const readSamples = (libDir = videoLibraryDir()) => { const j = readJson(join(libDir, SAMPLES_FILE)); return { schema: 1, samples: Array.isArray(j?.samples) ? j.samples : [], closing: j?.closing && typeof j.closing.text === "string" ? j.closing : null, said: Array.isArray(j?.said) ? j.said : [] }; };
-const writeSamples = (libDir, data) => { mkdirSync(libDir, { recursive: true }); writeFileSync(join(libDir, SAMPLES_FILE), JSON.stringify({ schema: 1, samples: data.samples, ...(data.closing ? { closing: data.closing } : {}), ...(data.said?.length ? { said: data.said } : {}) }, null, 2) + "\n"); };
+export const readSamples = (libDir = videoLibraryDir()) => { const j = readJson(join(libDir, SAMPLES_FILE)); return { schema: 1, samples: Array.isArray(j?.samples) ? j.samples : [], closing: j?.closing && typeof j.closing.text === "string" ? j.closing : null, said: Array.isArray(j?.said) ? j.said : [], plain: Array.isArray(j?.plain) ? j.plain : [] }; };
+const writeSamples = (libDir, data) => { mkdirSync(libDir, { recursive: true }); writeFileSync(join(libDir, SAMPLES_FILE), JSON.stringify({ schema: 1, samples: data.samples, ...(data.closing ? { closing: data.closing } : {}), ...(data.said?.length ? { said: data.said } : {}), ...(data.plain?.length ? { plain: data.plain } : {}) }, null, 2) + "\n"); };
 /**
  * How a word is said (2026-11-14, the owner: "'Quay' is pronounced 'Kee' in Singapore. Edge case but let's account for
  * it too"). A short list for every gym — the standing entries here, and the owner's own in the shared library
@@ -388,6 +390,108 @@ export const saidIn = (line, list = []) => list.filter((x) => new RegExp(`(?<![A
 const saidNote = (entries) => entries.map((x) => `${letters(x.word)}=${letters(x.say)}`).sort().join("|");
 /** Words that are one word to the ear: the word, the way it is written for the presenter, and other ways the check may spell that sound. */
 const soundsOf = (entries) => entries.map((x) => [x.word, ...String(x.say).split(/\s+/), ...(x.heard || [])].map(letters));
+/**
+ * Plain words (2026-11-15, the owner: "the vocabulary in the video … must be third grade reading and below. Right now,
+ * 'mid-afternoon slumps', 'vitality', 'functional muscle', 'baseline', 'oversized jackets' should be 'jackets that are
+ * too big', etc. should not be used when drafting the scripts"). A script is spoken, once, to someone scrolling: every
+ * word is one a nine-year-old knows. Two rules in code, for every gym:
+ *   · words never used — the standing list here (gym, science and office words, each with the plain way to say it)
+ *     and the owner's own in the shared library (`plain`), which may also take a standing one off;
+ *   · a long word — `LONG_SYLLABLES` or more by `syllables` — unless it is an everyday one (`EASY_LONG`) or the
+ *     owner has said it is fine.
+ * The programme's name, the gym's name, the closing line and the facts the owner typed for the offer are said as they
+ * are (`allow`). The syllable count is a rule of thumb, which is why a long word can be marked fine.
+ */
+export const LONG_SYLLABLES = 4;
+export const HARD_WORDS = [
+  { word: "vitality", say: "energy" }, { word: "functional", say: "for everyday things", re: "functional(?:ly|ity)?" }, { word: "baseline", say: "where you are now" },
+  { word: "slump", say: "feeling tired" }, { word: "oversized", say: "too big", re: "oversized?" }, { word: "mid-afternoon", say: "after lunch", re: "mid[\\s-]?(?:afternoon|morning)s?" },
+  { word: "sluggish", say: "slow and tired", re: "sluggish(?:ness|ly)?" }, { word: "lethargic", say: "tired", re: "letharg(?:ic|y)" }, { word: "fatigue", say: "tired" },
+  { word: "stamina", say: "energy that lasts" }, { word: "endurance", say: "keeping going for longer" }, { word: "metabolism", say: "how your body uses food", re: "metabol(?:ism|ic)" },
+  { word: "sustainable", say: "that you can keep up", re: "sustainabl[ey]|sustain(?:s|ed|ing)?" }, { word: "accountability", say: "someone to keep you going", re: "accountab(?:le|ility)" },
+  { word: "optimise", say: "make better", re: "optimi[sz](?:e[sd]?|ing|ation)|optimal(?:ly)?|optimum" }, { word: "maximise", say: "get the most from", re: "maximi[sz](?:e[sd]?|ing)" },
+  { word: "holistic", say: "whole", re: "holistic(?:ally)?" }, { word: "mobility", say: "moving easily" }, { word: "flexibility", say: "bending and moving easily" },
+  { word: "posture", say: "how you stand and sit" }, { word: "physique", say: "body" }, { word: "composition", say: "your body" }, { word: "conditioning", say: "getting fit" },
+  { word: "cardiovascular", say: "heart" }, { word: "sedentary", say: "sitting all day" }, { word: "plateau", say: "stuck" }, { word: "momentum", say: "keeping going" },
+  { word: "regimen", say: "plan", re: "regimen?s?" }, { word: "revitalise", say: "feel fresh again", re: "revitali[sz]\\w*|rejuvenat\\w*|invigorat\\w*" },
+  { word: "empower", say: "help", re: "empower\\w*" }, { word: "elevate", say: "lift" }, { word: "tailored", say: "made for you", re: "tailor(?:ed|ing|s)?|bespoke|personali[sz]ed|customi[sz]ed" },
+  { word: "comprehensive", say: "full", re: "comprehensive(?:ly)?" }, { word: "fundamentals", say: "the basics", re: "fundamentals?|foundational" }, { word: "utilise", say: "use", re: "utili[sz]\\w*" },
+  { word: "enhance", say: "make better" }, { word: "achieve", say: "reach", re: "achiev(?:e[sd]?|ing|ements?)|attain\\w*" }, { word: "resilient", say: "strong", re: "resilien(?:t|ce)" },
+  { word: "discipline", say: "sticking with it" }, { word: "consistent", say: "sticking with it", re: "consisten(?:t|tly|cy)" }, { word: "lifestyle", say: "the way you live" },
+  { word: "wellness", say: "feeling well", re: "wellness|well[\\s-]?being" }, { word: "sculpt", say: "shape" }, { word: "abdominal", say: "tummy", re: "abdominals?|abdomen|midsection" },
+  { word: "glutes", say: "legs", re: "glutes?|quads|hamstrings?|posterior" }, { word: "calories", say: "food", re: "calori\\w*|macros?|macronutrients?" },
+  { word: "hormones", say: "your body", re: "hormon\\w*|cortisol|insulin|inflammation" }, { word: "intimidating", say: "scary", re: "intimidat\\w*" }, { word: "guidance", say: "help" },
+  { word: "effortless", say: "easy", re: "effortless(?:ly)?|seamless(?:ly)?" }, { word: "navigate", say: "find your way" }, { word: "genuine", say: "real", re: "genuine(?:ly)?" },
+  { word: "thrive", say: "do well" }, { word: "vibrant", say: "full of life" }, { word: "robust", say: "strong" }, { word: "agility", say: "quick on your feet", re: "agil(?:e|ity)" },
+  { word: "winded", say: "out of breath" }, { word: "depleted", say: "worn out", re: "deplet\\w*" }, { word: "wardrobe", say: "clothes", re: "wardrobes?|attire|garments?|apparel" },
+  { word: "reclaim", say: "get back", re: "reclaim\\w*|regain\\w*|restor(?:e[sd]?|ing)|reignit\\w*|rekindl\\w*" }, { word: "embark", say: "start", re: "embark\\w*|commenc\\w*|initiat\\w*|kick[\\s-]?start\\w*|jump[\\s-]?start\\w*" },
+  { word: "self-conscious", say: "shy about how you look", re: "self[\\s-]?conscious" }, { word: "self-esteem", say: "how you feel about yourself", re: "self[\\s-]?esteem" }, { word: "mindset", say: "how you think" },
+  { word: "clarity", say: "a clear head" }, { word: "productive", say: "getting more done", re: "productiv\\w*" }, { word: "efficient", say: "quick", re: "efficien\\w*" }, { word: "effective", say: "that works", re: "effective(?:ly|ness)?" },
+  { word: "structured", say: "planned" }, { word: "framework", say: "plan", re: "frameworks?|methodolog\\w*|protocols?" }, { word: "gradually", say: "bit by bit", re: "gradual(?:ly)?|incremental(?:ly)?" },
+  { word: "substantial", say: "big", re: "substantial(?:ly)?|significant(?:ly)?" }, { word: "numerous", say: "many", re: "numerous|various|multiple" },
+  { word: "therefore", say: "so", re: "therefore|furthermore|moreover|nevertheless|whereas" }, { word: "however", say: "but" }, { word: "ensure", say: "make sure" },
+  { word: "assist", say: "help", re: "assist(?:s|ed|ing|ance)?" }, { word: "require", say: "need", re: "requir(?:e[sd]?|ing|ements?)" }, { word: "obtain", say: "get", re: "obtain\\w*" }, { word: "purchase", say: "buy" },
+  { word: "individuals", say: "people", re: "individuals?" }, { word: "hectic", say: "busy" }, { word: "exhausted", say: "very tired", re: "exhaust(?:ed|ing|ion)" }, { word: "discomfort", say: "aches" },
+  { word: "chronic", say: "that will not go away" }, { word: "alleviate", say: "ease", re: "alleviat\\w*" },
+];
+/** Everyday words the syllable count calls long: a child of nine knows them. */
+const EASY_LONG = new Set("everybody anybody everyday everything everywhere usually actually especially definitely absolutely exercising exercises comfortable comfortably uncomfortable interesting interested vegetables vegetable television community impossible january february supermarket understanding understand watermelon caterpillar alligator helicopter motorcycle elevator escalator kindergarten dictionary ordinary necessary congratulations eventually anywhere somebody anything immediately complicated celebrating celebration elementary information invitation conversation american beautiful beautifully differently activity activities confidently literally basically obviously".split(" "));
+const rx = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** A listed word with its plain endings: "slump" finds slumps and slumped, "achieve" achieving, "mobility" mobilities; a space or a hyphen in it may be either, or neither. */
+function hardRe(word, re = null) {
+  if (re) return new RegExp(`(?<![A-Za-z])(?:${re})(?![A-Za-z])`, "gi");
+  const e = rx(apos(word).toLowerCase().trim()).replace(/[\s-]+/g, "[\\s-]?");
+  const body = /[a-z]e$/.test(e) ? `${e.slice(0, -1)}(?:e[sd]?|ing)` : /[^aeiou]y$/.test(e) ? `${e.slice(0, -1)}(?:y|ies|ied|ily)` : `${e}(?:s|es|ed|ing|ly)?`;
+  return new RegExp(`(?<![A-Za-z])${body}(?![A-Za-z])`, "gi");
+}
+/** Syllables in a word, by the usual rule of thumb (vowel groups, a silent ending dropped). Good enough to tell a long word; `EASY_LONG` and the owner's own list mend its misses. */
+export function syllables(word) {
+  let w = String(word || "").toLowerCase().replace(/[^a-z]/g, ""); if (!w) return 0; if (w.length <= 3) return 1;
+  // A silent e before an ending ("completely", "movement") is no syllable; nor is the one that ends a word ("stairs" aside, "clothes", "tired").
+  w = w.replace(/^every/, "evry").replace(/([^aeiouy])e(ly|ment|ments|ness|ful|less)$/, "$1$2").replace(/(?:[^laeiouy]es|[^aeiouytd]ed|[^laeiouy]e)$/, "").replace(/^y/, "");
+  return (w.match(/[aeiouy]{1,2}/g) || [""]).length;
+}
+const plainKey = (w) => apos(w).toLowerCase().replace(/[^a-z' -]/g, "").replace(/\s+/g, " ").trim();
+/** The plain-word lists in force: { never[{ word, say, standing, re }], fine[word] } — the standing list, then the owner's own (which win, and may take a standing word off). */
+export function plainWords(libDir = videoLibraryDir()) {
+  const never = new Map(HARD_WORDS.map((x) => [plainKey(x.word), { word: x.word, say: x.say, standing: true, re: hardRe(x.word, x.re) }])), fine = new Set();
+  for (const x of readSamples(libDir).plain) { const k = plainKey(x.word); if (!k) continue; if (x.fine) fine.add(k); else if (x.removed) never.delete(k); else if (x.say) never.set(k, { word: x.word, say: x.say, standing: false, re: hardRe(x.word) }); }
+  return { never: [...never.values()], fine: [...fine] };
+}
+export function plainProblems(word, { say = null, fine = false } = {}) {
+  const errs = [];
+  if (!/^[A-Za-z][A-Za-z' -]{1,39}$/.test(String(word || "").trim())) errs.push("the word (or short phrase) as it is written, 2 to 40 letters (\"vitality\", \"mid-afternoon\")");
+  if (fine && /[\s-]/.test(String(word || "").trim())) errs.push("a word that is fine is one word");
+  if (!fine && !/^[A-Za-z][A-Za-z' -]{1,59}$/.test(String(say || "").trim())) errs.push("say what to use in its place, in small words (\"energy\", \"too big\")");
+  if (!fine && say && hardWordsIn(say, { never: HARD_WORDS.map((x) => ({ ...x, re: hardRe(x.word, x.re) })), fine: [] }).length) errs.push("what to say in its place is itself not a plain word");
+  return errs;
+}
+/**
+ * The owner's word on a word, for every gym: `{ say }` — never used, with what to say in its place; `{ fine: true }` —
+ * a long word a nine-year-old knows; `{ remove: true }` — off the list (a standing one stays off).
+ */
+export function setPlain(libDir, word, { say = null, fine = false, remove = false } = {}) {
+  const w = norm(word), k = plainKey(w), data = readSamples(libDir), rest = data.plain.filter((x) => plainKey(x.word) !== k);
+  if (remove) { if (!k) throw new Error("which word?"); data.plain = [...rest, ...(HARD_WORDS.some((x) => plainKey(x.word) === k) ? [{ word: w, removed: true, updated: today() }] : [])]; }
+  else { const errs = plainProblems(w, { say, fine }); if (errs.length) throw new Error(errs.join("; ")); data.plain = [...rest, fine ? { word: w.toLowerCase(), fine: true, updated: today() } : { word: w, say: norm(say), updated: today() }]; }
+  writeSamples(libDir, data); return plainWords(libDir);
+}
+function hardWordsIn(text, plain, allow = []) {
+  const t = apos(String(text ?? "")).replace(/\{[^}]*\}/g, " "), ok = new Set(allow.flatMap((x) => apos(String(x ?? "")).toLowerCase().match(/[a-z]+/g) || [])), out = [], seen = new Set();
+  const wordsOf = (x) => x.toLowerCase().match(/[a-z]+/g) || [];
+  for (const h of plain.never) { h.re.lastIndex = 0; for (const m of t.matchAll(h.re)) { const k = m[0].toLowerCase(); if (seen.has(k) || wordsOf(k).every((w) => ok.has(w))) continue; seen.add(k); for (const w of wordsOf(k)) seen.add(w); out.push({ word: m[0], say: h.say, why: "listed" }); } }
+  const fine = new Set(plain.fine);
+  for (const w of t.match(/[A-Za-z]+/g) || []) { const k = w.toLowerCase(); if (seen.has(k) || ok.has(k) || fine.has(k) || EASY_LONG.has(k) || syllables(k) < LONG_SYLLABLES) continue; seen.add(k); out.push({ word: w, say: null, why: "long" }); }
+  return out;
+}
+/** The words in a text a nine-year-old would not know: [{ word, say (the plain way, for a listed word), why: listed | long }]. `allow`: words said as they are (the offer, the gym's name, the owner's facts). */
+export const hardWords = (text, { allow = [], plain = plainWords() } = {}) => hardWordsIn(text, plain, allow);
+/** A problem that is only about a hard word (the drafter mends those itself before a draft is dropped). */
+export const PLAIN_PROBLEM = /is not a plain word|is a long word/;
+const plainWhy = (i, h) => h.why === "listed" ? `line ${i + 1}: "${h.word}" is not a plain word — say "${h.say}"` : `line ${i + 1}: "${h.word}" is a long word — say it in small words`;
+/** What the drafter, the editor and the pain points are told about words. */
+export const PLAIN_RULE = `PLAIN WORDS: the reading level of a nine-year-old (third grade), and no higher. Every word is one a child of nine knows and says: short everyday words, mostly one or two syllables. Say a thing the long way in small words, never the short way in a big word: "jackets that are too big", not "oversized jackets"; "tired after lunch", not "mid-afternoon slumps"; "energy", not "vitality"; "strong for everyday things", not "functional muscle"; "where you are now", not "baseline". No gym words, no science words and no office words (metabolism, mobility, posture, stamina, lifestyle, sustainable, accountability, optimise, achieve, consistent, wellness and the like). Short sentences, one idea in each.`;
+
 /** The closing line every script ends on: the owner's own when he has changed it, else the standing sentence. */
 export function closingLine(libDir = videoLibraryDir()) { return norm(readSamples(libDir).closing?.text) || CLOSING_LINE; }
 export function closingProblems(text, profile = {}) {
@@ -595,9 +699,10 @@ export function buildPainsPrompt({ profile = {}, offer, audience = null, count =
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean);
   const lines = [
     `List pain points for a talking-to-camera advert for ${gym}'s programme: "${offer}". ${audience ? `It is for: ${audience}.` : "It is for adults near the gym who are not training yet."} A pain point is what this person is living with now and wants gone: a moment of their ordinary day they would recognise at once and wince at.`,
-    `Each is ONE short phrase of 5 to 14 words, with no full stop, written so it can follow "If you live in the area and …" — for example: "your work clothes have been fitting tighter lately", "you are out of breath after two flights of stairs", "your energy is gone by mid-afternoon", "you keep starting a routine and dropping it after two weeks". Concrete and specific: never vague ("getting back into shape", "wanting to be healthier", "putting off fitness" are NOT pain points).`,
+    `Each is ONE short phrase of 5 to 14 words, with no full stop, written so it can follow "If you live in the area and …" — for example: "your work clothes have been fitting tighter lately", "you are out of breath after two flights of stairs", "you feel tired every day after lunch", "you keep starting to exercise and stopping after two weeks". Concrete and specific: never vague ("getting back into shape", "wanting to be healthier", "putting off fitness" are NOT pain points).`,
     `Say what HAPPENS to the person, never what they ARE: nothing that judges or labels their body, weight, looks or health, nothing that shames, no medical condition, no number of kilos or sizes. NEVER: a price, free, before and after, a guarantee${never.length ? `, any of: ${never.join(", ")}` : ""}.`,
     `Give ${count}, each a different part of life (clothes, energy, strength for everyday things, sticking with it, time, confidence in a room).`,
+    PLAIN_RULE,
   ];
   if (ads.length) lines.push(`This gym's own adverts that earned the most leads. Find the pain each one speaks to and say it plainly in your own words; never copy a sentence, a price or an offer from them:\n${ads.map((a, i) => `--- ADVERT ${i + 1} (${a.leads} leads)\n${a.text}`).join("\n")}`);
   if (library.length) lines.push(`Pain-led adverts that have worked for other gyms. The same: the pain they speak to, in your own words:\n${library.map((x, i) => `--- LIBRARY ${i + 1}\n${x}`).join("\n")}`);
@@ -640,7 +745,7 @@ export function videosProblems(videos) {
 export function noScriptWhy(gymDir, offer, { libraryDir = videoLibraryDir(), profile = readJson(join(gymDir, "gym-profile.json")) || {} } = {}) {
   const all = readScripts(gymDir).scripts.filter((s) => s.status !== "retired"), key = norm(offer).toLowerCase();
   // Kept for this offer, but written before a rule it now breaks (the closing line): one edit, then it is filmed.
-  const stale = all.filter((s) => s.status === "kept" && norm(s.offer).toLowerCase() === key).map((s) => scriptIssues(s, { profile, closing: closingLine(libraryDir) })).filter((e) => e.length).map((e) => [e.find((x) => /closing line/.test(x)) || e[0], ...e]);
+  const stale = all.filter((s) => s.status === "kept" && norm(s.offer).toLowerCase() === key).map((s) => scriptIssues(s, { profile, closing: closingLine(libraryDir), gymDir })).filter((e) => e.length).map((e) => [e.find((x) => /closing line/.test(x)) || e[0], ...e]);
   if (stale.length) return { state: "needs_edit", scripts: stale.length, issues: stale[0], text: `${stale.length === 1 ? "the script kept for this offer needs" : `${stale.length} scripts kept for this offer need`} an edit first — ${stale[0][0]}: press Edit… there` };
   const drafts = all.filter((s) => s.status === "draft" && norm(s.offer).toLowerCase() === key).length;
   if (drafts) return { state: "drafts", drafts, text: `${drafts} draft${drafts === 1 ? " for this offer is" : "s for this offer are"} waiting there: read ${drafts === 1 ? "it" : "them"} and press Keep` };
@@ -699,10 +804,11 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
       : `Line 1 ${open}. Line 2 names the programme in these exact words — "${gyms} ${offer}" — and says what it is FOR in this person's life. Line 3 is the ending. ${close}`,
     `Speak about BENEFITS, never features. A benefit is what changes for the person: feeling stronger, more energy for the day, clothes fitting better, confidence, keeping up with the children, a body that does what is asked of it. A feature is how the gym runs, and the script says NONE: nothing about how training is organised (no small groups, classes, one-to-one, personal training, session length, timetable, equipment, class size), because a wrong one is a false claim about this gym.${facts.length ? ` The only facts about the gym or the programme that may be stated are these, in the owner's words: ${facts.map((x) => `"${x}"`).join("; ")}. Say them as given, and nothing else about how the programme works.` : ""} A benefit is what the programme is built to help with, never a promised result.`,
     `The speaker speaks for the gym, as nobody in particular: "we", "our" and "us" mean ${gym} and its coaches, and are said the way a gym speaks ("we'll guide you through every step"). The speaker is NOT a named coach, NOT a member and NOT the owner: the script never says I, my or me, and never tells a personal story ("I joined", "my clients", "when I started"). The closing sentence is said word for word as given.`,
+    `${PLAIN_RULE} The only longer words allowed are the programme's name, the gym's name${facts.length ? ", the facts given above" : ""} and the closing sentence, said as they are.${long ? " A style's or a sample's own big words are NOT carried over: take how it is built and say it in small words." : ""}`,
     `The place is only ever {AREA}, the area around the gym: the script never names the country, and never speaks to a whole city or island.`,
     `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark (the closing sentence keeps its own); an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
     `Write ${count} script${count === 1 ? "" : "s"}, each opening on a different pain point, and say for each the pain point it opens on (pain: a short phrase, as it would stand in a list — "work clothes fitting tighter lately")${lettered.length ? " and the style it follows (style: its letter)" : ""}.`,
-    `PAIN POINTS. A pain point is something that HAPPENS to this person — work clothes fitting tighter, out of breath on the stairs, no energy left by mid-afternoon, starting a routine and dropping it within weeks — said the way they would say it to a friend. Never a judgement or a label of their body, weight, looks or health, nothing that shames, no medical condition; and never softened into something vague: "getting back into shape", "putting off fitness", "starting a fitness journey" are NOT pain points.${pains.length
+    `PAIN POINTS. A pain point is something that HAPPENS to this person — work clothes fitting tighter, out of breath on the stairs, tired every day after lunch, starting to exercise and stopping after two weeks — said the way they would say it to a friend, in small words. Never a judgement or a label of their body, weight, looks or health, nothing that shames, no medical condition; and never softened into something vague: "getting back into shape", "putting off fitness", "starting a fitness journey" are NOT pain points.${pains.length
       ? ` The owner's own list comes first — open on these, close to his words, one for each script${pains.length < count ? "; for the scripts beyond the list, work out further ones yourself the same way" : ""}:\n${pains.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
       : ` Work them out yourself before you write: who this advert is for, and what they are living with${ads.length || library.length ? ", drawing on the adverts below" : ""}.`}`,
   ];
@@ -731,7 +837,8 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
   const one = style ? all.find((x) => x.id === style) : null; if (style && !one) throw new Error("no such style: pick one of the sample scripts on file");
   const assigned = one ? Array.from({ length: count }, () => one) : pickStyles(all, count, { used }), lettered = letteredStyles(assigned);
   const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: mine.map((x) => x.lines.join(" / ")), styles: assigned, facts: factsFor(brandDir, offer), pains, ...src, closing });
-  const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [];
+  const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [], allow = factsFor(brandDir, offer);
+  let calls = 1, mended = 0; const plain = plainWords(libraryDir);
   for (const [k, d] of (answer?.scripts || []).entries()) {
     // The style a draft says it follows; one that says none is taken to be the one its place in the round was given.
     const st = lettered.find((r) => r.letter === String(d.style || "").trim().toUpperCase())?.style || assigned[k] || null;
@@ -739,10 +846,19 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
       const pain = plainDashes(norm(d.pain)).replace(/[.;,]+$/, "");
       if (!pain) throw new Error("it does not say which pain point it opens on");
       const bad = painProblems(pain, profile); if (bad.length) throw new Error(`the pain point it opens on ("${pain}"): ${bad[0]}`);
-      added.push(addScript(brandDir, { lines: d.lines, offer: offer.trim(), source: "drafted", pain, style: st }, { profile, closing }));
+      let ls = (d.lines || []).map((l) => plainDashes(norm(l))), again = false;
+      const errs = scriptProblems(ls, { offer: offer.trim(), profile, closing, plain, allow });
+      // Big words only: the drafter says them again in small words (one text call for that draft); anything else it breaks drops it as before.
+      if (errs.length && errs.every((x) => PLAIN_PROBLEM.test(x))) {
+        const fix = buildEditPrompt({ profile, script: { lines: ls, offer: offer.trim() }, problems: errs, closing }), said = await ask(null, fix.prompt, fix.schema, { model }); calls++;
+        const next = (said?.lines || []).map((l) => plainDashes(norm(l))).filter(Boolean);
+        if (next.length) { ls = next; again = true; }
+      }
+      added.push(addScript(brandDir, { lines: ls, offer: offer.trim(), source: "drafted", pain, style: st }, { profile, closing, plain }));
+      if (again) { mended++; log("  one draft said again in small words"); }
     } catch (e) { dropped.push({ text: (d.lines || []).join(" / "), reason: e.message }); log(`  dropped: ${e.message}`); }
   }
-  return { added, dropped, calls: 1, styles: lettered.map((r) => r.style.name), sources: { pains: pains.length, ads: src.ads.length, library: src.library.length } };
+  return { added, dropped, calls, mended, styles: lettered.map((r) => r.style.name), sources: { pains: pains.length, ads: src.ads.length, library: src.library.length } };
 }
 
 // ── the model calls (each can be replaced: the tests make no call) ───────────
@@ -1024,7 +1140,7 @@ export function keepTake(store, name, why = "") {
 export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [join(outDir, script.id)], saidList = saidAs(), log = () => {}, onProgress = () => {} }) {
   const presenter = presenterOf(profile);
   if (!presenter) throw new Error("say who presents first (Ad defaults → Presenter): a woman or a man. Nothing is made until then");
-  const errs = scriptProblems(script.lines, { offer, profile, closing }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
+  const errs = scriptProblems(script.lines, { offer, profile, closing, allow: factsFor(gymDir, offer) }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
   if (!areas?.length) throw new Error("a video needs a location");
   const whole = areas.find((a) => isWholeCountry(a)); if (whole) throw new Error(`"${whole}" is the whole country: a video says the area around the gym, never the country`);
   if (!room || !existsSync(room)) throw new Error("a photo of the gym's room is needed, so the video is in the gym's own room (Photos & assets → a cleaned premises photo)");
