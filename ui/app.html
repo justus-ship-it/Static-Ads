@@ -1534,7 +1534,7 @@ function freshDraft(){
   const locs = (cd.locations||[]).filter(Boolean), real = (cd.real_photos||[]).filter(p=>clean.includes(p));
   return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 10, real: cd.real_photos?.length ? real : [], // no photo of the empty room becomes an ad unless the owner ticks one (2026-11-11: they were added to every batch by themselves)
     looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true,
-    cards: { review:0, statement:0, timeline:0 }, videos: 0, videos_active: 0,
+    cards: { review:0, statement:0, timeline:0 }, videos: 0, videos_active: 0, videos_paper: 0,
     look: cd.look || 'reference', mix: (()=>{ const m = allocMix(B.setup.mix || profileMix(cd), cd.generated ?? 10); delete m.workout; return m; })(),
     age_min: (B.setup.photo_ages||[25,60])[0], age_max: (B.setup.photo_ages||[25,60])[1] };
 }
@@ -1603,7 +1603,7 @@ function briefFromDraft(){
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? generated*attempts : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
-    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(d.words_weight && generated>0 ? { words_weight: d.words_weight } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(), ...(Number(d.videos) > 0 ? { videos: (()=>{ const t = Math.round(Number(d.videos)), a = Math.max(0, Math.min(t, Math.round(Number(d.videos_active)||0))); return { ...(t - a > 0 || !a ? { presenter: t - a } : {}), ...(a ? { active: a } : {}) }; })() } : {}),
+    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(d.words_weight && generated>0 ? { words_weight: d.words_weight } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(), ...(Number(d.videos) > 0 || Number(d.videos_paper) > 0 ? { videos: (()=>{ const t = Math.max(0, Math.round(Number(d.videos)||0)), a = Math.max(0, Math.min(t, Math.round(Number(d.videos_active)||0))), p = Math.max(0, Math.round(Number(d.videos_paper)||0)); return { ...(t - a > 0 || (!a && !p) ? { presenter: t - a } : {}), ...(a ? { active: a } : {}), ...(p ? { paper: p } : {}) }; })() } : {}),
     // The photos per kind. An all-workout batch says nothing when that is the gym's own default — and says "workout" when the gym's default is a mix
     // (2026-11-11: a brief naming no kind takes the gym's mix, so the portraits set to 0 on this form came back and a gym without portrait scenes could not run a batch).
     ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m), gymMixed = Object.entries(B.setup.mix || profileMix(B.setup.creative_defaults || {})).some(([f,n])=>f!=='workout' && n>0); return !generated ? {} : live.length===1 && live[0]==='workout' ? (gymMixed ? { format:'workout' } : {}) : live.length===1 ? { format: live[0] } : { mix: m }; })(),
@@ -1648,7 +1648,8 @@ function paintBatch(v){
           ${Object.keys(FORMAT_NAMES).filter(f=>f!=='workout').map(f=>`<div><label for="bMix-${f}" style="margin-top:0">Of which ${esc(FORMAT_PLURAL[f])}</label><div class="stepper"><button type="button" onclick="bMixStep('${f}',-1)">−</button><input id="bMix-${f}" type="number" min="0" max="12" value="${esc(d.mix?.[f]||0)}" oninput="bMixSet('${f}',this.value)"><button type="button" onclick="bMixStep('${f}',1)">+</button></div><div class="hint" id="bMixRest" style="margin-top:2px"></div></div>`).join('')}
           <div><label style="margin-top:0">Cards <span class="hint" style="font-weight:400">· no photo, no image call</span></label><div class="row" style="gap:10px">${Object.entries(CARD_NAMES).map(([k,l])=>`<label style="margin:0;font-weight:500;color:var(--text);display:flex;align-items:center;gap:5px"><input id="bCard-${k}" type="number" min="0" max="${B.setup.max_cards||6}" style="width:56px" value="${esc(d.cards?.[k]||0)}" oninput="bCardSet('${k}',this.value)"> ${esc(l)} <span class="hint" style="font-weight:400">(${B.setup.cards_ready?.[k]??0} ready)</span></label>`).join('')}<a href="#" onclick="go('cards');return false" style="align-self:center">manage</a></div></div>
           <div><label for="bVideos" style="margin-top:0">Presenter videos <span class="hint" style="font-weight:400">· someone talking to camera, 9:16</span></label><div class="row" style="gap:10px"><input id="bVideos" type="number" min="0" max="${B.setup.videos?.max||3}" style="width:56px" value="${esc(d.videos||0)}" oninput="bVideoSet(this.value)"><span class="hint" id="bVideosHint" style="align-self:center">${bVideosHint()}</span><a href="#" onclick="go('scenes');return false" style="align-self:center">scripts</a></div>
-            <div class="row" style="gap:10px;margin-top:6px"><input id="bVideosActive" type="number" min="0" max="${B.setup.videos?.max||3}" style="width:56px" value="${esc(d.videos_active||0)}" oninput="bVideoActiveSet(this.value)" aria-label="Of which with exercises"><span class="hint" style="align-self:center">of which <b>with exercises</b> · the presenter does a simple move, stops, then says the line. The agent picks the moves from the kit in your room photos</span></div></div>
+            <div class="row" style="gap:10px;margin-top:6px"><input id="bVideosActive" type="number" min="0" max="${B.setup.videos?.max||3}" style="width:56px" value="${esc(d.videos_active||0)}" oninput="bVideoActiveSet(this.value)" aria-label="Of which with exercises"><span class="hint" style="align-self:center">of which <b>with exercises</b> · the presenter does a simple move, stops, then says the line. The agent picks the moves from the kit in your room photos</span></div>
+            <div class="row" style="gap:10px;margin-top:6px"><input id="bVideosPaper" type="number" min="0" max="${B.setup.videos?.max||3}" style="width:56px" value="${esc(d.videos_paper||0)}" oninput="bVideoPaperSet(this.value)" aria-label="White-paper videos"><span class="hint" id="bVideosPaperHint" style="align-self:center">${bPaperHint()}</span></div></div>
           <div><label for="bLook" style="margin-top:0">Look</label><select id="bLook" onchange="bSet('look',this.value)"><option value="reference" ${d.look!=='formula'?'selected':''}>Reference set</option><option value="formula" ${d.look==='formula'?'selected':''}>Formula (callout top, offer low)</option></select></div>
           <div><label for="bWordsW" style="margin-top:0" title="Which layouts the ads get is weighted toward more room for the words, or less. The words themselves never change.">Size of the words</label><select id="bWordsW" onchange="bSet('words_weight',this.value)"><option value="" ${!d.words_weight?'selected':''}>As each layout sets them</option><option value="bolder" ${d.words_weight==='bolder'?'selected':''}>Larger where the photo allows</option><option value="quieter" ${d.words_weight==='quieter'?'selected':''}>Smaller where the photo allows</option></select></div>
           <div><label style="margin-top:0">Shape</label><div class="hint" id="bShape" style="margin-top:6px" title="Every feed ad is portrait 4:5; its Stories and Reels version is 9:16, made from the ad's own photo">4:5 feed · 9:16 Stories</div></div>
@@ -1722,7 +1723,18 @@ function paintAud(){
 function bAudPick(a){ B.draft.audience = a; const i=$('#bAud'); if (i) i.value = a; B.touched=true; paintAud(); scheduleCheck(); schedulePreview(); }
 /** Create → how many cards of a kind the batch has (a Google review, a statement, a timeline). */
 function bVideoActiveSet(v){ B.draft.videos_active = Math.max(0, Math.min(B.draft.videos||0, Math.round(Number(v)||0))); B.touched = true; const i = $('#bVideosActive'); if (i && Number(i.value) !== B.draft.videos_active) i.value = B.draft.videos_active; scheduleCheck(); }
-function bVideoSet(v){ B.draft.videos = Math.max(0, Math.min(B.setup.videos?.max||3, Math.round(Number(v)||0))); if ((B.draft.videos_active||0) > B.draft.videos){ B.draft.videos_active = B.draft.videos; const i = $('#bVideosActive'); if (i) i.value = B.draft.videos_active; } B.touched = true; const h = $('#bVideosHint'); if (h) h.innerHTML = bVideosHint(); scheduleCheck(); }
+/** White-paper videos: their own count (they have scripts of their own kind); three videos a batch between all kinds. */
+function bVideoPaperSet(v){ B.draft.videos_paper = Math.max(0, Math.min((B.setup.videos?.max||3) - (B.draft.videos||0), Math.round(Number(v)||0))); B.touched = true; const i = $('#bVideosPaper'); if (i && Number(i.value) !== B.draft.videos_paper) i.value = B.draft.videos_paper; scheduleCheck(); }
+/** Beside the white-paper count: what it is, and how many sheet scripts are ready for the offer typed — or the one thing to press. */
+function bPaperHint(){ const P = B.setup.videos?.paper || {}, offer = (B.draft?.offer||'').replace(/\s+/g,' ').trim().toLowerCase(), of = (xs) => (xs||[]).filter(x=>!offer || x.offer.toLowerCase()===offer).length, n = of(P.kept);
+  const what = '<b>white-paper videos</b> · nobody speaks: the presenter holds hand-written sheets and drops them one by one';
+  if (n || !offer) return `${what} · ${n} sheet script${n===1?'':'s'} ready${offer?' for this offer':''}`;
+  const stale = of(P.needs_edit), drafts = of(P.drafts);
+  return `${what} · <span id="bPaperNone" style="color:var(--warn)">${stale ? 'the sheet script kept for this offer needs an edit first' : drafts ? `no sheet script kept for this offer yet · ${drafts} draft${drafts===1?' is':'s are'} waiting` : 'no sheet script written for this offer yet'}</span> · <a href="#" id="bPaperDraft" onclick="bPaperScripts(${!stale && !drafts});return false">${stale ? 'Edit it →' : drafts ? 'Read and keep one →' : 'Draft sheets for it…'}</a>`; }
+function bPaperScripts(draft){ VS.pending = { offer: (B.draft?.offer||'').replace(/\s+/g,' ').trim(), draft, paper: true }; go('scenes'); }
+function bVideoSet(v){ B.draft.videos = Math.max(0, Math.min((B.setup.videos?.max||3) - (B.draft.videos_paper||0), Math.round(Number(v)||0))); { const i = $('#bVideos'); if (i && Number(i.value) !== B.draft.videos) i.value = B.draft.videos; } if ((B.draft.videos_active||0) > B.draft.videos){ B.draft.videos_active = B.draft.videos; const i = $('#bVideosActive'); if (i) i.value = B.draft.videos_active; } B.touched = true; const h = $('#bVideosHint'); if (h) h.innerHTML = bVideosHint(); scheduleCheck(); }
+/** The kinds among a batch's videos, in brackets: "(1 with exercises · 1 white paper)". */
+const vidKinds = (v, long) => { const k = [v.active ? `${v.active} with exercises${long ? ': the agent picks a simple move for some cuts' : ''}` : '', v.paper ? `${v.paper} white paper${long ? ': no voice, the words on hand-written sheets' : ''}` : ''].filter(Boolean); return k.length ? ` (${k.join(' · ')})` : ''; };
 /** Under the videos count: who presents, and how many scripts are kept for the offer typed. */
 function bVideosHint(){ const V = B.setup.videos || {}, offer = (B.draft?.offer||'').replace(/\s+/g,' ').trim().toLowerCase(), n = (V.kept||[]).filter(x=>!offer || x.offer.toLowerCase()===offer).length;
   const who = V.presenter ? `presented by a ${esc(V.presenter.gender)}` : '<span style="color:var(--warn)">nobody set to present</span>';
@@ -1774,7 +1786,7 @@ function paintDerived(){
   const sb = $('#bSummary');
   if (sb) sb.innerHTML = s ? (B.mode==='rerender'
       ? `${s.ads} ads re-rendered with these words · <b>0 image calls</b>`
-      : `<b>${s.photos} photo${s.photos===1?'':'s'}</b> × ${s.looks} look${s.looks===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'} = <b>${s.ads} ads</b><br>Up to <b>${s.max_calls} image call${s.max_calls===1?'':'s'}</b>${s.videos ? `<br><span id="bVideoSum">${s.videos.count} presenter video${s.videos.count===1?'':'s'}${s.videos.active?` (${s.videos.active} with exercises)`:''} × ${s.locations} location${s.locations===1?'':'s'}: about <b>${s.videos.seconds} s of video</b>${s.videos.reused?' to film':''} (US$${s.videos.usd.toFixed(2)}), never more than ${s.videos.allow ?? s.videos.max_seconds} s (US$${s.videos.usd_max.toFixed(2)})${s.videos.reused ? ` · ${s.videos.reused} s already filmed for ${s.videos.count===1?'this script':'these scripts'} are reused` : ''}</span>` : ''}${errs.length? '' : ' · <span class="pill on">brief valid</span>'}`) : '';
+      : `<b>${s.photos} photo${s.photos===1?'':'s'}</b> × ${s.looks} look${s.looks===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'} = <b>${s.ads} ads</b><br>Up to <b>${s.max_calls} image call${s.max_calls===1?'':'s'}</b>${s.videos ? `<br><span id="bVideoSum">${s.videos.count} presenter video${s.videos.count===1?'':'s'}${vidKinds(s.videos)} × ${s.locations} location${s.locations===1?'':'s'}: about <b>${s.videos.seconds} s of video</b>${s.videos.reused?' to film':''} (US$${s.videos.usd.toFixed(2)}), never more than ${s.videos.allow ?? s.videos.max_seconds} s (US$${s.videos.usd_max.toFixed(2)})${s.videos.reused ? ` · ${s.videos.reused} s already filmed for ${s.videos.count===1?'this script':'these scripts'} are reused` : ''}</span>` : ''}${errs.length? '' : ' · <span class="pill on">brief valid</span>'}`) : '';
   const busy = STATE.run && !STATE.run.done;
   for (const id of ['bPlan','bRun','bRerender']) { const b=$('#'+id); if (b) b.disabled = !c || errs.length>0 || busy; }
   const run = $('#bRun'); if (run && s && !errs.length) run.textContent = `Generate ${s.ads} ads…`;
@@ -1829,7 +1841,7 @@ function bDraftGapsGo(cover, audience, count){
   $('#gModal').innerHTML = '';
   run({kind:'scenes-refresh', gym:STATE.sel, audience, count, cover}, async(code)=>{ try { await reloadScenes(); } catch{} const d = B.scenes?.drafts?.length || 0; if (code===0) toast(`${d} scene draft${d===1?'':'s'} await your approval below`, 'ok'); paintBatch($('#view')); paintGapDrafts(); scheduleCheck(0); schedulePreview(0); });
 }
-function bSet(k, v){ B.draft[k]=v; B.touched=true; if (k==='direction_words') paintLean(); if (k==='generated') setTimeout(paintMix, 0); if (k==='audience') paintAud(); scheduleCheck(); if (WORDS.has(k) || k==='generated' || k==='look') schedulePreview(); }
+function bSet(k, v){ B.draft[k]=v; B.touched=true; if (k==='offer'){ const h = $('#bVideosHint'); if (h) h.innerHTML = bVideosHint(); const q = $('#bVideosPaperHint'); if (q) q.innerHTML = bPaperHint(); } if (k==='direction_words') paintLean(); if (k==='generated') setTimeout(paintMix, 0); if (k==='audience') paintAud(); scheduleCheck(); if (WORDS.has(k) || k==='generated' || k==='look') schedulePreview(); }
 function bLoc(i, v){ B.draft.locations[i]=v; B.touched=true; scheduleCheck(); schedulePreview(); }
 function bLocAdd(){ B.draft.locations.push(''); paintLocs(); $('#bLoc'+(B.draft.locations.length-1))?.focus(); scheduleCheck(); }
 function bLocDel(i){ B.draft.locations.splice(i,1); paintLocs(); scheduleCheck(); schedulePreview(0); }
@@ -1902,7 +1914,7 @@ async function bConfirm(){
     <p class="hint">These words go on every ad exactly as shown. The run stops at the call limit, whatever happens.</p>
     <div class="words"><div><span>Offer</span>${esc(b.offer)}</div><div><span>Locations</span>${esc(b.locations.join(' / '))}</div><div><span>Audience</span>${b.audience?esc(b.audience):'<i style="color:var(--dim)">none</i>'}</div></div>
     ${scenes.length?`<div class="words"><div style="color:var(--dim)">Scenes for this batch${pending.length?' — confirming approves them into the library':''}</div>${scenes.map(x=>`<div style="margin:6px 0"><b class="mono">${esc(x.id)}</b>${x.draft?' <span class="pill">draft</span>':''}<br>${esc(x.scene)}</div>`).join('')}</div>`:''}
-    <div class="summary">${sm.photos} photos × ${sm.looks} looks × ${sm.locations} locations = <b>${sm.ads} ads</b><br>Up to <b>${b.max_calls} Gemini image call${b.max_calls===1?'':'s'}</b> for ${b.generated} new photo${b.generated===1?'':'s'}${sm.videos ? `<br><span id="bConfirmVideo">${sm.videos.count} presenter video${sm.videos.count===1?'':'s'}${sm.videos.active?` (${sm.videos.active} with exercises: the agent picks a simple move for some cuts)`:''} for ${sm.locations} location${sm.locations===1?'':'s'}: about ${sm.videos.seconds} s of video${sm.videos.reused?' to film':''} (US$${sm.videos.usd.toFixed(2)}), and never more than <b>${sm.videos.allow ?? sm.videos.max_seconds} s (US$${sm.videos.usd_max.toFixed(2)})</b>.${sm.videos.reused ? ` ${sm.videos.reused} s already filmed are reused.` : ''} The scripts are spoken as you kept them.</span>` : ''}</div>
+    <div class="summary">${sm.photos} photos × ${sm.looks} looks × ${sm.locations} locations = <b>${sm.ads} ads</b><br>Up to <b>${b.max_calls} Gemini image call${b.max_calls===1?'':'s'}</b> for ${b.generated} new photo${b.generated===1?'':'s'}${sm.videos ? `<br><span id="bConfirmVideo">${sm.videos.count} presenter video${sm.videos.count===1?'':'s'}${vidKinds(sm.videos, true)} for ${sm.locations} location${sm.locations===1?'':'s'}: about ${sm.videos.seconds} s of video${sm.videos.reused?' to film':''} (US$${sm.videos.usd.toFixed(2)}), and never more than <b>${sm.videos.allow ?? sm.videos.max_seconds} s (US$${sm.videos.usd_max.toFixed(2)})</b>.${sm.videos.reused ? ` ${sm.videos.reused} s already filmed are reused.` : ''} ${sm.videos.paper ? (sm.videos.paper === sm.videos.count ? 'The sheets are written as you kept them; nobody speaks.' : 'The scripts are spoken, and the sheets written, as you kept them.') : 'The scripts are spoken as you kept them.'}</span>` : ''}</div>
     <div class="row"><button onclick="bCancel()">Cancel</button><div class="spacer"></div>
       <button class="primary" id="bGo" onclick="bGo()">Yes, run — up to ${b.max_calls} image call${b.max_calls===1?'':'s'}</button></div></div></div>`;
   B.pending = b; B.pendingScenes = pending;
@@ -2097,14 +2109,14 @@ function paintStage(){
   if (!it){ const c = R.data.counts || {}; box.innerHTML = `<div style="color:#9fb0d6;align-self:center;text-align:center;line-height:1.7">${R.show==='todo' && R.mode==='ads' ? `<b style="color:#fff;font-size:18px">Every ad is picked.</b><br>${c.kept} kept · ${c.excluded} excluded` : R.show==='all'?'Nothing here yet.':'Nothing matches this filter.'}</div>`; info.innerHTML=''; paintButtons(null); return; }
   const st = it.status, photo = R.mode==='photos';
 const waits = !photo && it.video_flags > 0 && st !== 'exclude';
-  const badge = waits ? `<div class="rv-badge wait">Waiting for you · ${it.video_flags} line${it.video_flags===1?'':'s'} did not pass</div>` : `<div class="rv-badge ${st||''}">${st==='keep'?'✓ Kept':st==='exclude'?(photo?`✕ Excluded, with its ${it.ads} ad${it.ads===1?'':'s'}`:'✕ Excluded'):(photo?'Not reviewed':'Not reviewed · kept unless excluded')}</div>`;
+  const badge = waits ? `<div class="rv-badge wait">Waiting for you · ${it.video_flags} ${rvNoun(it)}${it.video_flags===1?'':'s'} did not pass</div>` : `<div class="rv-badge ${st||''}">${st==='keep'?'✓ Kept':st==='exclude'?(photo?`✕ Excluded, with its ${it.ads} ad${it.ads===1?'':'s'}`:'✕ Excluded'):(photo?'Not reviewed':'Not reviewed · kept unless excluded')}</div>`;
   if (R.mode==='photos'){
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${it.kind==='real'?'Real photo':'Generated photo'}</figcaption></figure>${STAMPS}</div>`;
     info.innerHTML = `<b>${esc(it.id)}</b>${it.scene_id?`<span>${esc(it.scene_id)}</span>`:''}<span>in ${it.ads} ad${it.ads===1?'':'s'}</span>${it.primary?`<span>made for ${esc(layoutName(it.primary))}</span>`:''}${it.scene?`<span class="scene">${esc(it.scene)}</span>`:''}${(it.notes||[]).length?`<span class="note" title="${esc(it.notes.join(' · '))}">${esc(it.notes.join(' · '))}</span>`:''}`;
   } else if (it.video) {
     // A video ad: it plays here, sound and all. Keep and Exclude work as for any ad; a video is 9:16 already, so it has no Stories version to make.
-    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · Presenter video${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${rvLinesPanel(it)}${STAMPS}</div>`;
-    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>presenter video</span>${it.video_flags?`<span class="note">waiting for you: ${it.video_flags} line${it.video_flags===1?'':'s'} did not pass its check</span>`:''}${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
+    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · ${it.video_kind==='paper'?'White-paper video · no voice':'Presenter video'}${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${rvLinesPanel(it)}${STAMPS}</div>`;
+    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${it.video_kind==='paper'?'white-paper video':'presenter video'}</span>${it.video_flags?`<span class="note">waiting for you: ${it.video_flags} ${rvNoun(it)}${it.video_flags===1?'':'s'} did not pass its check</span>`:''}${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
   } else {
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
       <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="" draggable="false">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>${STAMPS}</div>`;
@@ -2121,17 +2133,19 @@ const STAMPS = '<div class="rv-stamp keep">KEEP</div><div class="rv-stamp excl">
 // again, use the take anyway (his word, recorded), or edit the line. Until then the video cannot be kept.
 const rvClock = (t) => `${Math.floor((t||0)/60)}:${String(Math.floor((t||0)%60)).padStart(2,'0')}`;
 const rvUsd = (sec) => `US$${(sec * (R.data.video_cost?.usd_per_second || 0.07)).toFixed(2)}`;
+/** What a video is made of: lines (spoken), or sheets (white paper). */
+const rvNoun = (it) => it?.video_kind === 'paper' ? 'sheet' : 'line';
 function rvLinesPanel(it){
-  const parts = it.video_parts || []; if (!parts.length) return '';
+  const parts = it.video_parts || [], noun = rvNoun(it); if (!parts.length) return '';
   const ln = (p) => `<div class="ln ${p.flag?'flag':''}" data-line="${p.line}">
-      <div><button class="sm at" onclick="rvJump(${Number(p.at)||0})" title="Play from this line">▶ ${rvClock(p.at)}</button>${esc(p.text)}</div>
+      <div><button class="sm at" onclick="rvJump(${Number(p.at)||0})" title="Play from this ${noun}">▶ ${rvClock(p.at)}</button>${esc(p.text)}</div>
       ${p.move?`<div class="sub" data-move>In this cut: ${esc(p.move)}</div>`:''}
       ${p.flag?`<div class="why"><b>Did not pass:</b> ${esc(p.flag.why)}</div>`:''}
       ${(p.listen||[]).map(x=>`<div class="lis">Listen for “${esc(x.word)}”: it should sound like “${esc(x.say)}”. The check cannot judge that; your ear does.</div>`).join('')}
       ${p.kept?`<div class="sub">Kept on your word (${esc(p.kept)}).</div>`:''}
       ${p.again?`<div class="sub" data-again>Set aside: a fresh take is filmed the next time this batch runs.</div>`:''}
-      <div class="row">${p.flag?`<button class="sm primary" data-film="${p.line}" onclick="rvFilmAgain(${p.line})">Film this line again…</button><button class="sm" data-keep-take="${p.line}" onclick="rvKeepTake(${p.line})">Use this take anyway…</button><button class="sm" data-edit-line onclick="rvEditLine()">Edit the line…</button>`:`<button class="sm" data-film="${p.line}" onclick="rvFilmAgain(${p.line})">Film this line again…</button>`}</div></div>`;
-  return `<div class="rv-lines" id="rvLines"><div class="hd">The lines of this video${it.video_kind==='active'?' · with exercises':''}</div>${it.video_flags?`<div class="wait" id="rvWait">${it.video_flags===1?'One line':`${it.video_flags} lines`} did not pass the check. The video is cut for you to watch: decide ${it.video_flags===1?'that line':'each one'} below, or exclude the video. It cannot be kept or published until then.</div>`:''}${parts.map(ln).join('')}</div>`;
+      <div class="row">${p.flag?`<button class="sm primary" data-film="${p.line}" onclick="rvFilmAgain(${p.line})">Film this ${noun} again…</button><button class="sm" data-keep-take="${p.line}" onclick="rvKeepTake(${p.line})">Use this take anyway…</button><button class="sm" data-edit-line onclick="rvEditLine()">Edit the ${noun}…</button>`:`<button class="sm" data-film="${p.line}" onclick="rvFilmAgain(${p.line})">Film this ${noun} again…</button>`}</div></div>`;
+  return `<div class="rv-lines" id="rvLines"><div class="hd">The ${noun}s of this video${it.video_kind==='active'?' · with exercises':it.video_kind==='paper'?' · white paper, no voice':''}</div>${it.video_flags?`<div class="wait" id="rvWait">${it.video_flags===1?`One ${noun}`:`${it.video_flags} ${noun}s`} did not pass the check. The video is cut for you to watch: decide ${it.video_flags===1?`that ${noun}`:'each one'} below, or exclude the video. It cannot be kept or published until then.</div>`:''}${parts.map(ln).join('')}</div>`;
 }
 function rvJump(at){ const v = $('#rvVideo'); if (!v) return; try { v.currentTime = Math.max(0, at); v.play(); } catch{} }
 const rvPart = (line) => { const it = R.list[R.i]; return { it, p: (it?.video_parts||[]).find(x=>x.line===line) }; };
@@ -2139,7 +2153,7 @@ async function rvTake(it, line, action){ R.data = { ...R.data, ...(await api(`/a
 /** Film one line again: the takes on file are set aside (kept, never used) and the batch is run — it films only what is not on file. One button, with what it costs. */
 function rvFilmAgain(line){
   const { it, p } = rvPart(line); if (!p) return;
-  const c = R.data.video_cost || {}, takes = c.takes || 2, also = c.pending || 0, sec = p.seconds + also;
+  const noun = rvNoun(it), c = R.data.video_cost || {}, takes = c.takes || 2, also = c.pending || 0, sec = p.seconds + also;
   window.__rvFilmGo = async () => {
     const b = $('#rvFilmGo'); if (b) { b.disabled = true; b.textContent = 'Starting…'; }
     try {
@@ -2151,9 +2165,9 @@ function rvFilmAgain(line){
     } catch(e){ const m = $('#rvFilmErr'); if (m) m.textContent = e.message; if (b) { b.disabled = false; b.textContent = 'Try again'; } }
   };
   $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card">
-    <h2>Film this line again?</h2>
+    <h2>Film this ${noun} again?</h2>
     <div class="words"><div><span>${esc(p.label)}</span>${esc(p.text)}</div></div>
-    <p class="hint">${p.takes>1?`The ${p.takes} takes`:'The take'} on file ${p.takes>1?'are':'is'} set aside (kept, never used) and the line is filmed fresh. Everything else in this batch is reused: no photo is made and no other line is filmed${also?`, except ${also} s this batch still has to film anyway`:''}.${(it.video_parts||[]).length && !p.per_area && (R.data.locations||[]).length>1?' This line is one clip in every location’s video of this script.':''}</p>
+    <p class="hint">${p.takes>1?`The ${p.takes} takes`:'The take'} on file ${p.takes>1?'are':'is'} set aside (kept, never used) and the ${noun} is filmed fresh${noun==='sheet'?' from the same picture, its words written on by software as before':''}. Everything else in this batch is reused: no photo is made and no other ${noun} is filmed${also?`, except ${also} s this batch still has to film anyway`:''}.${(it.video_parts||[]).length && !p.per_area && (R.data.locations||[]).length>1?` This ${noun} is one clip in every location’s video of this script.`:''}</p>
     <div class="summary" id="rvFilmCost">About <b>${sec} s of video (${rvUsd(sec)})</b>, never more than ${sec*takes} s (${rvUsd(sec*takes)}): a take that fails its check is filmed once more.</div>
     <div class="hint" id="rvFilmErr" style="color:var(--err)"></div>
     <div class="row"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" id="rvFilmGo" onclick="window.__rvFilmGo()">Film it again — about ${rvUsd(sec)}</button></div></div></div>`;
@@ -2165,12 +2179,12 @@ function rvKeepTake(line){
   $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card">
     <h2>Use this take anyway?</h2>
     <div class="words"><div><span>${esc(p.label)}</span>${esc(p.text)}</div><div><span>Did not pass</span>${esc(p.flag.why)}</div></div>
-    <p class="hint">Press ▶ on the line first if you have not heard it. Your decision is recorded with this script’s clips, so the take is used every time this script is filmed. Nothing is filmed and nothing is spent.</p>
+    <p class="hint">${rvNoun(it)==='sheet'?'Press ▶ on the sheet first if you have not watched it.':'Press ▶ on the line first if you have not heard it.'} Your decision is recorded with this script’s clips, so the take is used every time this script is filmed. Nothing is filmed and nothing is spent.</p>
     <div class="hint" id="rvKeepErr" style="color:var(--err)"></div>
     <div class="row"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" id="rvKeepGo" onclick="window.__rvKeepGo()">Use this take</button></div></div></div>`;
 }
 /** Edit the script's line on Draft Scenes: the changed line is a new clip, filmed by Run again; the other lines are reused. */
-function rvEditLine(){ const it = R.list[R.i]; if (!it?.video_script) return; VS.pending = { edit: it.video_script }; go('scenes'); }
+function rvEditLine(){ const it = R.list[R.i]; if (!it?.video_script) return; VS.pending = { edit: it.video_script, paper: it.video_kind === 'paper' }; go('scenes'); }
 function rvVideoFailShow(){
   const f = R.data.video_failures || [];
   $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card">
@@ -2272,7 +2286,7 @@ function rvShow(s){ R.show = s; rvRefresh(); }
 function rvDecide(val){
   const it = R.list[R.i]; if (!it) return;
   if (R.mode==='ads' && it.by_photo && val!=='exclude'){ toast(`Photo ${it.by_photo} is excluded, and this ad with it. Keep the photo (Photos) to use its ads.`, 'err'); return; }
-  if (R.mode==='ads' && it.video_flags && val==='keep'){ toast(`This video has ${it.video_flags===1?'a line':'lines'} that did not pass the check. Decide ${it.video_flags===1?'it':'them'} first, beside the video: film the line again, use the take anyway, or edit the line. Or exclude the video.`, 'err'); return; }
+  if (R.mode==='ads' && it.video_flags && val==='keep'){ const noun = rvNoun(it); toast(`This video has ${it.video_flags===1?`a ${noun}`:`${noun}s`} that did not pass the check. Decide ${it.video_flags===1?'it':'them'} first, beside the video: film the ${noun} again, use the take anyway, or edit the ${noun}. Or exclude the video.`, 'err'); return; }
   const k = rkey(it), next = R.list[R.i+1] ? rkey(R.list[R.i+1]) : k;
   let change;
   if (R.mode==='photos'){ it.status = val; change = { photos:{ [it.id]:val } }; }
@@ -2349,7 +2363,7 @@ async function rvStoryOneGo(candidate){
 const G = { timer:null, data:null };
 const STAGE_NOW = { photos:'Generating photos', fit:'Rendering ads', looks:'Rendering ads', render:'Rendering ads', videos:'Making the videos', gallery:'Rendering ads', done:'Done', failed:'Stopped', stopped:'Stopped' };
 /** What a batch's video stage is doing now, in words: the presenter's still, a line being filmed, the cut. */
-function videoNow(p){ const v = p?.video; if (!v) return 'starting'; const where = v.area ? ` for ${v.area}` : ''; return v.stage === 'still' ? `the presenter's picture for line ${v.line}` : v.stage === 'clip' ? `filming line ${v.line}${where}${v.take > 1 ? `, take ${v.take}` : ''}` : v.stage === 'cut' ? `cutting the video${where}` : 'working'; }
+function videoNow(p){ const v = p?.video; if (!v) return 'starting'; const where = v.area ? ` for ${v.area}` : ''; return v.stage === 'still' ? (v.paper ? 'the presenter\'s picture, holding the blank sheets' : `the presenter's picture for line ${v.line}`) : v.stage === 'clip' ? `filming ${v.paper ? 'sheet' : 'line'} ${v.line}${where}${v.take > 1 ? `, take ${v.take}` : ''}` : v.stage === 'cut' ? `cutting the video${where}` : 'working'; }
 async function viewGenerating(v, seq=VIEW_SEQ){
   v.innerHTML = '<p class="sub">Loading…</p>';
   await genPoll(seq);
@@ -2859,7 +2873,7 @@ function ledgerCard(){
 // worked: the drafter follows how they are built and never copies them. No video is made on this screen.
 const VS = { data:null, error:null, gym:null };
 async function vsLoad(){ const gym = STATE.sel; try { const d = await api(`/api/client/${gym}/video`); if (gym !== STATE.sel) return; VS.data = d; VS.gym = gym; VS.error = null; } catch(e){ VS.error = e.message; } paintScripts();
-  if (VS.pending && !VS.error){ const p = VS.pending; VS.pending = null; $('#vsCard')?.scrollIntoView({ block:'start' }); if (p.draft) vsDraft(p.offer); if (p.edit) { vsEdit(p.edit); toast('Change the line and save. Then Run again on the batch: only the changed line is filmed.', 'ok'); } } }
+  if (VS.pending && !VS.error){ const p = VS.pending; VS.pending = null; $('#vsCard')?.scrollIntoView({ block:'start' }); if (p.paper) { $('#psBlock')?.scrollIntoView({ block:'start' }); if (p.draft) psDraft(p.offer); if (p.edit) { psEdit(p.edit); toast('Change the sheet and save. Then Run again on the batch: only the changed sheet is filmed.', 'ok'); } } else { if (p.draft) vsDraft(p.offer); if (p.edit) { vsEdit(p.edit); toast('Change the line and save. Then Run again on the batch: only the changed line is filmed.', 'ok'); } } } }
 const vsOffer = () => (B.setup?.batches||[]).map(b=>b.words?.offer).find(Boolean) || B.setup?.wordings?.[0]?.text || '';
 function paintScripts(){
   const box = $('#vsCard'); if (!box) return;
@@ -2876,6 +2890,7 @@ function paintScripts(){
     <p class="hint" id="vsWho" style="margin:0 0 10px">${who} ${P ? '' : ''}<a href="#" onclick="go('defaults');return false">${P ? 'change on Ad defaults' : 'Ad defaults → Presenter'}</a>${D.ffmpeg ? '' : ' · <span style="color:var(--warn)">ffmpeg is not installed on this Mac, so no video can be cut yet</span>'}</p>
     <div id="vsList">${live.length ? live.map(row).join('') : `<p class="hint" id="vsNone">${samples.length ? '<b>No script for this gym yet.</b> The sample below is a template, not a script: press <b>Draft scripts…</b> and the agent writes scripts for this gym and its offer from it. Read them, then <b>Keep</b> the one you want filmed.' : 'No script yet. Draft some, or write your own.'}</p>`}</div>
     ${gone.length ? `<details><summary>${gone.length} retired</summary>${gone.map(row).join('')}</details>` : ''}
+    ${psBlock(D)}
     ${vsPainsBlock(D)}
     <div id="vsClosing" style="margin-top:12px"><div class="hint"><b>The closing line</b> · the last words of every script, the same for every gym</div>
       <div class="scene"><div class="body" id="vsClosingText">“${esc(D.closing.text)}”</div><button class="sm" id="vsClosingGo" onclick="vsClosingEdit()">Change…</button></div></div>
@@ -2989,6 +3004,41 @@ async function vsPropose(id){
   for (const n of P.changed) { const t = $('#vsLine'+(n-1)); if (t) t.style.borderColor = 'var(--navy)'; }
 }
 function vsDecide(id, status){ vsSend('PUT', `/script/${id}`, { status }); }
+// White-paper scripts (2026-11-15): the words on the sheets of a silent video — the presenter holds hand-written sheets
+// and drops them one by one. Their own kind of script: six to nine sheets of a few words. Software writes the words on
+// the paper, so they are exact; nothing is filmed until one is kept.
+function psBlock(D){
+  const all = D.sheet_scripts || [], live = all.filter(s=>s.status!=='retired'), gone = all.filter(s=>s.status==='retired'), L = D.limits || {}, S = L.sheets || [6,9], Wd = L.sheet_words || [2,8];
+  const row = (s) => `<div class="scene" data-sheets="${esc(s.id)}" data-status="${s.status}"><div class="body"><div class="row" style="gap:8px;flex-wrap:wrap"><span class="pill ${s.status==='kept'&&(s.problems||[]).length?'warn':s.status==='kept'?'on':s.status==='draft'?'warn':''}">${s.status==='kept'?((s.problems||[]).length?'kept · needs an edit':'kept · ready to film'):s.status==='draft'?((s.problems||[]).length?'draft · needs an edit':'draft · press Keep to use it'):'retired'}</span><span class="hint">for “${esc(s.offer)}” · ${s.sheets.length} sheets · about ${s.cost.seconds} s of video a location, US$${s.cost.usd.toFixed(2)}${s.source==='drafted'?' · drafted':''}</span></div>
+      <ol style="margin:6px 0 0 18px;line-height:1.55">${s.sheets.map(l=>`<li>${esc(l)}</li>`).join('')}</ol>${(s.problems||[]).length?`<div class="hint" data-problems style="color:var(--warn);margin-top:4px">Needs an edit before it is filmed: ${esc(s.problems.join('; '))}. Press Edit….</div>`:''}${s.reason?`<div class="hint">Retired: ${esc(s.reason)}</div>`:''}</div>
+      <div class="row" style="gap:6px;align-items:flex-start">${s.status==='draft'?`<button class="sm primary" onclick="psDecide('${s.id}','kept')">Keep</button>`:''}${s.status==='kept'?`<button class="sm" onclick="psDecide('${s.id}','draft')">Put back</button>`:''}${s.status!=='retired'?`<button class="sm" onclick="psEdit('${s.id}')">Edit…</button><button class="sm" onclick="psRetire('${s.id}')">Retire…</button>`:`<button class="sm" onclick="psDecide('${s.id}','draft')">Restore</button>`}</div></div>`;
+  return `<div id="psBlock" style="margin-top:14px"><div class="row" style="flex-wrap:wrap"><div class="hint"><b>White-paper scripts</b> · a silent video: the presenter holds hand-written sheets and drops them one by one · ${live.filter(s=>s.status==='kept').length} kept · ${live.filter(s=>s.status==='draft').length} to read</div><div class="spacer"></div>
+      <button class="sm" id="psOwnGo" onclick="psOwn()">Write your own…</button><button class="sm primary" id="psDraftGo" onclick="psDraft()">Draft sheets…</button></div>
+    <p class="hint" style="margin:6px 0 6px">The words on the sheets, in order: ${S[0]} to ${S[1]} sheets of ${Wd[0]} to ${Wd[1]} words, <b>in words a nine-year-old knows</b>. One sheet names the offer in its exact words; the last sheet is the closing line. A sheet says places are limited, or a number of people, <b>only when you have typed that as true</b> under What each challenge includes. Software writes the words on the paper, so they are exact; nobody speaks and there is no music.</p>
+    <div id="psList">${live.length ? live.map(row).join('') : '<p class="hint" id="psNone">No white-paper script yet. Press <b>Draft sheets…</b> and the agent writes some for this gym and its offer; read them, then <b>Keep</b> the one you want filmed.</p>'}</div>
+    ${gone.length ? `<details><summary>${gone.length} retired</summary>${gone.map(row).join('')}</details>` : ''}</div>`;
+}
+function psDraft(offer){
+  offer = typeof offer === 'string' && offer ? offer : vsOffer();
+  vsModal('Draft white-paper scripts', `<p class="hint">Text calls only, no video. <b>The agent proposes the sheets</b>; you read them and edit what you want. Nothing is filmed from a draft until you keep it.</p>
+    <label for="vsOfferIn">The offer, in its exact words</label><input id="vsOfferIn" value="${esc(offer)}" placeholder="12 Week Full Body Transformation">
+    <label for="vsAudIn" style="margin-top:8px">Who it is for <span class="n">· optional, as on the ads</span></label><input id="vsAudIn" placeholder="e.g. busy professionals">
+    <label for="vsFactsIn" style="margin-top:8px">What this challenge includes <span class="n">· optional, one to a line · only what you type is said</span></label><textarea id="vsFactsIn" rows="4" placeholder="e.g.&#10;A full body scan at the start&#10;Help with what to eat&#10;Only 10 places">${esc(vsFactsOf(offer).join('\n'))}</textarea>
+    <p class="hint" style="margin:4px 0 0">A sheet such as “We’re looking for 10 people” or “limited spots” is written <b>only if a line here says so</b>, with your number.</p>
+    <label for="vsCountIn" style="margin-top:8px">How many</label><input id="vsCountIn" type="number" min="1" max="6" value="3" style="width:80px">`, 'psDraftRun()', 'Draft');
+  const o = $('#vsOfferIn'), f = $('#vsFactsIn'); let shown = f.value; o.oninput = () => { if (f.value === shown) f.value = shown = vsFactsOf(o.value).join('\n'); };
+}
+async function psDraftRun(){ const d = await vsSend('POST', '/sheets/draft', { offer: $('#vsOfferIn').value.trim(), audience: $('#vsAudIn').value.trim(), count: Number($('#vsCountIn').value)||3, facts: vsFactsRead() }); if (d?.drafted) toast(`${d.drafted.added.length} white-paper draft${d.drafted.added.length===1?'':'s'} to read${d.drafted.dropped.length?` · ${d.drafted.dropped.length} dropped for breaking a rule`:''}`, d.drafted.added.length ? 'ok' : 'warn'); }
+const PS_SHEETS = [0,1,2,3,4,5,6,7,8];
+const psForm = (sheets) => `<div style="max-height:52vh;overflow:auto;padding-right:4px">${PS_SHEETS.map(i=>`<label for="psSheet${i}" style="margin-top:6px">Sheet ${i+1}${i>5?' <span class="n">· optional</span>':''}</label><input id="psSheet${i}" value="${esc(sheets[i]||'')}" placeholder="${i===0?'Do your work clothes feel tight?':i===1?'Join our [the offer]':''}">`).join('')}</div>`;
+const psRead = () => PS_SHEETS.map(i=>$('#psSheet'+i).value.replace(/\s+/g,' ').trim()).filter(Boolean);
+function psOwn(){ vsModal('Your own white-paper script', `<p class="hint">Six to nine sheets of two to eight words; leave the rest empty. One sheet names the offer in its exact words, and the last sheet is the closing line: “${esc(VS.data.closing.text)}” Yours is kept at once.</p><label for="vsOfferIn">The offer, in its exact words</label><input id="vsOfferIn" value="${esc(vsOffer())}">${psForm([])}`, 'psOwnRun()', 'Keep this script'); }
+function psOwnRun(){ vsSend('POST', '/sheets', { offer: $('#vsOfferIn').value.trim(), sheets: psRead() }); }
+function psEdit(id){ const s = (VS.data.sheet_scripts||[]).find(x=>x.id===id); if (!s) return; VS.editing = id; vsModal('Edit the sheets', `<p class="hint">For “${esc(s.offer)}”. It is checked again when you save. The last sheet is the closing line: “${esc(VS.data.closing.text)}” A changed sheet is a new clip; the others are reused.</p>${psForm(s.sheets)}`, 'psEditRun()', 'Save'); }
+function psEditRun(){ vsSend('PUT', `/sheets/${VS.editing}`, { sheets: psRead() }); }
+function psDecide(id, status){ vsSend('PUT', `/sheets/${id}`, { status }); }
+function psRetire(id){ VS.editing = id; vsModal('Retire this script', `<p class="hint">It is kept on file, never deleted, and is no longer made into videos.</p><label for="vsReason">Why</label><input id="vsReason" placeholder="e.g. the offer has changed">`, 'psRetireRun()', 'Retire'); }
+function psRetireRun(){ vsSend('PUT', `/sheets/${VS.editing}`, { status:'retired', reason: $('#vsReason').value.trim() }); }
 function vsRetire(id){ VS.editing = id; vsModal('Retire this script', `<p class="hint">It is kept on file, never deleted, and is no longer made into videos.</p><label for="vsReason">Why</label><input id="vsReason" placeholder="e.g. the offer has changed">`, 'vsRetireRun()', 'Retire'); }
 function vsRetireRun(){ vsSend('PUT', `/script/${VS.editing}`, { status:'retired', reason: $('#vsReason').value.trim() }); }
 function vsSample(){ vsModal('A sample script', `<p class="hint">Paste one of your own scripts that has worked, as it is. It is a template: to film one, press Draft scripts… afterwards and keep a draft. It is never filmed and never changed: the drafter reads it to learn how yours are built and what they talk about. It serves every gym: mark what changes in braces — <span class="mono">{AREA}</span>, <span class="mono">{CHALLENGE NAME}</span>, <span class="mono">{GYM NAME}</span> — and each gym's own goes in.</p><textarea id="vsSampleIn" rows="8" placeholder="Paste the script here"></textarea>`, 'vsSampleRun()', 'Add it'); }

@@ -4085,3 +4085,111 @@ assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "1 sc
     assert.match(await ev("document.querySelector('#view').innerText.replace(/\\s+/g, ' ')"), /it stopped while making the videos/, "a run that is no longer going says which stage it was in, in words");
   } finally { writeFileSync(pf, before); rmSync(scriptsFile, { force: true }); rmSync(samplesFile, { force: true }); rmSync(other, { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); rmSync(join(g, "batches", "u63-batch"), { recursive: true, force: true }); rmSync(join(g, "batches", "u63-gen"), { recursive: true, force: true }); rmSync(join(g, "outputs", "u63-gen"), { recursive: true, force: true }); }
 });
+
+test("U64 white-paper videos through the panel (2026-11-15): the third kind's scripts are sheets — the owner's own kept at once and checked by the sheet rules (six to nine sheets, the offer on one, the closing line last, scarcity only from a typed fact), put back, kept, edited, retired with a reason, never twice, and the spoken scripts beside them untouched; batch setup and the brief check count the kind (one picture, four seconds a sheet) and refuse an offer with no sheet script by name; a white-paper ad on Pick Ads says it has no voice and lists its sheets, with Film this sheet again… and Use this take anyway… on a sheet that did not pass; Draft Scenes shows the White-paper scripts; Generate Creatives has the third count, three videos between all kinds, and the one thing to press when nothing is written", { skip: !HAS_FFMPEG && "ffmpeg is not installed" }, async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8"), scriptsFile = join(g, "video-scripts.json"), had = existsSync(scriptsFile) ? readFileSync(scriptsFile, "utf-8") : null, out = join(g, "outputs", "u64-batch");
+  const V = async (path = "", opts) => { const r = await call(`/api/client/${GYM}/video${path}`, opts); return [r.status, await r.json()]; };
+  const SHEETS = ["Do your work clothes feel tight?", "Live near {AREA}?", `Join our ${BRIEF.offer}`, "You get a coach beside you", "And a plan that fits your week", "Feel strong for everyday things", "Click the link below and we'll be in touch!"];
+  const swap = (i, s) => SHEETS.map((x, k) => (k === i ? s : x));
+  let id = null;
+  try {
+    rmSync(scriptsFile, { force: true });
+    await V("/presenter", { method: "POST", body: { gender: "man", age: 36 } });
+    let [st, D] = await V();
+    assert.deepEqual([st, D.sheet_scripts, D.limits.sheets, D.limits.sheet_words], [200, [], [6, 9], [2, 8]]);
+    // The rules, in words; the owner's own is kept at once.
+    [st, D] = await V("/sheets", { method: "POST", body: { offer: BRIEF.offer, sheets: swap(0, "We're looking for 10 people") } });
+    assert.equal(st, 400); assert.match(D.error, /sheet 1 says places are limited \("10 people"\): a sheet says that only when you have typed it as true of this offer/);
+    [st, D] = await V("/sheets", { method: "POST", body: { offer: BRIEF.offer, sheets: SHEETS.slice(0, 4) } });
+    assert.equal(st, 400); assert.equal(D.error, "a white-paper script is 6 to 9 sheets");
+    assert.equal((await call(`/api/client/${GYM}/video/sheets`, { method: "POST", body: { offer: BRIEF.offer, sheets: SHEETS }, token: null })).status, 403);
+    [st, D] = await V("/sheets", { method: "POST", body: { offer: BRIEF.offer, sheets: SHEETS } });
+    id = D.sheet_scripts[0].id; const locs = JSON.parse(readFileSync(pf, "utf-8")).creative_defaults?.locations?.length || 1;
+    assert.deepEqual([st, D.sheet_scripts.length, /^p-[0-9a-f]{10}$/.test(id), D.sheet_scripts[0].status, D.sheet_scripts[0].sheets, D.sheet_scripts[0].problems, D.sheet_scripts[0].cost.seconds, D.sheet_scripts[0].cost.images, D.scripts],
+      [200, 1, true, "kept", SHEETS, [], 24 + 4 * locs, 1, []]);
+    assert.equal((await V("/sheets", { method: "POST", body: { offer: BRIEF.offer, sheets: SHEETS } }))[0], 409, "never twice");
+    // With the fact typed, the sheet about places is taken.
+    await V("/facts", { method: "POST", body: { offer: BRIEF.offer, items: ["Only 10 places"] } });
+    [st, D] = await V("/sheets", { method: "POST", body: { offer: BRIEF.offer, sheets: swap(0, "We're looking for 10 people") } });
+    assert.deepEqual([st, D.sheet_scripts.length], [200, 2]); const ten = D.sheet_scripts[1].id;
+    // Put back, kept, edited (checked again), retired with a reason.
+    const setup = async () => (await (await call(`/api/client/${GYM}/batch-setup`)).json()).videos.paper;
+    assert.deepEqual((await setup()).kept.map((x) => x.id).sort(), [id, ten].sort());
+    [st, D] = await V(`/sheets/${ten}`, { method: "PUT", body: { status: "draft" } }); assert.equal(D.sheet_scripts[1].status, "draft");
+    assert.deepEqual([(await setup()).kept.map((x) => x.id), (await setup()).drafts.map((x) => x.id)], [[id], [ten]]);
+    [st, D] = await V(`/sheets/${ten}`, { method: "PUT", body: { sheets: swap(0, "I want 10 people") } }); assert.equal(st, 400); assert.match(D.error, /sheet 1 speaks as one person/);
+    [st, D] = await V(`/sheets/${ten}`, { method: "PUT", body: { status: "retired" } }); assert.equal(st, 400); assert.match(D.error, /retiring a script needs a reason/);
+    [st, D] = await V(`/sheets/${ten}`, { method: "PUT", body: { status: "retired", reason: "not this one" } }); assert.deepEqual([st, D.sheet_scripts[1].status, D.sheet_scripts[1].reason], [200, "retired", "not this one"]);
+    assert.equal((await V("/sheets/p-nothere", { method: "PUT", body: { status: "kept" } }))[0], 400);
+    // The brief: the kind is counted; one picture and four seconds a sheet (the sheet that says the area once for each location).
+    const check = async (over) => (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u64-new", ...over } } })).json();
+    let c = await check({ videos: { paper: 1 } });
+    assert.deepEqual(c.errors, []); assert.deepEqual([c.summary.videos.count, c.summary.videos.paper, c.summary.videos.active, c.summary.videos.videos, c.summary.videos.scripts, c.summary.videos.images, c.summary.videos.seconds], [1, 1, 0, 2, [id], 1, 24 + 4 * 2]);
+    c = await check({ videos: { presenter: 1, active: 1, paper: 2 } }); assert.ok(c.errors.some((e) => /at most 3 presenter videos in all, talking, with exercises and white paper together/.test(e)), c.errors.join(" | "));
+    c = await check({ offer: "6 Week Reset", videos: { paper: 1 } }); assert.ok(c.errors.some((e) => /1 white-paper video asked for, but no white-paper script is ready for "6 Week Reset": the white-paper scripts kept there are for "12 Week Total Body Reset"/.test(e)), c.errors.join(" | "));
+    // A batch with a white-paper ad on disk, as the runner leaves it: sheet 2 did not pass.
+    const folder = "101-v01-bishan-paper-video", mp4 = join(folder, "9x16", "v01-bishan_9x16_v1.mp4"), jpg = mp4.replace(/\.mp4$/, ".jpg"), store = join(g, "video-clips", id), WHY = 'the paper read "Live near Bishn?"';
+    mkdirSync(join(out, folder, "9x16"), { recursive: true }); mkdirSync(join(g, "batches", "u64-batch"), { recursive: true }); mkdirSync(store, { recursive: true });
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=360x640:r=24:d=3", "-f", "lavfi", "-i", "sine=frequency=330:duration=3", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", join(out, mp4)]);
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", join(out, mp4), "-frames:v", "1", join(out, jpg)]);
+    const words = SHEETS.map((s) => s.replace("{AREA}", "Bishan")), clip = (i) => `line-${i + 1}-${"abcdef"[i % 6].repeat(6)}.mp4`;
+    for (const f of [...words.map((_, i) => clip(i)), "line-2-bbbbbb-take2.mp4"]) writeFileSync(join(store, f), "clip " + f);
+    const parts = words.map((text, i) => ({ line: i + 1, label: `sheet ${i + 1}`, text, clip: i === 1 ? "line-2-bbbbbb-take2.mp4" : clip(i), takes: i === 1 ? [clip(1), "line-2-bbbbbb-take2.mp4"] : [clip(i)], seconds: 4, at: i * 0.4, ...(i === 1 ? { per_area: true, flag: { why: WHY, kind: "words" } } : {}) }));
+    const brief = { ...BRIEF, batch_id: "u64-batch", real: [], generated: 0, reference: BRIEF.real[0], locations: ["BISHAN"], videos: { paper: 1 } };
+    writeFileSync(join(g, "batches", "u64-batch", "brief.json"), JSON.stringify(brief)); writeFileSync(join(out, "brief.json"), JSON.stringify(brief));
+    writeFileSync(join(out, "batch.json"), JSON.stringify({ batch_id: "u64-batch", made: new Date().toISOString(), ratio: "4x5", look: "reference", videos: { presenter: 0, paper: 1 }, video_seconds: 32, image_calls: 0, photos: [], failed: [],
+      ads: [{ folder, file: jpg, video_file: mp4, candidate: "v01", location: "BISHAN", location_index: 0, photos: [], photo_files: [], treatment: "video-paper", style: "video", palette: null, ratio: "9x16", format: "presenter-video", video: { kind: "paper", script_id: id, style: null, pain: null, seconds: 3, words, notes: [], parts, flags: [{ line: 2, label: "sheet 2", why: WHY, kind: "words" }] }, crop: [], words: { location: "BISHAN", audience: null, offer: BRIEF.offer, free: false }, replaced: null }] }));
+    let rv = await (await call(`/api/client/${GYM}/batch/u64-batch/review`)).json(), ad = rv.ads[0];
+    assert.deepEqual([ad.video_kind, ad.video_script, ad.video_flags, ad.video_parts.map((p) => p.label), ad.video_parts[1].flag, ad.video_parts[1].takes], ["paper", id, 1, words.map((_, i) => `sheet ${i + 1}`), { why: WHY, kind: "words" }, 2]);
+    assert.equal((await call(`/api/client/${GYM}/batch/u64-batch/picks`, { method: "PUT", body: { ads: { [folder]: "keep" } } })).status, 400, "a flagged video is not kept until he decides the sheet");
+    const { keptAds } = await import("../skills/references/meta-publish.mjs"); assert.deepEqual(keptAds(out), [], "nor published");
+    // ── The page ──
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u64${Math.random()}#/${GYM}/${hash}` }, sessionId); await loaded; await until(ready); };
+    // Pick Ads: no voice; the sheets beside the video; the flagged sheet with its three choices.
+    await open("review/u64-batch", "!!document.querySelector('#rvLines')");
+    assert.deepEqual(await ev("[document.querySelector('#rvCards figcaption').innerText, document.querySelector('#rvLines .hd').innerText, document.querySelectorAll('#rvLines .ln').length, document.querySelector('.rv-badge').innerText, [...document.querySelectorAll('#rvLines .ln.flag button')].map(b => b.textContent), document.querySelector('#rvLines .ln:not(.flag) button[data-film]').textContent]"),
+      ["9:16 · WHITE-PAPER VIDEO · NO VOICE · 3 S · REELS, STORIES AND FEED", "THE SHEETS OF THIS VIDEO · WHITE PAPER, NO VOICE", 7, "Waiting for you · 1 sheet did not pass", ["▶ 0:00", "Film this sheet again…", "Use this take anyway…", "Edit the sheet…"], "Film this sheet again…"]);
+    assert.match(await ev("document.querySelector('#rvWait').innerText"), /^One sheet did not pass the check\. The video is cut for you to watch: decide that sheet below/);
+    assert.match(await ev("document.querySelector('#rvInfo').innerText.replace(/\\s+/g, ' ')"), /101 BISHAN white-paper video waiting for you: 1 sheet did not pass its check/);
+    await ev("rvFilmAgain(2); true");
+    assert.deepEqual(await ev("[document.querySelector('#gModal h2').textContent, /The 2 takes on file are set aside \\(kept, never used\\) and the sheet is filmed fresh from the same picture, its words written on by software as before\\./.test(document.querySelector('#gModal .hint').innerText), /^About (\\d+) s of video \\(US\\$\\d+\\.\\d\\d\\), never more than/.test(document.querySelector('#rvFilmCost').innerText)]"), ["Film this sheet again?", true, true]);
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // Use this take anyway: his word, recorded beside the script's clips; the flag comes off and the video may be kept.
+    await ev("rvKeepTake(2); true"); assert.match(await ev("document.querySelector('#gModal .hint').innerText"), /^Press ▶ on the sheet first if you have not watched it\./);
+    await ev("document.querySelector('#rvKeepGo').click(); true"); await until("!document.querySelector('#rvWait') && !document.querySelector('#gModal .modal')");
+    rv = await (await call(`/api/client/${GYM}/batch/u64-batch/review`)).json();
+    assert.deepEqual([rv.ads[0].video_flags, rv.ads[0].video_parts[1].kept, Object.keys(JSON.parse(readFileSync(join(store, "owner-kept.json"), "utf-8")).clips)], [0, WHY, ["line-2-bbbbbb-take2.mp4"]]);
+    assert.equal((await call(`/api/client/${GYM}/batch/u64-batch/picks`, { method: "PUT", body: { ads: { [folder]: "keep" } } })).status, 200);
+    assert.deepEqual(keptAds(out).map((a) => a.video_kind), ["paper"]);
+    // Draft Scenes: the white-paper scripts under the spoken ones, with their own buttons; writing your own has nine boxes.
+    await open("scenes", "!!document.querySelector('#psBlock [data-sheets]')");
+    assert.deepEqual(await ev("[document.querySelectorAll('#psBlock #psList [data-sheets]').length, document.querySelector('#psBlock [data-sheets] .pill').textContent, [...document.querySelectorAll('#psBlock #psList [data-sheets] ol li')].map(li => li.textContent), document.querySelector('#psDraftGo').textContent, document.querySelector('#psOwnGo').textContent, document.querySelectorAll('#psBlock details [data-sheets]').length]"), [1, "kept · ready to film", SHEETS, "Draft sheets…", "Write your own…", 1]);
+    assert.match(await ev("document.querySelector('#psBlock').innerText.replace(/\\s+/g, ' ')"), /^White-paper scripts · a silent video: the presenter holds hand-written sheets and drops them one by one · 1 kept · 0 to read .* 6 to 9 sheets of 2 to 8 words, in words a nine-year-old knows\. .* only when you have typed that as true under What each challenge includes\./);
+    await ev("psOwn(); true"); assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelectorAll('#gModal input[id^=psSheet]').length]"), ["Your own white-paper script", 9]);
+    await ev("document.querySelector('#gModal').innerHTML = ''; psEdit(" + JSON.stringify(id) + "); true"); assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelector('#psSheet0').value, document.querySelector('#psSheet6').value, document.querySelector('#psSheet7').value]"), ["Edit the sheets", SHEETS[0], SHEETS[6], ""]);
+    await ev("document.querySelector('#psSheet0').value = 'Tired?'; psEditRun(); true"); await until("/sheet 1 is 1 word/.test(document.querySelector('#vsWhy')?.textContent || '')");
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // Generate Creatives: the third count; three videos between all kinds; the summary says the kind.
+    await open("batch", "!!document.querySelector('#bVideosPaper')");
+    await ev(`B.draft.offer = ${JSON.stringify(BRIEF.offer)}; bSet('offer', B.draft.offer); B.draft.locations = ["BISHAN", "ANG MO KIO"]; B.draft.generated = 0; B.draft.real = ${JSON.stringify(BRIEF.real)}; B.touched = true; true`);
+    assert.match(await ev("document.querySelector('#bVideosPaperHint').innerText"), /^white-paper videos · nobody speaks: the presenter holds hand-written sheets and drops them one by one · 1 sheet script ready for this offer$/);
+    await ev("document.querySelector('#bVideosPaper').value = '1'; bVideoPaperSet(1); true");
+    assert.equal(await ev("JSON.stringify(briefFromDraft().videos)"), '{"paper":1}');
+    await until("/white paper/.test(document.querySelector('#bVideoSum')?.innerText || '')");
+    assert.match(await ev("document.querySelector('#bVideoSum').innerText"), /^1 presenter video \(1 white paper\) × 2 locations: about 32 s of video \(US\$2\.24\), never more than \d+ s \(US\$\d+\.\d\d\)$/);
+    await ev("bVideoPaperSet(9); true"); assert.deepEqual(await ev("[B.draft.videos_paper, document.querySelector('#bVideosPaper').value]"), [3, "3"]);
+    await ev("document.querySelector('#bVideos').value = '2'; bVideoSet(2); true"); assert.deepEqual(await ev("[B.draft.videos, document.querySelector('#bVideos').value]"), [0, "0"], "three videos between all kinds");
+    await ev("bVideoPaperSet(1); bVideoSet(1); true"); assert.equal(await ev("JSON.stringify(briefFromDraft().videos)"), '{"presenter":1,"paper":1}');
+    await ev("bVideoSet(0); true");
+    // An offer nothing is written for: the count's own line says so and gives the one thing to press.
+    await ev("bSet('offer', '6 Week Full Body Transformation'); true");
+    assert.equal(await ev("document.querySelector('#bVideosPaperHint').innerText"), "white-paper videos · nobody speaks: the presenter holds hand-written sheets and drops them one by one · no sheet script written for this offer yet · Draft sheets for it…");
+    await ev("document.querySelector('#bPaperDraft').click(); true");
+    await until("location.hash.endsWith('/scenes') && !!document.querySelector('#vsOfferIn')");
+    assert.deepEqual(await ev("[document.querySelector('#vsOfferIn').value, document.querySelector('#gModal h3').textContent, /only if a line here says so/.test(document.querySelector('#gModal').innerText)]"), ["6 Week Full Body Transformation", "Draft white-paper scripts", true]);
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+  } finally { writeFileSync(pf, before); if (had != null) writeFileSync(scriptsFile, had); else rmSync(scriptsFile, { force: true }); rmSync(out, { recursive: true, force: true }); rmSync(join(g, "batches", "u64-batch"), { recursive: true, force: true }); if (id) rmSync(join(g, "video-clips", id), { recursive: true, force: true }); }
+});

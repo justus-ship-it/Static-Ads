@@ -1057,7 +1057,7 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "with-videos", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN", "ANG MO KIO"], videos: { presenter: 1 } };
     // The brief's own rules.
-    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 9, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter, active)', "videos.presenter must be a whole number from 0 to 3", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 9, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 3", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
     assert.deepEqual(validateBrief(brief, { brandDir: dir }), [], "videos alone are a batch");
     // The models: a still is a small picture; a clip is real video with a tone for speech between two silences; the watching pass hears the line.
     const made = { image: 0, clip: [], watch: 0 }, said = new Map();
@@ -1156,7 +1156,7 @@ test("B17 presenter videos with exercises in a batch (2026-11-15): a brief asks 
     const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "with-moves", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN"], videos: { active: 1 } };
     assert.deepEqual(validateBrief(brief, { brandDir: dir }), []);
-    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 2, active: 2 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 3 presenter videos in all, talking and with exercises together"]);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 2, active: 2 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 3 presenter videos in all, talking, with exercises and white paper together"]);
     const script = addScript(dir, { lines: LINES, offer: brief.offer }, { profile });
     const S = (i) => clipSeconds(fillLine(LINES[i], "BISHAN")), plan = videoPlan(dir, brief);
     assert.deepEqual([plan.kinds, plan.active, plan.count, plan.seconds, plan.images], [["active"], 1, 1, S(0) + S(1) + S(2) + 2 * MOVE_LEAD, 4]);
@@ -1174,5 +1174,50 @@ test("B17 presenter videos with exercises in a batch (2026-11-15): a brief asks 
     assert.deepEqual([made.image, made.clip], [4, [[S(0) + MOVE_LEAD, true], [S(1), false], [S(2) + MOVE_LEAD, true]]]);
     assert.deepEqual([batch.ads.length, batch.videos, /-exercise-video$/.test(ad.folder), ad.treatment, ad.format, ad.video.kind, ad.video.moves, ad.video.parts.map((p) => p.move)], [1, { presenter: 0, active: 1 }, true, "video-presenter-active", "presenter-video", "active", picks.map((move, i) => ({ line: i + 1, move })), picks]);
     assert.equal(keptAds(r.out)[0].video_kind, "active", "the kind goes on to the publish plan");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("B18 white-paper videos in a batch (2026-11-15): the third count — a brief asks for it beside the spoken kinds, three videos between them; it takes a sheet script of its own kind, kept for the offer (none: refused by name, with where to draft one); what it would take is one picture and four seconds a sheet; the run makes one picture, writes the words on by software and films each sheet; the ad says its kind, its sheets as parts, in batch.json and on to the publish plan; a second run films nothing", { skip: !(await import("./presenter-video.mjs")).hasFfmpeg() && "ffmpeg is not installed", timeout: 600000 }, async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    process.env.VIDEO_LIBRARY_DIR = join(dir, "video-library");
+    const { addSheetScript, SHEET_SECONDS } = await import("./paper-video.mjs");
+    const { fillLine } = await import("./presenter-video.mjs");
+    const { execFileSync } = await import("node:child_process");
+    const { basename } = await import("node:path");
+    const { videoPlan } = await import("./plan-offer-batch.mjs");
+    const { keptAds } = await import("./meta-publish.mjs");
+    const profile = { ...JSON.parse(readFileSync(join(dir, "gym-profile.json"), "utf-8")), creative_defaults: { presenter: { gender: "woman", age: 34 } } };
+    writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(profile));
+    const SHEETS = ["Do your work clothes feel tight?", "Live near {AREA}?", "Join our 12 Week Total Body Reset", "You get a coach beside you", "And a plan that fits your week", "Feel strong for everyday things", "Click the link below and we'll be in touch!"];
+    const brief = { ...BRIEF, batch_id: "white-paper", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN"], videos: { paper: 1 } };
+    assert.deepEqual(validateBrief(brief, { brandDir: dir }), []);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 1, active: 1, paper: 2 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 3 presenter videos in all, talking, with exercises and white paper together"]);
+    assert.throws(() => videoPlan(dir, brief), /1 white-paper video asked for, but no white-paper script is ready for "12 Week Total Body Reset": nothing is written for this offer yet: press Draft sheets… there, or write your own \(Draft Scenes → Video scripts → White-paper scripts\)/);
+    const script = addSheetScript(dir, { sheets: SHEETS, offer: brief.offer }, { profile });
+    const plan = videoPlan(dir, brief);
+    assert.deepEqual([plan.kinds, plan.paper, plan.active, plan.count, plan.videos, plan.seconds, plan.images, plan.scripts.map((x) => x.id)], [["paper"], 1, 0, 1, 1, SHEETS.length * SHEET_SECONDS, 1, [script.id]]);
+    // Fakes: a grey picture with a white sheet; a clip made from the written picture it is given, the sheet going blank at 2.7 s (the last is held).
+    const made = { image: 0, clip: [], read: 0, watch: 0 }, logs = [], B = { x: 200, y: 400, w: 320, h: 450 }, ffm = (a) => execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...a]);
+    const videoModels = {
+      async image({ out }) { made.image++; ffm(["-f", "lavfi", "-i", "color=c=0x707070:s=720x1280", "-vf", `drawbox=x=${B.x}:y=${B.y}:w=${B.w}:h=${B.h}:color=white:t=fill`, "-frames:v", "1", "-q:v", "2", out]); },
+      async clip({ out, image, prompt, seconds }) { const held = /The sheet is not dropped/.test(prompt); made.clip.push([seconds, held, /^sheet-\d/.test(basename(image))]);
+        ffm(["-loop", "1", "-t", String(seconds), "-i", image, "-f", "lavfi", "-i", `sine=frequency=330:duration=${seconds}`, "-vf", held ? "fps=24" : `fps=24,drawbox=x=${B.x}:y=${B.y}:w=${B.w}:h=${B.h}:color=white:t=fill:enable='gte(t,2.7)'`, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", String(seconds), out]); },
+      async read(frame) { made.read++; return { written: fillLine(SHEETS[Number(basename(frame).match(/^line-(\d+)/)[1]) - 1], "BISHAN"), clean: true }; },
+      async watch() { made.watch++; return { spoken: "", lettering: [], people: 1, lips_match_speech: true, faults: [], looks_real: 9 }; },
+    };
+    const r = await runBatch({ brandDir: dir, brief, deps: { ...fakes([]), browser, videoModels }, log: (m) => logs.push(m) });
+    const batch = JSON.parse(readFileSync(join(r.out, "batch.json"), "utf-8")), ad = batch.ads[0];
+    assert.ok(logs.some((m) => /· v01: white-paper video from script p-/.test(m)), logs.join("\n"));
+    assert.deepEqual([made.image, made.clip, made.read, made.watch], [1, SHEETS.map((_, i) => [SHEET_SECONDS, i === SHEETS.length - 1, true]), 14, 7]);
+    assert.deepEqual([batch.ads.length, batch.videos, /^\d+-v01-bishan-paper-video$/.test(ad.folder), ad.treatment, ad.format, ad.ratio, ad.video.kind, ad.video.script_id, ad.video.words, ad.video.parts.map((p) => p.label), ad.video.flags, batch.video_seconds],
+      [1, { presenter: 0, paper: 1 }, true, "video-paper", "presenter-video", "9x16", "paper", script.id, SHEETS.map((s) => fillLine(s, "BISHAN")), SHEETS.map((_, i) => `sheet ${i + 1}`), undefined, 28]);
+    assert.ok(existsSync(join(r.out, ad.video_file)) && existsSync(join(r.out, ad.file)), "the video and its poster frame are in the ad's folder");
+    assert.equal(keptAds(r.out)[0].video_kind, "paper", "the kind goes on to the publish plan");
+    // Everything is on file: the plan says nothing is left to film, and a second run films nothing.
+    assert.deepEqual((({ seconds, reused, images }) => [seconds, reused, images])(videoPlan(dir, brief)), [0, 28, 0]);
+    await runBatch({ brandDir: dir, brief, deps: { ...fakes([]), browser, videoModels }, log: () => {} });
+    assert.deepEqual([made.image, made.clip.length], [1, 7]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

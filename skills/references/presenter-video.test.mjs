@@ -290,7 +290,7 @@ test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the 
     assert.equal(decideSample(L, s1.id, { retired: false }).retired, undefined);
     // A batch's videos: how many, and which scripts.
     assert.deepEqual([videosProblems(undefined), videosProblems({ presenter: 2 }), videoCount({ presenter: 2 }), videoCount(null), MAX_VIDEOS], [[], [], 2, 0, 3]);
-    assert.deepEqual(videosProblems({ presenter: 4, talking: 1 }), ['videos: "talking" is not a kind of video (presenter, active)', "videos.presenter must be a whole number from 0 to 3"]);
+    assert.deepEqual(videosProblems({ presenter: 4, talking: 1 }), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 3"]);
     // No script for the offer: the refusal says which case it is and what to press (2026-11-12: a sample on the screen was taken for a script).
     const { noScriptWhy } = await import("./presenter-video.mjs");
     assert.throws(() => pickScripts(g, { count: 1, offer: OFFER, libraryDir: L }), /1 presenter video asked for, but no script is kept for "12 Week Full Body Transformation": keep 1 more on Draft Scenes → Video scripts \(nothing is written for this offer yet\. The sample script there is a template, not a script to film: press Draft scripts…, read the drafts and keep one\)$/);
@@ -749,7 +749,7 @@ test("PV13 the second kind, with exercises (2026-11-15, the owner, with a coach'
     assert.deepEqual(long.map((p) => p?.m.kind), ["move", "hold", "hold"]);
     // A brief: the two kinds, MAX_VIDEOS between them; the talking ones are picked first.
     assert.deepEqual([videosProblems({ presenter: 1, active: 2 }), videoCount({ presenter: 1, active: 2 }), videoKinds({ presenter: 1, active: 2 }), videoCount({ active: 1 }), videoCount({ presenter: 2 })], [[], 3, ["presenter", "active", "active"], 1, 2]);
-    assert.match(videosProblems({ presenter: 2, active: 2 })[0], /at most 3 presenter videos in all/); assert.match(videosProblems({ active: MAX_VIDEOS + 1 })[0], /videos\.active must be a whole number from 0 to 3/); assert.match(videosProblems({ walking: 1 })[0], /not a kind of video \(presenter, active\)/);
+    assert.match(videosProblems({ presenter: 2, active: 2 })[0], /at most 3 presenter videos in all/); assert.match(videosProblems({ active: MAX_VIDEOS + 1 })[0], /videos\.active must be a whole number from 0 to 3/); assert.match(videosProblems({ walking: 1 })[0], /not a kind of video \(presenter, active, paper\)/);
     // The prompts: the picture is the start of the move; the clip is the move in silence, then the line said in place; a hold is said as it is held.
     const P = presenterOf(profile), twist = { m: M("russian-twist"), k: "plate" }, seat = { m: M("seated"), k: "box" };
     assert.match(moveStillPrompt({ presenter: P, profile, move: twist, kit: KIT }), /The person is the SAME person as in the first image.*He sits on the gym floor, side-on to the camera.*holding one round black weight plate in both hands.*fills the width of the frame\..*There is no text of any kind/);

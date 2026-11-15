@@ -449,7 +449,7 @@ export function keptAds(batchDir) {
   const excludedPhotos = new Set(Object.entries(review.photos || {}).filter(([, v]) => v === "exclude").map(([k]) => k));
   // A video with a line no take passed for (2026-11-15) is shown to the owner flagged and is never published until he has decided that line: an ad not looked at counts as kept, and this one must not.
   return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)) && !a.video?.flags?.length)
-    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null, ...(a.video?.style ? { video_style: a.video.style } : {}), ...(a.video?.kind === "active" ? { video_kind: "active" } : {}) } : {}) }));
+    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null, ...(a.video?.style ? { video_style: a.video.style } : {}), ...(["active", "paper"].includes(a.video?.kind) ? { video_kind: a.video.kind } : {}) } : {}) }));
 }
 
 /** POST a creative; a feature Meta refuses by name is dropped and the post retried; the opt-out as a whole refused → made without it, said so. */

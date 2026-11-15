@@ -45,7 +45,8 @@ import { assignVariants, measurePhotos, renderPlan, excludeFromProfile } from ".
 import { catalogueFor, imageModelFor, mixOf, FEED_RATIOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
 import { cardsProblems, cardCount, pickCards } from "./cards.mjs";
 import { renderCard, loadCards } from "./render-cards.mjs";
-import { videosProblems, videoCount, videoKinds, pickScripts, makePresenterVideos, videoNeeds, USD_PER_SECOND } from "./presenter-video.mjs";
+import { videosProblems, videoCount, spokenCount, paperCount, videoKinds, pickScripts, makePresenterVideos, videoNeeds, USD_PER_SECOND } from "./presenter-video.mjs";
+import { pickSheetScripts, paperNeeds, makePaperVideos } from "./paper-video.mjs";
 import { plainGemini } from "./gemini-busy.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
@@ -501,14 +502,17 @@ export function videoFolders(brandDir, scriptId, batchId) {
 export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id, profile = null } = {}) {
   const n = videoCount(brief.videos); if (!n) return null;
   const prof = profile || (() => { try { return JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8")); } catch { return {}; } })();
-  // The scripts in the order they are picked: the first are filmed talking, the rest with exercises (`videoKinds`).
-  const scripts = pickScripts(brandDir, { count: n, offer: brief.offer, seed }), room = roomOf(brandDir, brief), takes = brief.attempts ?? 2, kinds = videoKinds(brief.videos);
-  const needs = scripts.map((x, i) => videoNeeds({ gymDir: brandDir, script: x, areas: brief.locations, room, profile: prof, legacy: videoFolders(brandDir, x.id, brief.batch_id), takes, kind: kinds[i] }));
+  // The scripts in the order they are picked: the spoken ones — the first filmed talking, the rest with exercises — then
+  // the white-paper ones, which have scripts of their own kind (sheets) (`videoKinds`).
+  const room = roomOf(brandDir, brief), takes = brief.attempts ?? 2, kinds = videoKinds(brief.videos), ns = spokenCount(brief.videos), np = paperCount(brief.videos);
+  const scripts = [...(ns ? pickScripts(brandDir, { count: ns, offer: brief.offer, seed }) : []), ...(np ? pickSheetScripts(brandDir, { count: np, offer: brief.offer, seed }) : [])];
+  const needs = scripts.map((x, i) => (kinds[i] === "paper" ? paperNeeds({ gymDir: brandDir, script: x, areas: brief.locations, room, profile: prof, takes })
+    : videoNeeds({ gymDir: brandDir, script: x, areas: brief.locations, room, profile: prof, legacy: videoFolders(brandDir, x.id, brief.batch_id), takes, kind: kinds[i] })));
   const seconds = needs.reduce((t, c) => t + c.seconds, 0), reused = needs.reduce((t, c) => t + c.reused, 0), images = needs.reduce((t, c) => t + c.images, 0);
   const spent = (() => { try { return JSON.parse(readFileSync(join(brandDir, "outputs", brief.batch_id, VIDEO_SPEND), "utf-8")).seconds || 0; } catch { return 0; } })();
   const allow = Math.max(0, brief.max_video_seconds != null ? Math.min(MAX_VIDEO_SECONDS, brief.max_video_seconds) - spent : Math.min(MAX_VIDEO_SECONDS - spent, seconds * takes));
   const usd = (x) => Math.round(x * USD_PER_SECOND * 100) / 100;
-  return { scripts, kinds, active: kinds.filter((k) => k === "active").length, count: n, videos: n * brief.locations.length, seconds, reused, flagged: needs.reduce((t, c) => t + (c.flagged || 0), 0), spent, allow, images, takes, max_seconds: spent + allow, usd: usd(seconds), usd_max: usd(allow) };
+  return { scripts, kinds, active: kinds.filter((k) => k === "active").length, paper: np, count: n, videos: n * brief.locations.length, seconds, reused, flagged: needs.reduce((t, c) => t + (c.flagged || 0), 0), spent, allow, images, takes, max_seconds: spent + allow, usd: usd(seconds), usd_max: usd(allow) };
 }
 /**
  * A batch's presenter videos (presenter-video.mjs): each picked script made once for every location, in the gym's own
@@ -524,8 +528,11 @@ export async function renderBatchVideos(browser, { brandDir, out, brief, profile
   for (const [i, script] of plan.scripts.entries()) {
     const id = `v${String(i + 1).padStart(2, "0")}`;
     const kind = plan.kinds[i];
-    log(`· ${id}: presenter video${kind === "active" ? " with exercises" : ""} from script ${script.id} (${brief.locations.length} location${brief.locations.length === 1 ? "" : "s"})`);
-    const r = await makePresenterVideos({ gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, audience, room, profile, kind, caps: { seconds: plan.allow, images: plan.images + 2 }, spent, takes: plan.takes, browser, legacy: videoFolders(brandDir, script.id, brief.batch_id), ...(models ? { models } : {}),
+    log(`· ${id}: ${kind === "paper" ? "white-paper video" : `presenter video${kind === "active" ? " with exercises" : ""}`} from script ${script.id} (${brief.locations.length} location${brief.locations.length === 1 ? "" : "s"})`);
+    const shared = { gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, room, profile, caps: { seconds: plan.allow, images: plan.images + 2 }, spent, takes: plan.takes, browser, ...(models ? { models } : {}),
+      log: (m) => log(`  ${m}`), onProgress: (p) => { save(); prog?.set({ stage: "videos", video: { id, script: script.id, ...p }, video_seconds: before.seconds + spent.seconds, video_max_seconds: plan.max_seconds }); } };
+    // White paper: nobody speaks; the words are written on the sheets by software and each sheet is one clip (paper-video.mjs).
+    const r = kind === "paper" ? await makePaperVideos(shared) : await makePresenterVideos({ gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, audience, room, profile, kind, caps: { seconds: plan.allow, images: plan.images + 2 }, spent, takes: plan.takes, browser, legacy: videoFolders(brandDir, script.id, brief.batch_id), ...(models ? { models } : {}),
       log: (m) => log(`  ${m}`), onProgress: (p) => { save(); prog?.set({ stage: "videos", video: { id, script: script.id, ...p }, video_seconds: before.seconds + spent.seconds, video_max_seconds: plan.max_seconds }); } });
     save();
     for (const k of Object.keys(tally)) tally[k] += r.tally?.[k] || 0;
@@ -856,18 +863,18 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     // ad's still, so every screen that shows an ad has something to show; `video_file` is the advert itself.
     for (const v of videoRun?.videos || []) {
       if (v.failed) { failed.push({ candidate: v.id, photo: null, video: v.script_id, location: v.area, failures: [v.failed] }); continue; }
-      const li = brief.locations.indexOf(v.area), active = v.kind === "active", folder = `${cardNo++}-${v.id}-${slug(v.area)}-${active ? "exercise" : "presenter"}-video`, name = `${v.id}-${slug(v.area)}`;
+      const li = brief.locations.indexOf(v.area), active = v.kind === "active", paper = v.kind === "paper", folder = `${cardNo++}-${v.id}-${slug(v.area)}-${paper ? "paper" : active ? "exercise" : "presenter"}-video`, name = `${v.id}-${slug(v.area)}`;
       const video = join(folder, "9x16", `${name}_9x16_v1.mp4`), poster = join(folder, "9x16", `${name}_9x16_v1.jpg`);
       mkdirSync(dirname(join(out, video)), { recursive: true }); copyFileSync(v.file, join(out, video)); copyFileSync(v.poster, join(out, poster));
-      ads.push({ folder, file: poster, video_file: video, candidate: v.id, location: v.area, location_index: li, photos: [], photo_files: [], treatment: active ? "video-presenter-active" : "video-presenter", style: "video", palette: null, ratio: "9x16", format: "presenter-video",
-        video: { kind: active ? "active" : "presenter", ...(active ? { moves: v.moves || [] } : {}), script_id: v.script_id, style: v.style || null, pain: v.pain || null, seconds: v.seconds, words: v.words, notes: v.notes || [], parts: v.parts || [], ...(v.flags?.length ? { flags: v.flags } : {}) }, crop: [], words: { location: v.area, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
+      ads.push({ folder, file: poster, video_file: video, candidate: v.id, location: v.area, location_index: li, photos: [], photo_files: [], treatment: paper ? "video-paper" : active ? "video-presenter-active" : "video-presenter", style: "video", palette: null, ratio: "9x16", format: "presenter-video",
+        video: { kind: paper ? "paper" : active ? "active" : "presenter", ...(active ? { moves: v.moves || [] } : {}), script_id: v.script_id, style: v.style || null, pain: v.pain || null, seconds: v.seconds, words: v.words, notes: v.notes || [], parts: v.parts || [], ...(v.flags?.length ? { flags: v.flags } : {}) }, crop: [], words: { location: v.area, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
     }
     // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
     // record of the calls that made its photos (the panel showed "0 image calls" after one).
     const batch = {
       batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, ...(brief.words_weight ? { words_weight: brief.words_weight } : {}), ...(cardRenders.length ? { cards: Object.fromEntries(["review", "statement", "timeline"].map((k) => [k, cardRenders.filter((c) => c.kind === k && !c.failed).length]).filter(([, n]) => n > 0)) } : {}), format, mix: Object.fromEntries(Object.keys(SCENE_FORMATS).map((f) => [f, photos.filter((p) => p.format === f).length]).filter(([, n]) => n > 0)), ...(brief.lean?.length && !directed ? { lean: brief.lean } : {}), image_calls: spent, image_calls_this_run: calls,
       photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.format ? { format: p.format } : {}), ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
-      ...(videoRun ? { videos: Object.fromEntries([["presenter", "presenter"], ["active", "active"]].map(([k, kind]) => [k, new Set(videoRun.videos.filter((v) => !v.failed && (v.kind || "presenter") === kind).map((v) => v.id)).size]).filter(([k, n]) => n > 0 || k === "presenter")), video_seconds: videoRun.spent.seconds, video_run: videoRun.tally } : {}),
+      ...(videoRun ? { videos: Object.fromEntries([["presenter", "presenter"], ["active", "active"], ["paper", "paper"]].map(([k, kind]) => [k, new Set(videoRun.videos.filter((v) => !v.failed && (v.kind || "presenter") === kind).map((v) => v.id)).size]).filter(([k, n]) => n > 0 || k === "presenter")), video_seconds: videoRun.spent.seconds, video_run: videoRun.tally } : {}),
       ads, failed,
     };
     writeFileSync(join(out, "batch.json"), JSON.stringify(batch, null, 2) + "\n");

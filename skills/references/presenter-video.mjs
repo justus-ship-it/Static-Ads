@@ -208,10 +208,10 @@ const closingRe = (closing) => new RegExp("(?<![A-Za-z0-9'])" + apos(closing).sp
 export const endsWithClosing = (line, closing = CLOSING_LINE) => closingRe(closing).test(apos(line).trim());
 const withoutClosing = (line, closing) => apos(line).trim().replace(closingRe(closing), "");
 /** Another call to action than the closing line: "tap below", "tap the button". */
-const TAP = /\btap (?:below|the|on|here|now|this|that)\b/i;
+export const TAP = /\btap (?:below|the|on|here|now|this|that)\b/i;
 /** The country's own names, for a line that says the whole country as the place. */
 const COUNTRY_WORDS = { SG: ["Singapore", "新加坡"], TW: ["Taiwan", "台灣", "臺灣"], MY: ["Malaysia"] };
-function countryNamed(line, { profile = {}, offer = null } = {}) {
+export function countryNamed(line, { profile = {}, offer = null } = {}) {
   let t = String(line);
   for (const own of [profile.display_name, offer].filter(Boolean)) t = t.split(new RegExp(String(own).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")).join(" ");
   return (COUNTRY_WORDS[profileCountry(profile)] || []).find((w) => (/^[A-Za-z]/.test(w) ? new RegExp(`\\b${w}\\b`, "i").test(t) : t.includes(w))) || null;
@@ -237,7 +237,7 @@ export function filmedLines(lines, closing = closingLine()) {
  * no-promised-result rule, and Meta's rules on appearance).
  */
 export const BRIDGE_WORDS = 8;
-const IDEAL_BODY = /\b(?:dream|perfect|ideal|beach|bikini|summer) body\b|\bbody (?:that )?(?:you|they)(?:'ve| have)? always wanted\b/i;
+export const IDEAL_BODY = /\b(?:dream|perfect|ideal|beach|bikini|summer) body\b|\bbody (?:that )?(?:you|they)(?:'ve| have)? always wanted\b/i;
 export function bridgeOf(lines, closing = CLOSING_LINE) {
   const cuts = filmedLines(lines, closing), parts = withoutClosing(cuts[cuts.length - 1] || "", closing).trim().split(/(?<=[.!?])\s+/).filter(Boolean);
   return (parts[parts.length - 1] || "").trim();
@@ -271,8 +271,9 @@ export function scriptProblems(lines, { offer = null, profile = {}, closing = cl
   return errs;
 }
 const objOf = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : {});
-export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [], samples: Array.isArray(j?.samples) ? j.samples : [], facts: objOf(j?.facts), pains: objOf(j?.pains) }; };
-const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], samples: data.samples || [], facts: data.facts || {}, pains: data.pains || {} }, null, 2) + "\n");
+// `sheets`: the white-paper videos' scripts (paper-video.mjs) — their own list, kept through every write of this file.
+export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [], sheets: Array.isArray(j?.sheets) ? j.sheets : [], samples: Array.isArray(j?.samples) ? j.samples : [], facts: objOf(j?.facts), pains: objOf(j?.pains) }; };
+export const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], ...((data.sheets || []).length ? { sheets: data.sheets } : {}), samples: data.samples || [], facts: data.facts || {}, pains: data.pains || {} }, null, 2) + "\n");
 const shape = (lines) => lines.map(norm).join(" ").toLowerCase().replace(/[^a-z0-9 ]/g, "");
 /** Add a script: the owner's own is kept at once, a drafted one waits for him. Never twice. */
 export function addScript(gymDir, { lines, offer, source = "owner", pain = null, style = null }, { profile = {}, closing = closingLine(), plain = plainWords() } = {}) {
@@ -728,17 +729,23 @@ export async function suggestPains({ brandDir, offer, audience = null, count = 6
 /** How many presenter videos a batch may ask for (each is one script, made once for every location). */
 export const MAX_VIDEOS = 3;
 const kindCount = (videos, k) => (Number.isInteger(videos?.[k]) && videos[k] > 0 ? videos[k] : 0);
-export const videoCount = (videos) => kindCount(videos, "presenter") + kindCount(videos, "active");
-/** The kind of each video of a batch, in the order its scripts are picked: the talking ones, then the ones with exercises. */
-export const videoKinds = (videos) => [...Array(kindCount(videos, "presenter")).fill("presenter"), ...Array(kindCount(videos, "active")).fill("active")];
-/** What is wrong with a brief's `videos`: { presenter: talking to camera, active: with exercises } — `MAX_VIDEOS` between them. */
+/** The videos made from a spoken script: talking, and with exercises. */
+export const spokenCount = (videos) => kindCount(videos, "presenter") + kindCount(videos, "active");
+/** White-paper videos (paper-video.mjs): nobody speaks, the words are on sheets of paper. Their scripts are their own. */
+export const paperCount = (videos) => kindCount(videos, "paper");
+export const videoCount = (videos) => spokenCount(videos) + paperCount(videos);
+/** The kind of each video of a batch, in the order its scripts are picked: the talking ones, the ones with exercises, then the white-paper ones. */
+export const videoKinds = (videos) => [...Array(kindCount(videos, "presenter")).fill("presenter"), ...Array(kindCount(videos, "active")).fill("active"), ...Array(kindCount(videos, "paper")).fill("paper")];
+/** What a brief may ask for: the two ways a spoken script is filmed, and the white-paper kind. */
+export const BRIEF_VIDEOS = ["presenter", "active", "paper"];
+/** What is wrong with a brief's `videos`: { presenter: talking to camera, active: with exercises, paper: white paper } — `MAX_VIDEOS` between them. */
 export function videosProblems(videos) {
   if (videos == null) return [];
   if (typeof videos !== "object" || Array.isArray(videos)) return ["videos must say how many of each kind: { presenter: 1 }"];
   const errs = [];
-  for (const k of Object.keys(videos)) if (!VIDEO_KINDS.includes(k)) errs.push(`videos: "${k}" is not a kind of video (presenter, active)`);
-  for (const k of VIDEO_KINDS) if (videos[k] != null && !(Number.isInteger(videos[k]) && videos[k] >= 0 && videos[k] <= MAX_VIDEOS)) errs.push(`videos.${k} must be a whole number from 0 to ${MAX_VIDEOS}`);
-  if (!errs.length && videoCount(videos) > MAX_VIDEOS) errs.push(`a batch makes at most ${MAX_VIDEOS} presenter videos in all, talking and with exercises together`);
+  for (const k of Object.keys(videos)) if (!BRIEF_VIDEOS.includes(k)) errs.push(`videos: "${k}" is not a kind of video (${BRIEF_VIDEOS.join(", ")})`);
+  for (const k of BRIEF_VIDEOS) if (videos[k] != null && !(Number.isInteger(videos[k]) && videos[k] >= 0 && videos[k] <= MAX_VIDEOS)) errs.push(`videos.${k} must be a whole number from 0 to ${MAX_VIDEOS}`);
+  if (!errs.length && videoCount(videos) > MAX_VIDEOS) errs.push(`a batch makes at most ${MAX_VIDEOS} presenter videos in all, talking, with exercises and white paper together`);
   return errs;
 }
 /**
@@ -920,15 +927,17 @@ export function realModels(profile = {}) {
     },
     /** The kit one photo of the room shows (a vision call). */
     async kit(photo) { const r = await callVision(photo, KIT_QUESTION, KIT_SCHEMA); return KIT.filter((k) => r?.[k] === true); },
-    async watch(file, { move = null } = {}) {
+    async watch(file, { move = null, paper = false } = {}) {
       // With exercises: was the move done before the line? Asked only of a move cut.
       const moveQ = move?.m.kind === "move" ? ` did_move: before the person speaks, do they do this exercise at least once — ${move.m.name}? true or false.` : "";
       // A name is spelt the gym's way when it is heard ("Aether", not "Ether"; "F45", not "F forty-five"): nothing else about the line is told.
       // How a listed word sounded is not asked (2026-11-15): the check wrote "kee" for a clip the owner heard as "kway", so its ear is no judge of that.
+      // White paper: the sheet's own hand-written words are read back apart (paper-video.mjs), so they are not lettering here.
+      const paperQ = paper ? " The person holds a sheet of paper with hand-written words on it: leave the writing on that paper out of lettering, and list only other lettering." : "";
       const named = profile.display_name ? ` The business is called "${profile.display_name}": where that name is spoken, write it exactly that way.` : "";
       const out = await whenGeminiFree(async () => {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHECK_MODEL}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": loadGeminiKey() }, signal: AbortSignal.timeout(240000),
-          body: JSON.stringify({ contents: [{ parts: [{ text: WATCH_QUESTION + moveQ + named }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: WATCH_SCHEMA, temperature: 0 } }) });
+          body: JSON.stringify({ contents: [{ parts: [{ text: WATCH_QUESTION + moveQ + paperQ + named }, { inline_data: { mime_type: "video/mp4", data: readFileSync(file).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json", responseSchema: WATCH_SCHEMA, temperature: 0 } }) });
         if (!res.ok) throw new Error(`the video check failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
         return res.json();
       }, { label: "video check" });
@@ -1189,7 +1198,7 @@ const capHtml = (text, lit) => `<div class="cap">${String(text).toUpperCase().sp
 /** How long the last clip is held after its last word, so the video does not end on a clipped syllable (there is no end card). */
 export const END_HOLD = 0.45;
 /** Cut the clips together — each { file, from, to }, its spoken part — at one size and rate, and lay the timed words over it all. The video ends on the last clip. */
-function assemble({ clips, overlays, out }) {
+export function assemble({ clips, overlays, out }) {
   const inputs = clips.flatMap((c) => ["-i", c.file]), n = clips.length;
   let chain = clips.map((c, i) => `[${i}:v]trim=${c.from}:${c.to},setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1[c${i}];[${i}:a]atrim=${c.from}:${c.to},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a${i}]`).join(";")
     + ";" + clips.map((_, i) => `[c${i}][a${i}]`).join("") + `concat=n=${n}:v=1:a=1[v0][a]`;
@@ -1267,7 +1276,7 @@ export function videoNeeds({ gymDir, script, areas = [""], room = null, profile 
  * his word, as a flagged premises photo does.
  */
 const ASIDE_FILE = "set-aside.json", KEPT_FILE = "owner-kept.json";
-const asideOf = (store) => new Set(Object.keys(readJson(join(store, ASIDE_FILE))?.clips || {}));
+export const asideOf = (store) => new Set(Object.keys(readJson(join(store, ASIDE_FILE))?.clips || {}));
 const fileSha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 export const ownerKeptClip = (store, file) => { const e = readJson(join(store, KEPT_FILE))?.clips?.[basename(file)]; return e && existsSync(file) && e.sha256 === fileSha(file) ? e : null; };
 const clipNames = (names) => { const out = [...new Set([].concat(names || []).map((n) => String(n)))]; if (!out.length || out.some((n) => !/^line-[a-z0-9-]+\.mp4$/.test(n))) throw new Error("which take? (a clip of this script, by its file name)"); return out; };
