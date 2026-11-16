@@ -455,7 +455,9 @@ function joinSheets({ clips, out, fade = SHEET_FADE }) {
 export async function makePaperVideos({ gymDir, outDir, script, areas, offer, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 80, images: 2 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = paperModels(profile), browser = null, closing = closingLine(), store = clipStore(gymDir, script.id), log = () => {}, onProgress = () => {} }) {
   const presenter = presenterOf(profile);
   if (!presenter) throw new Error("say who presents first (Ad defaults → Presenter): a woman or a man. Nothing is made until then");
-  const errs = sheetProblems(script.sheets, { offer, profile, closing, facts: factsFor(gymDir, offer) }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
+  // The script's own rules, as they stand for a kept script: a scarcity sheet he said yes to (`scarce_ok`) is his word here too.
+  // (2026-11-16: this check left his yes out, so a script he had kept and approved stopped a batch after two videos were filmed.)
+  const errs = sheetProblems(script.sheets, { offer, profile, closing, facts: factsFor(gymDir, offer), approved: script.scarce_ok || [] }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
   if (!areas?.length) throw new Error("a video needs a location");
   const whole = areas.find((a) => isWholeCountry(a)); if (whole) throw new Error(`"${whole}" is the whole country: a video says the area around the gym, never the country`);
   if (!room || !existsSync(room)) throw new Error("a photo of the gym's room is needed, so the video is in the gym's own room (Photos & assets → a cleaned premises photo)");

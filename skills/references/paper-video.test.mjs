@@ -254,6 +254,16 @@ test("PP4 a white-paper video end to end: ONE picture of the presenter holding b
     assert.deepEqual([f3.calls.clip.length, r3.spent.seconds, r3.tally, r3.videos[0].failed, r3.videos[0].flags], [8, 32, { filmed: 32, in_videos: 28, replaced: 0, failed: 4, waiting: 0 }, undefined, [{ line: 1, label: "sheet 1", why: 'the paper read "Stairs leave you out of breth?"', kind: "words" }]]);
     assert.ok(existsSync(r3.videos[0].file), "the owner still sees the video"); assert.equal(r3.videos[0].parts[0].takes.length, 2);
     assert.deepEqual((({ seconds, flagged }) => [seconds, flagged])(paperNeeds({ gymDir: g, script: two, areas: ["BISHAN"], room, profile })), [0, 1], "it waits for him: a run films nothing for it");
+    // A scarcity sheet he said yes to is his word when the video is MADE too (2026-11-16: a script he had kept and approved stopped a batch
+    // after two videos were filmed — "it should have not let me approve the script if the claim was not true": the run's own check left his yes out).
+    { const sug = addSheetScript(g, { sheets: GOOD.map((s, i) => (i === 0 ? "Do you turn away from the mirror?" : i === 5 ? "Places are limited." : s)), offer: OFFER, source: "drafted" }, { profile });
+      const noCall = { ...fakes().models, image: async () => { throw new Error("no call is expected"); } };
+      await assert.rejects(makePaperVideos({ ...base, script: sug, areas: ["BISHAN"], models: noCall }), /^Error: this script cannot be made: sheet 6 says places are limited \("Places are"\)/, "not approved: refused before anything is made");
+      const yes = decideSheetScript(g, sug.id, { status: "kept", scarcity_ok: true }, { profile });
+      assert.deepEqual([yes.status, yes.scarce_ok, readySheetScripts(g, OFFER, { profile }).some((x) => x.id === sug.id)], ["kept", ["placesarelimited"], true]);
+      const fy = fakes({ sheets: yes.sheets, areas: ["BISHAN"] }), ry = await makePaperVideos({ ...base, script: yes, areas: ["BISHAN"], models: fy.models });
+      assert.deepEqual([ry.videos[0].failed, ry.videos[0].flags, existsSync(ry.videos[0].file), ry.videos[0].words[5]], [undefined, undefined, true, "Places are limited."], "approved: it is made");
+      decideSheetScript(g, sug.id, { status: "retired", reason: "only for this check" }, { profile }); }
     // Film this sheet again: the takes are set aside and one fresh take is filmed — which now reads right.
     assert.equal(setAside(store2, r3.videos[0].parts[0].takes, "the owner asked for a fresh take"), 2);
     assert.equal(paperNeeds({ gymDir: g, script: two, areas: ["BISHAN"], room, profile }).seconds, 4);
