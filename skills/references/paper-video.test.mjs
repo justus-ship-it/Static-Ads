@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { execFileSync } from "node:child_process";
-import { SHEETS, SHEET_WORDS, SHEET_SECONDS, MIN_HOLD, DROP_KEEP, SHEET_FADE, LAST_KEEP, PAPER, PAPER_FONT, SCARCE, scarceSheets, scarcityOf, sheetProblems, addSheetScript, decideSheetScript, readSheetScripts, keptSheetScripts, readySheetScripts, sheetIssues, pickSheetScripts, noSheetScriptWhy, sheetCost, buildSheetPrompt, draftSheetScripts, blankPrompt, sheetClipPrompt, paperFacts, dropFrom, judgeSheet, sameWriting, inkText, paperNeeds, makePaperVideos } from "./paper-video.mjs";
+import { SHEETS, SHEET_WORDS, SHEET_SECONDS, MIN_HOLD, DROP_KEEP, SHEET_FADE, LAST_KEEP, PAPER, PAPER_FONT, SCARCE, scarceSheets, scarcityOf, sheetProblems, addSheetScript, decideSheetScript, readSheetScripts, keptSheetScripts, readySheetScripts, sheetIssues, pickSheetScripts, noSheetScriptWhy, sheetCost, buildSheetPrompt, draftSheetScripts, blankPrompt, sheetClipPrompt, paperFacts, dropFrom, judgeSheet, sameWriting, inkText, paperNeeds, makePaperVideos, findPaper, writeSheet, quadSound, paperKey, DROP_FALL } from "./paper-video.mjs";
 import { addScript, readScripts, setFacts, fillLine, clipStore, setAside, keepTake, durationOf, hasFfmpeg, LIVE, USD_PER_SECOND, USD_PER_IMAGE, videosProblems, videoCount, videoKinds, spokenCount, paperCount } from "./presenter-video.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 import { launchBrowser } from "./render-composites.mjs";
@@ -186,6 +186,15 @@ test("PP3 the parts that judge, pure: what a found paper allows (too small, held
   assert.deepEqual(dropFrom(series(() => 30)), { duration: 4, base: 30, leave: null, drop: null });
   assert.deepEqual(dropFrom(series((t) => (t > 1 && t < 1.08 ? 0 : 30))), { duration: 4, base: 30, leave: null, drop: null }, "two frames of a hand passing over the words are no drop");
   assert.deepEqual([dropFrom(series(() => 0)), dropFrom([])], [{ duration: 4, base: 0, leave: 0, drop: 0 }, { duration: 0, base: 0, leave: 0, drop: 0 }]);
+  // The fall is measured from where the ink ends up (2026-11-16: something dark stayed in the patch after the sheet had gone, the ink settled at 40% of
+  // what it was, no drop was timed and the paper was read after it had fallen — "all 6 checks failed, the paper was blank when it was read"). A fall of less than half is no drop.
+  assert.equal(DROP_FALL, 0.5);
+  assert.deepEqual(dropFrom(series((t) => (t < 2.8 ? 48 : t < 3 ? 36 : 20))), { duration: 4, base: 48, leave: 2.83, drop: 3 });
+  assert.deepEqual(dropFrom(series((t) => (t < 2.8 ? 48 : 30))), { duration: 4, base: 48, leave: null, drop: null });
+  // A paper's opposite sides agree; one that does not was found wrongly: it is not written on, and a picture on file with such a paper is found again under a mark.
+  const SQ = { quad: [[200, 400], [520, 400], [520, 850], [200, 850]], W: 720, H: 1280, fill: 0.97 }, BAD = { ...SQ, quad: [[120, 380], [520, 400], [520, 850], [200, 850]] };
+  assert.deepEqual([quadSound(SQ), quadSound(BAD), quadSound({}), paperFacts(BAD).problem, paperFacts(SQ).problem], [true, false, false, "the paper's edges could not be found cleanly", undefined]);
+  assert.deepEqual([paperKey(SQ), paperKey(BAD), paperKey({ ...BAD, v: 2 }), paperKey({ ...SQ, v: 2, key: "r2" }), paperKey(null), paperKey({ problem: "no paper" })], ["", "r2", "", "r2", "", ""]);
   // The check.
   const TEXT = "Join our 12 Week Full Body Transformation", seen = { spoken: "", lettering: [], people: 1, faults: [] }, timing = { duration: 4, base: 30, leave: 2.7, drop: 2.75 };
   const reads = (...w) => w.map((written, i) => ({ at: i, written, clean: true })), J = (c, o) => judgeSheet({ v: 1, timing, seen, reads: reads(TEXT, TEXT), ...c }, TEXT, o);
@@ -288,6 +297,24 @@ test("PP4 a white-paper video end to end: ONE picture of the presenter holding b
     assert.deepEqual([f8.calls.image.length, /-c\.jpg$/.test(f8.calls.image[0].out), f8.calls.clip.length, r8.spent.seconds], [1, true, 2, 8], "the third picture is the one used; the cap of 8 s films two sheets and no more");
     assert.equal(r8.videos[0].failed, "sheet 3: the cap of 8 seconds of video was reached");
     // Words too many to be read on the paper: said by the sheet, and nothing is filmed for it.
+    // The paper's edges are each found from the middle of its side: something bright that touches a corner (a sleeve, a wall) does not move them, and the words sit in the middle of the sheet.
+    { const pic = join(d, "bridge.jpg"); ffm(["-f", "lavfi", "-i", "color=c=0x707070:s=720x1280", "-vf", `drawbox=x=${BOX.x}:y=${BOX.y}:w=${BOX.w}:h=${BOX.h}:color=white:t=fill,drawbox=x=${BOX.x - 90}:y=${BOX.y - 10}:w=110:h=44:color=white:t=fill`, "-frames:v", "1", "-q:v", "2", pic]);
+      const p = await findPaper(browser, pic), near = (a, b) => Math.abs(a - b) <= 6;
+      assert.ok(p.v === 2 && !p.problem && near(p.quad[0][0], BOX.x) && near(p.quad[0][1], BOX.y) && near(p.quad[1][0], BOX.x + BOX.w) && near(p.quad[2][1], BOX.y + BOX.h) && near(p.quad[3][0], BOX.x), JSON.stringify(p));
+      const w = await writeSheet(browser, { picture: pic, paper: p, text: "Do you turn away from the mirror?", out: join(d, "bridge-written.jpg") });
+      assert.ok(!w.problem && Math.abs(w.box.x + w.box.w / 2 - (BOX.x + BOX.w / 2) / 720) < 0.012, `the words' middle is the paper's middle: ${JSON.stringify(w.box)}`); }
+    // A picture on file whose paper the first finder got wrong: found again, its sheets written and its clips filmed under new names; the old files stay; the plan knows before the run.
+    { const old = addSheetScript(g, { sheets: GOOD.map((s, i) => (i === 0 ? "Clothes feeling a little tight?" : s)), offer: OFFER }, { profile }), st = clipStore(g, old.id), b1 = { ...base, script: old, areas: ["BISHAN"] };
+      const fa = fakes({ sheets: old.sheets, areas: ["BISHAN"] }); await makePaperVideos({ ...b1, models: fa.models });
+      const pf = readdirSync(st).find((x) => /\.paper\.json$/.test(x)), was = JSON.parse(readFileSync(join(st, pf), "utf-8")), before = readdirSync(st).filter((x) => /^line-.*\.mp4$/.test(x)).sort();
+      assert.deepEqual([was.v, paperKey(was), paperNeeds({ gymDir: g, script: old, areas: ["BISHAN"], room, profile }).seconds], [2, "", 0]);
+      writeFileSync(join(st, pf), JSON.stringify({ ...was, v: undefined, quad: [[was.quad[0][0] - 90, was.quad[0][1] - 10], was.quad[1], was.quad[2], was.quad[3]] }));
+      assert.equal(paperNeeds({ gymDir: g, script: old, areas: ["BISHAN"], room, profile }).seconds, 28, "the plan counts every sheet as still to film");
+      const fb = fakes({ sheets: old.sheets, areas: ["BISHAN"] }), lg = [], rb = await makePaperVideos({ ...b1, models: fb.models, log: (m) => lg.push(m) });
+      const now = JSON.parse(readFileSync(join(st, pf), "utf-8")), after = readdirSync(st).filter((x) => /^line-.*\.mp4$/.test(x)).sort();
+      assert.deepEqual([fb.calls.image.length, fb.calls.clip.length, now.key, now.v, quadSound(now), rb.videos[0].failed, rb.videos[0].flags, before.every((x) => after.includes(x)), after.length], [0, 7, "r2", 2, true, undefined, undefined, true, 14]);
+      assert.ok(lg.some((l) => /the paper in the picture on file had been found wrongly: it is found again/.test(l)) && rb.videos[0].parts.every((p) => !before.includes(p.clip)), lg.join("\n"));
+      const fc = fakes({ sheets: old.sheets, areas: ["BISHAN"] }); await makePaperVideos({ ...b1, models: fc.models }); assert.deepEqual([fc.calls.clip.length, fc.calls.image.length], [0, 0], "and then nothing more"); }
     const tiny = { ...four, id: "p-tiny", sheets: four.sheets }, r9 = await makePaperVideos({ ...base, script: tiny, areas: ["BISHAN"], store: join(d, "tiny"), models: fakes({ sheets: four.sheets, areas: ["BISHAN"], boxes: [{ x: 262, y: 420, w: 196, h: 276 }] }).models, caps: { seconds: 0, images: 1 } });
     assert.match(r9.videos[0].failed, /^sheet \d: the cap of 0 seconds of video was reached$|has too many words to be read on the paper: use fewer/);
   } finally { await browser.close(); rmSync(d, { recursive: true, force: true }); }

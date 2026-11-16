@@ -51,7 +51,7 @@ const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 /** A sheet script is 6 to 9 sheets; a sheet is 2 to 8 words (the closing line and the sheet with the offer's name may be longer). Each sheet is one clip of 4 seconds. */
 export const SHEETS = [6, 9], SHEET_WORDS = [2, 8], SHEET_SECONDS = 4;
 /** How long a sheet must stay readable; what is kept of a clip after its drop begins; how much of the last sheet is kept. */
-export const MIN_HOLD = 1.6, LAST_KEEP = 3.2;
+export const MIN_HOLD = 1.6, LAST_KEEP = 3.2, DROP_FALL = 0.5;
 /**
  * The cut between two sheets (2026-11-16, the owner on his first white-paper video: "the cut is so abrupt. it looks
  * super unnatural" — it cut the moment the words were gone, with the sheet still sliding in his hands; he picked the
@@ -61,7 +61,7 @@ export const MIN_HOLD = 1.6, LAST_KEEP = 3.2;
  */
 export const DROP_KEEP = 0.5, SHEET_FADE = 0.25;
 /** The paper in the picture: the least of the picture's width it may be, how blank it must be, how much of its height must be inside Meta's live area, the words' box on it, and the smallest the letters may be (of the picture's width). */
-export const PAPER = { min_w: 0.24, fill: 0.8, usable: 0.5, text_w: 0.78, pad: 0.08, min_letter: 0.034 };
+export const PAPER = { min_w: 0.24, fill: 0.8, usable: 0.5, text_w: 0.78, pad: 0.08, min_letter: 0.034, skew: 0.12 };
 export const PAPER_FONT = join(REPO_ROOT, "assets/fonts/permanentmarker/PermanentMarker-Regular.ttf");
 const W = 720, H = 1280, FPS = 24, CHECK_V = 1;
 
@@ -282,22 +282,53 @@ async function page(browser, html, { w, h, expr = null, shot = null }) {
 }
 const dataUrl = (f) => `data:image/${/\.png$/i.test(f) ? "png" : "jpeg"};base64,${readFileSync(f).toString("base64")}`;
 /**
- * The paper: among the bright, colourless patches near the middle of the picture, the largest that fills its own four
- * corners (a wall or a window is ragged; a sheet of paper is a clean quadrilateral). Answers its corners in picture
- * pixels (top-left, top-right, bottom-right, bottom-left) and how much of that quadrilateral is blank paper.
+ * The paper: among the bright, colourless patches near the middle of the picture, the one that best fills the
+ * quadrilateral of its own four EDGES. Answers its corners in picture pixels (top-left, top-right, bottom-right,
+ * bottom-left) and how much of that quadrilateral is blank paper.
+ *
+ * Each edge is fitted from the middle of its side (2026-11-16). The first finder took the patch's four extreme points
+ * as the corners; on Aether's second white-paper picture a few bright pixels beside the sheet joined its patch, the
+ * top-left "corner" landed 85 px outside the paper, and so the words were set off-centre and the patch the drop is
+ * timed from took in the presenter's shirt — no drop was timed, each sheet was read after it had fallen, and all six
+ * were refused ("the paper was blank when it was read") though the clips were sound. `v: 2` marks a paper found this way.
  */
 const FIND = `(async () => { const im = document.querySelector('img'); await im.decode(); const W = im.naturalWidth, H = im.naturalHeight, s = 360 / W, w = 360, h = Math.round(H * s);
   const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.drawImage(im, 0, 0, w, h); const d = x.getImageData(0, 0, w, h).data;
   const m = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) { const r = d[i*4], g = d[i*4+1], b = d[i*4+2]; m[i] = Math.min(r, g, b) > 178 && Math.max(r, g, b) - Math.min(r, g, b) < 42 ? 1 : 0; }
-  const seen = new Int32Array(w * h); let best = null, id = 0; const f = (k) => [k % w, (k / w) | 0];
-  for (let i = 0; i < w * h; i++) { if (!m[i] || seen[i]) continue; id++; const q = [i]; seen[i] = id; let n = 0, sx = 0, sy = 0, tl = i, tr = i, br = i, bl = i;
-    while (q.length) { const k = q.pop(), [px, py] = f(k); n++; sx += px; sy += py;
-      { const [ax, ay] = f(tl); if (px + py < ax + ay) tl = k; } { const [ax, ay] = f(tr); if (px - py > ax - ay) tr = k; } { const [ax, ay] = f(br); if (px + py > ax + ay) br = k; } { const [ax, ay] = f(bl); if (px - py < ax - ay) bl = k; }
-      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) { const nx = px + dx, ny = py + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue; const j = ny * w + nx; if (m[j] && !seen[j]) { seen[j] = id; q.push(j); } } }
-    const cx = sx / n / w, cy = sy / n / h, share = n / (w * h); if (!(cx > 0.2 && cx < 0.8 && cy > 0.15 && cy < 0.85 && share > 0.02 && share < 0.5)) continue;
-    const P = [tl, tr, br, bl].map(f); let area = 0; for (let k = 0; k < 4; k++) { const [x1, y1] = P[k], [x2, y2] = P[(k + 1) % 4]; area += x1 * y2 - x2 * y1; } area = Math.abs(area) / 2 + 1;
-    const fill = Math.min(1, n / area), score = n * fill * fill; if (!best || score > best.score) best = { score, share, fill, quad: P.map((p) => p.map((v) => v / s)) }; }
-  return JSON.stringify(best ? { ...best, W, H } : { W, H }); })()`;
+  // Thin bridges to a wall, a window or a sleeve are cut before the patches are told apart (a 5 px erosion), so the paper is its own patch.
+  const R = 2, t1 = new Uint8Array(w * h), er = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let px = 0; px < w; px++) { let ok = 1; for (let k = -R; k <= R && ok; k++) { const nx = px + k; if (nx < 0 || nx >= w || !m[y * w + nx]) ok = 0; } t1[y * w + px] = ok; }
+  for (let y = 0; y < h; y++) for (let px = 0; px < w; px++) { let ok = 1; for (let k = -R; k <= R && ok; k++) { const ny = y + k; if (ny < 0 || ny >= h || !t1[ny * w + px]) ok = 0; } er[y * w + px] = ok; }
+  const seen = new Int32Array(w * h), cands = []; let id = 0;
+  for (let i = 0; i < w * h; i++) { if (!er[i] || seen[i]) continue; id++; const q = [i]; seen[i] = id; let n = 0, sx = 0, sy = 0;
+    while (q.length) { const k = q.pop(), px = k % w, py = (k / w) | 0; n++; sx += px; sy += py;
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) { const nx = px + dx, ny = py + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue; const j = ny * w + nx; if (er[j] && !seen[j]) { seen[j] = id; q.push(j); } } }
+    const cx = sx / n / w, cy = sy / n / h, share = n / (w * h); if (cx > 0.2 && cx < 0.8 && cy > 0.15 && cy < 0.85 && share > 0.012 && share < 0.5) cands.push({ n, cx: Math.round(sx / n), cy: Math.round(sy / n), share }); }
+  // The paper's four edges, each from the middle of its side: where the blank run through the patch's centre ends, row by row and column by column.
+  // The median over a band near each end of a side gives two points on that edge, so fingers on an edge, a bridge to the wall or a ragged corner do not move it.
+  const runRow = (y, x0) => { if (y < 0 || y >= h || !m[y * w + x0]) return null; let a = x0, b = x0; while (a > 0 && m[y * w + a - 1]) a--; while (b < w - 1 && m[y * w + b + 1]) b++; return [a, b + 1]; };
+  const runCol = (x0, y) => { if (x0 < 0 || x0 >= w || !m[y * w + x0]) return null; let a = y, b = y; while (a > 0 && m[(a - 1) * w + x0]) a--; while (b < h - 1 && m[(b + 1) * w + x0]) b++; return [a, b + 1]; };
+  const med = (a) => { a.sort((p, q) => p - q); return a[a.length >> 1]; };
+  const band = (from, to, at) => { const v = []; for (let t = Math.round(from); t <= Math.round(to); t++) { const r = at(t); if (r != null) v.push(r); } return v.length >= 3 ? med(v) : null; };
+  let best = null;
+  for (const cnd of cands.sort((a, b) => b.n - a.n).slice(0, 4)) {
+    const rc = runCol(cnd.cx, cnd.cy), rr = runRow(cnd.cy, cnd.cx); if (!rc || !rr) continue;
+    const top0 = rc[0], hh = rc[1] - rc[0], left0 = rr[0], ww = rr[1] - rr[0]; if (hh < 20 || ww < 20) continue;
+    const yU = [top0 + 0.08 * hh, top0 + 0.26 * hh], yL = [top0 + 0.74 * hh, top0 + 0.92 * hh], xL = [left0 + 0.12 * ww, left0 + 0.32 * ww], xR = [left0 + 0.68 * ww, left0 + 0.88 * ww], mid = (p) => (p[0] + p[1]) / 2;
+    const lU = band(yU[0], yU[1], (y) => runRow(y, cnd.cx)?.[0]), lL = band(yL[0], yL[1], (y) => runRow(y, cnd.cx)?.[0]), rU = band(yU[0], yU[1], (y) => runRow(y, cnd.cx)?.[1]), rL = band(yL[0], yL[1], (y) => runRow(y, cnd.cx)?.[1]);
+    const tL = band(xL[0], xL[1], (px) => runCol(px, cnd.cy)?.[0]), tR = band(xR[0], xR[1], (px) => runCol(px, cnd.cy)?.[0]), bL = band(xL[0], xL[1], (px) => runCol(px, cnd.cy)?.[1]), bR = band(xR[0], xR[1], (px) => runCol(px, cnd.cy)?.[1]);
+    if ([lU, lL, rU, rL, tL, tR, bL, bR].some((v) => v == null)) continue;
+    // A side edge is x = a + k·y, a top or bottom edge y = b + j·x; a corner is where two meet.
+    const V = (xa, ya, xb, yb) => { const k = (xb - xa) / (yb - ya); return { a: xa - k * ya, k }; }, Hz = (xa, ya, xb, yb) => { const j = (yb - ya) / (xb - xa); return { b: ya - j * xa, j }; };
+    const meet = (v, z) => { const px = (v.a + v.k * z.b) / (1 - v.k * z.j); return [px, z.b + z.j * px]; };
+    const left = V(lU, mid(yU), lL, mid(yL)), right = V(rU, mid(yU), rL, mid(yL)), top = Hz(mid(xL), tL, mid(xR), tR), bot = Hz(mid(xL), bL, mid(xR), bR);
+    const P = [meet(left, top), meet(right, top), meet(right, bot), meet(left, bot)];
+    let area = 0; for (let k = 0; k < 4; k++) { const [x1, y1] = P[k], [x2, y2] = P[(k + 1) % 4]; area += x1 * y2 - x2 * y1; } area = Math.abs(area) / 2 + 1;
+    const inside = (px, py) => { for (let k = 0; k < 4; k++) { const [x1, y1] = P[k], [x2, y2] = P[(k + 1) % 4]; if ((x2 - x1) * (py - y1) - (y2 - y1) * (px - x1) < 0) return false; } return true; };
+    let n = 0; const x0 = Math.max(0, Math.floor(Math.min(...P.map((p) => p[0])))), x1 = Math.min(w - 1, Math.ceil(Math.max(...P.map((p) => p[0])))), y0 = Math.max(0, Math.floor(Math.min(...P.map((p) => p[1])))), y1 = Math.min(h - 1, Math.ceil(Math.max(...P.map((p) => p[1]))));
+    for (let py = y0; py <= y1; py++) for (let px = x0; px <= x1; px++) if (m[py * w + px] && inside(px + 0.5, py + 0.5)) n++;
+    const fill = Math.min(1, n / area), score = n * fill * fill; if (!best || score > best.score) best = { score, share: cnd.share, fill, quad: P.map((p) => p.map((v) => v / s)) }; }
+  return JSON.stringify(best ? { ...best, W, H, v: 2 } : { W, H, v: 2 }); })()`;
 /** The CSS matrix3d that carries the rectangle (0,0)-(w,h) onto four points. */
 function homography(w, h, q) {
   const src = [[0, 0], [w, 0], [w, h], [0, h]], A = [], B = [];
@@ -313,12 +344,26 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
  * part of the paper's height that is inside Meta's live area, where the words go — problem }. A picture with a
  * problem is not written on: another is made.
  */
+/** A sheet held square to the lens has opposite sides of about the same length (within `PAPER.skew`): a quadrilateral that does not is a paper found wrongly. Pure. */
+export function quadSound(found) {
+  if (!found?.quad) return false;
+  const [tl, tr, br, bl] = found.quad, top = dist(tl, tr), bottom = dist(bl, br), left = dist(tl, bl), right = dist(tr, br), off = (a, b) => Math.abs(a - b) / Math.max(a, b, 1);
+  return off(top, bottom) <= PAPER.skew && off(left, right) <= PAPER.skew;
+}
+/**
+ * The mark a picture's sheets and clips carry in their names when its paper had to be found again: "" for a paper
+ * found once and soundly (every file on disk stands), "r2" for one the first finder got wrong — its sheets are written
+ * again and its clips filmed again, under new names, and the old files are left where they are. Pure, so the plan
+ * (paperNeeds) and the run agree before the browser is opened.
+ */
+export const paperKey = (p) => (p?.key ? p.key : p?.quad && p.v !== 2 && !quadSound(p) ? "r2" : "");
 export function paperFacts(found) {
   if (!found?.quad) return { problem: "no blank sheet of paper was found in the picture" };
   const { quad: [tl, tr, br, bl], W: w, H: h, fill } = found, width = dist(tl, tr) / w, top = (tl[1] + tr[1]) / 2, bottom = (bl[1] + br[1]) / 2, tall = bottom - top;
   const from = Math.max(PAPER.pad, (LIVE.top * h - top) / tall + 0.02), to = Math.min(1 - PAPER.pad, (LIVE.bottom * h - top) / tall - 0.02), usable = [round(from, 1000), round(to, 1000)];
   const facts = { width: round(width, 1000), fill: round(fill, 1000), usable };
   if (!(tall > 0) || Math.min(tl[0], bl[0]) < LIVE.left * w * 0.5 || Math.max(tr[0], br[0]) > w * (1 - LIVE.left * 0.5)) return { ...facts, problem: "the paper runs off the side of the picture" };
+  if (!quadSound(found)) return { ...facts, problem: "the paper's edges could not be found cleanly" };
   if (width < PAPER.min_w) return { ...facts, problem: `the paper is too small in the picture (${Math.round(width * 100)}% of its width; at least ${Math.round(PAPER.min_w * 100)}%)` };
   if (fill < PAPER.fill) return { ...facts, problem: "the paper is not blank, or hands cover too much of it" };
   if (to - from < PAPER.usable) return { ...facts, problem: `the paper is held too ${top < LIVE.top * h ? "high" : "low"}: only ${Math.round(Math.max(0, to - from) * 100)}% of it is where words may sit on a Story or Reel` };
@@ -373,7 +418,12 @@ export function dropFrom(series) {
   const step = series.length > 1 ? (series[series.length - 1].t - series[0].t) / (series.length - 1) : 1 / FPS, duration = round(series[series.length - 1].t + step);
   const early = series.filter((s) => s.t <= 0.5).map((s) => s.ink).sort((a, b) => a - b), base = early[Math.floor(early.length / 2)] ?? 0;
   if (base < 2) return { duration, base: round(base), leave: 0, drop: 0 };
-  const under = (share) => { for (let i = 0; i < series.length; i++) if (series[i].ink < base * share && series.slice(i, i + 4).every((s) => s.ink < base * share)) return round(series[i].t); return null; };
+  // The fall is measured from where the ink ends up, not from nought: when something dark stays in the patch after the
+  // sheet has gone (a sleeve at its edge) the ink settles above nought, and a drop to 40% of what it was is still a drop.
+  // A real drop takes at least `DROP_FALL` of the ink away; less than that is a sheet that was never let go.
+  const floor = Math.min(...series.map((s) => s.ink)), fall = base - floor;
+  if (fall < base * DROP_FALL) return { duration, base: round(base), leave: null, drop: null };
+  const under = (share) => { const lim = floor + fall * share; for (let i = 0; i < series.length; i++) if (series[i].ink < lim && series.slice(i, i + 4).every((s) => s.ink < lim)) return round(series[i].t); return null; };
   const drop = under(0.15), leave = drop == null ? null : under(0.7) ?? drop;
   return { duration, base: round(base), leave, drop };
 }
@@ -408,8 +458,8 @@ const LETTERS = "bcdefgh";
 /** The pictures a script may be filmed from, in order: its first, then the ones made after it was refused (-b, -c …). */
 const blankFiles = (main) => [main, ...[...LETTERS].map((c) => main.replace(/\.jpg$/, `-${c}.jpg`))];
 const paperFile = (pic) => pic.replace(/\.jpg$/, ".paper.json");
-const sheetName = (i, text, blank, area, perArea) => `sheet-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(inkText(text) + basename(blank)).slice(0, 6)}.jpg`;
-const clipName = (i, text, blank, area, perArea, last) => `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(`${inkText(text)}|${basename(blank)}|${last ? "last" : "drop"}`).slice(0, 6)}`;
+const sheetName = (i, text, blank, area, perArea, key = "") => `sheet-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(inkText(text) + basename(blank) + key).slice(0, 6)}.jpg`;
+const clipName = (i, text, blank, area, perArea, last, key = "") => `line-${i + 1}${perArea ? `-${slug(area)}` : ""}-${sha(`${inkText(text)}|${basename(blank)}|${last ? "last" : "drop"}${key ? `|${key}` : ""}`).slice(0, 6)}`;
 const passed = (check, text, last) => !!check && check.v === CHECK_V && judgeSheet(check, text, { last }).passed;
 /**
  * What a sheet script still needs filmed for these locations, by what is on file — the shape `videoNeeds` gives for a
@@ -420,11 +470,11 @@ export function paperNeeds({ gymDir, script, areas = [""], room = null, profile 
   const presenter = presenterOf(profile), files = existsSync(store) ? readdirSync(store) : [], aside = asideOf(store), clips = [], last = script.sheets.length - 1;
   const main = presenter && room ? blankName(blankPrompt({ presenter, profile }), room) : null;
   // The picture in use: the first on file whose paper passed (one not looked at yet counts as usable).
-  const blank = main ? blankFiles(main).find((b) => files.includes(b) && !readJson(join(store, paperFile(b)))?.problem) || null : null;
+  const blank = main ? blankFiles(main).find((b) => files.includes(b) && !readJson(join(store, paperFile(b)))?.problem) || null : null, key = blank ? paperKey(readJson(join(store, paperFile(blank)))) : "";
   for (const [i, raw] of script.sheets.entries()) {
     const perArea = /\{AREA\}/.test(raw);
     for (const area of perArea ? (areas.length ? areas : [""]) : [null]) {
-      const text = fillLine(raw, area || ""), name = blank ? clipName(i, text, blank, area, perArea, i === last) : null;
+      const text = fillLine(raw, area || ""), name = blank ? clipName(i, text, blank, area, perArea, i === last, key) : null;
       const mine = name ? files.filter((f) => /\.mp4$/.test(f) && (f === `${name}.mp4` || f.startsWith(`${name}-take`))) : [], live = mine.filter((f) => !aside.has(f));
       const on_file = live.some((f) => passed(readJson(join(store, f.replace(/\.mp4$/, ".check.json"))), text, i === last) || !!ownerKeptClip(store, join(store, f)));
       clips.push({ line: text, area, seconds: SHEET_SECONDS, on_file, flagged: !on_file && live.length > 0 && mine.length >= takes + (mine.length - live.length) });
@@ -481,6 +531,8 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
         catch (e) { if (!isRefusal(e)) throw e; why = "Google's image model refused the presenter's picture under its content rules"; log(`  ${why}`); continue; }
       }
       let p = readJson(paperFile(pic)); if (!p) { p = await findPaper(browser, pic); writeFileSync(paperFile(pic), JSON.stringify(p, null, 2) + "\n"); }
+      // A paper the first finder got wrong (its sides do not agree) is found again; its sheets and clips are made afresh under new names.
+      else if (!p.problem && paperKey(p) && !p.key) { p = { ...(await findPaper(browser, pic)), key: "r2" }; writeFileSync(paperFile(pic), JSON.stringify(p, null, 2) + "\n"); log("  the paper in the picture on file had been found wrongly: it is found again, and its sheets are written and filmed afresh"); }
       if (!p.problem) { blank = pic; paper = p; break; }
       why = p.problem; log(`  ${basename(pic)}: ${p.problem}`);
     }
@@ -490,7 +542,7 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
     const stills = new Map(), made = new Map(), aside = asideOf(store), filmedNow = new Map();
     const stillFor = async (i, area) => {
       const perArea = /\{AREA\}/.test(script.sheets[i]), key = `${i}|${perArea ? area : ""}`; if (stills.has(key)) return stills.get(key);
-      const text = fillLine(script.sheets[i], area), file = join(store, sheetName(i, text, blank, area, perArea)), meta = file.replace(/\.jpg$/, ".sheet.json");
+      const text = fillLine(script.sheets[i], area), file = join(store, sheetName(i, text, blank, area, perArea, paper.key || "")), meta = file.replace(/\.jpg$/, ".sheet.json");
       let r = existsSync(file) ? readJson(meta) : null; if (!r) { r = await writeSheet(browser, { picture: blank, paper, text, out: file }); writeFileSync(meta, JSON.stringify(r, null, 2) + "\n"); }
       const s = { file, text, perArea, ...r }; stills.set(key, s); return s;
     };
@@ -506,7 +558,7 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
     };
     const clipFor = async (i, area) => {
       const still = await stillFor(i, area), key = `${i}|${still.perArea ? area : ""}`; if (made.has(key)) return made.get(key);
-      const isLast = i === last, name = clipName(i, still.text, blank, area, still.perArea, isLast), seconds = SHEET_SECONDS;
+      const isLast = i === last, name = clipName(i, still.text, blank, area, still.perArea, isLast, paper.key || ""), seconds = SHEET_SECONDS;
       let r;
       if (still.problem) r = { file: null, takes: 0, passed: false, text: still.text, why: `${still.problem} ("${still.text}")`, all: [], words: true };
       else {
