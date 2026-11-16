@@ -3822,7 +3822,7 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
       assert.equal((await call(`/api/client/${GYM}/video/script/${id}/propose`, { method: "POST", body: {}, token: null })).status, 403);
       const none = await call(`/api/client/${GYM}/video/script/v-nope/propose`, { method: "POST", body: {} }); assert.equal(none.status, 400); assert.match((await none.json()).error, /no such script/); }
     [st, D] = await V("/closing", { method: "POST", body: { text: CLOSE } }); assert.deepEqual([st, D.closing.text, D.scripts[0].problems], [200, CLOSE, []]);
-    { const ok = await call(`/api/client/${GYM}/video/script/${id}/propose`, { method: "POST", body: {} }); assert.equal(ok.status, 400); assert.match((await ok.json()).error, /this script needs no edit/); }
+    { const ok = await call(`/api/client/${GYM}/video/script/${id}/propose`, { method: "POST", body: {} }); assert.equal(ok.status, 400); assert.match((await ok.json()).error, /network blocked|GEMINI_KEY/, "a script that breaks no rule is read aloud by the model (2026-11-16): the test panel has none"); }
     // The closing line as a script's whole last line (2026-11-14: Google's video model refuses that sentence as a clip of its own): it is filmed with the line before it — one cut, one picture fewer — and the script says so.
     [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0].replace("keep watching", "stay with this"), LINES[1], "If you are ready to feel stronger every single day, now is your time.", CLOSE] } });
     { const alone = D.scripts.find((x) => x.lines.length === 4); assert.deepEqual([st, alone.joined, alone.cost.images, alone.problems, D.scripts.find((x) => x.id === id).joined], [200, true, 3, [], false]);
@@ -3915,6 +3915,7 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
     // A script that needs an edit: the card offers Propose an edit… beside Edit…; the agent's proposal (the model's answer is stood in for here) comes up in the same boxes, says what changed and why, and is saved only when he presses Use this edit — after any change of his own.
     assert.equal(await ev("!!document.querySelector('#vsCard [data-propose]')"), false, "a script that needs no edit offers none");
+    assert.deepEqual(await ev("[document.querySelectorAll('#vsList [data-script] [data-read]').length, document.querySelector('#vsList [data-script] [data-read]').textContent, /reads every line aloud/.test(document.querySelector('#vsList [data-script] [data-read]').title)]"), [1, "Check how it reads…", true], "a script that breaks no rule can still be read aloud by the agent");
     await V("/closing", { method: "POST", body: { text: "Click the link below and the team will be in touch." } });
     await open("scenes", "!!document.querySelector('#vsCard [data-propose]')");
     assert.deepEqual(await ev("[document.querySelector('#vsCard [data-propose]').textContent, /Press Propose an edit… and the agent writes it for you to approve, or Edit… to do it yourself\\./.test(document.querySelector('#vsCard [data-problems]').innerText), document.querySelector('#vsCard [data-script] .pill').textContent]"), ["Propose an edit…", true, "kept · needs an edit"]);

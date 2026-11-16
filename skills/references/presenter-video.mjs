@@ -107,6 +107,15 @@ export const OMNI = "gemini-omni-1.2-flash", INTERACTIONS = "https://generativel
 export const SCRIPTS_FILE = "video-scripts.json";
 /** A script is 2 to 4 lines; a line is one breath (6 to 26 words) and becomes one clip of 5 to 12 seconds. */
 export const LINES = [2, 7], LINE_WORDS = [6, 26], CLIP_SECONDS = [5, 15], WORDS_PER_SECOND = 2.8;
+/**
+ * What a first take needs to be said as written (2026-11-16, measured on the 81 takes on file: 19 of 19 for lines of 17
+ * words or fewer, 85% for longer ones; the failures were a word or phrase said twice, and extra words spoken into the
+ * time left over). A DRAFTED line is at most `DRAFT_WORDS.line` words, the last line (the turn to the viewer and the
+ * closing sentence) `DRAFT_WORDS.last`; the owner's own writing keeps `LINE_WORDS`, and nothing kept before is refused.
+ * `CLIP_PAD`: the seconds a clip is given beyond its words (it was a full second; 20 words were said in 7.5 s of an 8 s clip).
+ * `READ_MIN`: the least a line may score when it is read aloud (see `readAloud`).
+ */
+export const DRAFT_WORDS = { line: 17, last: 22 }, CLIP_PAD = 0.8, READ_MIN = 8;
 /** What a second of 720p video costs (Google's pricing page, 2026-11-12) and an image call, for the estimate shown before a run. */
 export const USD_PER_SECOND = 0.07, USD_PER_IMAGE = 0.15;
 /**
@@ -184,7 +193,7 @@ export const wordCount = (line) => norm(line).split(" ").filter(Boolean).length;
 /** `{AREA}` filled the way the plan fills it in copy: "ANG MO KIO" → "Ang Mo Kio", "CBD" stays. */
 export const fillLine = (line, area) => norm(line).replace(/\{AREA\}/g, titleCase(String(area || "")));
 /** How long a line's clip is: its words at a talking pace and a second to finish, inside the model's limits (the test's lines of 22, 23 and 15 words were said in 8, 9 and 7 seconds). */
-export const clipSeconds = (line) => Math.max(CLIP_SECONDS[0], Math.min(CLIP_SECONDS[1], Math.ceil(wordCount(line) / WORDS_PER_SECOND + 1)));
+export const clipSeconds = (line) => Math.max(CLIP_SECONDS[0], Math.min(CLIP_SECONDS[1], Math.ceil(wordCount(line) / WORDS_PER_SECOND + CLIP_PAD)));
 
 // ── who presents ─────────────────────────────────────────────────────────────
 /** The gym's presenter, or null when it has not said who presents. */
@@ -298,6 +307,40 @@ export function decideScript(gymDir, id, { status, lines, reason } = {}, { profi
   }
   writeScripts(gymDir, data); return row;
 }
+/** How a line must read: it is heard once, said by a person. Told to the drafter and the editor, and scored by `readAloud`. */
+export const READ_RULE = `READ IT ALOUD: every line is something a person would really say to a friend, in correct, natural spoken English. No clumsy or stitched-together phrase, no word (or a close form of it: "energised … energy", "everyday … every day") used twice in one line, nothing that reads like writing rather than speech.`;
+const READ_SCHEMA = { type: "OBJECT", properties: { lines: { type: "ARRAY", items: { type: "OBJECT", properties: { id: { type: "STRING" }, score: { type: "INTEGER" }, why: { type: "STRING" } }, required: ["id", "score", "why"] } } }, required: ["lines"] };
+export function buildReadPrompt({ scripts, offer, profile = {}, closing = CLOSING_LINE }) {
+  const gym = profile.display_name || "the gym";
+  return { schema: READ_SCHEMA, prompt: [
+    `Each numbered line below is spoken aloud to the camera by one person in a short video advert for ${gym}. Read each line aloud in your head and score it 1 to 10 for how natural it is as something a person would SAY: 10 = a native speaker would say exactly this; 8 = fine; under 8 when the grammar is wrong, a phrase is clumsy or stitched together ("plenty of energy that lasts left for your own evenings", "we are here to help you every step"), a word or a close form of it is used twice in the line ("energised … energy"), it reads like writing rather than speech, or it is a mouthful that would be hard to say cleanly in one breath.`,
+    `Do NOT judge what the line claims, how long it is in words, or these fixed parts, which stay as they are: the programme's name "${offer}", the gym's name "${gym}", the placeholder {AREA} (a place name goes there), and the sentence "${closing}".`,
+    `THE LINES:\n${scripts.flatMap((ls, s) => ls.map((l, i) => `${s + 1}.${i + 1} ${l}`)).join("\n")}`,
+    `Answer with every line: its id as written ("1.2"), its score, and why — for a line under 8 the fault in a few words, quoting the clumsy part; an empty string otherwise.`,
+  ].join("\n\n") };
+}
+/**
+ * Every line read aloud (2026-11-16, the owner on "help you every step" and "plenty of energy that lasts left": "this
+ * is horrible grammar from the script drafting … no wonder the video can't generate a good one"): one text call scores
+ * each line of each script for how it is SAID; a line under `READ_MIN` is a fault, in words. Returns, for each script,
+ * its faults: [{ line (1-based), score, why }]. An answer that cannot be read judges nothing (`unread`), and says so.
+ */
+export async function readAloud(scripts, { offer, profile = {}, closing = CLOSING_LINE, ask = callVision, model = COPY_MODEL } = {}) {
+  if (!scripts.length) return { faults: [], unread: false };
+  const { prompt, schema } = buildReadPrompt({ scripts, offer, profile, closing }), answer = await ask(null, prompt, schema, { model });
+  const rows = Array.isArray(answer?.lines) ? answer.lines.filter((r) => /^\d+\.\d+$/.test(String(r?.id)) && Number.isFinite(Number(r.score))) : [];
+  const faults = scripts.map(() => []);
+  for (const r of rows) { const [s, i] = String(r.id).split(".").map(Number); if (faults[s - 1] && scripts[s - 1][i - 1] != null && Number(r.score) < READ_MIN) faults[s - 1].push({ line: i, score: Number(r.score), why: norm(r.why) || "it does not read as something a person would say" }); }
+  return { faults, unread: !rows.length };
+}
+const readProblem = (f) => `line ${f.line} does not read as something a person would say out loud (${f.why})`;
+/** A drafted script's lines by the lengths a first take can carry: empty when they fit. */
+export const lastWords = (closing = CLOSING_LINE, words = DRAFT_WORDS) => words.last + Math.max(0, wordCount(closing) - wordCount(CLOSING_LINE));
+export function draftLengths(lines, closing = CLOSING_LINE, words = DRAFT_WORDS) {
+  const cuts = filmedLines(lines, closing), last = cuts.length - 1;
+  return cuts.map((l, i) => { const n = wordCount(fillLine(l, "Ang Mo Kio")), most = i === last ? lastWords(closing, words) : words.line; return n > most ? `line ${i + 1} is ${n} words: a drafted line is at most ${most}, so that it is said cleanly in one take — say it shorter, or split it in two lines` : null; }).filter(Boolean);
+}
+const LONG_LINE = /a drafted line is at most/;
 const EDIT_SCHEMA = { type: "OBJECT", properties: { lines: { type: "ARRAY", items: { type: "STRING" } }, note: { type: "STRING" } }, required: ["lines", "note"] };
 export function buildEditPrompt({ profile = {}, script, problems, closing = CLOSING_LINE }) {
   const gym = profile.display_name || "the gym";
@@ -306,7 +349,8 @@ export function buildEditPrompt({ profile = {}, script, problems, closing = CLOS
     `THE SCRIPT:\n${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`,
     `WHAT IS WRONG:\n${problems.map((x) => `- ${x}`).join("\n")}`,
     `THE RULES. Keep every line that breaks no rule exactly as it is, word for word and in its place; change only what a rule requires, and keep the owner's voice. The ending is two beats in the last line: first ONE sentence of its own that turns to the viewer and names what they want, in this shape — "If you're ready to [what they want], now is your time." (what they will feel or be able to do, never an ideal body, never a promised result) — and then exactly this sentence, word for word: "${closing}". That sentence is the only call to action, so a sentence that says "tap below", names a button or gives another instruction is taken out. When the script goes straight into the closing sentence, add the bridge sentence before it and change nothing else. The offer is named in its exact words: "${script.offer}". The place is only ever written {AREA}, never the country. The speaker speaks for the gym: "we", "our" and "us" are fine; never "I", "my" or "me", and never a personal story. Each line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words; a script is ${LINES[0]} to ${LINES[1]} lines. Never: a price, free, before and after, a guarantee, a promised result, a number of kilos, an em dash.`,
-    `${PLAIN_RULE} Where a word is named above as not plain, swap it for small words that mean the same and leave the rest of its line as it is; the programme's name, the gym's name and the closing sentence stay as they are.`,
+    `${PLAIN_RULE} Where a word is named above as not plain, REWRITE THE WHOLE SENTENCE it is in, so that it says the same thing in small words and reads as something a person would say out loud. Never swap the word and leave the rest standing: "plenty of stamina left for your evenings" becomes "lots of energy left for your evenings", never "plenty of energy that lasts left for your evenings". The programme's name, the gym's name and the closing sentence stay as they are.`,
+    `${READ_RULE} A line you change is at most ${DRAFT_WORDS.line} words (the last line ${DRAFT_WORDS.last}).`,
     `Answer with every line of the script after the edit, in order, and a note of one sentence saying what you changed.`,
   ].join("\n\n") };
 }
@@ -320,17 +364,22 @@ export function buildEditPrompt({ profile = {}, script, problems, closing = CLOS
 export async function proposeEdit({ brandDir, id, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL }) {
   const profile = readJson(join(brandDir, "gym-profile.json")) || {}, script = readScripts(brandDir).scripts.find((x) => x.id === id), closing = closingLine(libraryDir);
   if (!script) throw new Error(`no such script: ${id}`);
-  const allow = factsFor(brandDir, script.offer), plain = plainWords(libraryDir), problems = scriptProblems(script.lines, { offer: script.offer, profile, closing, plain, allow });
-  if (!problems.length) throw new Error("this script needs no edit");
-  let left = problems, calls = 0;
+  const allow = factsFor(brandDir, script.offer), plain = plainWords(libraryDir), rules = (ls) => scriptProblems(ls, { offer: script.offer, profile, closing, plain, allow });
+  const heard = async (ls) => (await readAloud([ls], { offer: script.offer, profile, closing, ask, model })).faults[0].map(readProblem);
+  let calls = 0, problems = rules(script.lines);
+  // A script that breaks no rule may still not read as speech (a word swapped into a sentence that no longer holds): read it aloud, and propose for what that finds.
+  if (!problems.length) { problems = await heard(script.lines); calls++; if (!problems.length) throw new Error("this script breaks no rule and reads well aloud: nothing to propose"); }
+  let left = problems, kind = "rule";
   for (let round = 0; round < 2; round++) {
     const { prompt, schema } = buildEditPrompt({ profile, script, problems: left, closing });
     const answer = await ask(null, prompt, schema, { model }); calls++;
     const lines = (answer?.lines || []).map((l) => plainDashes(norm(l))).filter(Boolean);
-    left = scriptProblems(lines, { offer: script.offer, profile, closing, plain, allow });
+    left = rules(lines); kind = "rule";
+    // The edit itself is read aloud before it is offered: a swap that mends the rule and breaks the sentence is asked for again.
+    if (!left.length) { left = await heard(lines); calls++; kind = "read"; }
     if (!left.length) return { lines, changed: lines.map((l, i) => (l === norm(script.lines[i] ?? "") ? 0 : i + 1)).filter(Boolean).concat(script.lines.length > lines.length ? [lines.length] : []).filter((x, i, a) => a.indexOf(x) === i), note: norm(answer?.note), problems, calls };
   }
-  throw new Error(`the agent's edit still breaks a rule (${left[0]}): edit the script yourself`);
+  throw new Error(kind === "read" ? `the agent's edit does not read well aloud (${left[0]}): edit the script yourself` : `the agent's edit still breaks a rule (${left[0]}): edit the script yourself`);
 }
 /** The scripts ready for an offer: kept, and written for these exact words. */
 export const keptScripts = (gymDir, offer = null) => readScripts(gymDir).scripts.filter((s) => s.status === "kept" && (!offer || norm(s.offer).toLowerCase() === norm(offer).toLowerCase()));
@@ -802,12 +851,12 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
   // `styles`: one for each script of the round (2026-11-14). A script follows the one it is given and no other.
   const lettered = letteredStyles(styles);
   const open = "says where — the place written as {AREA} (it is filled in for each location) — and opens on ONE pain point: what this person is living with and wants gone, said as a moment of their day they will recognise at once";
-  const close = `THE ENDING is two beats, both in the last line. First ONE sentence that turns to the viewer and names what they want, tied to the pain the script opened on, in this shape: "If you're ready to [what they want], now is your time." Then exactly this sentence, word for word; it is the ONLY call to action in the script: "${closing}" Never go straight from a benefit into the call to action, and never use a bare lead-in ("If that sounds like you, …"). What they want is what they will FEEL or be able to DO (feel strong and at ease in their clothes again, have energy left for the evening), never an ideal body and never a promised result ("the body you've always wanted" is out). The last line may run to ${LINE_WORDS[1]} words. Never write "tap", never name a button, never add another instruction.`;
+  const close = `THE ENDING is two beats, both in the last line. First ONE sentence that turns to the viewer and names what they want, tied to the pain the script opened on, in this shape: "If you're ready to [what they want], now is your time." Then exactly this sentence, word for word; it is the ONLY call to action in the script: "${closing}" Never go straight from a benefit into the call to action, and never use a bare lead-in ("If that sounds like you, …"). What they want is what they will FEEL or be able to DO (feel strong and at ease in their clothes again, have energy left for the evening), never an ideal body and never a promised result ("the body you've always wanted" is out). The last line is at most ${lastWords(closing)} words in all, so keep the first sentence short. Never write "tap", never name a button, never add another instruction.`;
   const lines = [
     `You write short scripts for a talking-to-camera video advert for ${gym}'s programme: "${offer}". ${audience ? `The advert is for: ${audience}.` : "The advert is for adults near the gym who are not training yet."} Someone stands in the gym, talks to a phone camera the way a friend would, and the video cuts to a new spot for each line.`,
     long
-      ? `A script is 3 to ${LINES[1]} lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`
-      : `A script is exactly 3 lines. Each line is one breath, ${LINE_WORDS[0] + 4} to ${LINE_WORDS[1] - 4} words, in plain spoken English: short sentences, no lists, nothing a person would not say out loud.`,
+      ? `A script is 3 to ${LINES[1]} lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better. Each line is one breath, ${LINE_WORDS[0] + 4} to ${DRAFT_WORDS.line} words and never more (a longer line is not said cleanly in one take: split it in two lines), in plain spoken English: short sentences, no lists. ${READ_RULE}`
+      : `A script is exactly 3 lines. Each line is one breath, ${LINE_WORDS[0] + 4} to ${DRAFT_WORDS.line} words and never more, in plain spoken English: short sentences, no lists. ${READ_RULE}`,
     lettered.length
       ? `Each script follows ONE style — the one it is given under STYLES below — and no other: its kind of opening, its parts in their order, its rhythm and its tone, so that two scripts in two styles read as two different adverts. A style with more parts than a script has lines is cut to the parts that matter most; a part that needs a fact you were NOT given (an assessment, a number of places, how many people were helped) is left out, never invented. Whatever the style: within its first two lines the script speaks to ONE pain point — what this person is living with and wants gone, said as a moment of their day they will recognise at once; it names the programme once, in these exact words: "${offer}" (as "${gyms} ${offer}" or "our ${offer}"); and where its style calls people out by where they live or work, the place is written {AREA} (it is filled in for each location) — a style that does not, names no place at all. ${close}`
       : long
@@ -839,7 +888,7 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
  * works the pain points out from the gym's own best adverts and the library's pain-led ones, his own kept ones first
  * when he has given some, and each draft carries the pain point it opens on, held to the pain points' own rules.
  */
-export async function draftScripts({ brandDir, offer, audience = null, count = 3, style = null, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, log = () => {} }) {
+export async function draftScripts({ brandDir, offer, audience = null, count = 3, style = null, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, words = DRAFT_WORDS, log = () => {} }) {
   if (typeof offer !== "string" || offer.trim().length < 3) throw new Error("the offer's exact words are needed");
   if (!Number.isInteger(count) || count < 1 || count > 6) throw new Error("count must be 1 to 6");
   const profile = readJson(join(brandDir, "gym-profile.json")) || {}, pains = painsFor(brandDir, offer), closing = closingLine(libraryDir), src = painSources(brandDir, libraryDir);
@@ -849,7 +898,9 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
   const assigned = one ? Array.from({ length: count }, () => one) : pickStyles(all, count, { used }), lettered = letteredStyles(assigned);
   const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: mine.map((x) => x.lines.join(" / ")), styles: assigned, facts: factsFor(brandDir, offer), pains, ...src, closing });
   const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [], allow = factsFor(brandDir, offer);
-  let calls = 1, mended = 0; const plain = plainWords(libraryDir);
+  let calls = 1, mended = 0; const plain = plainWords(libraryDir), ready = [];
+  const rules = (ls) => [...scriptProblems(ls, { offer: offer.trim(), profile, closing, plain, allow }), ...draftLengths(ls, closing, words)];
+  const sayAgain = async (ls, problems) => { const fix = buildEditPrompt({ profile, script: { lines: ls, offer: offer.trim() }, problems, closing }), said = await ask(null, fix.prompt, fix.schema, { model }); calls++; return (said?.lines || []).map((l) => plainDashes(norm(l))).filter(Boolean); };
   for (const [k, d] of (answer?.scripts || []).entries()) {
     // The style a draft says it follows; one that says none is taken to be the one its place in the round was given.
     const st = lettered.find((r) => r.letter === String(d.style || "").trim().toUpperCase())?.style || assigned[k] || null;
@@ -857,19 +908,33 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
       const pain = plainDashes(norm(d.pain)).replace(/[.;,]+$/, "");
       if (!pain) throw new Error("it does not say which pain point it opens on");
       const bad = painProblems(pain, profile); if (bad.length) throw new Error(`the pain point it opens on ("${pain}"): ${bad[0]}`);
-      let ls = (d.lines || []).map((l) => plainDashes(norm(l))), again = false;
-      const errs = scriptProblems(ls, { offer: offer.trim(), profile, closing, plain, allow });
-      // Big words only: the drafter says them again in small words (one text call for that draft); anything else it breaks drops it as before.
-      if (errs.length && errs.every((x) => PLAIN_PROBLEM.test(x))) {
-        const fix = buildEditPrompt({ profile, script: { lines: ls, offer: offer.trim() }, problems: errs, closing }), said = await ask(null, fix.prompt, fix.schema, { model }); calls++;
-        const next = (said?.lines || []).map((l) => plainDashes(norm(l))).filter(Boolean);
-        if (next.length) { ls = next; again = true; }
-      }
-      added.push(addScript(brandDir, { lines: ls, offer: offer.trim(), source: "drafted", pain, style: st }, { profile, closing, plain }));
-      if (again) { mended++; log("  one draft said again in small words"); }
+      let ls = (d.lines || []).map((l) => plainDashes(norm(l))), again = false, errs = rules(ls);
+      // Big words or a line too long only: the drafter says it again (one text call for that draft); anything else it breaks drops it as before.
+      if (errs.length && errs.every((x) => PLAIN_PROBLEM.test(x) || LONG_LINE.test(x))) { const next = await sayAgain(ls, errs); if (next.length) { ls = next; again = true; errs = rules(ls); } }
+      if (errs.length) throw new Error(errs.join("; "));
+      ready.push({ ls, pain, st, again, text: (d.lines || []).join(" / ") });
     } catch (e) { dropped.push({ text: (d.lines || []).join(" / "), reason: e.message }); log(`  dropped: ${e.message}`); }
   }
-  return { added, dropped, calls, mended, styles: lettered.map((r) => r.style.name), sources: { pains: pains.length, ads: src.ads.length, library: src.library.length } };
+  // Every line read aloud before he sees it (one text call for the round): a draft with a line that does not read as
+  // speech is said again once, read once more, and dropped with the reason if it still does not.
+  let reads = 0, unread = false;
+  if (ready.length) {
+    const first = await readAloud(ready.map((r) => r.ls), { offer: offer.trim(), profile, closing, ask, model }); reads++; unread = first.unread;
+    const redo = [];
+    for (const [i, r] of ready.entries()) if (first.faults[i].length) {
+      const next = await sayAgain(r.ls, first.faults[i].map(readProblem)), errs = next.length ? rules(next) : ["the drafter gave no lines"];
+      if (errs.length) { r.drop = `${readProblem(first.faults[i][0])}; said again, it broke a rule: ${errs[0]}`; continue; }
+      r.ls = next; r.again = true; redo.push(r);
+    }
+    if (redo.length) { const second = await readAloud(redo.map((r) => r.ls), { offer: offer.trim(), profile, closing, ask, model }); reads++; for (const [i, r] of redo.entries()) if (second.faults[i].length) r.drop = `${readProblem(second.faults[i][0])}, after one rewrite`; }
+    if (unread) log("  the read-aloud check gave no answer: the drafts were not scored for how they are said");
+  }
+  for (const r of ready) {
+    if (r.drop) { dropped.push({ text: r.text, reason: r.drop }); log(`  dropped: ${r.drop}`); continue; }
+    try { added.push(addScript(brandDir, { lines: r.ls, offer: offer.trim(), source: "drafted", pain: r.pain, style: r.st }, { profile, closing, plain })); if (r.again) { mended++; log("  one draft said again"); } }
+    catch (e) { dropped.push({ text: r.text, reason: e.message }); log(`  dropped: ${e.message}`); }
+  }
+  return { added, dropped, calls, reads, unread, mended, styles: lettered.map((r) => r.style.name), sources: { pains: pains.length, ads: src.ads.length, library: src.library.length } };
 }
 
 // ── the model calls (each can be replaced: the tests make no call) ───────────
@@ -904,7 +969,9 @@ const staleCheck = (seen) => !Array.isArray(seen?.lettering) && (seen?.on_screen
  * never a retake), lettering }. Pure: the same check is judged again by today's rules on every run.
  */
 export function judgeClip(seen, line, { profile = {}, say = [], move = null } = {}) {
-  const heard = sameWords(seen?.spoken || "", line, { names: [profile.display_name].filter(Boolean), sounds: soundsOf(say) }), alone = seen?.people === 1, L = letteringOf(seen);
+  // The words as the watching pass wrote them, or — when that pass refused them and the take was listened to again by its sound alone — as that heard them.
+  const same = (t) => sameWords(t || "", line, { names: [profile.display_name].filter(Boolean), sounds: soundsOf(say) });
+  const heard = same(seen?.spoken) || (norm(seen?.heard) ? same(seen.heard) : false), alone = seen?.people === 1, L = letteringOf(seen);
   // With exercises: the move is done before the line (asked of the check only for a move cut; a check that does not say is not held against the take).
   const moved = !(move?.m.kind === "move" && seen?.did_move === false);
   const kind = !heard ? "words" : !alone ? "people" : !moved ? "move" : L.fails.length ? "lettering" : null;
@@ -913,7 +980,8 @@ export function judgeClip(seen, line, { profile = {}, say = [], move = null } = 
 }
 const WATCH_SCHEMA = { type: "OBJECT", properties: { spoken: { type: "STRING" }, lettering: { type: "ARRAY", items: { type: "OBJECT", properties: { text: { type: "STRING" }, on: { type: "STRING", enum: LETTERING_ON } }, required: ["text", "on"] } }, people: { type: "INTEGER" }, lips_match_speech: { type: "BOOLEAN" }, faults: { type: "ARRAY", items: { type: "STRING" } }, looks_real: { type: "INTEGER" }, did_move: { type: "BOOLEAN" } }, required: ["spoken", "lettering", "people", "lips_match_speech", "faults", "looks_real"] };
 const WATCH_QUESTION = "Watch and listen to this short video. spoken: transcribe exactly every word spoken, in order, with nothing added; an empty string if nobody speaks. lettering: every word, name, logo, number or letter visible anywhere in the picture at any point, one entry each, empty if none — text: what it says; on: what it is on: \"equipment\" (a maker's name, model or number printed on a machine, rack, weight, bench or mat), \"screen\" (the display of a machine, or a television or clock in the room), \"clothing\" (anything a person is wearing), \"sign\" (a sign, poster, board, or writing on a wall, door, window or mirror), \"overlay\" (a caption, subtitle, title, watermark or logo laid over the picture rather than part of the room), \"other\" (none of these, or you cannot tell). people: how many people are visible at any point. lips_match_speech: true only if the visible person's mouth moves in time with the spoken words. faults: every visible fault that would make a viewer think this is not real footage — warped hands or faces, objects that melt or pass through each other, impossible movement, a face that changes — each as a short phrase; empty if none. looks_real: 1 to 10, how convincingly this passes as phone footage shot in a real gym.";
-/** The real models: a still from the gym's image model, a clip from Omni, a watching pass by the check model. */
+const HEAR_QUESTION = "Listen to this recording of one person speaking. Write down exactly every word that is spoken, in order. Keep every repeated word, stutter, false start and any extra words at the end exactly as they are said: do not tidy, correct or complete anything.";
+/** The real models: a still from the gym's image model, a clip from Omni, a watching pass by the check model, a second listen by sound alone. */
 export function realModels(profile = {}) {
   return {
     async image({ out, prompt, refs }) { const r = await generateImage(prompt, refs.map((p) => ({ inline_data: { mime_type: mimeOf(p), data: readFileSync(p).toString("base64") } })), { aspectRatio: "9:16", model: imageModelFor(profile) }); writeFileSync(out, r.buffer); },
@@ -925,6 +993,22 @@ export function realModels(profile = {}) {
       else if (v.uri) { const res = await fetch(v.uri.includes("alt=media") ? v.uri : `${v.uri}${v.uri.includes("?") ? "&" : "?"}alt=media`, { headers: { "x-goog-api-key": loadGeminiKey() } }); if (!res.ok) throw new Error(`the video could not be downloaded (${res.status})`); writeFileSync(out, Buffer.from(await res.arrayBuffer())); }
       else throw new Error("the video part carried neither data nor a uri");
     },
+    /**
+     * A take's words by its sound alone (2026-11-16): the sound track only, to a listener told to keep every repeat and
+     * extra word. Measured on 20 takes: it agreed with all 10 that passed, confirmed 8 of 10 refusals, and heard 2 as
+     * written that the watching pass had tidied into better English than was said.
+     */
+    async hear(file) {
+      const wav = execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", file, "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", "pipe:1"], { maxBuffer: 64 * 1024 * 1024 });
+      const named = profile.display_name ? ` The business is called "${profile.display_name}": where that name is spoken, write it exactly that way.` : "";
+      const out = await whenGeminiFree(async () => {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHECK_MODEL}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": loadGeminiKey() }, signal: AbortSignal.timeout(120000),
+          body: JSON.stringify({ contents: [{ parts: [{ text: HEAR_QUESTION + named + " Answer with the spoken words only." }, { inline_data: { mime_type: "audio/wav", data: wav.toString("base64") } }] }], generationConfig: { temperature: 0 } }) });
+        if (!res.ok) throw new Error(`the second listen failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+        return res.json();
+      }, { label: "second listen" });
+      return norm((out.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join(" "));
+    },
     /** The kit one photo of the room shows (a vision call). */
     async kit(photo) { const r = await callVision(photo, KIT_QUESTION, KIT_SCHEMA); return KIT.filter((k) => r?.[k] === true); },
     async watch(file, { move = null, paper = false } = {}) {
@@ -933,7 +1017,7 @@ export function realModels(profile = {}) {
       // A name is spelt the gym's way when it is heard ("Aether", not "Ether"; "F45", not "F forty-five"): nothing else about the line is told.
       // How a listed word sounded is not asked (2026-11-15): the check wrote "kee" for a clip the owner heard as "kway", so its ear is no judge of that.
       // White paper: the sheet's own hand-written words are read back apart (paper-video.mjs), so they are not lettering here.
-      const paperQ = paper ? " The person holds a sheet of paper with hand-written words on it: leave the writing on that paper out of lettering, and list only other lettering." : "";
+      const paperQ = paper ? " The person holds a sheet of paper with hand-written words on it: leave the writing on that paper out of lettering, and list only other lettering. The front sheet is let go and falls or slides away during the clip, showing a blank sheet behind it: that is meant, so never list the sheet leaving, or its writing going with it, as a fault." : "";
       const named = profile.display_name ? ` The business is called "${profile.display_name}": where that name is spoken, write it exactly that way.` : "";
       const out = await whenGeminiFree(async () => {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHECK_MODEL}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": loadGeminiKey() }, signal: AbortSignal.timeout(240000),
@@ -962,9 +1046,14 @@ export function stillPrompt({ presenter, profile, spot, first, framing = FRAMING
  * "Boat Quay"), capitalised as the line has it. The captions keep the word as written — software sets them from the script.
  */
 export const spokenLine = (line, said = []) => said.reduce((s, x) => s.replace(new RegExp(`(?<![A-Za-z])${x.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`, "gi"), (m) => (/^[A-Z]/.test(m) ? x.say.charAt(0).toUpperCase() + x.say.slice(1) : x.say.toLowerCase())), String(line));
+/**
+ * What happens after the line (2026-11-16): two takes filled the time left over with speech nobody wrote ("So contribute
+ * to me to test human self"), and four said a word or phrase twice. The presenter is told to stop and stay silent.
+ */
+export const silentAfter = (presenter) => { const he = presenter.gender === "man" ? "he" : "she", his = presenter.gender === "man" ? "his" : "her"; return `When the sentence is finished ${he} stops talking: ${he} closes ${his} mouth, keeps looking into the lens with a small smile and stays silent until the clip ends — no more words, nothing said twice.`; };
 export function clipPrompt({ presenter, profile, line, seconds, said = [] }) {
   const she = presenter.gender === "man" ? "The man" : "The woman", pron = presenter.gender === "man" ? "His" : "Her", their = presenter.gender === "man" ? "his" : "her", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`;
-  return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${pron} mouth forms exactly these words, in time with ${their} voice, and says nothing else; the sentence is finished before the clip ends. ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
+  return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${pron} mouth forms exactly these words, once, in time with ${their} voice. ${silentAfter(presenter)} ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
 }
 
 // ── with exercises: a move, then the line ────────────────────────────────────
@@ -1070,7 +1159,7 @@ export function moveStillPrompt({ presenter, profile, move, kit = KIT }) {
 /** The clip of a move or a hold: the move in silence, then the line said in place; a hold is said as it is held. */
 export function moveClipPrompt({ presenter, profile, line, seconds, said = [], move }) {
   const g = G(presenter), she = presenter.gender === "man" ? "The man" : "The woman", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`, m = move.m, k = move.k;
-  const says = `says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${g.He === "He" ? "His" : "Her"} mouth forms exactly these words, in time with ${g.his} voice, and says nothing else; the sentence is finished before the clip ends.`;
+  const says = `says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${g.He === "He" ? "His" : "Her"} mouth forms exactly these words, once, in time with ${g.his} voice. ${silentAfter(presenter)}`;
   const body = m.kind === "move"
     ? `For the first two seconds ${g.he} says nothing and ${m.does(g, k)}. Then ${g.he} stops, ${m.rest(g, k)}, looks into the lens and ${says} ${m.stays(g, k)}`
     : `${she} keeps looking into the camera and ${says} ${m.stays(g, k)}`;
@@ -1373,7 +1462,8 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         // retake for notes, the owner's choice — never two). A take kept on the owner's word is not filmed again.
         const ok = judged.filter((t) => t.passed);
         if (ok.some((t) => !t.faults.length || t.kept)) break;
-        if (ok.length) { if (noteRetake) break; noteRetake = true; }
+        // A move cut is long (the move, then the line): it is never filmed again for a small note (2026-11-16: 14 s to mend "slight facial distortion", and the retake failed).
+        if (ok.length) { if (noteRetake || mv?.m.kind === "move") break; noteRetake = true; }
         take++; const name = nameFor(still), file = join(store, `${name}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
         if (aside.has(basename(file))) continue;
         if (!(existsSync(file) && statSync(file).size > 1000)) {
@@ -1399,10 +1489,12 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         // The check on file is judged again by today's rules; one made before lettering said what it is on is watched again (a check call, no filming).
         let seen = readJson(checkFile); if (!seen || staleCheck(seen)) { spent.checks++; seen = normalSeen(await models.watch(file, { said: say, move: mv })); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
         let j = judgeClip(seen, line, { profile, say, move: mv });
+        // Refused for its words: listened to once more by its sound alone, before a second is filmed again (a check call against a retake).
+        if (!j.passed && j.kind === "words" && seen.heard == null && models.hear) { spent.checks++; seen.heard = await models.hear(file); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); j = judgeClip(seen, line, { profile, say, move: mv }); if (j.kind !== "words") log(`  ${basename(file)}: heard again by its sound alone, the words are as written`); }
         // The owner's "Use this take anyway": that file, unchanged since, passes on his word.
         if (!j.passed && ownerKeptClip(store, file)) j = { ...j, passed: true, kept: j.why, why: null, kind: null };
         judged.push({ file, take, ...j, check: seen });
-        log(`  ${basename(file)}: ${j.kept ? `kept on your word (${j.kept})` : j.passed ? "said as written, one person, no lettering" : j.why}${j.marks.length ? ` · in the room: ${j.marks.join("; ")}` : ""}${j.faults.length ? ` · noted: ${j.faults.join("; ")}${j.passed && !j.kept && !noteRetake && take < limit ? " — made once more" : ""}` : ""}`);
+        log(`  ${basename(file)}: ${j.kept ? `kept on your word (${j.kept})` : j.passed ? "said as written, one person, no lettering" : j.why}${j.marks.length ? ` · in the room: ${j.marks.join("; ")}` : ""}${j.faults.length ? ` · noted: ${j.faults.join("; ")}${j.passed && !j.kept && !noteRetake && mv?.m.kind !== "move" && take < limit ? " — made once more" : ""}` : ""}`);
         // Lettering that is in the picture itself (a sign, clothing) would be in every take from it: the next take is filmed from a fresh picture. A caption the video model laid over the picture is not the picture's fault.
         if (!j.passed && j.kind === "lettering" && j.lettering.fails.some((x) => x.on !== "overlay") && still === stills[i] && take < limit) await freshPicture();
       }

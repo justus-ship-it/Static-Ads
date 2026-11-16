@@ -51,7 +51,15 @@ const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 /** A sheet script is 6 to 9 sheets; a sheet is 2 to 8 words (the closing line and the sheet with the offer's name may be longer). Each sheet is one clip of 4 seconds. */
 export const SHEETS = [6, 9], SHEET_WORDS = [2, 8], SHEET_SECONDS = 4;
 /** How long a sheet must stay readable; what is kept of a clip after its drop begins; how much of the last sheet is kept. */
-export const MIN_HOLD = 1.6, DROP_KEEP = 0.06, LAST_KEEP = 3.2;
+export const MIN_HOLD = 1.6, LAST_KEEP = 3.2;
+/**
+ * The cut between two sheets (2026-11-16, the owner on his first white-paper video: "the cut is so abrupt. it looks
+ * super unnatural" — it cut the moment the words were gone, with the sheet still sliding in his hands; he picked the
+ * second of two free re-cuts). A clip is kept `DROP_KEEP` seconds past its drop, so the sheet falls out of the frame
+ * and the blank sheet behind shows; then the next clip — the same pose, its words on that sheet — fades in over
+ * `SHEET_FADE` seconds, so the words come up on the blank paper instead of the picture jumping.
+ */
+export const DROP_KEEP = 0.5, SHEET_FADE = 0.25;
 /** The paper in the picture: the least of the picture's width it may be, how blank it must be, how much of its height must be inside Meta's live area, the words' box on it, and the smallest the letters may be (of the picture's width). */
 export const PAPER = { min_w: 0.24, fill: 0.8, usable: 0.5, text_w: 0.78, pad: 0.08, min_letter: 0.034 };
 export const PAPER_FONT = join(REPO_ROOT, "assets/fonts/permanentmarker/PermanentMarker-Regular.ttf");
@@ -423,12 +431,15 @@ export function paperNeeds({ gymDir, script, areas = [""], room = null, profile 
   const sum = (xs) => xs.reduce((t, c) => t + c.seconds, 0);
   return { clips, seconds: sum(clips.filter((c) => !c.on_file && !c.flagged)), reused: sum(clips.filter((c) => c.on_file)), flagged: clips.filter((c) => c.flagged).length, images: blank ? 0 : 1 };
 }
-/** Join the sheets' clips, each cut to [0, to], at one size and rate; a clip without sound gets silence. */
-function joinSheets({ clips, out }) {
+/** Join the sheets' clips, each cut to [0, to], at one size and rate, each fading into the next over `fade` seconds; a clip without sound gets silence. */
+function joinSheets({ clips, out, fade = SHEET_FADE }) {
   const sound = clips.map((c) => { try { return sh("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", c.file]).trim().length > 0; } catch { return false; } });
   const inputs = clips.flatMap((c) => ["-i", c.file]), n = clips.length;
   const chain = clips.map((c, i) => `[${i}:v]trim=0:${c.to},setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1[c${i}];${sound[i] ? `[${i}:a]atrim=0:${c.to},asetpts=PTS-STARTPTS` : `anullsrc=r=48000:cl=stereo,atrim=0:${c.to}`},aresample=48000,aformat=channel_layouts=stereo[a${i}]`).join(";")
-    + ";" + clips.map((_, i) => `[c${i}][a${i}]`).join("") + `concat=n=${n}:v=1:a=1[v][a]`;
+    + ";" + (n < 2 || !(fade > 0) ? clips.map((_, i) => `[c${i}][a${i}]`).join("") + `concat=n=${n}:v=1:a=1[v][a]` : (() => {
+      let s = "", at = 0, pv = "c0", pa = "a0";
+      for (let i = 1; i < n; i++) { at += clips[i - 1].to - fade; s += `${i > 1 ? ";" : ""}[${pv}][c${i}]xfade=transition=fade:duration=${fade}:offset=${at.toFixed(3)}[x${i}];[${pa}][a${i}]acrossfade=d=${fade}[y${i}]`; pv = `x${i}`; pa = `y${i}`; }
+      return `${s};[${pv}]format=yuv420p[v];[${pa}]anull[a]`; })());
   ff([...inputs, "-filter_complex", chain, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-preset", "medium", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out]);
   return out;
 }
@@ -496,12 +507,12 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
       if (still.problem) r = { file: null, takes: 0, passed: false, text: still.text, why: `${still.problem} ("${still.text}")`, all: [], words: true };
       else {
         const mine = (f) => f === `${name}.mp4` || f.startsWith(`${name}-take`), limit = takes + [...aside].filter(mine).length;
-        let take = 0, refused = 0, noteRetake = false, stopped = null; const judged = [];
+        let take = 0, refused = 0, stopped = null; const judged = [];
         while (take < limit) {
-          // Enough: a clean take; or a take with small notes that has had its one retake. A take kept on the owner's word is not filmed again.
+          // Enough: a take that passed, or one kept on the owner's word.
           const ok = judged.filter((t) => t.passed);
-          if (ok.some((t) => !t.faults.length || t.kept)) break;
-          if (ok.length) { if (noteRetake) break; noteRetake = true; }
+          // A sheet is never filmed again for a small note (2026-11-16): the paper is read back letter for letter, and two sheets were filmed again because the check noted the drop itself.
+          if (ok.length) break;
           take++; const file = join(store, `${name}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
           if (aside.has(basename(file))) continue;
           if (!(existsSync(file) && statSync(file).size > 1000)) {
@@ -521,7 +532,7 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
           let j = judgeSheet(check, still.text, { last: isLast });
           if (!j.passed && ownerKeptClip(store, file)) j = { ...j, passed: true, kept: j.why, why: null, kind: null };
           judged.push({ file, take, ...j, check });
-          log(`  ${basename(file)}: ${j.kept ? `kept on your word (${j.kept})` : j.passed ? `the paper reads as written${isLast ? ", held" : `, dropped at ${check.timing.drop} s`}` : j.why}${j.faults.length ? ` · noted: ${j.faults.join("; ")}${j.passed && !j.kept && !noteRetake && take < limit ? " — made once more" : ""}` : ""}`);
+          log(`  ${basename(file)}: ${j.kept ? `kept on your word (${j.kept})` : j.passed ? `the paper reads as written${isLast ? ", held" : `, dropped at ${check.timing.drop} s`}` : j.why}${j.faults.length ? ` · noted: ${j.faults.join("; ")}` : ""}`);
         }
         const ok = judged.filter((t) => t.passed), all = judged.map((t) => basename(t.file));
         if (ok.length) { const best = ok.reduce((b, x) => (x.faults.length <= b.faults.length ? x : b)); r = { file: best.file, takes: take, passed: true, check: best.check, marks: best.marks, faults: best.faults, ...(best.kept ? { kept: best.kept } : {}), all }; }
@@ -539,11 +550,11 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
       const none = sheets.findIndex((s) => !s.file);
       if (none >= 0) { const s = sheets[none]; videos.push({ area, script_id: script.id, kind: "paper", ...(s.refused ? { refused: true } : {}), failed: s.words ? `${label(none)} ${s.why}` : s.refused ? `${label(none)}: ${s.why}. Nothing else is lost: Run again tries only this sheet; if it is refused again, change its words` : `${label(none)}: ${s.why}` }); continue; }
       onProgress({ stage: "cut", area, paper: true });
-      // Each clip is kept up to its drop (the last one: while the sheet is held); a sheet that is never dropped is cut at its end.
+      // Each clip is kept until its sheet has fallen out of the frame (the last one: while the sheet is held), and fades into the next; a sheet that is never dropped is cut at its end.
       const cuts = [], starts = []; let at = 0;
       for (const [i, s] of sheets.entries()) {
-        const t = s.check.timing, to = i === last ? Math.min(LAST_KEEP, t.leave != null ? Math.max(0.5, t.leave - 0.1) : t.duration) : t.drop != null && t.drop > 0 ? Math.min(t.duration, t.drop + DROP_KEEP) : t.duration;
-        cuts.push({ file: s.file, to: round(to) }); starts.push(round(at)); at += cuts[i].to;
+        const t = s.check.timing, to = i === last ? Math.min(LAST_KEEP, t.leave != null ? Math.max(0.5, t.leave - 0.1) : t.duration) : t.drop != null && t.drop > 0 ? Math.min(t.duration - 0.04, t.drop + DROP_KEEP) : t.duration;
+        cuts.push({ file: s.file, to: round(to) }); starts.push(round(at)); at += cuts[i].to - (sheets.length > 1 ? SHEET_FADE : 0);
       }
       const file = joinSheets({ clips: cuts, out: join(outDir, `${script.id}-${slug(area)}.mp4`) });
       const poster = file.replace(/\.mp4$/, ".jpg"); ff(["-ss", "0.8", "-i", file, "-frames:v", "1", "-q:v", "3", poster]);

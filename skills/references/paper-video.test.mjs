@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { execFileSync } from "node:child_process";
-import { SHEETS, SHEET_WORDS, SHEET_SECONDS, MIN_HOLD, DROP_KEEP, LAST_KEEP, PAPER, PAPER_FONT, SCARCE, scarceSheets, scarcityOf, sheetProblems, addSheetScript, decideSheetScript, readSheetScripts, keptSheetScripts, readySheetScripts, sheetIssues, pickSheetScripts, noSheetScriptWhy, sheetCost, buildSheetPrompt, draftSheetScripts, blankPrompt, sheetClipPrompt, paperFacts, dropFrom, judgeSheet, sameWriting, inkText, paperNeeds, makePaperVideos } from "./paper-video.mjs";
+import { SHEETS, SHEET_WORDS, SHEET_SECONDS, MIN_HOLD, DROP_KEEP, SHEET_FADE, LAST_KEEP, PAPER, PAPER_FONT, SCARCE, scarceSheets, scarcityOf, sheetProblems, addSheetScript, decideSheetScript, readSheetScripts, keptSheetScripts, readySheetScripts, sheetIssues, pickSheetScripts, noSheetScriptWhy, sheetCost, buildSheetPrompt, draftSheetScripts, blankPrompt, sheetClipPrompt, paperFacts, dropFrom, judgeSheet, sameWriting, inkText, paperNeeds, makePaperVideos } from "./paper-video.mjs";
 import { addScript, readScripts, setFacts, fillLine, clipStore, setAside, keepTake, durationOf, hasFfmpeg, LIVE, USD_PER_SECOND, USD_PER_IMAGE, videosProblems, videoCount, videoKinds, spokenCount, paperCount } from "./presenter-video.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 import { launchBrowser } from "./render-composites.mjs";
@@ -229,10 +229,12 @@ test("PP4 a white-paper video end to end: ONE picture of the presenter holding b
     assert.ok(logs.some((m) => /the paper is 44% of the picture's width; the words go on it by software/.test(m)) && logs.some((m) => /the paper reads as written, dropped at 2\.7\d? s/.test(m)) && logs.some((m) => /the paper reads as written, held/.test(m)), logs.join("\n"));
     // Two videos, each seven cuts: six sheets kept to their drop and the last held.
     assert.deepEqual(r.videos.map((v) => [v.area, v.kind, v.failed, v.flags, v.words[1], v.parts.length]), [["BISHAN", "paper", undefined, undefined, "Live near Bishan?", 7], ["ANG MO KIO", "paper", undefined, undefined, "Live near Ang Mo Kio?", 7]]);
-    const v = r.videos[0], want = 6 * (2.71 + DROP_KEEP) + LAST_KEEP;
+    // Each sheet is kept half a second past its drop, so it falls out of the frame, and fades into the next over a quarter second (the owner's pick of two re-cuts, 2026-11-16).
+    assert.deepEqual([DROP_KEEP, SHEET_FADE], [0.5, 0.25]);
+    const v = r.videos[0], want = 6 * (2.71 + DROP_KEEP - SHEET_FADE) + LAST_KEEP;
     assert.ok(existsSync(v.file) && existsSync(v.poster) && Math.abs(durationOf(v.file) - want) < 0.5, `${durationOf(v.file)} s, about ${want} expected`);
     assert.deepEqual(v.parts.map((p) => [p.line, p.label, p.text, p.seconds, p.takes.length, !!p.flag, !!p.per_area]), GOOD.map((s, i) => [i + 1, `sheet ${i + 1}`, fillLine(s, "BISHAN"), 4, 1, false, i === 1]));
-    assert.ok(v.parts.every((p, i) => /^line-\d+(-[a-z-]+)?-[0-9a-f]{6}\.mp4$/.test(p.clip) && Math.abs(p.at - i * (2.71 + DROP_KEEP)) < 0.2), JSON.stringify(v.parts.map((p) => [p.clip, p.at])));
+    assert.ok(v.parts.every((p, i) => /^line-\d+(-[a-z-]+)?-[0-9a-f]{6}\.mp4$/.test(p.clip) && Math.abs(p.at - i * (2.71 + DROP_KEEP - SHEET_FADE)) < 0.2), JSON.stringify(v.parts.map((p) => [p.clip, p.at])));
     assert.deepEqual([r.videos[1].parts[0].clip, r.videos[1].parts[1].clip === v.parts[1].clip], [v.parts[0].clip, false], "a sheet without the area is one clip in both videos");
     // Everything is on file: a second run films nothing and makes no call but the cut.
     assert.deepEqual((({ seconds, reused, images }) => [seconds, reused, images])(paperNeeds({ gymDir: g, script, areas, room, profile })), [0, 32, 0]);
