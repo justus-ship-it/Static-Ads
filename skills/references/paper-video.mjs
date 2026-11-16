@@ -45,7 +45,7 @@ import { callVision } from "./check-visual.mjs";
 import { launchBrowser, isWholeCountry } from "./render-composites.mjs";
 import { onAdProblems } from "./cards.mjs";
 import { COPY_MODEL, plainDashes } from "./draft-copy.mjs";
-import { readScripts, writeScripts, presenterOf, presenterWords, realModels, closingLine, endsWithClosing, closingAlone, plainWords, hardWords, PLAIN_RULE, FIRST_PERSON, TAP, IDEAL_BODY, countryNamed, factsFor, painsFor, painSources, fillLine, wordCount, videoLibraryDir, clipStore, asideOf, ownerKeptClip, durationOf, hasFfmpeg, letteringOf, LIVE, USD_PER_SECOND, USD_PER_IMAGE } from "./presenter-video.mjs";
+import { themeOf, themeRule, readScripts, writeScripts, presenterOf, presenterWords, realModels, closingLine, endsWithClosing, closingAlone, plainWords, hardWords, PLAIN_RULE, FIRST_PERSON, TAP, IDEAL_BODY, countryNamed, factsFor, painsFor, painSources, fillLine, wordCount, videoLibraryDir, clipStore, asideOf, ownerKeptClip, durationOf, hasFfmpeg, letteringOf, LIVE, USD_PER_SECOND, USD_PER_IMAGE } from "./presenter-video.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 /** A sheet script is 6 to 9 sheets; a sheet is 2 to 8 words (the closing line and the sheet with the offer's name may be longer). Each sheet is one clip of 4 seconds. */
@@ -140,7 +140,7 @@ const shapeOf = (sheets) => sheets.map(lettersOf).join("|");
 const tidy = (sheets, closing) => (sheets || []).map((s) => plainDashes(norm(s))).filter(Boolean).map((s, i, a) => (i === a.length - 1 && endsWithClosing(s, closing) && closingAlone(s, closing) ? closing : s));
 export const readSheetScripts = (gymDir) => readScripts(gymDir).sheets;
 /** Add a sheet script: the owner's own is kept at once, a drafted one waits for him. Never twice. */
-export function addSheetScript(gymDir, { sheets, offer, source = "owner" }, { profile = {}, closing = closingLine(), plain = plainWords() } = {}) {
+export function addSheetScript(gymDir, { sheets, offer, source = "owner", pain = null }, { profile = {}, closing = closingLine(), plain = plainWords() } = {}) {
   if (typeof offer !== "string" || norm(offer).length < 3) throw new Error("the offer's exact words are needed");
   // His own sheets are his word, scarcity included; a drafted script's scarcity sheet is a suggestion that waits for his yes.
   const ss = tidy(sheets, closing), own = source === "owner", ok = own ? scarceSheets(ss, offer).map((x) => lettersOf(x.text)) : [];
@@ -148,7 +148,7 @@ export function addSheetScript(gymDir, { sheets, offer, source = "owner" }, { pr
   if (errs.length) throw new Error(errs.join("; "));
   const data = readScripts(gymDir), key = shapeOf(ss);
   if (data.sheets.some((s) => shapeOf(s.sheets) === key)) throw Object.assign(new Error("this script is already here"), { duplicate: true });
-  const row = { id: `p-${sha(key).slice(0, 10)}`, sheets: ss, offer: norm(offer), status: own ? "kept" : "draft", source, added: today(), ...(ok.length ? { scarce_ok: ok } : {}) };
+  const row = { id: `p-${sha(key).slice(0, 10)}`, sheets: ss, offer: norm(offer), status: own ? "kept" : "draft", source, added: today(), ...(pain ? { pain } : {}), ...(ok.length ? { scarce_ok: ok } : {}) };
   data.sheets.push(row); writeScripts(gymDir, data); return row;
 }
 /** The owner keeps a draft, edits it (checked again), puts it back, or retires it with a reason — never deleted. One that breaks today's rules is not kept until it is edited. */
@@ -210,7 +210,7 @@ export function sheetCost(script, areas = [""]) {
 
 // ── drafting ─────────────────────────────────────────────────────────────────
 const DRAFT_SCHEMA = { type: "OBJECT", properties: { scripts: { type: "ARRAY", items: { type: "OBJECT", properties: { sheets: { type: "ARRAY", items: { type: "STRING" } } }, required: ["sheets"] } } }, required: ["scripts"] };
-export function buildSheetPrompt({ profile = {}, offer, audience = null, count = 3, facts = [], pains = [], ads = [], library = [], existing = [], closing = closingLine(), refused = [] }) {
+export function buildSheetPrompt({ profile = {}, offer, audience = null, count = 3, facts = [], pains = [], ads = [], library = [], existing = [], closing = closingLine(), refused = [], theme = null }) {
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean), scarce = facts.filter((f) => SCARCE.test(apos(f)));
   return { schema: DRAFT_SCHEMA, prompt: [
     `Write ${count} script${count === 1 ? "" : "s"} for a silent video advert for ${gym}'s programme "${offer}"${audience ? `, for ${audience}` : ""}. In the video one person stands in the gym holding a stack of hand-written sheets of paper. Nobody speaks. The viewer reads the front sheet, it is dropped, and the next one shows. A script is the words on the sheets, in order.`,
@@ -223,7 +223,7 @@ export function buildSheetPrompt({ profile = {}, offer, audience = null, count =
     `THE RULES. ${SHEETS[0]} to ${SHEETS[1]} sheets. Each sheet is ${SHEET_WORDS[0]} to ${SHEET_WORDS[1]} words — the last sheet and the sheet with the programme's name may be longer — a phrase read in two seconds. A sentence may run over two sheets, with "…" at the break. The gym speaks as "we" and "our"; never "I", "my" or "me". At most one sheet may call people out by where they live, with the place written exactly {AREA} ("Live near {AREA}?"): use it in about half the scripts, and never name a country or a city. Never: a price, free, a trial, before and after, a guarantee, a promised result, a number of kilos or sizes, an ideal body, "tap", an emoji, a hashtag, an em dash.${never.length ? ` Never these words: ${never.join(", ")}.` : ""} Each script takes a different way in.`,
     PLAIN_RULE,
     facts.length ? `THE FACTS the owner has typed as true of this programme (the only ones that may be stated):\n${facts.map((f) => `- ${f}`).join("\n")}` : "",
-    pains.length ? `WHAT BOTHERS THESE PEOPLE, in the owner's words (open on one of these):\n${pains.map((p) => `- ${p}`).join("\n")}` : (ads.length || library.length) ? `READING MATERIAL for what bothers these people (never copy a sentence):\n${[...ads.map((a) => a.text), ...library].slice(0, 6).map((t) => `--- ${t}`).join("\n")}` : "",
+    theme ? themeRule(theme, "script") + " The first one or two sheets name it; the sheets of what they get answer it." : pains.length ? `WHAT BOTHERS THESE PEOPLE, in the owner's words (open on one of these):\n${pains.map((p) => `- ${p}`).join("\n")}` : (ads.length || library.length) ? `READING MATERIAL for what bothers these people (never copy a sentence):\n${[...ads.map((a) => a.text), ...library].slice(0, 6).map((t) => `--- ${t}`).join("\n")}` : "",
     existing.length ? `ALREADY WRITTEN (write something different):\n${existing.map((e) => `- ${e}`).join("\n")}` : "",
     refused.length ? `THESE WERE REFUSED — do not make the same mistake:\n${refused.map((r) => `- ${r}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n") };
@@ -232,24 +232,26 @@ export function buildSheetPrompt({ profile = {}, offer, audience = null, count =
  * The agent proposes sheet scripts for the owner to read and keep: one text call, a second only for a shortfall
  * (told what was refused). Every draft is checked in code; one that breaks a rule is dropped with the reason.
  */
-export async function draftSheetScripts({ brandDir, offer, audience = null, count = 3, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, log = () => {} }) {
+export async function draftSheetScripts({ brandDir, offer, audience = null, count = 3, pain = null, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, log = () => {} }) {
   if (typeof offer !== "string" || offer.trim().length < 3) throw new Error("the offer's exact words are needed");
   if (!Number.isInteger(count) || count < 1 || count > 6) throw new Error("count must be 1 to 6");
   const profile = readJson(join(brandDir, "gym-profile.json")) || {}, closing = closingLine(libraryDir), plain = plainWords(libraryDir), facts = factsFor(brandDir, offer), pains = painsFor(brandDir, offer), src = painSources(brandDir, libraryDir);
+  // The pain point he typed for this round (2026-11-16): every script of it is about that one thing, and keeps it.
+  const theme = themeOf(pain, profile);
   const added = [], dropped = []; let calls = 0;
   for (let roundNo = 0; roundNo < 2 && added.length < count; roundNo++) {
-    const { prompt, schema } = buildSheetPrompt({ profile, offer: offer.trim(), audience, count: count - added.length, facts, pains, ...src, existing: readSheetScripts(brandDir).filter((s) => s.status !== "retired").map((s) => s.sheets.join(" / ")), closing, refused: dropped.map((d) => `"${d.text}" — ${d.reason}`).slice(0, 6) });
+    const { prompt, schema } = buildSheetPrompt({ profile, offer: offer.trim(), audience, count: count - added.length, facts, pains, ...src, existing: readSheetScripts(brandDir).filter((s) => s.status !== "retired").map((s) => s.sheets.join(" / ")), closing, theme, refused: dropped.map((d) => `"${d.text}" — ${d.reason}`).slice(0, 6) });
     const answer = await ask(null, prompt, schema, { model }); calls++;
     for (const d of (answer?.scripts || []).slice(0, count - added.length)) {
       try {
         // Every drafted script carries one scarcity sheet (the owner, 2026-11-16: "by default we should have it"): his to approve or change at Keep.
         if (!scarceSheets(tidy(d.sheets, closing), offer.trim()).length) throw new Error("no sheet says places are limited: every script has exactly one, just before the last sheet");
-        added.push(addSheetScript(brandDir, { sheets: d.sheets, offer: offer.trim(), source: "drafted" }, { profile, closing, plain }));
+        added.push(addSheetScript(brandDir, { sheets: d.sheets, offer: offer.trim(), source: "drafted", pain: theme }, { profile, closing, plain }));
       }
       catch (e) { dropped.push({ text: (d.sheets || []).join(" / "), reason: e.message }); log(`  dropped: ${e.message}`); }
     }
   }
-  return { added, dropped, calls, sources: { facts: facts.length, pains: pains.length, ads: src.ads.length, library: src.library.length } };
+  return { added, dropped, calls, theme, sources: { facts: facts.length, pains: pains.length, ads: src.ads.length, library: src.library.length } };
 }
 
 // ── the prompts ──────────────────────────────────────────────────────────────

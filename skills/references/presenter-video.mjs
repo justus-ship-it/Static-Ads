@@ -842,7 +842,20 @@ export function letteredStyles(assigned = []) {
  * `ads` and `library` (`painSources`): what the drafter works the pain points out from when he has not — it is the
  * agent that proposes, and he reviews. Every script says the pain point it opens on.
  */
-export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [], styles = [], pains = [], ads = [], library = [], closing = CLOSING_LINE }) {
+/**
+ * The pain point the owner gives for a round of drafts (2026-11-16: "an option for the user to indicate the pain point,
+ * which should drive the entire flow of the video … 'Weight gain' or 'Not being happy with the way you look in the
+ * mirror', then the sheets … or the scripts … should be drafted to follow"). His words, held to the pain points' own
+ * rule (never a judgement of the person). Told to both drafters; every script of the round is about it and keeps it.
+ */
+export function themeOf(pain, profile = {}) {
+  if (pain == null || !norm(pain)) return null;
+  const theme = plainDashes(norm(pain)).replace(/[.;,]+$/, ""), bad = painProblems(theme, profile);
+  if (bad.length) throw new Error(`the pain point: ${bad[0]}`);
+  return theme;
+}
+export const themeRule = (theme, what = "script") => `THE PAIN POINT OF THIS ROUND, in the owner's own words: "${theme}". It drives every ${what} from start to finish: it opens on it — as one moment of the person's day where it shows, in small words they would use themselves — everything in the middle speaks to it (what changes about it, what the person gets), and the ending names what they want instead of it. Nothing in a ${what} is about any other worry. Each ${what} takes a DIFFERENT moment or side of this same pain point, so that no two are alike. Say it as something that happens to the person, never a judgement or a label of them, and never promise a result or a number.`;
+export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [], styles = [], pains = [], ads = [], library = [], closing = CLOSING_LINE, theme = null }) {
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean);
   // "Aether Athletics' 6 Week…", never "Athletics's": the possessive as it is said and as the captions show it.
   const gyms = /s$/i.test(gym) ? `${gym}'` : `${gym}'s`;
@@ -867,8 +880,8 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
     `${PLAIN_RULE} The only longer words allowed are the programme's name, the gym's name${facts.length ? ", the facts given above" : ""} and the closing sentence, said as they are.${long ? " A style's or a sample's own big words are NOT carried over: take how it is built and say it in small words." : ""}`,
     `The place is only ever {AREA}, the area around the gym: the script never names the country, and never speaks to a whole city or island.`,
     `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark (the closing sentence keeps its own); an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
-    `Write ${count} script${count === 1 ? "" : "s"}, each opening on a different pain point, and say for each the pain point it opens on (pain: a short phrase, as it would stand in a list — "work clothes fitting tighter lately")${lettered.length ? " and the style it follows (style: its letter)" : ""}.`,
-    `PAIN POINTS. A pain point is something that HAPPENS to this person — work clothes fitting tighter, out of breath on the stairs, tired every day after lunch, starting to exercise and stopping after two weeks — said the way they would say it to a friend, in small words. Never a judgement or a label of their body, weight, looks or health, nothing that shames, no medical condition; and never softened into something vague: "getting back into shape", "putting off fitness", "starting a fitness journey" are NOT pain points.${pains.length
+    `Write ${count} script${count === 1 ? "" : "s"}, ${theme ? "each on a different moment or side of the one pain point above" : "each opening on a different pain point"}, and say for each the pain point it opens on (pain: a short phrase, as it would stand in a list — "work clothes fitting tighter lately")${lettered.length ? " and the style it follows (style: its letter)" : ""}.`,
+    `PAIN POINTS. A pain point is something that HAPPENS to this person — work clothes fitting tighter, out of breath on the stairs, tired every day after lunch, starting to exercise and stopping after two weeks — said the way they would say it to a friend, in small words. Never a judgement or a label of their body, weight, looks or health, nothing that shames, no medical condition; and never softened into something vague: "getting back into shape", "putting off fitness", "starting a fitness journey" are NOT pain points.${theme ? ` ${themeRule(theme)} For "pain", answer with exactly these words: "${theme}".` : pains.length
       ? ` The owner's own list comes first — open on these, close to his words, one for each script${pains.length < count ? "; for the scripts beyond the list, work out further ones yourself the same way" : ""}:\n${pains.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
       : ` Work them out yourself before you write: who this advert is for, and what they are living with${ads.length || library.length ? ", drawing on the adverts below" : ""}.`}`,
   ];
@@ -888,15 +901,17 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
  * works the pain points out from the gym's own best adverts and the library's pain-led ones, his own kept ones first
  * when he has given some, and each draft carries the pain point it opens on, held to the pain points' own rules.
  */
-export async function draftScripts({ brandDir, offer, audience = null, count = 3, style = null, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, words = DRAFT_WORDS, log = () => {} }) {
+export async function draftScripts({ brandDir, offer, audience = null, count = 3, style = null, pain = null, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL, words = DRAFT_WORDS, log = () => {} }) {
   if (typeof offer !== "string" || offer.trim().length < 3) throw new Error("the offer's exact words are needed");
   if (!Number.isInteger(count) || count < 1 || count > 6) throw new Error("count must be 1 to 6");
   const profile = readJson(join(brandDir, "gym-profile.json")) || {}, pains = painsFor(brandDir, offer), closing = closingLine(libraryDir), src = painSources(brandDir, libraryDir);
+  // The pain point he typed for this round (refused in words when it judges the person): every draft is about it, and keeps it as its pain point.
+  const theme = themeOf(pain, profile);
   // One style for each script: the one asked for, else spread across the styles, the ones this gym has used least first.
   const all = liveStyles(libraryDir), mine = readScripts(brandDir).scripts, used = {}; for (const x of mine) if (x.status !== "retired" && x.style?.id) used[x.style.id] = (used[x.style.id] || 0) + 1;
   const one = style ? all.find((x) => x.id === style) : null; if (style && !one) throw new Error("no such style: pick one of the sample scripts on file");
   const assigned = one ? Array.from({ length: count }, () => one) : pickStyles(all, count, { used }), lettered = letteredStyles(assigned);
-  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: mine.map((x) => x.lines.join(" / ")), styles: assigned, facts: factsFor(brandDir, offer), pains, ...src, closing });
+  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: mine.map((x) => x.lines.join(" / ")), styles: assigned, facts: factsFor(brandDir, offer), pains, ...src, closing, theme });
   const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [], allow = factsFor(brandDir, offer);
   let calls = 1, mended = 0; const plain = plainWords(libraryDir), ready = [];
   const rules = (ls) => [...scriptProblems(ls, { offer: offer.trim(), profile, closing, plain, allow }), ...draftLengths(ls, closing, words)];
@@ -905,7 +920,7 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
     // The style a draft says it follows; one that says none is taken to be the one its place in the round was given.
     const st = lettered.find((r) => r.letter === String(d.style || "").trim().toUpperCase())?.style || assigned[k] || null;
     try {
-      const pain = plainDashes(norm(d.pain)).replace(/[.;,]+$/, "");
+      const pain = theme || plainDashes(norm(d.pain)).replace(/[.;,]+$/, "");
       if (!pain) throw new Error("it does not say which pain point it opens on");
       const bad = painProblems(pain, profile); if (bad.length) throw new Error(`the pain point it opens on ("${pain}"): ${bad[0]}`);
       let ls = (d.lines || []).map((l) => plainDashes(norm(l))), again = false, errs = rules(ls);
@@ -934,7 +949,7 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
     try { added.push(addScript(brandDir, { lines: r.ls, offer: offer.trim(), source: "drafted", pain: r.pain, style: r.st }, { profile, closing, plain })); if (r.again) { mended++; log("  one draft said again"); } }
     catch (e) { dropped.push({ text: r.text, reason: e.message }); log(`  dropped: ${e.message}`); }
   }
-  return { added, dropped, calls, reads, unread, mended, styles: lettered.map((r) => r.style.name), sources: { pains: pains.length, ads: src.ads.length, library: src.library.length } };
+  return { added, dropped, calls, reads, unread, mended, theme, styles: lettered.map((r) => r.style.name), sources: { pains: pains.length, ads: src.ads.length, library: src.library.length } };
 }
 
 // ── the model calls (each can be replaced: the tests make no call) ───────────

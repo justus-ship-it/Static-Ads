@@ -1863,8 +1863,8 @@ const server = createServer(async (req, res) => {
           const count = body.count ?? 3; if (!Number.isInteger(count) || count < 1 || count > 6) return json(res, 400, { error: "how many scripts to draft must be 1 to 6" });
           // The facts typed with the request are saved for this offer first (checked; a refusal drafts nothing): they are the only ground for a sheet about limited places.
           if (body.facts != null) { if (!Array.isArray(body.facts)) return json(res, 400, { error: "the facts are a list, one to a line" }); setFacts(dir, body.offer, body.facts, { profile }); }
-          const d = await draftSheetScripts({ brandDir: dir, libraryDir: VIDEO_LIBRARY_DIR, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count });
-          return json(res, 200, { ...view(), drafted: { paper: true, added: d.added.map((x) => x.id), dropped: d.dropped, sources: d.sources } });
+          const d = await draftSheetScripts({ brandDir: dir, libraryDir: VIDEO_LIBRARY_DIR, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count, pain: typeof body.pain === "string" && body.pain.trim() ? body.pain : null });
+          return json(res, 200, { ...view(), drafted: { paper: true, added: d.added.map((x) => x.id), dropped: d.dropped, sources: d.sources, theme: d.theme } });
         }
         if (what === "sheets" && req.method === "PUT" && x1) { decideSheetScript(dir, x1, { status: body.status, sheets: body.sheets, reason: body.reason, scarcity_ok: body.scarcity_ok === true }, { profile, closing }); return json(res, 200, view()); }
         if (what === "closing" && req.method === "POST" && !x1) { setClosing(VIDEO_LIBRARY_DIR, body.text); return json(res, 200, view()); }
@@ -1883,8 +1883,8 @@ const server = createServer(async (req, res) => {
           // The facts typed with the request are saved for this offer first (checked; a refusal drafts nothing), then the drafter is given them.
           if (body.facts != null) { if (!Array.isArray(body.facts)) return json(res, 400, { error: "the facts are a list, one to a line" }); setFacts(dir, body.offer, body.facts, { profile }); }
           // `style`: a sample's id — every draft of the round in that one style; without it the round is spread across the styles.
-          const d = await draftScripts({ brandDir: dir, libraryDir: VIDEO_LIBRARY_DIR, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count, style: typeof body.style === "string" && body.style ? body.style : null });
-          return json(res, 200, { ...view(), drafted: { added: d.added.map((x) => x.id), dropped: d.dropped, sources: d.sources, styles: d.styles } });
+          const d = await draftScripts({ brandDir: dir, libraryDir: VIDEO_LIBRARY_DIR, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count, style: typeof body.style === "string" && body.style ? body.style : null, pain: typeof body.pain === "string" && body.pain.trim() ? body.pain : null });
+          return json(res, 200, { ...view(), drafted: { added: d.added.map((x) => x.id), dropped: d.dropped, sources: d.sources, styles: d.styles, theme: d.theme } });
         }
         // A sample is a style (2026-11-14): pasted, it is read at once for how it is built (one text call; a reading that fails leaves the sample on file, unread, to be read again from its card).
         if (what === "sample" && req.method === "POST" && !x1) {

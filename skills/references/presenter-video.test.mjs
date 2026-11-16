@@ -838,6 +838,21 @@ test("PV14 takes said as written the first time (2026-11-16, the owner on a batc
     await assert.rejects(proposeEdit({ brandDir: g, id: fine.id, libraryDir: L, ask }), /^Error: this script breaks no rule and reads well aloud: nothing to propose$/);
     const bad = addScript(g, { lines: D_BAD, offer: OFFER }, { profile, closing: C });
     await assert.rejects(proposeEdit({ brandDir: g, id: bad.id, libraryDir: L, ask }), /^Error: the agent's edit does not read well aloud \(line 2 does not read as something a person would say out loud \("help you every step" is not finished\)\): edit the script yourself$/);
+    // The pain point he gives for a round drives every script of it (2026-11-16: "an option for the user to indicate the pain point, which should drive the
+    // entire flow of the video … 'Weight gain' or 'Not being happy with the way you look in the mirror'"): his words, held to the pain points' own rule; told
+    // to the drafter as the one thing every script is about; kept on every draft as its pain point, whatever the drafter answers.
+    const { themeOf, themeRule } = await import("./presenter-video.mjs");
+    assert.deepEqual([themeOf(null), themeOf("  "), themeOf("Weight gain."), themeOf("Not being happy with the way you look in the mirror")], [null, null, "Weight gain", "Not being happy with the way you look in the mirror"]);
+    assert.throws(() => themeOf("being overweight"), /^Error: the pain point: "overweight" judges the person: say it as something that happens to them/);
+    const TP = buildScriptPrompt({ profile, offer: OFFER, count: 2, theme: "Weight gain", pains: ["something he kept before"] }).prompt;
+    assert.ok(TP.includes(themeRule("Weight gain")) && TP.includes('For "pain", answer with exactly these words: "Weight gain".'), TP);
+    assert.match(TP, /THE PAIN POINT OF THIS ROUND, in the owner's own words: "Weight gain"\. It drives every script from start to finish: it opens on it .* everything in the middle speaks to it .* and the ending names what they want instead of it\. Nothing in a script is about any other worry\. Each script takes a DIFFERENT moment or side of this same pain point/);
+    assert.match(TP, /Write 2 scripts, each on a different moment or side of the one pain point above/); assert.doesNotMatch(TP, /The owner's own list comes first|something he kept before/, "the round's own pain point takes the place of the list");
+    assert.doesNotMatch(buildScriptPrompt({ profile, offer: OFFER, count: 2 }).prompt, /THE PAIN POINT OF THIS ROUND/);
+    const T1 = ["Do your clothes feel tighter than they did last year?", "Test Gym's 12 Week Full Body Transformation is built for that, with a coach beside you.", `If you are ready to feel light again, now is your time. ${C}`];
+    const tasked = [], tr = await draftScripts({ brandDir: g, libraryDir: L, offer: OFFER, count: 1, pain: "Weight gain", ask: async (img, p) => { tasked.push(p); return /^Each numbered line/.test(p) ? { lines: [] } : { scripts: [{ pain: "something the drafter made up", lines: T1 }] }; } });
+    assert.deepEqual([tr.theme, tr.added.map((x) => [x.pain, x.lines]), /THE PAIN POINT OF THIS ROUND, in the owner's own words: "Weight gain"/.test(tasked[0])], ["Weight gain", [["Weight gain", T1]], true]);
+    let never = 0; await assert.rejects(draftScripts({ brandDir: g, libraryDir: L, offer: OFFER, count: 1, pain: "being fat", ask: async () => { never++; return {}; } }), /the pain point: "fat" judges the person/); assert.equal(never, 0, "refused before any call");
     // The presenter stops and stays silent after the line, in both kinds of clip.
     const man = { gender: "man", age: 36, look: "" }, woman = { gender: "woman", age: 30, look: "" };
     assert.equal(silentAfter(man), "When the sentence is finished he stops talking: he closes his mouth, keeps looking into the lens with a small smile and stays silent until the clip ends — no more words, nothing said twice.");

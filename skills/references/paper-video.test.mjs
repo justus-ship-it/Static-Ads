@@ -158,6 +158,12 @@ test("PP2 the agent proposes the sheets: one text call told the shape, the rules
     assert.ok(r.added.every((x) => scarcityOf(x).by === null && !x.scarce_ok), "the suggestion waits for his yes");
     assert.match(asked[1], /Write 2 scripts/); assert.match(asked[1], /THESE WERE REFUSED — do not make the same mistake:\n- "Do your work clothes feel tight\? \/ /); assert.match(asked[1], /ALREADY WRITTEN \(write something different\):\n- Do your work clothes feel tight\? \/ /);
     assert.deepEqual([readSheetScripts(g).length, keptSheetScripts(g, OFFER).length], [3, 0], "nothing is kept until he keeps it");
+    // The pain point he gives for a round (2026-11-16): the drafter is told every script is about that one thing, and each draft keeps it.
+    const themed = buildSheetPrompt({ profile, offer: OFFER, count: 1, theme: "Not being happy with the way you look in the mirror", pains: ["something he kept before"] }).prompt;
+    assert.match(themed, /THE PAIN POINT OF THIS ROUND, in the owner's own words: "Not being happy with the way you look in the mirror"\. It drives every script from start to finish.* The first one or two sheets name it; the sheets of what they get answer it\./); assert.doesNotMatch(themed, /something he kept before/);
+    const seenT = [], rt = await draftSheetScripts({ brandDir: g, offer: OFFER, count: 1, pain: "Not being happy with the way you look in the mirror.", ask: async (img, p) => { seenT.push(p); return { scripts: [{ sheets: swap(0, "Avoiding the mirror lately?") }] }; } });
+    assert.deepEqual([rt.theme, rt.added.map((x) => x.pain), /THE PAIN POINT OF THIS ROUND/.test(seenT[0]), r.added[0].pain], ["Not being happy with the way you look in the mirror", ["Not being happy with the way you look in the mirror"], true, undefined]);
+    await assert.rejects(draftSheetScripts({ brandDir: g, offer: OFFER, count: 1, pain: "being overweight", ask: async () => { throw new Error("never asked"); } }), /the pain point: "overweight" judges the person/);
     await assert.rejects(draftSheetScripts({ brandDir: g, offer: "", ask }), /the offer's exact words are needed/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
