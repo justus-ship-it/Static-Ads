@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { execFileSync } from "node:child_process";
-import { SHEETS, SHEET_WORDS, SHEET_SECONDS, MIN_HOLD, DROP_KEEP, LAST_KEEP, PAPER, PAPER_FONT, SCARCE, sheetProblems, addSheetScript, decideSheetScript, readSheetScripts, keptSheetScripts, readySheetScripts, pickSheetScripts, noSheetScriptWhy, sheetCost, buildSheetPrompt, draftSheetScripts, blankPrompt, sheetClipPrompt, paperFacts, dropFrom, judgeSheet, sameWriting, inkText, paperNeeds, makePaperVideos } from "./paper-video.mjs";
+import { SHEETS, SHEET_WORDS, SHEET_SECONDS, MIN_HOLD, DROP_KEEP, LAST_KEEP, PAPER, PAPER_FONT, SCARCE, scarceSheets, scarcityOf, sheetProblems, addSheetScript, decideSheetScript, readSheetScripts, keptSheetScripts, readySheetScripts, sheetIssues, pickSheetScripts, noSheetScriptWhy, sheetCost, buildSheetPrompt, draftSheetScripts, blankPrompt, sheetClipPrompt, paperFacts, dropFrom, judgeSheet, sameWriting, inkText, paperNeeds, makePaperVideos } from "./paper-video.mjs";
 import { addScript, readScripts, setFacts, fillLine, clipStore, setAside, keepTake, durationOf, hasFfmpeg, LIVE, USD_PER_SECOND, USD_PER_IMAGE, videosProblems, videoCount, videoKinds, spokenCount, paperCount } from "./presenter-video.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 import { launchBrowser } from "./render-composites.mjs";
@@ -76,10 +76,13 @@ test("PP1 a white-paper script and its rules: six to nine sheets of two to eight
     assert.match(bad(swap(5, "Get your dream body back")), /sheet 6 promises an ideal body/);
     assert.match(bad(swap(5, "Feel strong 💪 every day")), /sheet 6 has a character the marker cannot write/);
     assert.ok(/trial/i.test(bad(swap(4, "Start with a free trial week"))) && /guarantee/i.test(bad(swap(4, "Results are guaranteed here"))), "the ad rules hold: " + bad(swap(4, "Start with a free trial week")));
-    // Scarcity is a claim about the gym: only from his facts, with his number.
+    // Scarcity is a claim about the gym: it stands on the owner's word — his typed fact (with its number), or the sheet's own words once he has said yes.
     assert.ok(SCARCE.test("limited spots") && SCARCE.test("10 people") && SCARCE.test("Only 10 places") && !SCARCE.test("12 Week Full Body Transformation") && !SCARCE.test("in only 6 weeks"));
     const TEN = swap(0, "We're looking for 10 people"), LIMITED = swap(5, "But… we have limited spots!!");
-    assert.match(bad(TEN), /sheet 1 says places are limited \("10 people"\): a sheet says that only when you have typed it as true of this offer \(What each challenge includes, e\.g\. "Only 10 places"\)/);
+    assert.match(bad(TEN), /sheet 1 says places are limited \("10 people"\): that is a claim about this gym, so it stands on your word — say it is true when you keep the script, write the sheet yourself, or type it under What each challenge includes \(e\.g\. "Only 10 places"\)/);
+    assert.deepEqual([sheetProblems(TEN, { offer: OFFER, profile, approved: ["werelookingfor10people"] }), sheetProblems(TEN, { offer: OFFER, profile, ask: true })], [[], []], "his yes to the sheet's own words; a draft's suggestion waits and is no fault");
+    assert.deepEqual([scarceSheets(GOOD, OFFER), scarceSheets(LIMITED, OFFER).map((x) => [x.sheet, x.phrase]), scarcityOf({ sheets: LIMITED, offer: OFFER }), scarcityOf({ sheets: LIMITED, offer: OFFER }, ["Only 10 places"]).by, scarcityOf({ sheets: LIMITED, offer: OFFER, scarce_ok: ["butwehavelimitedspots"] }).by, scarcityOf({ sheets: GOOD, offer: OFFER })],
+      [[], [[6, "limited"]], { sheet: 6, text: "But… we have limited spots!!", by: null }, "fact", "you", null]);
     assert.match(bad(LIMITED), /sheet 6 says places are limited \("limited"\)/);
     assert.deepEqual([sheetProblems(TEN, { offer: OFFER, profile, facts: ["Only 10 places"] }), sheetProblems(LIMITED, { offer: OFFER, profile, facts: ["Only 10 places"] })], [[], []]);
     assert.match(bad(swap(0, "We want 20 people"), { facts: ["Only 10 places"] }), /sheet 1 says "20 people": the number you typed for this offer is 10/);
@@ -96,17 +99,30 @@ test("PP1 a white-paper script and its rules: six to nine sheets of two to eight
     assert.equal(decideSheetScript(g, draft.id, { sheets: swap(0, "No energy left after lunch?") }, { profile }).sheets[0], "No energy left after lunch?");
     assert.throws(() => decideSheetScript(g, draft.id, { status: "retired" }, { profile }), /retiring a script needs a reason/);
     assert.equal(decideSheetScript(g, draft.id, { status: "kept" }, { profile }).status, "kept");
-    assert.deepEqual([decideSheetScript(g, draft.id, { status: "retired", reason: "not this one" }, { profile }).status, readSheetScripts(g).length], ["retired", 2]);
+    // A drafted script's scarcity sheet is the agent's suggestion: it waits as a draft, Keep needs his yes, and a sheet he changes himself is his word.
+    const sug = addSheetScript(g, { sheets: swap(5, "But we have limited spots!"), offer: OFFER, source: "drafted" }, { profile });
+    assert.deepEqual([sug.status, sug.scarce_ok, sheetIssues(sug, { profile, gymDir: g })], ["draft", undefined, []]);
+    assert.throws(() => decideSheetScript(g, sug.id, { status: "kept" }, { profile }), (e) => /^sheet 6 says "But we have limited spots!": that is the agent's suggestion\. Say it is true of this offer to keep the script, or change the sheet first$/.test(e.message) && e.scarcity.sheet === 6);
+    assert.equal(decideSheetScript(g, sug.id, { sheets: swap(5, "But we have limited spots!").map((s, i) => (i === 0 ? "Stairs leave you out of breath?" : s)) }, { profile }).scarce_ok, undefined, "an edit elsewhere is not a yes to the suggestion");
+    assert.throws(() => decideSheetScript(g, sug.id, { status: "kept" }, { profile }), /the agent's suggestion/);
+    const yes = decideSheetScript(g, sug.id, { status: "kept", scarcity_ok: true }, { profile });
+    assert.deepEqual([yes.status, yes.scarce_ok, sheetIssues(yes, { profile, gymDir: g })], ["kept", ["butwehavelimitedspots"], []]);
+    const mine = decideSheetScript(g, sug.id, { sheets: yes.sheets.map((s, i) => (i === 5 ? "We only have 8 spots!" : s)) }, { profile });
+    assert.deepEqual([mine.scarce_ok, sheetIssues(mine, { profile, gymDir: g })], [["weonlyhave8spots"], []], "the sheet he wrote himself is his word");
+    decideSheetScript(g, sug.id, { status: "retired", reason: "only for this check" }, { profile });
+    assert.deepEqual(addSheetScript(g, { sheets: swap(5, "Only 12 places this time"), offer: OFFER }, { profile }).scarce_ok, ["only12placesthistime"], "his own script is his word, scarcity included");
+    decideSheetScript(g, readSheetScripts(g).at(-1).id, { status: "retired", reason: "only for this check" }, { profile });
+    assert.deepEqual([decideSheetScript(g, draft.id, { status: "retired", reason: "not this one" }, { profile }).status, readSheetScripts(g).length], ["retired", 4]);
     // One file, two lists: a spoken script's write keeps the sheets, and a sheet script's write keeps the spoken ones.
     const SPOKEN = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Full Body Transformation is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
     addScript(g, { lines: SPOKEN, offer: OFFER }, { profile }); setFacts(g, OFFER, ["Only 10 places"], { profile });
-    assert.deepEqual([readScripts(g).scripts.length, readScripts(g).sheets.length], [1, 2]);
+    assert.deepEqual([readScripts(g).scripts.length, readScripts(g).sheets.length], [1, 4]);
     addSheetScript(g, { sheets: TEN, offer: OFFER }, { profile });
-    assert.deepEqual([readScripts(g).scripts.length, readScripts(g).sheets.length, Object.keys(readScripts(g).facts).length], [1, 3, 1]);
-    // A kept script that today's rules refuse (the fact it stood on is gone) is not ready, and the refusal says what to press.
-    setFacts(g, OFFER, [], { profile });
+    assert.deepEqual([readScripts(g).scripts.length, readScripts(g).sheets.length, Object.keys(readScripts(g).facts).length], [1, 5, 1]);
+    // A kept script that today's rules refuse (the number he typed for the offer has changed) is not ready, and the refusal says what to press.
+    setFacts(g, OFFER, ["Only 8 places"], { profile });
     assert.deepEqual(readySheetScripts(g, OFFER, { profile }).map((x) => x.id), [own.id]);
-    assert.match(noSheetScriptWhy(g, OFFER, { profile }).text, /the white-paper script kept for this offer needs an edit first — sheet 1 says places are limited/);
+    assert.match(noSheetScriptWhy(g, OFFER, { profile }).text, /the white-paper script kept for this offer needs an edit first — sheet 1 says "10 people": the number you typed for this offer is 8/);
     assert.deepEqual(pickSheetScripts(g, { count: 1, offer: OFFER, seed: "b1" }).map((x) => x.id), [own.id]);
     assert.throws(() => pickSheetScripts(g, { count: 2, offer: OFFER, seed: "b1" }), /2 white-paper videos asked for, but only 1 white-paper script is ready for "12 Week Full Body Transformation": .* \(Draft Scenes → Video scripts → White-paper scripts\)/);
     assert.throws(() => pickSheetScripts(g, { count: 1, offer: "6 Week Reset", seed: "b1" }), /no white-paper script is ready for "6 Week Reset": the white-paper scripts kept there are for "12 Week Full Body Transformation"/);
@@ -120,26 +136,27 @@ test("PP1 a white-paper script and its rules: six to nine sheets of two to eight
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
-test("PP2 the agent proposes the sheets: one text call told the shape, the rules, plain words and the facts — with no fact about places it is told to write no scarcity, with one it may say it as typed; every draft is checked in code and a broken one is dropped with the reason; a shortfall is asked for once more, told what was refused; drafts wait for the owner", async () => {
+test("PP2 the agent proposes the sheets: one text call told the shape, the rules, plain words and the facts — every script carries exactly one scarcity sheet (with no fact about places, one with no number for the owner to check; with one, as typed) and a draft without one is dropped; every draft is checked in code and a broken one is dropped with the reason; a shortfall is asked for once more, told what was refused; drafts wait for the owner", async () => {
   const { d, g, profile } = gym();
   try {
     const none = buildSheetPrompt({ profile, offer: OFFER, audience: "busy professionals", count: 3 }).prompt;
     assert.match(none, /silent video advert for Test Gym's programme "12 Week Full Body Transformation", for busy professionals/);
-    assert.match(none, /NO sheet about limited places, a number of people or a deadline: none was given as a fact, and an invented one is a false claim/);
+    assert.match(none, /4\. ALWAYS exactly one sheet of scarcity, just before the last sheet\. The owner has typed no number of places, so say that places are limited with NO number and no date — "But we have limited spots!", "Places are limited\." — for the owner to check and to put his own number in\. Never invent a number of people or places, and never a deadline\./);
     assert.match(none, /The last sheet is exactly this, and nothing else: "Click the link below and we'll be in touch!"/);
     assert.match(none, /6 to 9 sheets\. Each sheet is 2 to 8 words/); assert.match(none, /PLAIN WORDS: the reading level of a nine-year-old/); assert.match(none, /state no fact about the gym/);
     const withFacts = buildSheetPrompt({ profile, offer: OFFER, count: 2, facts: ["A full body scan at the start", "Only 10 places"], pains: ["your work clothes feel tight"] }).prompt;
-    assert.match(withFacts, /One sheet of scarcity, only as the facts state it \("Only 10 places"\): the same number, nothing added/);
+    assert.match(withFacts, /ALWAYS exactly one sheet of scarcity, just before the last sheet\. Say it only as the facts state it \("Only 10 places"\): the same number, nothing added/);
     assert.match(withFacts, /THE FACTS the owner has typed as true of this programme \(the only ones that may be stated\):\n- A full body scan at the start\n- Only 10 places/);
     assert.match(withFacts, /WHAT BOTHERS THESE PEOPLE, in the owner's words \(open on one of these\):\n- your work clothes feel tight/);
-    const swap = (i, s) => GOOD.map((x, k) => (k === i ? s : x)), asked = [];
+    const LIM = GOOD.map((x, k) => (k === 5 ? "But we have limited spots!" : x)), swap = (i, s) => LIM.map((x, k) => (k === i ? s : x)), asked = [];
     const ask = async (image, prompt) => { asked.push(prompt); return asked.length === 1
-      ? { scripts: [{ sheets: GOOD }, { sheets: swap(0, "We're looking for 10 people") }, { sheets: swap(4, "With real accountability every week") }] }
+      ? { scripts: [{ sheets: LIM }, { sheets: GOOD }, { sheets: swap(4, "With real accountability every week") }] }
       : { scripts: [{ sheets: swap(0, "No energy left after lunch?") }, { sheets: swap(0, "Stairs leave you out of breath?") }] }; };
     const r = await draftSheetScripts({ brandDir: g, offer: OFFER, count: 3, ask });
     assert.deepEqual([r.calls, r.added.length, r.added.every((x) => x.status === "draft" && x.source === "drafted"), r.dropped.length], [2, 3, true, 2]);
-    assert.match(r.dropped[0].reason, /sheet 1 says places are limited/); assert.match(r.dropped[1].reason, /"accountability" is not a plain word/);
-    assert.match(asked[1], /Write 2 scripts/); assert.match(asked[1], /THESE WERE REFUSED — do not make the same mistake:\n- "We're looking for 10 people \/ /); assert.match(asked[1], /ALREADY WRITTEN \(write something different\):\n- Do your work clothes feel tight\? \/ /);
+    assert.match(r.dropped[0].reason, /^no sheet says places are limited: every script has exactly one, just before the last sheet$/); assert.match(r.dropped[1].reason, /"accountability" is not a plain word/);
+    assert.ok(r.added.every((x) => scarcityOf(x).by === null && !x.scarce_ok), "the suggestion waits for his yes");
+    assert.match(asked[1], /Write 2 scripts/); assert.match(asked[1], /THESE WERE REFUSED — do not make the same mistake:\n- "Do your work clothes feel tight\? \/ /); assert.match(asked[1], /ALREADY WRITTEN \(write something different\):\n- Do your work clothes feel tight\? \/ /);
     assert.deepEqual([readSheetScripts(g).length, keptSheetScripts(g, OFFER).length], [3, 0], "nothing is kept until he keeps it");
     await assert.rejects(draftSheetScripts({ brandDir: g, offer: "", ask }), /the offer's exact words are needed/);
   } finally { rmSync(d, { recursive: true, force: true }); }

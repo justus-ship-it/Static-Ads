@@ -3896,6 +3896,17 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await open("scenes", "!!document.querySelector('#vsCard [data-script]')");
     assert.deepEqual(await ev("[document.querySelectorAll('#vsCard [data-script]').length, document.querySelector('#vsCard [data-script]').dataset.status, [...document.querySelectorAll('#vsCard [data-script] ol li')].map(li => li.textContent), document.querySelectorAll('#vsCard [data-sample]').length, document.querySelector('#vsWho').innerText.startsWith('Presented by a man of about 36')]"), [1, "kept", LINES, 2, true]);
     assert.match(await ev("document.querySelector('#vsCard').innerText.replace(/\\s+/g, ' ')"), /^VIDEO SCRIPTS 1 kept · 0 to read .* Nothing is filmed until you keep a script/i);
+    // One tab for each kind of video (2026-11-16): Talking shows first; With exercises shows the same script with the move the agent picks for each cut.
+    assert.deepEqual(await ev("[[...document.querySelectorAll('#vsTabs [data-vtab]')].map(b => b.textContent.replace(/\\s+/g, ' ')), document.querySelector('#vsTabs .sel').dataset.vtab, document.querySelector('#vsPaneActive').hidden, document.querySelector('#vsSpoken').hidden]"), [["Talking1 ready", "With exercises1 ready", "White paper0 ready"], "talk", true, false]);
+    await ev("document.querySelector('#vsTabs [data-vtab=active]').click(); true");
+    { const [shown, hiddenTalk, n, moves, lines, kit, same] = await ev("[document.querySelector('#vsTabs .sel').dataset.vtab, document.querySelector('#vsPaneTalk').hidden, document.querySelectorAll('#vsActiveList [data-moves-script]').length, [...document.querySelectorAll('#vsActiveList [data-moves-script] [data-move]')].map(x => x.textContent), document.querySelectorAll('#vsActiveList [data-moves-script] ol li').length, document.querySelector('#vsKit').innerText, /the same scripts as Talking, so an edit here changes both/.test(document.querySelector('#vsPaneActive').innerText)]");
+      const view = (await V())[1], A = view.scripts[0].active;
+      assert.deepEqual([shown, hiddenTalk, n, lines, same], ["active", true, 1, A.moves.length, true]);
+      assert.deepEqual(moves, A.moves.map((m) => (m ? m.label + (m.kind === "move" ? ", then the line" : "") : "standing")));
+      assert.ok(A.moves[0]?.kind === "move" && A.seconds > view.scripts[0].cost.seconds && A.usd > view.scripts[0].cost.usd, "the first cut opens on a move, and it costs more than talking");
+      assert.match(kit, /^The agent picks the moves, only with kit this gym’s own room photos show .*Moves it may use here: .*Holds: /); assert.ok(view.kit.moves.some((m) => m.kind === "move" && m.here)); }
+    assert.equal(await ev("document.querySelectorAll('#vsCard [data-script]').length"), 1, "the script is listed once as a script; the exercises tab shows it another way");
+    await ev("document.querySelector('#vsTabs [data-vtab=talk]').click(); true");
     await ev("document.querySelector('#vsOwnGo').click(); true");
     assert.deepEqual(await ev("[document.querySelectorAll('#gModal textarea').length, document.querySelector('#vsOfferIn').value !== undefined, document.querySelector('#vsGo').textContent]"), [7, true, "Keep this script"]);
     await ev("document.querySelector('#vsLine0').value = 'We do it all.'; document.querySelector('#vsLine1').value = 'Our way.'; document.querySelector('#vsGo').click(); true");
@@ -4098,8 +4109,8 @@ test("U64 white-paper videos through the panel (2026-11-15): the third kind's sc
     let [st, D] = await V();
     assert.deepEqual([st, D.sheet_scripts, D.limits.sheets, D.limits.sheet_words], [200, [], [6, 9], [2, 8]]);
     // The rules, in words; the owner's own is kept at once.
-    [st, D] = await V("/sheets", { method: "POST", body: { offer: BRIEF.offer, sheets: swap(0, "We're looking for 10 people") } });
-    assert.equal(st, 400); assert.match(D.error, /sheet 1 says places are limited \("10 people"\): a sheet says that only when you have typed it as true of this offer/);
+    [st, D] = await V("/sheets", { method: "POST", body: { offer: BRIEF.offer, sheets: swap(0, "Tired?") } });
+    assert.equal(st, 400); assert.match(D.error, /sheet 1 is 1 word: a sheet is 2 to 8 words/);
     [st, D] = await V("/sheets", { method: "POST", body: { offer: BRIEF.offer, sheets: SHEETS.slice(0, 4) } });
     assert.equal(st, 400); assert.equal(D.error, "a white-paper script is 6 to 9 sheets");
     assert.equal((await call(`/api/client/${GYM}/video/sheets`, { method: "POST", body: { offer: BRIEF.offer, sheets: SHEETS }, token: null })).status, 403);
@@ -4121,6 +4132,14 @@ test("U64 white-paper videos through the panel (2026-11-15): the third kind's sc
     [st, D] = await V(`/sheets/${ten}`, { method: "PUT", body: { status: "retired" } }); assert.equal(st, 400); assert.match(D.error, /retiring a script needs a reason/);
     [st, D] = await V(`/sheets/${ten}`, { method: "PUT", body: { status: "retired", reason: "not this one" } }); assert.deepEqual([st, D.sheet_scripts[1].status, D.sheet_scripts[1].reason], [200, "retired", "not this one"]);
     assert.equal((await V("/sheets/p-nothere", { method: "PUT", body: { status: "kept" } }))[0], 400);
+    // The scarcity sheet (2026-11-16: "always include one, and recommend one for the user to approve and fix"): on a draft it is the
+    // agent's suggestion and no fault; Keep is refused until he says it is true; his yes is recorded on the script. With his fact typed it stands on the fact.
+    await V("/facts", { method: "POST", body: { offer: BRIEF.offer, items: [] } });
+    const sug = "p-5a66e57ed0"; { const j = JSON.parse(readFileSync(scriptsFile, "utf-8")); j.sheets.push({ id: sug, sheets: swap(5, "But we have limited spots!"), offer: BRIEF.offer, status: "draft", source: "drafted", added: "2026-11-16" }); writeFileSync(scriptsFile, JSON.stringify(j, null, 2)); }
+    [st, D] = await V(); let S = D.sheet_scripts.find((x) => x.id === sug);
+    assert.deepEqual([S.status, S.problems, S.scarcity, D.sheet_scripts[0].scarcity], ["draft", [], { sheet: 6, text: "But we have limited spots!", by: null }, null]);
+    [st, D] = await V(`/sheets/${sug}`, { method: "PUT", body: { status: "kept" } });
+    assert.equal(st, 400); assert.match(D.error, /^sheet 6 says "But we have limited spots!": that is the agent's suggestion\. Say it is true of this offer to keep the script, or change the sheet first$/);
     // The brief: the kind is counted; one picture and four seconds a sheet (the sheet that says the area once for each location).
     const check = async (over) => (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u64-new", ...over } } })).json();
     let c = await check({ videos: { paper: 1 } });
@@ -4164,10 +4183,25 @@ test("U64 white-paper videos through the panel (2026-11-15): the third kind's sc
     assert.deepEqual([rv.ads[0].video_flags, rv.ads[0].video_parts[1].kept, Object.keys(JSON.parse(readFileSync(join(store, "owner-kept.json"), "utf-8")).clips)], [0, WHY, ["line-2-bbbbbb-take2.mp4"]]);
     assert.equal((await call(`/api/client/${GYM}/batch/u64-batch/picks`, { method: "PUT", body: { ads: { [folder]: "keep" } } })).status, 200);
     assert.deepEqual(keptAds(out).map((a) => a.video_kind), ["paper"]);
-    // Draft Scenes: the white-paper scripts under the spoken ones, with their own buttons; writing your own has nine boxes.
+    // Draft Scenes: one tab for each kind of video; the white-paper scripts on their own tab, with their own buttons; writing your own has nine boxes.
     await open("scenes", "!!document.querySelector('#psBlock [data-sheets]')");
-    assert.deepEqual(await ev("[document.querySelectorAll('#psBlock #psList [data-sheets]').length, document.querySelector('#psBlock [data-sheets] .pill').textContent, [...document.querySelectorAll('#psBlock #psList [data-sheets] ol li')].map(li => li.textContent), document.querySelector('#psDraftGo').textContent, document.querySelector('#psOwnGo').textContent, document.querySelectorAll('#psBlock details [data-sheets]').length]"), [1, "kept · ready to film", SHEETS, "Draft sheets…", "Write your own…", 1]);
-    assert.match(await ev("document.querySelector('#psBlock').innerText.replace(/\\s+/g, ' ')"), /^White-paper scripts · a silent video: the presenter holds hand-written sheets and drops them one by one · 1 kept · 0 to read .* 6 to 9 sheets of 2 to 8 words, in words a nine-year-old knows\. .* only when you have typed that as true under What each challenge includes\./);
+    assert.deepEqual(await ev("[[...document.querySelectorAll('#vsTabs [data-vtab]')].map(b => b.dataset.vtab + ':' + b.classList.contains('sel')), document.querySelector('#vsPanePaper').hidden, document.querySelector('#vsPaneTalk').hidden, document.querySelector('#vsSpoken').hidden, !!document.querySelector('#vsAllKinds #vsClosing') && !!document.querySelector('#vsAllKinds #vsFacts') && !!document.querySelector('#vsAllKinds #vsPlain') && !!document.querySelector('#vsAllKinds #vsPains')]"), [["talk:true", "active:false", "paper:false"], true, false, false, true]);
+    assert.match(await ev("document.querySelector('#vsTabs [data-vtab=paper]').innerText.replace(/\\s+/g, ' ')"), /^White paper ?1 ready · 1 to read$/);
+    await ev("document.querySelector('#vsTabs [data-vtab=paper]').click(); true");
+    assert.deepEqual(await ev("[document.querySelector('#vsTabs .sel').dataset.vtab, document.querySelector('#vsPanePaper').hidden, document.querySelector('#vsPaneTalk').hidden, document.querySelector('#vsPaneActive').hidden, document.querySelector('#vsSpoken').hidden, document.querySelector('#vsCount').textContent]"), ["paper", false, true, true, true, "1 kept · 1 to read"]);
+    // The suggested scarcity sheet says whose word it stands on, and Keep asks before anything is kept: the words can be changed there.
+    assert.deepEqual(await ev(`[document.querySelector('#psList [data-sheets="${sug}"] [data-scarcity]').dataset.scarcity, document.querySelector('#psList [data-sheets="${sug}"] [data-scarcity]').textContent, document.querySelectorAll('#psList [data-scarcity]').length]`), ["ask", "places limited · the agent’s suggestion: Keep asks if it is true", 1]);
+    await ev(`document.querySelector('#psList [data-sheets="${sug}"] [data-keep]').click(); true`);
+    assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelector('#psScarceIn').value, /^Sheet 6 says places are limited\\. The agent suggested it; an advert may say it only when it is true of/.test(document.querySelector('#gModal .hint').innerText)]"), ["Is this true of the offer?", "But we have limited spots!", true]);
+    assert.equal(JSON.parse(readFileSync(scriptsFile, "utf-8")).sheets.find((x) => x.id === sug).status, "draft", "nothing is kept by opening the question");
+    await ev("document.querySelector('#psScarceIn').value = 'We only have 10 spots!'; psKeepRun(); true");
+    await until(`document.querySelector('#psList [data-sheets="${sug}"]')?.dataset.status === 'kept'`);
+    { const row = JSON.parse(readFileSync(scriptsFile, "utf-8")).sheets.find((x) => x.id === sug); assert.deepEqual([row.status, row.sheets[5], row.scarce_ok], ["kept", "We only have 10 spots!", ["weonlyhave10spots"]]); }
+    assert.deepEqual(await ev(`[document.querySelector('#psList [data-sheets="${sug}"] [data-scarcity]').dataset.scarcity, document.querySelector('#vsTabs [data-vtab=paper] .n').textContent]`), ["you", "2 ready"]);
+    [st, D] = await V(`/sheets/${sug}`, { method: "PUT", body: { status: "retired", reason: "only for this check" } }); assert.equal(st, 200);
+    await ev("vsLoad(); true"); await until(`!document.querySelector('#psList [data-sheets="${sug}"]')`);
+    assert.deepEqual(await ev("[document.querySelectorAll('#psBlock #psList [data-sheets]').length, document.querySelector('#psBlock [data-sheets] .pill').textContent, [...document.querySelectorAll('#psBlock #psList [data-sheets] ol li')].map(li => li.textContent), document.querySelector('#psDraftGo').textContent, document.querySelector('#psOwnGo').textContent, document.querySelectorAll('#psBlock details [data-sheets]').length]"), [1, "kept · ready to film", SHEETS, "Draft sheets…", "Write your own…", 2]);
+    assert.match(await ev("document.querySelector('#psBlock').innerText.replace(/\\s+/g, ' ')"), /^White-paper scripts · a silent video: the presenter holds hand-written sheets and drops them one by one · 1 kept · 0 to read .* 6 to 9 sheets of 2 to 8 words, in words a nine-year-old knows\. .* Every drafted script has one sheet that says places are limited: with your number when you have typed one under What each challenge includes, else with no number, as the agent’s suggestion — Keep asks you if it is true, and you can put your own number in\./);
     await ev("psOwn(); true"); assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelectorAll('#gModal input[id^=psSheet]').length]"), ["Your own white-paper script", 9]);
     await ev("document.querySelector('#gModal').innerHTML = ''; psEdit(" + JSON.stringify(id) + "); true"); assert.deepEqual(await ev("[document.querySelector('#gModal h3').textContent, document.querySelector('#psSheet0').value, document.querySelector('#psSheet6').value, document.querySelector('#psSheet7').value]"), ["Edit the sheets", SHEETS[0], SHEETS[6], ""]);
     await ev("document.querySelector('#psSheet0').value = 'Tired?'; psEditRun(); true"); await until("/sheet 1 is 1 word/.test(document.querySelector('#vsWhy')?.textContent || '')");
@@ -4189,7 +4223,7 @@ test("U64 white-paper videos through the panel (2026-11-15): the third kind's sc
     assert.equal(await ev("document.querySelector('#bVideosPaperHint').innerText"), "white-paper videos · nobody speaks: the presenter holds hand-written sheets and drops them one by one · no sheet script written for this offer yet · Draft sheets for it…");
     await ev("document.querySelector('#bPaperDraft').click(); true");
     await until("location.hash.endsWith('/scenes') && !!document.querySelector('#vsOfferIn')");
-    assert.deepEqual(await ev("[document.querySelector('#vsOfferIn').value, document.querySelector('#gModal h3').textContent, /only if a line here says so/.test(document.querySelector('#gModal').innerText)]"), ["6 Week Full Body Transformation", "Draft white-paper scripts", true]);
+    assert.deepEqual(await ev("[document.querySelector('#vsOfferIn').value, document.querySelector('#gModal h3').textContent, /Every draft has one sheet that says places are limited\\..* Keep asks you if it is true before the script can be filmed\\./.test(document.querySelector('#gModal').innerText.replace(/\\s+/g, ' ')) && document.querySelector('#vsTabs .sel').dataset.vtab === 'paper']"), ["6 Week Full Body Transformation", "Draft white-paper scripts", true]);
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
   } finally { writeFileSync(pf, before); if (had != null) writeFileSync(scriptsFile, had); else rmSync(scriptsFile, { force: true }); rmSync(out, { recursive: true, force: true }); rmSync(join(g, "batches", "u64-batch"), { recursive: true, force: true }); if (id) rmSync(join(g, "video-clips", id), { recursive: true, force: true }); }
 });

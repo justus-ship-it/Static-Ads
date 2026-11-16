@@ -78,12 +78,27 @@ export const sameWriting = (read, text) => lettersOf(read) === lettersOf(text);
 /** A sheet's words as they are written on the paper: plain quotes and three dots, which every marker font has. */
 export const inkText = (s) => norm(s).replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/…/g, "...");
 const UNWRITABLE = /[^\x20-\x7E’‘“”…]/;
+const scarceOf = (s, offer) => { const key = norm(offer).toLowerCase(), t = norm(s); return apos(key && t.toLowerCase().includes(key) ? t.toLowerCase().split(key).join(" ") : t).match(SCARCE); };
+/** The sheets of a script that say places are limited (never the last one, the closing line): [{ sheet (1-based), text, phrase }]. */
+export const scarceSheets = (sheets, offer = null) => (sheets || []).map((s, i, a) => { const m = i < a.length - 1 ? scarceOf(s, offer) : null; return m ? { sheet: i + 1, text: norm(s), phrase: m[0] } : null; }).filter(Boolean);
+/**
+ * Whose word a script's scarcity sheet stands on (2026-11-16, the owner: "always include one, and recommend one for
+ * the user to approve and fix"): `fact` — he typed it as true of the offer; `you` — he wrote or changed the sheet
+ * himself, or said yes to it when keeping the script; null — the agent's suggestion, still waiting for his yes.
+ */
+export function scarcityOf(script, facts = []) {
+  const first = scarceSheets(script.sheets, script.offer)[0]; if (!first) return null;
+  const byFact = (facts || []).some((f) => SCARCE.test(apos(f)));
+  return { sheet: first.sheet, text: first.text, by: byFact ? "fact" : (script.scarce_ok || []).includes(lettersOf(first.text)) ? "you" : null };
+}
 /**
  * What is wrong with a sheet script, in words; empty when it may be filmed. `offer`: the exact words one sheet must
  * carry; `closing`: the sentence the last sheet is; `facts`: what the owner typed as true of this offer — said as it
- * is, and the only ground for a sheet about limited places.
+ * is. A sheet about limited places is a claim about the gym, so it stands on the owner's word: a fact he typed (then
+ * with its number), or the sheet's own words in `approved` (the letters of the sheets he wrote or said yes to).
+ * `ask`: a draft — a suggested scarcity sheet is not a fault, it waits for his yes at Keep.
  */
-export function sheetProblems(sheets, { offer = null, profile = {}, closing = closingLine(), plain = plainWords(), facts = [] } = {}) {
+export function sheetProblems(sheets, { offer = null, profile = {}, closing = closingLine(), plain = plainWords(), facts = [], approved = [], ask = false } = {}) {
   if (!Array.isArray(sheets) || sheets.length < SHEETS[0] || sheets.length > SHEETS[1]) return [`a white-paper script is ${SHEETS[0]} to ${SHEETS[1]} sheets`];
   const errs = [], ss = sheets.map(norm), last = ss.length - 1, key = norm(offer).toLowerCase(), asIs = [offer, profile.display_name, closing, ...(facts || [])].filter(Boolean);
   const scarceFacts = (facts || []).filter((f) => SCARCE.test(apos(f))), factNumbers = new Set(scarceFacts.join(" ").match(/\d+/g) || []);
@@ -100,12 +115,12 @@ export function sheetProblems(sheets, { offer = null, profile = {}, closing = cl
     const ideal = apos(s).match(IDEAL_BODY); if (ideal) errs.push(`sheet ${i + 1} promises an ideal body ("${ideal[0]}"): say what the person will feel or be able to do`);
     const country = countryNamed(s, { profile, offer }); if (country) errs.push(`sheet ${i + 1} names the whole country ("${country}"): the place is only ever {AREA}, the area around the gym`);
     for (const h of hardWords(s, { allow: asIs, plain })) errs.push(h.why === "listed" ? `sheet ${i + 1}: "${h.word}" is not a plain word — say "${h.say}"` : `sheet ${i + 1}: "${h.word}" is a long word — say it in small words`);
-    // Scarcity is a claim about the gym: only what the owner typed as true of this offer, with his number.
-    const scarce = apos(hasOffer ? s.toLowerCase().split(key).join(" ") : s).match(SCARCE);
+    // Scarcity is a claim about the gym: it stands on the owner's word — his typed fact (with its number), or this sheet's own words.
+    const scarce = scarceOf(s, offer);
     if (scarce) {
       const num = scarce[0].match(/\d+/)?.[0];
-      if (!scarceFacts.length) errs.push(`sheet ${i + 1} says places are limited ("${scarce[0]}"): a sheet says that only when you have typed it as true of this offer (What each challenge includes, e.g. "Only 10 places")`);
-      else if (num && !factNumbers.has(num)) errs.push(`sheet ${i + 1} says "${scarce[0]}": the number you typed for this offer is ${[...factNumbers].join(" or ") || "not a number"} (What each challenge includes)`);
+      if (scarceFacts.length) { if (num && factNumbers.size && !factNumbers.has(num)) errs.push(`sheet ${i + 1} says "${scarce[0]}": the number you typed for this offer is ${[...factNumbers].join(" or ")} (What each challenge includes)`); }
+      else if (!ask && !approved.includes(lettersOf(s))) errs.push(`sheet ${i + 1} says places are limited ("${scarce[0]}"): that is a claim about this gym, so it stands on your word — say it is true when you keep the script, write the sheet yourself, or type it under What each challenge includes (e.g. "Only 10 places")`);
     }
   });
   if (!(endsWithClosing(ss[last], closing) && closingAlone(ss[last], closing))) errs.push(`the last sheet is the closing line, word for word, and nothing else: "${closing}"`);
@@ -119,32 +134,47 @@ export const readSheetScripts = (gymDir) => readScripts(gymDir).sheets;
 /** Add a sheet script: the owner's own is kept at once, a drafted one waits for him. Never twice. */
 export function addSheetScript(gymDir, { sheets, offer, source = "owner" }, { profile = {}, closing = closingLine(), plain = plainWords() } = {}) {
   if (typeof offer !== "string" || norm(offer).length < 3) throw new Error("the offer's exact words are needed");
-  const ss = tidy(sheets, closing), errs = sheetProblems(ss, { offer, profile, closing, plain, facts: factsFor(gymDir, offer) });
+  // His own sheets are his word, scarcity included; a drafted script's scarcity sheet is a suggestion that waits for his yes.
+  const ss = tidy(sheets, closing), own = source === "owner", ok = own ? scarceSheets(ss, offer).map((x) => lettersOf(x.text)) : [];
+  const errs = sheetProblems(ss, { offer, profile, closing, plain, facts: factsFor(gymDir, offer), approved: ok, ask: !own });
   if (errs.length) throw new Error(errs.join("; "));
   const data = readScripts(gymDir), key = shapeOf(ss);
   if (data.sheets.some((s) => shapeOf(s.sheets) === key)) throw Object.assign(new Error("this script is already here"), { duplicate: true });
-  const row = { id: `p-${sha(key).slice(0, 10)}`, sheets: ss, offer: norm(offer), status: source === "owner" ? "kept" : "draft", source, added: today() };
+  const row = { id: `p-${sha(key).slice(0, 10)}`, sheets: ss, offer: norm(offer), status: own ? "kept" : "draft", source, added: today(), ...(ok.length ? { scarce_ok: ok } : {}) };
   data.sheets.push(row); writeScripts(gymDir, data); return row;
 }
 /** The owner keeps a draft, edits it (checked again), puts it back, or retires it with a reason — never deleted. One that breaks today's rules is not kept until it is edited. */
-export function decideSheetScript(gymDir, id, { status, sheets, reason } = {}, { profile = {}, closing = closingLine(), plain = plainWords() } = {}) {
+export function decideSheetScript(gymDir, id, { status, sheets, reason, scarcity_ok = false } = {}, { profile = {}, closing = closingLine(), plain = plainWords() } = {}) {
   const data = readScripts(gymDir), row = data.sheets.find((s) => s.id === id);
   if (!row) throw new Error(`no such white-paper script: ${id}`);
-  const check = (ss) => sheetProblems(ss, { offer: row.offer, profile, closing, plain, facts: factsFor(gymDir, row.offer) });
-  if (sheets != null) { const ss = tidy(sheets, closing), errs = check(ss); if (errs.length) throw new Error(errs.join("; ")); row.sheets = ss; row.edited = today(); }
+  const facts = factsFor(gymDir, row.offer), check = (ss, approved, ask) => sheetProblems(ss, { offer: row.offer, profile, closing, plain, facts, approved, ask });
+  const yes = (ss, had) => { const now = scarceSheets(ss, row.offer).map((x) => lettersOf(x.text)); return scarcity_ok === true ? now : now.filter((x) => had.includes(x)); };
+  let ok = row.scarce_ok || [];
+  if (sheets != null) {
+    // A sheet he wrote or changed himself is his word; a suggested one he left alone still waits for his yes.
+    const ss = tidy(sheets, closing), before = row.sheets.map(lettersOf), mine = scarceSheets(ss, row.offer).map((x) => lettersOf(x.text)).filter((x) => !before.includes(x));
+    ok = yes(ss, [...ok, ...mine]);
+    const errs = check(ss, ok, (status ?? row.status) !== "kept"); if (errs.length) throw new Error(errs.join("; "));
+    row.sheets = ss; row.edited = today();
+  } else ok = yes(row.sheets, ok);
   if (status != null) {
     if (!["kept", "draft", "retired"].includes(status)) throw new Error("status must be kept, draft or retired");
     if (status === "retired") { if (typeof reason !== "string" || reason.trim().length < 3) throw new Error("retiring a script needs a reason"); row.reason = reason.trim(); row.retired_on = today(); }
     else { delete row.reason; delete row.retired_on; }
-    if (status === "kept" && row.status !== "kept") { const errs = check(row.sheets); if (errs.length) throw new Error(`edit it first: ${errs.join("; ")}`); }
+    if (status === "kept" && row.status !== "kept") {
+      const errs = check(row.sheets, ok, false), wait = scarcityOf({ ...row, scarce_ok: ok }, facts);
+      if (errs.length && wait && wait.by == null && !check(row.sheets, ok, true).length) throw Object.assign(new Error(`sheet ${wait.sheet} says "${wait.text}": that is the agent's suggestion. Say it is true of this offer to keep the script, or change the sheet first`), { scarcity: wait });
+      if (errs.length) throw new Error(`edit it first: ${errs.join("; ")}`);
+    }
     row.status = status;
   }
+  if (ok.length) row.scarce_ok = ok; else delete row.scarce_ok;
   writeScripts(gymDir, data); return row;
 }
 const sameOffer = (a, b) => norm(a).toLowerCase() === norm(b).toLowerCase();
 export const keptSheetScripts = (gymDir, offer = null) => readSheetScripts(gymDir).filter((s) => s.status === "kept" && (!offer || sameOffer(s.offer, offer)));
 /** What a sheet script on file breaks by today's rules: empty when it may be filmed. */
-export const sheetIssues = (script, { profile = {}, closing = closingLine(), plain = plainWords(), gymDir = null } = {}) => sheetProblems(script.sheets, { offer: script.offer, profile, closing, plain, facts: gymDir ? factsFor(gymDir, script.offer) : [] });
+export const sheetIssues = (script, { profile = {}, closing = closingLine(), plain = plainWords(), gymDir = null } = {}) => sheetProblems(script.sheets, { offer: script.offer, profile, closing, plain, facts: gymDir ? factsFor(gymDir, script.offer) : [], approved: script.scarce_ok || [], ask: script.status === "draft" });
 export const readySheetScripts = (gymDir, offer = null, opts = {}) => keptSheetScripts(gymDir, offer).filter((x) => !sheetIssues(x, { gymDir, ...opts }).length);
 /** Why an offer has no white-paper script ready, and what to press. */
 export function noSheetScriptWhy(gymDir, offer, { libraryDir = videoLibraryDir(), profile = readJson(join(gymDir, "gym-profile.json")) || {} } = {}) {
@@ -180,7 +210,7 @@ export function buildSheetPrompt({ profile = {}, offer, audience = null, count =
 1. One or two sheets that call the right person out, or name ONE thing that bothers them in their day — a moment of their day, never a judgement of them.
 2. One sheet that names the programme in its exact words, "${offer}", with at most three small words around it ("Join our ${offer}").
 3. One to three sheets of what they get. ${facts.length ? "Each fact below may be its own sheet, said in a few of its own words; say nothing else about how the programme works." : "Nothing about how the programme works was given, so say what the person will feel or be able to do, and state no fact about the gym."}
-4. ${scarce.length ? `One sheet of scarcity, only as the facts state it (${scarce.map((f) => `"${f}"`).join("; ")}): the same number, nothing added.` : "NO sheet about limited places, a number of people or a deadline: none was given as a fact, and an invented one is a false claim."}
+4. ALWAYS exactly one sheet of scarcity, just before the last sheet. ${scarce.length ? `Say it only as the facts state it (${scarce.map((f) => `"${f}"`).join("; ")}): the same number, nothing added.` : `The owner has typed no number of places, so say that places are limited with NO number and no date — "But we have limited spots!", "Places are limited." — for the owner to check and to put his own number in. Never invent a number of people or places, and never a deadline.`}
 5. The last sheet is exactly this, and nothing else: "${closing}"`,
     `THE RULES. ${SHEETS[0]} to ${SHEETS[1]} sheets. Each sheet is ${SHEET_WORDS[0]} to ${SHEET_WORDS[1]} words — the last sheet and the sheet with the programme's name may be longer — a phrase read in two seconds. A sentence may run over two sheets, with "…" at the break. The gym speaks as "we" and "our"; never "I", "my" or "me". At most one sheet may call people out by where they live, with the place written exactly {AREA} ("Live near {AREA}?"): use it in about half the scripts, and never name a country or a city. Never: a price, free, a trial, before and after, a guarantee, a promised result, a number of kilos or sizes, an ideal body, "tap", an emoji, a hashtag, an em dash.${never.length ? ` Never these words: ${never.join(", ")}.` : ""} Each script takes a different way in.`,
     PLAIN_RULE,
@@ -203,7 +233,11 @@ export async function draftSheetScripts({ brandDir, offer, audience = null, coun
     const { prompt, schema } = buildSheetPrompt({ profile, offer: offer.trim(), audience, count: count - added.length, facts, pains, ...src, existing: readSheetScripts(brandDir).filter((s) => s.status !== "retired").map((s) => s.sheets.join(" / ")), closing, refused: dropped.map((d) => `"${d.text}" — ${d.reason}`).slice(0, 6) });
     const answer = await ask(null, prompt, schema, { model }); calls++;
     for (const d of (answer?.scripts || []).slice(0, count - added.length)) {
-      try { added.push(addSheetScript(brandDir, { sheets: d.sheets, offer: offer.trim(), source: "drafted" }, { profile, closing, plain })); }
+      try {
+        // Every drafted script carries one scarcity sheet (the owner, 2026-11-16: "by default we should have it"): his to approve or change at Keep.
+        if (!scarceSheets(tidy(d.sheets, closing), offer.trim()).length) throw new Error("no sheet says places are limited: every script has exactly one, just before the last sheet");
+        added.push(addSheetScript(brandDir, { sheets: d.sheets, offer: offer.trim(), source: "drafted" }, { profile, closing, plain }));
+      }
       catch (e) { dropped.push({ text: (d.sheets || []).join(" / "), reason: e.message }); log(`  dropped: ${e.message}`); }
     }
   }
