@@ -387,6 +387,8 @@ const WAITS = [
   [/POST/, /\/batch\/check$|\/api\/preview$/, null], [/PUT/, /\/picks$/, null], [/GET/, /\/cycle$|\/progress$|\/api\/run\/|\/api\/status$|\/api\/token$|\/api\/enums$|\/api\/clients$|\/batch-setup$|\/api\/client\/[^/]+$/, null],
   [/GET/, /\/api\/portfolio$/, "Adding up every gym's numbers from what is on file."],
   [/GET/, /\/api\/library\/survey/, null],
+  [/PUT/, /\/coaches\/sample\//, 'Saving the coach video as it is and pulling still frames from it. A large video takes a few seconds.'],
+  [/GET/, /\/coaches$/, null],
   [/POST/, /\/video\/draft$/, 'The agent is drafting video scripts and checking each one against the rules. About half a minute.'],
   [/POST/, /\/video\/script\/[\w-]+\/propose$/, 'The agent is reading the script aloud and writing the edit it needs, for you to approve. A few seconds.'],
   [/POST/, /\/video\/facts\/suggest$/, 'The agent is reading your sample scripts for facts to tick. About half a minute.'],
@@ -997,7 +999,9 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     <p class="hint" id="cdShape" style="margin-top:10px"><b>Shape:</b> every feed ad is portrait 4:5 and its Stories and Reels version 9:16, made from the ad's own photo. The square (1:1) is no longer made; a batch made as a square before keeps its shape.</p>
   </div>
   <div class="card" id="cdPresenter"><h3>Presenter · videos</h3>
-    <p class="hint">Who talks to the camera in this gym's videos. An invented person who speaks for the gym (“we”, “our”), never as a named coach or a member with a story of their own. Choose what fits the gym — no video is made until this is set.</p>
+    <div id="cdCoaches"><p class="hint">Loading who presents…</p></div>
+    <h4 style="margin:14px 0 4px">The invented presenter</h4>
+    <p class="hint">Who talks to the camera when the gym does not present with its own coaches. An invented person who speaks for the gym (“we”, “our”), never as a named coach or a member with a story of their own. Choose what fits the gym — no video of this kind is made until this is set.</p>
     <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
       <div><label for="cdPresGender">Who presents</label><select id="cdPresGender"><option value="" ${D.presenter?'':'selected'}>— not set —</option><option value="woman" ${D.presenter?.gender==='woman'?'selected':''}>A woman</option><option value="man" ${D.presenter?.gender==='man'?'selected':''}>A man</option></select></div>
       <div><label for="cdPresAge">About what age</label><input id="cdPresAge" type="number" min="20" max="65" style="width:90px" value="${esc(D.presenter?.age ?? 35)}"></div>
@@ -1020,6 +1024,7 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     ${hasBrand?'':'<p class="hint" style="margin:6px 0 0">Give the gym a primary colour on Brand & photography to use its brand palettes.</p>'}
   </div>
   ${saveBar('profile')}`;
+  chMount();
 }
 function cdList(k,i,val){ const cd = STATE.profile.creative_defaults ||= {}; (cd[k] ||= [])[i] = k==='locations' ? val.toUpperCase() : val; dirty('profile'); }
 function cdAdd(k){ const cd = STATE.profile.creative_defaults ||= {}; (cd[k] ||= []).push(''); dirty('profile'); render(); }
@@ -1629,7 +1634,7 @@ function briefFromDraft(){
   return { batch_id: d.batch_id || autoId(), ...words, free:false, generated, real:d.real, looks_per_photo:Number(d.looks_per_photo)||1,
     max_calls: d.max_calls===''? Math.max(generated, Math.min(LIM.calls, generated*attempts)) : Number(d.max_calls), attempts, scenes:null, ...(d.seed?{seed:d.seed}:{}), ...(direction?{direction}:{}),
     ...(generated>0 && d.age_min!=='' && d.age_max!=='' ? { age_range: [Number(d.age_min), Number(d.age_max)] } : {}),
-    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(d.words_weight && generated>0 ? { words_weight: d.words_weight } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(), ...(Number(d.videos) > 0 || Number(d.videos_paper) > 0 ? { videos: (()=>{ const t = Math.max(0, Math.round(Number(d.videos)||0)), a = Math.max(0, Math.min(t, Math.round(Number(d.videos_active)||0))), p = Math.max(0, Math.round(Number(d.videos_paper)||0)); return { ...(t - a > 0 || (!a && !p) ? { presenter: t - a } : {}), ...(a ? { active: a } : {}), ...(p ? { paper: p } : {}) }; })() } : {}),
+    ...(d.look && d.look!=='reference' ? { look: d.look } : {}), ...(d.words_weight && generated>0 ? { words_weight: d.words_weight } : {}), ...(()=>{ const c = Object.fromEntries(Object.entries(d.cards||{}).map(([k,n])=>[k, Math.max(0, Math.round(Number(n)||0))]).filter(([,n])=>n>0)); return Object.keys(c).length ? { cards: c } : {}; })(), ...(d.coach && (Number(d.videos) > 0 || Number(d.videos_paper) > 0) ? { coach: d.coach } : {}), ...(Number(d.videos) > 0 || Number(d.videos_paper) > 0 ? { videos: (()=>{ const t = Math.max(0, Math.round(Number(d.videos)||0)), a = Math.max(0, Math.min(t, Math.round(Number(d.videos_active)||0))), p = Math.max(0, Math.round(Number(d.videos_paper)||0)); return { ...(t - a > 0 || (!a && !p) ? { presenter: t - a } : {}), ...(a ? { active: a } : {}), ...(p ? { paper: p } : {}) }; })() } : {}),
     // The photos per kind. An all-workout batch says nothing when that is the gym's own default — and says "workout" when the gym's default is a mix
     // (2026-11-11: a brief naming no kind takes the gym's mix, so the portraits set to 0 on this form came back and a gym without portrait scenes could not run a batch).
     ...(()=>{ const m = draftMix(d, generated), live = Object.keys(m), gymMixed = Object.entries(B.setup.mix || profileMix(B.setup.creative_defaults || {})).some(([f,n])=>f!=='workout' && n>0); return !generated ? {} : live.length===1 && live[0]==='workout' ? (gymMixed ? { format:'workout' } : {}) : live.length===1 ? { format: live[0] } : { mix: m }; })(),
@@ -1676,6 +1681,7 @@ function paintBatch(v){
           <div><label for="bVideos" style="margin-top:0">Presenter videos <span class="hint" style="font-weight:400">· someone talking to camera, 9:16</span></label><div class="row" style="gap:10px"><input id="bVideos" type="number" min="0" max="${B.setup.videos?.max||9}" style="width:56px" value="${esc(d.videos||0)}" oninput="bVideoSet(this.value)"><span class="hint" id="bVideosHint" style="align-self:center">${bVideosHint()}</span><a href="#" onclick="go('scenes');return false" style="align-self:center">scripts</a></div>
             <div class="row" style="gap:10px;margin-top:6px"><input id="bVideosActive" type="number" min="0" max="${B.setup.videos?.max||9}" style="width:56px" value="${esc(d.videos_active||0)}" oninput="bVideoActiveSet(this.value)" aria-label="Of which with exercises"><span class="hint" style="align-self:center">of which <b>with exercises</b> · the presenter does a simple move, stops, then says the line. The agent picks the moves from the kit in your room photos</span></div>
             <div class="row" style="gap:10px;margin-top:6px"><input id="bVideosPaper" type="number" min="0" max="${B.setup.videos?.max||9}" style="width:56px" value="${esc(d.videos_paper||0)}" oninput="bVideoPaperSet(this.value)" aria-label="White-paper videos"><span class="hint" id="bVideosPaperHint" style="align-self:center">${bPaperHint()}</span></div>
+            ${B.setup.videos?.presents==='coaches'?`<div class="row" style="gap:10px;margin-top:6px;align-items:center"><label for="bCoach" style="margin:0;font-weight:500">Who presents</label><select id="bCoach" onchange="bSet('coach',this.value||null)"><option value="">Shared evenly between the coaches</option>${(B.setup.videos.coaches||[]).map(c=>`<option value="${esc(c.id)}" ${d.coach===c.id?'selected':''} ${c.why?'disabled':''}>${esc(c.name)}${c.why?' · cannot be filmed yet':''}</option>`).join('')}</select><span class="hint" id="bCoachHint" style="margin:0">${(B.setup.videos.coaches||[]).filter(c=>!c.why).length?'the gym\'s own coaches, from their sample videos':'<span style="color:var(--warn)">no coach can be filmed yet: Ad defaults → Presenter · videos</span>'}</span></div>`:''}
             <div class="hint" style="margin-top:6px">Up to ${B.setup.videos?.max||9} videos a batch, every kind together · each needs its own script kept for this offer. <span id="bVideosWhy" style="color:var(--warn)"></span></div></div>
           <div><label for="bLook" style="margin-top:0">Look</label><select id="bLook" onchange="bSet('look',this.value)"><option value="reference" ${d.look!=='formula'?'selected':''}>Reference set</option><option value="formula" ${d.look==='formula'?'selected':''}>Formula (callout top, offer low)</option></select></div>
           <div><label for="bWordsW" style="margin-top:0" title="Which layouts the ads get is weighted toward more room for the words, or less. The words themselves never change.">Size of the words</label><select id="bWordsW" onchange="bSet('words_weight',this.value)"><option value="" ${!d.words_weight?'selected':''}>As each layout sets them</option><option value="bolder" ${d.words_weight==='bolder'?'selected':''}>Larger where the photo allows</option><option value="quieter" ${d.words_weight==='quieter'?'selected':''}>Smaller where the photo allows</option></select></div>
@@ -1767,7 +1773,7 @@ function bVideoSet(v){ B.draft.videos = Math.max(0, Math.min(bVideoMax() - (B.dr
 const vidKinds = (v, long) => { const k = [v.active ? `${v.active} with exercises${long ? ': the agent picks a simple move for some cuts' : ''}` : '', v.paper ? `${v.paper} white paper${long ? ': no voice, the words on hand-written sheets' : ''}` : ''].filter(Boolean); return k.length ? ` (${k.join(' · ')})` : ''; };
 /** Under the videos count: who presents, and how many scripts are kept for the offer typed. */
 function bVideosHint(){ const V = B.setup.videos || {}, offer = (B.draft?.offer||'').replace(/\s+/g,' ').trim().toLowerCase(), n = (V.kept||[]).filter(x=>!offer || x.offer.toLowerCase()===offer).length;
-  const who = V.presenter ? `presented by a ${esc(V.presenter.gender)}` : '<span style="color:var(--warn)">nobody set to present</span>';
+  const ready = (V.coaches||[]).filter(c=>!c.why), who = V.presents === 'coaches' ? (ready.length ? `presented by ${ready.length===1?esc(ready[0].name):'the gym\'s coaches'}` : '<span style="color:var(--warn)">no coach can be filmed yet</span>') : V.presenter ? `presented by a ${esc(V.presenter.gender)}` : '<span style="color:var(--warn)">nobody set to present</span>';
   if (n || !offer) return `${n} script${n===1?'':'s'} ready${offer?' for this offer':''} · ${who}`;
   const stale = (V.needs_edit||[]).filter(x=>x.offer.toLowerCase()===offer).length;
   if (stale) return `<span id="bVideoNone" style="color:var(--warn)">the script kept for this offer needs one edit before it is filmed (every script now ends with the closing line)</span> · <a href="#" id="bVideoDraft" onclick="bVideoScripts(false);return false">Edit it →</a> · ${who}`;
@@ -2163,7 +2169,7 @@ const waits = !photo && it.video_flags > 0 && st !== 'exclude';
   } else if (it.video) {
     // A video ad: it plays here, sound and all. Keep and Exclude work as for any ad; a video is 9:16 already, so it has no Stories version to make.
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · ${it.video_kind==='paper'?'White-paper video · no voice':'Presenter video'}${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${rvLinesPanel(it)}${STAMPS}</div>`;
-    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${it.video_kind==='paper'?'white-paper video':'presenter video'}</span>${it.video_flags?`<span class="note">waiting for you: ${it.video_flags} ${rvNoun(it)}${it.video_flags===1?'':'s'} did not pass its check</span>`:''}${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
+    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${it.video_kind==='paper'?'white-paper video':'presenter video'}</span>${it.video_coach?`<span id="rvCoach">${esc(it.video_coach)} presents · your eye is the check that it looks and sounds like them</span>`:''}${it.video_flags?`<span class="note">waiting for you: ${it.video_flags} ${rvNoun(it)}${it.video_flags===1?'':'s'} did not pass its check</span>`:''}${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
   } else {
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
       <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="" draggable="false">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>${STAMPS}</div>`;
@@ -4150,9 +4156,126 @@ function paintAssets(v){
   </div>
   ${section(fac, 'Click photos to select them, then survey what a clean-up would remove (free) or clean them (about 4 image calls each). Cleaned copies keep the same name.', cleanBtns('facility'))}
   ${d.kinds.filter(k=>k.id!=='facility').map(k=>section(k, k.id==='logo'?'The profile\'s logo file is marked in use; it is kept for later and never drawn on the offer-first ads.':k.id==='brand'?'Screenshots of the website, brand guidelines, past ads the gym made itself.':k.id==='coaches'||k.id==='members'?'References only, never in an ad. One that shows the room well can be cleaned and used as the room reference: select it, clean it, then "Use as room reference" above.':'', (k.id==='coaches'||k.id==='members')?cleanBtns(k.id):'')).join('')}
+  <div class="card" id="cvCard"><h3>Coach videos</h3><p class="hint">Loading…</p></div>
   <div id="runbox"></div>`;
   renderRunBox();
+  chMount();
 }
+// ── A gym's real coaches (2026-11-17) ────────────────────────────────────────
+// The gym's own coaches in its videos: named by the owner, each with their consent on file, pictured from real frames of
+// sample videos dropped on Photos & assets. Two places, no new step: Ad defaults → Presenter · videos (who presents, the
+// coaches, their consent and voice, the uniform) and Photos & assets → Coach videos (the samples, who each shows, the
+// one button that reads them, each coach's starting pictures). Nobody is named from a face: the groups are by clothes.
+const CH = { data:null, gym:null, busy:false };
+async function chMount(){
+  if (CH.gym !== STATE.sel) CH.data = null;
+  chRepaint();
+  try { CH.data = await api(`/api/client/${STATE.sel}/coaches`); CH.gym = STATE.sel; } catch(e){ CH.data = { error: e.message }; }
+  chRepaint();
+}
+function chRepaint(){ const a = $('#cdCoaches'); if (a) a.innerHTML = chDefaultsBlock(); const b = $('#cvCard'); if (b) b.innerHTML = chSamplesBlock(); }
+async function chDo(path, opts){ try { CH.data = await api(`/api/client/${STATE.sel}/coaches${path}`, opts); CH.gym = STATE.sel; chRepaint(); return true; } catch(e){ toast(e.message, 'err'); return false; } }
+const chCoach = (id) => (CH.data?.coaches || []).find(c => c.id === id);
+function chDefaultsBlock(){
+  const D = CH.data; if (!D) return '<p class="hint">Loading who presents…</p>'; if (D.error) return `<p class="hint" style="color:var(--err)">${esc(D.error)}</p>`;
+  const radio = (v, l, d) => `<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:6px"><input type="radio" name="chPresents" value="${v}" style="width:auto;margin:0" ${D.presents===v?'checked':''} onchange="chDo('/presents',{method:'POST',body:{presents:'${v}'}})"> ${l} <span class="hint" style="font-weight:400">· ${d}</span></label>`;
+  const ready = D.coaches.filter(c => !c.why).length;
+  const card = (c) => `<div class="chc" data-coach="${esc(c.id)}" style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px">
+      <div class="row" style="gap:8px;align-items:center"><b>${esc(c.name)}</b><span class="pill ${c.why?'warn':'on'}" data-state>${c.why?'not filmed yet':'can be filmed'}</span><span class="hint" style="margin:0">${c.samples.length} sample${c.samples.length===1?'':'s'} · ${c.starts.filter(s=>!s.off).length} starting picture${c.starts.filter(s=>!s.off).length===1?'':'s'}</span><div class="spacer"></div>
+        <button class="sm" data-consent onclick="chConsentOpen('${esc(c.id)}')">${c.consent?'Change consent…':'Record consent…'}</button>${c.status==='off'?`<button class="sm" onclick="chDo('/coach/${esc(c.id)}',{method:'PUT',body:{on:true}})">Switch on</button>`:`<button class="sm" data-off onclick="chOffOpen('${esc(c.id)}')">Switch off…</button>`}</div>
+      ${c.why?`<p class="hint" data-why style="color:var(--warn);margin:6px 0 0">${esc(c.why)}</p>`:''}
+      <p class="hint" data-consent-line style="margin:6px 0 0">${c.consent?`Consent on file: face <b>${c.consent.face?'yes':'no'}</b>, voice <b>${c.consent.voice?'yes':'no'}</b> · ${esc(c.consent.by)} · ${esc(c.consent.on)}`:'No consent on file: nothing is made in this coach\'s likeness until there is.'}</p>
+      ${c.paper_why?`<p class="hint" style="margin:4px 0 0">${esc(c.paper_why)}</p>`:''}
+      ${(c.shown_in||[]).length?`<p class="hint" data-shown style="margin:4px 0 0${c.why?';color:var(--warn)':''}">${c.why?`Videos already made still show ${esc(c.name)}: `:`Shown in: `}${c.shown_in.map(x=>`${esc(x.batch)} (${x.ads} video ad${x.ads===1?'':'s'}${x.on_meta?`, ${x.on_meta} on Facebook`:''})`).join(' · ')}${c.why&&c.shown_in.some(x=>x.on_meta)?'. Pause those in Ads Manager: the app pauses nothing by itself.':''}</p>`:''}
+      <label style="margin-top:8px">How ${esc(c.name)} sounds <span class="n">· told to the video model; ${c.voice?.by==='owner'?'your words':c.voice?'from the samples, yours to change':'read the samples to fill this'}</span></label>
+      <div class="row" style="gap:8px;align-items:flex-start"><textarea data-voice rows="2" style="flex:1" placeholder="e.g. a clear, medium-low voice with a light Singaporean accent, warm and measured">${esc(c.voice?.description || '')}</textarea><button class="sm" onclick="chDo('/coach/${esc(c.id)}',{method:'PUT',body:{voice:this.parentNode.querySelector('textarea').value}}).then(ok=>ok&&toast('Voice saved','ok'))">Save voice</button></div>
+    </div>`;
+  return `<label style="margin-top:0">Who presents this gym's videos</label>
+    ${radio('invented','An invented presenter','nobody in particular; set below')}
+    ${radio('coaches',"The gym's own coaches",'their real faces, voices and uniform, from sample videos you drop on Photos & assets')}
+    ${D.presents==='coaches'||D.coaches.length?`<div id="chList" style="margin-top:10px">
+      <div class="row" style="gap:8px;align-items:center"><h4 style="margin:0">Coaches <span class="pill">${D.coaches.length}</span></h4><span class="hint" style="margin:0">${D.presents==='coaches'?(ready?`${ready} can be filmed · a batch's videos are shared evenly between them`:'<span style="color:var(--warn)">nobody can be filmed yet: no video will be made</span>'):'not in use while the invented presenter is chosen'}</span><div class="spacer"></div><button class="sm" id="chAdd" onclick="chAddOpen()">Add a coach…</button><a href="#" onclick="go('photos');return false">Coach videos →</a></div>
+      ${D.coaches.map(card).join('') || '<p class="hint" style="margin:8px 0 0">No coach yet. Add each coach by name, record their consent, then drop sample videos of them on Photos & assets → Coach videos.</p>'}
+      <div class="row" style="gap:8px;align-items:flex-end;margin-top:10px"><div style="flex:1"><label for="chUniform" style="margin-top:0">The uniform's words <span class="n">· exactly as printed on the shirt; every clip is checked against them${D.uniform?.by==='read'?' · read from the samples':''}</span></label><input id="chUniform" value="${esc(D.uniform?.words || '')}" placeholder="e.g. STRONGER THAN YESTERDAY"></div><button class="sm" onclick="chDo('/uniform',{method:'POST',body:{words:$('#chUniform').value,logo:${JSON.stringify(D.uniform?.logo||'').replace(/"/g,'&quot;')}}}).then(ok=>ok&&toast('Uniform saved','ok'))">Save uniform</button></div>
+      <p class="hint" style="margin:8px 0 0">A coach only ever says a script you have kept. A coach whose consent is taken back, or who is switched off, is in no new video; ads already running are yours to pause.</p></div>`:''}`;
+}
+function chAddOpen(){
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Add a coach</h3>
+    <p class="hint">The name the gym calls them. You say who a coach is; the app never names anyone from a face.</p>
+    <label for="chName">Name</label><input id="chName" maxlength="60" placeholder="e.g. Sam">
+    <p class="hint" id="chAddErr" style="color:var(--err);min-height:16px;margin:6px 0 0"></p>
+    <div class="row" style="margin-top:10px"><button class="primary" id="chAddGo" onclick="chAddGo()">Add</button><button onclick="$('#gModal').innerHTML=''">Cancel</button></div></div></div>`;
+  $('#chName').focus();
+}
+async function chAddGo(){ try { CH.data = await api(`/api/client/${STATE.sel}/coaches/coach`, { method:'POST', body:{ name: $('#chName').value } }); $('#gModal').innerHTML=''; chRepaint(); } catch(e){ $('#chAddErr').textContent = e.message; } }
+function chConsentOpen(id){
+  const c = chCoach(id); if (!c) return;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>${esc(c.name)}'s consent</h3>
+    <p class="hint">Record what ${esc(c.name)} has agreed to, in writing. Without it no video is made in their likeness. To take consent back, untick and save.</p>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--text)"><input type="checkbox" id="chFace" style="width:auto;margin:0" ${c.consent?.face?'checked':''}> Their face: videos may look like them</label>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--text)"><input type="checkbox" id="chVoice" style="width:auto;margin:0" ${c.consent?.voice?'checked':''}> Their voice: videos may sound like them</label>
+    <label for="chBy">Who gave it, and how</label><input id="chBy" value="${esc(c.consent?.by || '')}" placeholder="e.g. signed form, 17 Nov · WhatsApp message to me">
+    <p class="hint" id="chConErr" style="color:var(--err);min-height:16px;margin:6px 0 0"></p>
+    <div class="row" style="margin-top:10px"><button class="primary" id="chConGo" onclick="chConsentGo('${esc(id)}')">Save consent</button><button onclick="$('#gModal').innerHTML=''">Cancel</button></div></div></div>`;
+}
+async function chConsentGo(id){ try { CH.data = await api(`/api/client/${STATE.sel}/coaches/coach/${id}`, { method:'PUT', body:{ consent:{ face: $('#chFace').checked, voice: $('#chVoice').checked, by: $('#chBy').value } } }); $('#gModal').innerHTML=''; chRepaint(); } catch(e){ $('#chConErr').textContent = e.message; } }
+function chOffOpen(id, start=null){
+  const c = chCoach(id); if (!c) return;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>${start?'Take this picture off':`Switch ${esc(c.name)} off`}</h3>
+    <p class="hint">${start?`No clip of ${esc(c.name)} starts from it again. The file is kept.`:`${esc(c.name)} is in no new video until switched back on. They stay on file, and ads already running are yours to pause.`}</p>
+    <label for="chWhy">Why</label><input id="chWhy" placeholder="${start?'e.g. eyes half closed':'e.g. left the gym'}">
+    <p class="hint" id="chOffErr" style="color:var(--err);min-height:16px;margin:6px 0 0"></p>
+    <div class="row" style="margin-top:10px"><button class="primary" id="chOffGo" onclick="chOffGo('${esc(id)}', ${start?`'${esc(start)}'`:'null'})">${start?'Take it off':'Switch off'}</button><button onclick="$('#gModal').innerHTML=''">Cancel</button></div></div></div>`;
+  $('#chWhy').focus();
+}
+async function chOffGo(id, start){ try { CH.data = await api(`/api/client/${STATE.sel}/coaches/coach/${id}`, { method:'PUT', body:{ on:false, reason: $('#chWhy').value, ...(start?{ start }:{}) } }); $('#gModal').innerHTML=''; chRepaint(); } catch(e){ $('#chOffErr').textContent = e.message; } }
+/** Photos & assets → Coach videos. */
+function chSamplesBlock(){
+  const D = CH.data; if (!D) return '<h3>Coach videos</h3><p class="hint">Loading…</p>'; if (D.error) return `<h3>Coach videos</h3><p class="hint" style="color:var(--err)">${esc(D.error)}</p>`;
+  const running = !!D.reading || (STATE.run && !STATE.run.done && STATE.run.kind === 'coach-read');
+  const who = (name, cur, on) => `<select style="font-size:12px;padding:3px 6px" onchange="${on}"><option value="">who is this?</option>${D.coaches.map(c=>`<option value="${esc(c.id)}" ${cur===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select>`;
+  const byName = new Map(D.samples.map(s => [s.name, s]));
+  const tile = (x) => { const s = byName.get(x.name); if (!s) return ''; return `<div class="cvs" data-sample="${esc(s.name)}" style="width:132px"><div style="width:132px;height:234px;background:#111;border-radius:6px;overflow:hidden">${s.thumb?`<img src="${esc(s.thumb)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover">`:''}</div>
+      <div style="font-size:11.5px;margin-top:3px"><b title="${esc(s.original||s.name)}">${esc(s.name)}</b>${s.seconds?` · ${Math.round(s.seconds)} s`:''}<br><span class="hint" style="margin:0">${s.read?esc(s.read.spot||''):'not read yet'}</span></div>
+      ${who(s.name, s.coach, `chShow('${esc(s.name)}', this.value)`)}</div>`; };
+  const groups = D.groups.map((g, i) => `<div class="cvg" data-group="${esc(g.key)}" style="margin-top:12px"><div class="row" style="gap:8px;align-items:center"><b>${esc(g.label)}</b><span class="pill">${g.samples.length}</span>${g.key!=='unread'&&D.coaches.length?`<span class="hint" style="margin:0">these all show</span>${who('', g.coach, `chShowGroup(${i}, this.value)`)}`:''}</div>
+      <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:6px;align-items:flex-start">${g.samples.map(tile).join('')}</div></div>`).join('');
+  const starts = D.coaches.filter(c => c.starts.length).map(c => `<div class="cvst" data-starts="${esc(c.id)}" style="margin-top:14px"><div class="row" style="gap:8px;align-items:center"><b>${esc(c.name)} · starting pictures</b><span class="pill">${c.starts.filter(s=>!s.off).length}</span><span class="hint" style="margin:0">real frames, cut so the shirt's words sit above the captions. A talking cut starts from one of these; take off any you do not like.</span></div>
+      <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:6px;align-items:flex-start">${c.starts.map(s => `<div style="width:112px;opacity:${s.off?0.45:1}"><a href="${esc(s.url)}" target="_blank" rel="noopener"><img src="${esc(s.url)}" alt="" loading="lazy" style="width:112px;height:199px;object-fit:cover;border-radius:6px"></a>
+        <div style="font-size:11px">${s.off?`off: ${esc(s.off.reason)}`:s.clear?esc(s.framing):'<span style="color:var(--warn)">words too low: used last</span>'}</div>${s.off?`<button class="sm" onclick="chDo('/coach/${esc(c.id)}',{method:'PUT',body:{on:true,start:'${esc(s.file)}'}})">Put back</button>`:`<button class="sm" onclick="chOffOpen('${esc(c.id)}','${esc(s.file)}')">Take off…</button>`}</div>`).join('')}</div></div>`).join('');
+  return `<div class="row"><h3 style="margin:0">Coach videos <span class="pill">${D.samples.length}</span></h3><div class="spacer"></div><button class="${D.unread&&!running?'primary':''}" id="cvRead" ${D.unread&&!running?'':'disabled'} title="${D.unread?'':D.samples.length?'every sample has been read':'add sample videos first'}" onclick="chReadAsk()">${running?'Reading…':D.unread?`Read ${D.unread} sample${D.unread===1?'':'s'}…`:'Read the samples…'}</button></div>
+    <p class="hint" style="margin-top:8px">Short videos of the gym's own coaches talking to the camera in uniform, as filmed: a phone held upright, the coach close enough to fill the frame from the hips up, looking into the lens. Videos of the coach are what the gym's videos are made to look and sound like (Ad defaults → Presenter · videos). You say who each video shows; nobody is named from a face.</p>
+    ${D.ffmpeg?`<div class="drop" id="cvDrop" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="event.preventDefault();this.classList.remove('over');chFiles(event.dataTransfer.files)">Drop the coach videos here, or <label class="lnk">choose files<input type="file" id="cvFile" multiple accept=".mp4,.mov,.m4v,.jpg,.jpeg,.png,.heic,.webp,video/*,image/*" hidden onchange="chFiles(this.files)"></label>
+      <div style="font-size:12px;margin-top:6px;color:var(--faint)">MP4 or MOV, up to 600 MB each · kept exactly as they are · a file already here is not added twice · nothing is sent anywhere until you press Read</div></div>`:'<p class="hint" style="color:var(--warn)">Sample videos need ffmpeg on this Mac: run <code>brew install ffmpeg</code> once in Terminal.</p>'}
+    <div id="cvMsgs"></div>
+    ${D.samples.length&&!D.coaches.length?'<p class="hint" style="color:var(--warn);margin-top:10px">Add the coaches by name first (Ad defaults → Presenter · videos → Add a coach…), then say who each video shows.</p>':''}
+    ${groups}${starts}`;
+}
+function chMsg(file, text, cls=''){ const box = $('#cvMsgs'); if (!box) return; let el = box.querySelector(`[data-f="${CSS.escape(file)}"]`); if (!el){ el = document.createElement('div'); el.className='amsg'; el.dataset.f=file; box.appendChild(el); } el.className = `amsg ${cls}`; el.textContent = `${file}: ${text}`; }
+async function chFiles(files){
+  const notes = [];
+  for (const f of [...files]) {
+    const m = f.name.match(/\.(mp4|mov|m4v|jpe?g|png|heic|webp)$/i);
+    if (!m) { notes.push([f.name, 'a sample is a video (MP4, MOV) or a still', 'err']); chMsg(f.name, notes.at(-1)[1], 'err'); continue; }
+    chMsg(f.name, `uploading ${Math.round(f.size/1048576)} MB and pulling frames…`);
+    try {
+      const r = await panelFetch(`/api/client/${STATE.sel}/coaches/sample/${slugify(f.name.replace(/\.[^.]+$/,'')).slice(0,48) || 'sample'}.${m[1].toLowerCase()}`, { method:'PUT', headers:{ 'content-type': f.type || 'application/octet-stream', 'x-original-name': encodeURIComponent(f.name) }, body: await f.arrayBuffer() });
+      const j = await r.json().catch(()=>({ error:'bad response' })); if (!r.ok) throw new Error(j.error || r.statusText);
+      CH.data = j; CH.gym = STATE.sel; notes.push([f.name, j.already ? `already here as ${j.added}` : `added as ${j.added}`, 'ok']);
+    } catch(e){ notes.push([f.name, e.message, 'err']); }
+    chRepaint(); for (const [n, t, c] of notes) chMsg(n, t, c);
+  }
+}
+const chShow = (name, id) => { const c = id ? chCoach(id) : null, was = (CH.data.coaches || []).find(x => x.samples.includes(name)); if (c) return chDo(`/coach/${c.id}`, { method:'PUT', body:{ samples: [...new Set([...c.samples, name])] } }); if (was) return chDo(`/coach/${was.id}`, { method:'PUT', body:{ samples: was.samples.filter(n => n !== name) } }); };
+const chShowGroup = (i, id) => { const g = CH.data.groups[i], c = id ? chCoach(id) : null; if (!g || !c) return; return chDo(`/coach/${c.id}`, { method:'PUT', body:{ samples: [...new Set([...c.samples, ...g.samples.map(s => s.name)])] } }); };
+function chReadAsk(){
+  const D = CH.data, n = D?.unread || 0; if (!n) return;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Read ${n} sample${n===1?'':'s'}</h3>
+    <p class="hint">For each video the agent listens to the sound (the words, and how the voice sounds) and looks at eight of its frames (which are fit to start a clip from, what is worn, where it was filmed, what the shirt and the walls say). Then each coach's starting pictures are cut from the real frames.</p>
+    <p class="hint" id="cvReadCost"><b>${n * 2} small calls to the checking model, a few cents in all.</b> No picture and no video is made. The sound and the frames are sent to Google's model for this; nobody is named or recognised by it.</p>
+    <div class="row" style="margin-top:10px"><button class="primary" id="cvReadGo" onclick="chReadGo(${n})">Read ${n} sample${n===1?'':'s'}</button><button onclick="$('#gModal').innerHTML=''">Cancel</button></div></div></div>`;
+}
+function chReadGo(n){ $('#gModal').innerHTML=''; run({ kind:'coach-read', gym: STATE.sel, confirm:{ unread: n } }, () => chMount()); chRepaint(); }
 function aToggle(name){ if (A.sel.has(name)) A.sel.delete(name); else A.sel.add(name); paintAssets($('#view')); }
 function aMsg(file, text, cls=''){ const box = $('#aMsgs'); if (!box) return; let el = box.querySelector(`[data-f="${CSS.escape(file)}"]`); if (!el){ el = document.createElement('div'); el.className='amsg'; el.dataset.f=file; box.appendChild(el); } el.className = `amsg ${cls}`; el.textContent = `${file}: ${text}`; }
 function aDrop(ev){ ev.preventDefault(); $('#aDrop')?.classList.remove('over'); aFiles(ev.dataTransfer.files); }

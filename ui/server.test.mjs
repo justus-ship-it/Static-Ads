@@ -4296,3 +4296,97 @@ test("U64 white-paper videos through the panel (2026-11-15): the third kind's sc
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
   } finally { writeFileSync(pf, before); if (had != null) writeFileSync(scriptsFile, had); else rmSync(scriptsFile, { force: true }); rmSync(out, { recursive: true, force: true }); rmSync(join(g, "batches", "u64-batch"), { recursive: true, force: true }); if (id) rmSync(join(g, "video-clips", id), { recursive: true, force: true }); }
 });
+
+test("U65 a gym's real coaches through the panel (2026-11-17): who presents is the invented presenter or the gym's own coaches; a coach is added by name, their consent recorded for face and voice with who gave it, switched off only with a reason; a sample video is dropped as it is, never twice, and frames are pulled; the owner says who each sample shows and the starting pictures follow; reading is one confirmed run that is refused when there is nothing to read or what was confirmed has changed; batch setup and the brief check take the coaches in place of a presenter and a room photo and say who presents each video; the pages show it — Ad defaults, Photos & assets, Generate Creatives", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8"), cf = join(g, "coaches.json"), sdir = join(g, "brand-assets", "video-samples"), scriptsFile = join(g, "video-scripts.json"), hadScripts = existsSync(scriptsFile) ? readFileSync(scriptsFile, "utf-8") : null;
+  const { readdirSync } = await import("node:fs");
+  const C = async (path = "", opts) => { const r = await call(`/api/client/${GYM}/coaches${path}`, opts); return [r.status, await r.json()]; };
+  try {
+    rmSync(cf, { force: true }); rmSync(sdir, { recursive: true, force: true });
+    let [st, D] = await C();
+    assert.deepEqual([st, D.presents, D.coaches, D.samples, D.unread, D.uniform], [200, "invented", [], [], 0, null]);
+    // Who presents.
+    [st, D] = await C("/presents", { method: "POST", body: { presents: "the owner" } }); assert.equal(st, 400); assert.match(D.error, /the invented presenter or the gym's own coaches/);
+    [st, D] = await C("/presents", { method: "POST", body: { presents: "coaches" } }); assert.deepEqual([st, D.presents, JSON.parse(readFileSync(pf, "utf-8")).creative_defaults.presents], [200, "coaches", "coaches"]);
+    // A coach, by name; consent says who gave it; nothing is filmed without it.
+    [st, D] = await C("/coach", { method: "POST", body: { name: "M" } }); assert.equal(st, 400); assert.match(D.error, /a coach needs a name/);
+    [st, D] = await C("/coach", { method: "POST", body: { name: "Mei" } }); assert.deepEqual([st, D.coaches.map((c) => [c.id, c.name, c.consent])], [200, [["coach-mei", "Mei", null]]]); assert.match(D.coaches[0].why, /written consent is not on file/);
+    [st, D] = await C("/coach", { method: "POST", body: { name: "mei" } }); assert.equal(st, 400); assert.match(D.error, /already on this gym's list/);
+    [st, D] = await C("/coach/coach-mei", { method: "PUT", body: { consent: { face: true, voice: true } } }); assert.equal(st, 400); assert.match(D.error, /say who gave the consent and how/);
+    [st, D] = await C("/coach/coach-mei", { method: "PUT", body: { consent: { face: true, voice: true, by: "signed form, 17 Nov" } } }); assert.deepEqual([st, D.coaches[0].consent.face, D.coaches[0].consent.voice, D.coaches[0].consent.by], [200, true, true, "signed form, 17 Nov"]); assert.match(D.coaches[0].why, /no starting picture yet/);
+    [st, D] = await C("/coach/coach-mei", { method: "PUT", body: {} }); assert.equal(st, 400); assert.match(D.error, /say what changes/);
+    // A sample video: kept as it is, never twice, frames pulled; a file that is neither a video nor a still is refused.
+    const vid = join(dir, "u65-sample.mp4");
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=1080x1920:r=12:d=5", "-f", "lavfi", "-i", "sine=frequency=300:duration=5", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", vid]);
+    const put = async (name, body, orig) => { const r = await fetch(`${panel.url}/api/client/${GYM}/coaches/sample/${name}`, { method: "PUT", headers: { "content-type": "application/octet-stream", "x-panel-token": panel.token, "x-original-name": encodeURIComponent(orig) }, body }); return [r.status, await r.json()]; };
+    [st, D] = await put("notes.txt", Buffer.from("x"), "notes.txt"); assert.equal(st, 400); assert.match(D.error, /a sample is a video/);
+    [st, D] = await put("coach-talking.mp4", readFileSync(vid), "Coach talking.mp4");
+    assert.deepEqual([st, D.added, D.already, D.samples.map((s) => [s.name, s.kind, s.original, s.seconds, s.coach, s.read]), D.unread, readFileSync(join(sdir, "video-01.mp4")).length === readFileSync(vid).length], [200, "video-01.mp4", false, [["video-01.mp4", "video", "Coach talking.mp4", 5, null, null]], 1, true]);
+    assert.ok(readdirSync(join(sdir, "frames", "video-01")).length >= 2 && D.samples[0].thumb.startsWith(`/files/brands/${GYM}/brand-assets/video-samples/frames/video-01/`) && (await fetch(panel.url + D.samples[0].thumb)).status === 200, "frames are pulled, and one is the tile's picture");
+    [st, D] = await put("again.mp4", readFileSync(vid), "again.mp4"); assert.deepEqual([st, D.already, D.samples.length], [200, true, 1]);
+    assert.deepEqual(D.groups.map((x) => [x.label, x.samples.length, x.coach]), [["not read yet", 1, null]]);
+    // Reading: the owner's confirmed click. What was confirmed must be what is true now.
+    let r = await call("/api/run", { method: "POST", body: { kind: "coach-read", gym: GYM, confirm: { unread: 3 } } }); assert.equal(r.status, 409); assert.match((await r.json()).error, /what is on file changed since you looked/);
+    // (The reading itself calls the model: here its result is put on file, as the run would leave it.)
+    const idx = join(sdir, "samples.json"), list = JSON.parse(readFileSync(idx, "utf-8")), frames = readdirSync(join(sdir, "frames", "video-01")).filter((f) => /^at-[\d.]+\.jpg$/.test(f) && !/look/.test(f)).sort();
+    list.samples[0].read = { on: "2026-11-17", heard: { transcript: "one two three four five six seven eight nine ten", speakers: 1, pitch: "medium-low", pace: "measured", accent: "Singaporean English, moderate", energy: "warm", voice: "A clear voice.", words: 10, per_second: 2 }, frames: frames.map((f, index) => ({ index, at: Number(f.match(/at-([\d.]+)\.jpg/)[1]), people: 1, looks_at_lens: true, eyes_open: true, mouth_closed: index === 1, sharp: true, hands_low: true, ready: true, head_box: [150, 400, 290, 600], print_box: [400, 350, 570, 650] })), top: "black T-shirt", bottom: "black shorts", glasses: false, spot: "on the turf lane", shirt_words: "STRONGER THAN YESTERDAY", shirt_logo: "a hexagon", wall_words: [] };
+    writeFileSync(idx, JSON.stringify(list));
+    r = await call("/api/run", { method: "POST", body: { kind: "coach-read", gym: GYM, confirm: { unread: 0 } } }); assert.equal(r.status, 400); assert.match((await r.json()).error, /every sample video has been read already/);
+    // Who the sample shows: the owner's click; the starting pictures follow, cut from its real frames.
+    [st, D] = await C("/coach/coach-mei", { method: "PUT", body: { samples: ["video-09.mp4"] } }); assert.equal(st, 400); assert.match(D.error, /no sample video-09\.mp4/);
+    [st, D] = await C("/coach/coach-mei", { method: "PUT", body: { samples: ["video-01.mp4"] } });
+    const mei = D.coaches[0];
+    assert.deepEqual([st, mei.samples, mei.why, mei.paper_why, mei.starts.length >= 1, mei.starts.every((s) => s.clear && s.url.startsWith(`/files/brands/${GYM}/brand-assets/video-samples/starts/mei/`)), mei.wears.top, mei.voice.by, D.uniform.words, D.samples[0].coach, D.groups.map((x) => [x.label, x.coach])], [200, ["video-01.mp4"], null, null, true, true, "black T-shirt", "read", "STRONGER THAN YESTERDAY", "coach-mei", [["black T-shirt, no glasses", "coach-mei"]]]);
+    assert.equal((await fetch(panel.url + mei.starts[0].url)).status, 200);
+    // The owner's words on the voice and the uniform; a starting picture off with a reason, and back.
+    [st, D] = await C("/coach/coach-mei", { method: "PUT", body: { voice: "a calm, low voice with a light Singaporean accent" } }); assert.deepEqual([st, D.coaches[0].voice.by, D.coaches[0].voice.description], [200, "owner", "a calm, low voice with a light Singaporean accent"]);
+    [st, D] = await C("/uniform", { method: "POST", body: { words: "stronger than yesterday", logo: "the hexagon b" } }); assert.deepEqual([st, D.uniform.words, D.uniform.by], [200, "STRONGER THAN YESTERDAY", "owner"]);
+    [st, D] = await C("/coach/coach-mei", { method: "PUT", body: { on: false, start: mei.starts[0].file } }); assert.equal(st, 400); assert.match(D.error, /say why this picture is taken off/);
+    [st, D] = await C("/coach/coach-mei", { method: "PUT", body: { on: false, start: mei.starts[0].file, reason: "eyes half closed" } }); assert.equal(D.coaches[0].starts.find((s) => s.file === mei.starts[0].file).off.reason, "eyes half closed");
+    [st, D] = await C("/coach/coach-mei", { method: "PUT", body: { on: true, start: mei.starts[0].file } }); assert.equal(D.coaches[0].starts.find((s) => s.file === mei.starts[0].file).off, undefined);
+    // Batch setup and the brief check: the coaches stand in for the presenter and the room photo, and each video says who presents.
+    const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
+    assert.deepEqual([setup.videos.presents, setup.videos.coaches], ["coaches", [{ id: "coach-mei", name: "Mei", why: null, paper_why: null }]]);
+    const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", `Test Gym's ${BRIEF.offer} is built for exactly that. A coach beside you, and a plan that fits your week.`, "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
+    rmSync(scriptsFile, { force: true });
+    const sc = await call(`/api/client/${GYM}/video/script`, { method: "POST", body: { offer: BRIEF.offer, lines: LINES } }); assert.equal(sc.status, 200, JSON.stringify(await sc.clone().json()).slice(0, 300));
+    const profNow = JSON.parse(readFileSync(pf, "utf-8")); delete profNow.creative_defaults.presenter; writeFileSync(pf, JSON.stringify(profNow, null, 2));
+    const brief = { ...BRIEF, batch_id: "u65-batch", real: [], generated: 0, max_calls: 0, locations: ["BISHAN"], videos: { presenter: 1 } };
+    let chk = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief } })).json();
+    assert.deepEqual([chk.errors, chk.summary.videos.coaches, chk.summary.videos.images, chk.summary.videos.count], [[], [{ id: "coach-mei", name: "Mei" }], 0, 1], "no presenter and no room photo are asked for; no picture is to be made");
+    chk = await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...brief, coach: "coach-nobody" } } })).json(); assert.ok(chk.errors.some((e) => /this gym has no coach coach-nobody/.test(e)), JSON.stringify(chk.errors));
+    // ── The pages ──
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u65${Math.random()}#/${GYM}/${hash}` }, sessionId); await loaded; await until(ready); };
+    // Ad defaults → Presenter · videos: who presents, the coach's card, the uniform.
+    await open("defaults", "!!document.querySelector('#cdCoaches .chc')");
+    assert.deepEqual(await ev("[[...document.querySelectorAll('input[name=chPresents]')].map(r => r.value + (r.checked ? '*' : '')), document.querySelector('.chc b').innerText, document.querySelector('.chc [data-state]').innerText, /^Consent on file: face yes, voice yes · signed form, 17 Nov · \\d{4}-\\d\\d-\\d\\d$/.test(document.querySelector('.chc [data-consent-line]').innerText), document.querySelector('.chc [data-voice]').value, document.querySelector('#chUniform').value, !!document.querySelector('#cdPresGender')]"),
+      [["invented", "coaches*"], "Mei", "can be filmed", true, "a calm, low voice with a light Singaporean accent", "STRONGER THAN YESTERDAY", true]);
+    // Switching a coach off asks why, in a dialog that keeps what was typed when it is refused.
+    await ev("chOffOpen('coach-mei'); true"); await ev("document.querySelector('#chOffGo').click(); true"); await until("/say why this coach is switched off/.test(document.querySelector('#chOffErr')?.textContent || '')");
+    await ev("document.querySelector('#chWhy').value = 'on leave'; document.querySelector('#chOffGo').click(); true"); await until("document.querySelector('.chc [data-state]')?.innerText === 'not filmed yet'");
+    assert.match(await ev("document.querySelector('.chc [data-why]').innerText"), /Mei is switched off \(on leave\)/);
+    assert.match((await (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief } })).json()).errors.join(" "), /no coach can be filmed yet — Mei is switched off \(on leave\)/);
+    await ev("[...document.querySelectorAll('.chc button')].find(b => b.textContent === 'Switch on').click(); true"); await until("document.querySelector('.chc [data-state]')?.innerText === 'can be filmed'");
+    // Consent taken back in the dialog: unticked and saved, and the coach is not filmed.
+    await ev("chConsentOpen('coach-mei'); true");
+    assert.deepEqual(await ev("[document.querySelector('#chFace').checked, document.querySelector('#chVoice').checked, document.querySelector('#chBy').value]"), [true, true, "signed form, 17 Nov"]);
+    await ev("document.querySelector('#chVoice').checked = false; document.querySelector('#chBy').value = 'message: face only'; document.querySelector('#chConGo').click(); true");
+    await until("/not to their voice/.test(document.querySelector('.chc [data-why]')?.innerText || '')");
+    await C("/coach/coach-mei", { method: "PUT", body: { consent: { face: true, voice: true, by: "signed form, 17 Nov" } } });
+    // Photos & assets → Coach videos: the sample in its group, who it shows, the starting pictures, nothing left to read.
+    await open("photos", "!!document.querySelector('#cvCard .cvg')");
+    assert.deepEqual(await ev("[document.querySelector('#cvCard h3').innerText.replace(/\\s+/g, ' '), document.querySelector('#cvRead').disabled, document.querySelector('#cvRead').title, [...document.querySelectorAll('#cvCard .cvg')].map(x => x.querySelector('b').innerText + ' → ' + x.querySelector('select').selectedOptions[0].textContent), document.querySelector('#cvCard .cvs select').selectedOptions[0].textContent, !!document.querySelector('#cvDrop'), document.querySelector('#cvCard .cvst b').innerText, document.querySelectorAll('#cvCard .cvst img').length >= 1]"),
+      ["COACH VIDEOS 1", true, "every sample has been read", ["black T-shirt, no glasses → Mei"], "Mei", true, "Mei · starting pictures", true]);
+    // Generate Creatives: who presents, shared evenly or one coach, and the brief carries the choice.
+    await open("batch", "!!document.querySelector('#bCoach')");
+    assert.deepEqual(await ev("[[...document.querySelector('#bCoach').options].map(o => o.textContent), /presented by Mei/.test(document.querySelector('#bVideosHint').innerText)]"), [["Shared evenly between the coaches", "Mei"], true]);
+    await ev("bVideoSet(1); bSet('coach', 'coach-mei'); true");
+    assert.deepEqual(await ev("(({ coach, videos }) => [coach, videos])(briefFromDraft())"), ["coach-mei", { presenter: 1 }]);
+  } finally {
+    writeFileSync(pf, before); rmSync(cf, { force: true }); rmSync(sdir, { recursive: true, force: true });
+    if (hadScripts != null) writeFileSync(scriptsFile, hadScripts); else rmSync(scriptsFile, { force: true });
+  }
+});

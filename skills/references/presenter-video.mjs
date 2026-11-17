@@ -92,6 +92,7 @@ import { join, resolve, extname, basename, dirname } from "path";
 import { createHash } from "crypto";
 import { parseArgs } from "util";
 import { fileURLToPath } from "url";
+import { tmpdir } from "os";
 import { execFileSync, spawnSync } from "child_process";
 import { loadGeminiKey, generateImage } from "./generate_ads_gemini.mjs";
 import { whenGeminiFree, isRefusal } from "./gemini-busy.mjs";
@@ -994,12 +995,15 @@ const staleCheck = (seen) => !Array.isArray(seen?.lettering) && (seen?.on_screen
 export function judgeClip(seen, line, { profile = {}, say = [], move = null } = {}) {
   // The words as the watching pass wrote them, or — when that pass refused them and the take was listened to again by its sound alone — as that heard them.
   const same = (t) => sameWords(t || "", line, { names: [profile.display_name].filter(Boolean), sounds: soundsOf(say) });
-  const heard = same(seen?.spoken) || (norm(seen?.heard) ? same(seen.heard) : false), alone = seen?.people === 1, L = letteringOf(seen);
+  // A real coach's clip (stamped `coach` when it is checked): the uniform's print and the gym's own lettering are the room's own — notes — and what must hold is that they are unchanged and the person is the same (`seen.same`, from `models.same`).
+  // (2026-11-17: the lane numbers painted on BFIT's turf — "5", "6" — were placed as "other" on some takes and failed two good ones: a coach's clip starts from a real frame of the real room, so whatever is written in the room is the room's own, and only words laid OVER the picture fail it.)
+  const isCoach = seen?.coach === true, L0 = letteringOf(seen), own = (x) => x.on !== "overlay";
+  const heard = same(seen?.spoken) || (norm(seen?.heard) ? same(seen.heard) : false), alone = seen?.people === 1, L = isCoach ? { fails: L0.fails.filter((x) => !own(x)), notes: [...L0.notes, ...L0.fails.filter(own)] } : L0, drift = isCoach ? sameFails(seen.same) : null;
   // With exercises: the move is done before the line (asked of the check only for a move cut; a check that does not say is not held against the take).
   const moved = !(move?.m.kind === "move" && seen?.did_move === false);
-  const kind = !heard ? "words" : !alone ? "people" : !moved ? "move" : L.fails.length ? "lettering" : null;
-  const why = kind === "move" ? `the move (${moveLabel(move)}) was not done before the line` : kind === "words" ? `it said "${norm(seen?.spoken)}"` : kind === "people" ? `${seen?.people} people are in it` : kind === "lettering" ? `words appear in the picture: ${L.fails.map((x) => `${x.text}${LETTER_WHERE[x.on] ? ` (${LETTER_WHERE[x.on]})` : ""}`).join(", ")}` : null;
-  return { passed: !kind, why, kind, faults: (seen?.faults || []).filter(Boolean), marks: L.notes.map((x) => `${x.on === "screen" ? "on a screen in the room" : "the maker's name on the equipment"}: ${x.text}`), lettering: L };
+  const kind = !heard ? "words" : !alone ? "people" : !moved ? "move" : L.fails.length ? "lettering" : drift;
+  const why = drift && kind === drift ? sameWhy(seen.same, drift, seen.coach_name) : kind === "move" ? `the move (${moveLabel(move)}) was not done before the line` : kind === "words" ? `it said "${norm(seen?.spoken)}"` : kind === "people" ? `${seen?.people} people are in it` : kind === "lettering" ? `words appear in the picture: ${L.fails.map((x) => `${x.text}${LETTER_WHERE[x.on] ? ` (${LETTER_WHERE[x.on]})` : ""}`).join(", ")}` : null;
+  return { passed: !kind, why, kind, faults: (seen?.faults || []).filter(Boolean), marks: (isCoach ? [] : L.notes).map((x) => `${x.on === "screen" ? "on a screen in the room" : "the maker's name on the equipment"}: ${x.text}`), lettering: L };
 }
 const WATCH_SCHEMA = { type: "OBJECT", properties: { spoken: { type: "STRING" }, lettering: { type: "ARRAY", items: { type: "OBJECT", properties: { text: { type: "STRING" }, on: { type: "STRING", enum: LETTERING_ON } }, required: ["text", "on"] } }, people: { type: "INTEGER" }, lips_match_speech: { type: "BOOLEAN" }, faults: { type: "ARRAY", items: { type: "STRING" } }, looks_real: { type: "INTEGER" }, did_move: { type: "BOOLEAN" } }, required: ["spoken", "lettering", "people", "lips_match_speech", "faults", "looks_real"] };
 const WATCH_QUESTION = "Watch and listen to this short video. spoken: transcribe exactly every word spoken, in order, with nothing added; an empty string if nobody speaks. lettering: every word, name, logo, number or letter visible anywhere in the picture at any point, one entry each, empty if none — text: what it says; on: what it is on: \"equipment\" (a maker's name, model or number printed on a machine, rack, weight, bench or mat), \"screen\" (the display of a machine, or a television or clock in the room), \"clothing\" (anything a person is wearing), \"sign\" (a sign, poster, board, or writing on a wall, door, window or mirror), \"overlay\" (a caption, subtitle, title, watermark or logo laid over the picture rather than part of the room), \"other\" (none of these, or you cannot tell). people: how many people are visible at any point. lips_match_speech: true only if the visible person's mouth moves in time with the spoken words. faults: every visible fault that would make a viewer think this is not real footage — warped hands or faces, objects that melt or pass through each other, impossible movement, a face that changes — each as a short phrase; empty if none. looks_real: 1 to 10, how convincingly this passes as phone footage shot in a real gym.";
@@ -1032,11 +1036,22 @@ export function realModels(profile = {}) {
       }, { label: "second listen" });
       return norm((out.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join(" "));
     },
+    /**
+     * A coach's clip (or re-made picture) against the real picture it was made from: the same person, the uniform's
+     * print unchanged, the gym's own lettering unchanged. Three frames of a clip — near its start, its middle, its end.
+     */
+    async same(start, target) {
+      let frames = [target];
+      if (/\.mp4$/i.test(target)) { const d = durationOf(target), base = join(tmpdir(), `same-${sha(target + statSync(target).size).slice(0, 12)}`); frames = [0.4, d / 2, Math.max(0.5, d - 0.4)].map((t, i) => { const f = `${base}-${i}.jpg`; ff(["-ss", String(Math.max(0, t)), "-i", target, "-frames:v", "1", "-q:v", "3", f]); return f; }); }
+      return callVision([start, ...frames], SAME_QUESTION, SAME_SCHEMA);
+    },
     /** The kit one photo of the room shows (a vision call). */
     async kit(photo) { const r = await callVision(photo, KIT_QUESTION, KIT_SCHEMA); return KIT.filter((k) => r?.[k] === true); },
     async watch(file, { move = null, paper = false } = {}) {
       // With exercises: was the move done before the line? Asked only of a move cut.
-      const moveQ = move?.m.kind === "move" ? ` did_move: before the person speaks, do they do this exercise at least once — ${move.m.name}? true or false.` : "";
+      // (2026-11-17: asked whether the move was done "before the person speaks", the check said no of a silent clip in which a deadlift is plainly done, twice: one repetition counts, and it need not be deep.)
+      // The movement is described, not only named: a single shallow kettlebell deadlift was called "not done" four times running when it was asked for by name.
+      const moveQ = move?.m.kind === "move" ? ` did_move: at any point in the clip, does the person do this movement at least ONCE — ${move.m.does({ He: "The person", he: "the person", his: "their" }, move.k).replace(/^does (two|three) [^:]*: /, "")}? Once is enough even though the movement may be repeated, it need not be deep or perfect, and it does not matter whether anyone speaks. true or false.` : "";
       // A name is spelt the gym's way when it is heard ("Aether", not "Ether"; "F45", not "F forty-five"): nothing else about the line is told.
       // How a listed word sounded is not asked (2026-11-15): the check wrote "kee" for a clip the owner heard as "kway", so its ear is no judge of that.
       // White paper: the sheet's own hand-written words are read back apart (paper-video.mjs), so they are not lettering here.
@@ -1075,9 +1090,53 @@ export const spokenLine = (line, said = []) => said.reduce((s, x) => s.replace(n
  */
 export const silentAfter = (presenter) => { const he = presenter.gender === "man" ? "he" : "she", his = presenter.gender === "man" ? "his" : "her"; return `When the sentence is finished ${he} stops talking: ${he} closes ${his} mouth, keeps looking into the lens with a small smile and stays silent until the clip ends — no more words, nothing said twice.`; };
 export function clipPrompt({ presenter, profile, line, seconds, said = [] }) {
+  if (presenter.coach) return coachClipPrompt({ coach: presenter.coach, profile, line, seconds, said });
   const she = presenter.gender === "man" ? "The man" : "The woman", pron = presenter.gender === "man" ? "His" : "Her", their = presenter.gender === "man" ? "his" : "her", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`;
   return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${pron} mouth forms exactly these words, once, in time with ${their} voice. ${silentAfter(presenter)} ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
 }
+
+// ── a real coach (2026-11-17) ────────────────────────────────────────────────
+/**
+ * A gym's real coach in place of the invented presenter (coach-look.mjs: named by the owner, consent for face and voice
+ * on file, the pictures cut from real frames of the gym's own sample videos). Tested on the owner's yes the same day
+ * (US$3.80, `plans/coach-test-2026-11-17/`; his verdict: likeness yes, voice close enough, uniform yes): Google's video
+ * model animates a real frame and keeps the shirt's print; the lessons are in these prompts — the clip is timed at the
+ * app's own speaking speed (given the coach's slower one, the model filled the spare seconds by saying the line
+ * again), the camera is told to stay where it is (it pushed in), nothing is held in front of the shirt's print (a
+ * dumbbell at the chest hid it), and the gym's own lettering must stay as it is (a wall's words turned to nonsense in
+ * one clip: that is checked, see `models.same`). A coach is written as "the coach": nothing here says he or she.
+ */
+const COACH_SAME = "The person in the photograph is a real coach at this gym: keep the coach's face, hair, build, clothes and the room exactly as they are in the photograph, so that the coach is recognisably the same person in every frame.";
+const COACH_QUIET = "When the sentence is finished the coach stops talking: mouth closed, still looking into the lens with a small smile, silent until the clip ends — no more words, nothing said twice.";
+const STILL_CAMERA = "The camera is fixed on a tripod for the whole clip: it does not move closer, pull back, sway or turn, and the framing of the last frame is exactly the framing of the first.";
+/** A coach's clip is not told of a hand-held sway (2026-11-17: told of one, the model pushed the camera in on both coaches, and the face drifted with it). */
+const COACH_PHONE = "It looks like real footage shot on a phone standing on a tripod: natural indoor light, real skin, nothing glossy or cinematic. One continuous shot with no scene cuts.";
+const coachUniform = (coach) => {
+  const w = norm(coach?.uniform?.words);
+  return `${w ? `The print on the coach's top stays exactly as it is in the photograph for the whole clip — ${norm(coach.uniform.logo) ? "the logo and " : ""}the words ${w}, sharp and readable, never warped, never changed` : "Anything printed on the coach's clothes stays exactly as it is in the photograph"} — and so do any lettering on the walls behind and the small microphone clipped at the collar if there is one. Nothing else is written anywhere: no captions, no subtitles, no titles, no watermark.`;
+};
+/** A talking clip of a coach, from a real frame (or from a re-made picture, or a move clip's last frame: `holding` says what the hands do). */
+export function coachClipPrompt({ coach, profile, line, seconds, said = [], holding = null, before = "" }) {
+  const voice = coach.voice ? `in this voice — ${norm(coach.voice).replace(/[.\s]+$/, "")} — at an easy, natural pace` : `in a warm, natural ${countryRules(profileCountry(profile)).demonym || "natural"} English voice, at an easy conversational pace`;
+  return `Bring this photograph to life as ${seconds} seconds of video. ${COACH_SAME} ${before ? `${before} ` : ""}The coach looks into the camera and says, ${voice}: "${spokenLine(line, said)}" The coach's mouth forms exactly these words, once, in time with the voice. ${COACH_QUIET} ${holding || "The coach's hands stay low and relaxed, with at most one small, slow gesture: no pointing, no hands near the face, nothing in front of the print on the coach's top."} No walking. ${STILL_CAMERA} Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. ${coachUniform(coach)} ${COACH_PHONE} Sound: the coach's voice, close and clear, over the quiet of an empty gym. No music.`;
+}
+/** A re-made picture of a coach in a pose the samples do not have: from two real pictures of them (the first also gives the room). */
+export function coachStillPrompt({ coach, pose, room = false }) {
+  const w = norm(coach?.uniform?.words), wears = [coach.wears?.top, coach.wears?.bottom, coach.wears?.glasses ? "glasses" : null].filter(Boolean).join(", ");
+  return `A real photograph taken on a phone held upright, 9:16. The person is the SAME real person as in the first and second images: exactly the same face, hair, build and skin, wearing the same clothes${wears ? ` (${wears})` : ""}${w ? ` — the print on the top exactly as it is in those images: ${norm(coach.uniform.logo) ? "the logo and " : ""}the words ${w}, sharp and readable` : ""}, with the same small microphone clipped at the collar if there is one. ${pose} Nothing the coach holds is in front of the print on the top: the print is in full view. ${room ? "The room is the gym in the THIRD image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, the coach is alone in it, and no words, sign or logo is on any wall" : "The room is the room of the first image — its walls, ceiling, lights, equipment and floor — and the coach is alone in it. The picture is framed so that NO lettering on any wall is in view: the coach stands where the wall behind is plain or only equipment shows, and no words, sign or logo is on any wall in the picture"}. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; the coach's hands and anything held look natural and solid. No other text anywhere: no captions, no titles, no watermark.`;
+}
+/** What the uniform-and-likeness check is asked: the real picture first, then frames of the clip (or the re-made picture). */
+const SAME_SCHEMA = { type: "OBJECT", properties: { same_person: { type: "BOOLEAN" }, differences: { type: "ARRAY", items: { type: "STRING" } }, shirt_reads: { type: "STRING" }, shirt_changed: { type: "BOOLEAN" }, wall_changed: { type: "BOOLEAN" }, wall_reads: { type: "STRING" } }, required: ["same_person", "differences", "shirt_reads", "shirt_changed", "wall_changed"] };
+const SAME_QUESTION = "The FIRST image is a real photograph of a person. The other images were made from it and must show the SAME person, in the same clothes. same_person: true only if someone who knows the person in the first image would take the person in every other image for them without a second look. differences: every difference in the face, hair, glasses, build or clothes between the first image and the others, each as a short phrase; empty if none. shirt_reads: the words printed on the front of their top in the other images, as they read there; \"\" if none can be seen. shirt_changed: true only if, in any other image, the print on the top shows letters or a logo that DIFFER from the first image — misspelt, warped into other letters, replaced, or missing from a part of the top that is in plain view. Letters hidden behind a hand, an arm or an object, turned away, or outside the picture are NOT a change. wall_changed: true only if lettering on the walls, mirrors or signs that can be read in the first image reads DIFFERENTLY in any other image — other letters or other words where the same wall is in view. Lettering hidden behind the person, out of focus or outside the picture is NOT a change, and a different room or a different part of the room is NOT a change. wall_reads: where wall_changed is true, what the changed lettering reads; else \"\".";
+const sameFails = (same) => (!same ? null : same.same_person === false ? "likeness" : same.shirt_changed === true ? "uniform" : same.wall_changed === true ? "wall" : null);
+const sameWhy = (same, kind, name) => (kind === "likeness" ? `it does not look like ${name || "the coach"}${(same.differences || []).length ? ` (${same.differences.slice(0, 3).join("; ")})` : ""}` : kind === "uniform" ? `the print on the uniform changed${norm(same.shirt_reads) ? ` (it reads "${norm(same.shirt_reads)}")` : ""}` : kind === "wall" ? `the gym's lettering on the wall changed${norm(same.wall_reads) ? ` (it reads "${norm(same.wall_reads)}")` : ""}` : null);
+/** A talking cut's picture is a real frame: the "prompt" that names it is the frame itself. */
+const coachFrame = (coach, i) => coach.starts[i % coach.starts.length];
+const coachFrameKey = (coach, i) => { const f = coachFrame(coach, i); return `a real frame of ${coach.id}: ${basename(f)} ${existsSync(f) ? statSync(f).size : 0}`; };
+/** The mark, in a coach's store, that a cut is filmed standing from a real frame because its line was refused after its move. */
+const standingMark = (i) => `cut-${i + 1}-standing.json`;
+/** Where a coach's pictures and clips of a script are kept: beside the invented presenter's, never mixed with them. */
+export const coachStore = (gymDir, scriptId, coach) => join(gymDir, CLIPS_DIR, `${scriptId}--${coach.key}`);
 
 // ── with exercises: a move, then the line ────────────────────────────────────
 /**
@@ -1101,7 +1160,7 @@ export const VIDEO_KINDS = ["presenter", "active"];
 /** Seconds added to a move cut's clip for the move itself (asked for two, the model takes three to four), and how much of the move the cut keeps before the first word. */
 export const MOVE_LEAD = 4, MOVE_KEEP = 1.6;
 export const KIT = ["dumbbell", "kettlebell", "plate", "box", "bench"];
-const G = (presenter) => (presenter.gender === "man" ? { He: "He", he: "he", his: "his" } : { He: "She", he: "she", his: "her" });
+const G = (presenter) => (presenter.coach ? { He: "The coach", he: "the coach", his: "the coach's" } : presenter.gender === "man" ? { He: "He", he: "he", his: "his" } : { He: "She", he: "she", his: "her" });
 const CLOSE = (g) => `The camera is close: ${g.he} fills most of the frame.`;
 const FULL = (g) => `The camera is a few steps back, close enough that ${g.his} whole body, from head to feet, fills the height of the frame.`;
 const ITEM = { plate: "one round black weight plate", kettlebell: "one kettlebell", dumbbell: "one dumbbell, held by its two ends" };
@@ -1111,11 +1170,11 @@ const ITEM = { plate: "one round black weight plate", kettlebell: "one kettlebel
  * line; `stays`: what holds for the rest of the clip; `label`: how it reads on the owner's screen.
  */
 export const MOVES = [
-  { id: "russian-twist", name: "Russian twists", kind: "move", kit: ["plate", "kettlebell", "dumbbell"], label: (k) => `Russian twists with a ${k}`,
+  { id: "russian-twist", covers: true, name: "Russian twists", kind: "move", kit: ["plate", "kettlebell", "dumbbell"], label: (k) => `Russian twists with a ${k}`,
     pose: (g, k) => `${g.He} sits on the gym floor, side-on to the camera, knees bent with ${g.his} heels on the floor, leaning back a little with a straight back, holding ${ITEM[k]} in both hands in front of ${g.his} chest, ${g.his} shoulders turned toward one hip, eyes on the ${k}, mid-exercise. The camera is low, at the height of ${g.his} chest, and close: ${g.his} whole body is in the picture and fills the width of the frame.`,
     does: (g, k) => `does two smooth Russian twists: ${g.he} turns ${g.his} shoulders and carries the ${k} to one side of ${g.his} hips, then to the other side`,
     rest: (g, k) => `holds the ${k} still against ${g.his} chest, turns ${g.his} face to the camera`, stays: (g) => `${g.He} stays seated on the floor.` },
-  { id: "goblet-squat", name: "goblet squats", kind: "move", kit: ["kettlebell", "dumbbell"], label: (k) => `goblet squats with a ${k}`,
+  { id: "goblet-squat", covers: true, name: "goblet squats", kind: "move", kit: ["kettlebell", "dumbbell"], label: (k) => `goblet squats with a ${k}`,
     pose: (g, k) => `${g.He} stands on the open floor facing the camera, feet a little wider than ${g.his} shoulders, holding ONE ${k} against ${g.his} chest with both hands${k === "dumbbell" ? ", upright, cupped under its top end" : ", by the sides of its handle"}, elbows down — the start of a goblet squat — looking ahead with easy focus. ${FULL(g)}`,
     does: (g, k) => `does two slow, easy goblet squats: ${g.he} bends ${g.his} knees and sits back until ${g.his} thighs are level with the floor, then stands up tall, the ${k} staying against ${g.his} chest the whole time`,
     rest: () => "stands still", stays: (g) => `${g.He} stays where ${g.he} is: no walking, and the camera does not move closer.` },
@@ -1146,7 +1205,7 @@ export const MOVES = [
   { id: "seated", name: "seated", kind: "hold", kit: ["box", "bench"], label: (k) => `sitting on a ${k}`,
     pose: (g, k, has) => `${g.He} sits on a ${k === "box" ? "black wooden box" : "flat training bench"} on the gym floor, facing the camera, leaning forward a little with ${g.his} forearms resting on ${g.his} thighs, ${has("dumbbell") ? `one dumbbell held loosely in one hand between ${g.his} knees` : `${g.his} hands loosely together`}, as if resting between sets, looking straight into the lens, relaxed and friendly, mid-sentence. Framed from the knees up. ${CLOSE(g)}`,
     stays: (g) => `${g.He} stays seated and keeps ${g.his} hands low and still; at most one small nod.` },
-  { id: "chest-hold", name: "holding a weight", kind: "hold", kit: ["kettlebell", "dumbbell"], label: (k) => `standing with a ${k} held at the chest`,
+  { id: "chest-hold", covers: true, name: "holding a weight", kind: "hold", kit: ["kettlebell", "dumbbell"], label: (k) => `standing with a ${k} held at the chest`,
     pose: (g, k) => `${g.He} stands on the open floor facing the camera, holding one ${k} against ${g.his} chest with both hands, as if between sets, looking straight into the lens, relaxed and friendly, mid-sentence. Framed from the waist up. ${CLOSE(g)}`,
     stays: (g, k) => `${g.He} holds the ${k} still against ${g.his} chest the whole time: no walking.` },
   { id: "foot-up", name: "one foot up", kind: "hold", kit: ["box", "bench"], label: (k) => `one foot up on a ${k}`,
@@ -1165,8 +1224,9 @@ const cutSeconds = (line, mv) => Math.min(CLIP_SECONDS[1], clipSeconds(line) + (
  * the script's id, so every run picks the same (what is filmed is reused); two cuts never show the same move; a cut
  * whose words leave no room for a move inside the model's longest clip is a hold instead.
  */
-export function movesFor(script, { kit = KIT, closing = closingLine() } = {}) {
-  const cuts = filmedLines(script.lines, closing), n = cuts.length, order = (kind) => MOVES.filter((m) => m.kind === kind && kitFor(m, kit) != null).map((m) => ({ m, k: kitFor(m, kit), key: sha(`${script.id}|${m.id}`) })).sort((a, b) => a.key.localeCompare(b.key)).map(({ m, k }) => ({ m, k }));
+export function movesFor(script, { kit = KIT, closing = closingLine(), clear = false } = {}) {
+  // `clear` (a real coach in the gym's uniform): never a move or a hold that puts the kit in front of the shirt's print (`covers`).
+  const cuts = filmedLines(script.lines, closing), n = cuts.length, order = (kind) => MOVES.filter((m) => m.kind === kind && kitFor(m, kit) != null && !(clear && m.covers)).map((m) => ({ m, k: kitFor(m, kit), key: sha(`${script.id}|${m.id}`) })).sort((a, b) => a.key.localeCompare(b.key)).map(({ m, k }) => ({ m, k }));
   const moves = order("move"), holds = order("hold"), fits = (i) => clipSeconds(fillLine(cuts[i], "Ang Mo Kio")) + MOVE_LEAD <= CLIP_SECONDS[1];
   const out = cuts.map(() => null), hold = (i) => { if (holds.length) out[i] = holds.shift(); };
   const move = (i) => { if (moves.length && fits(i)) out[i] = moves.shift(); else hold(i); };
@@ -1177,10 +1237,12 @@ export function movesFor(script, { kit = KIT, closing = closingLine() } = {}) {
 /** The picture a move's clip starts from: the same invented presenter, in the start position, in the gym's own room. */
 export function moveStillPrompt({ presenter, profile, move, kit = KIT }) {
   const g = G(presenter), has = (k) => kit.includes(k);
+  if (presenter.coach) return coachStillPrompt({ coach: presenter.coach, pose: move.m.pose(g, move.k, has), room: presenter.room === true });
   return `A real photograph taken on a phone held upright, 9:16. The person is the SAME person as in the first image: the same face, hair and clothes. ${g.He} is ${presenterWords(presenter, profile)}. ${move.m.pose(g, move.k, has)} The room is the gym in the second image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, and ${g.he} is alone. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; ${g.his} hands and what ${g.he} holds look natural and solid. ${NO_WORDS}`;
 }
 /** The clip of a move or a hold: the move in silence, then the line said in place; a hold is said as it is held. */
 export function moveClipPrompt({ presenter, profile, line, seconds, said = [], move }) {
+  if (presenter.coach) { const c = G(presenter), mm = move.m, kk = move.k; return coachClipPrompt({ coach: presenter.coach, profile, line, seconds, said, before: mm.kind === "move" ? `For the first two seconds the coach says nothing and ${mm.does(c, kk)}. Then the coach stops, ${mm.rest(c, kk)}, and only then speaks.` : "", holding: `${mm.stays(c, kk)} What the coach holds stays one solid object, and never in front of the print on the coach's top.` }); }
   const g = G(presenter), she = presenter.gender === "man" ? "The man" : "The woman", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`, m = move.m, k = move.k;
   const says = `says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${g.He === "He" ? "His" : "Her"} mouth forms exactly these words, once, in time with ${g.his} voice. ${silentAfter(presenter)}`;
   const body = m.kind === "move"
@@ -1201,16 +1263,19 @@ const SAME = (g) => `Exactly one person is in the room for the whole clip: nobod
 /** The move alone, in silence: the reps, then still, facing the lens — the frame the line's clip starts from. */
 export function moveOnlyPrompt({ presenter, move }) {
   const g = G(presenter), m = move.m, k = move.k;
+  if (presenter.coach) return `Bring this photograph to life as ${MOVE_SECONDS} seconds of video. ${COACH_SAME} Nobody speaks at any point: the coach's mouth stays closed and there is no voice. ${g.He} ${m.does(g, k)}. Then ${g.he} ${m.rest(g, k)}, turns to face the camera and looks into the lens with an easy, friendly expression, mouth closed, and holds still. ${m.stays(g, k)} What ${g.he} holds stays one solid object. ${STILL_CAMERA} Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. ${coachUniform(presenter.coach)} ${COACH_PHONE} Sound: only the quiet of an empty gym and the small sounds of the movement. No voice, no music.`;
   return `Bring this photograph to life as ${MOVE_SECONDS} seconds of video. Nobody speaks at any point: ${g.his} mouth stays closed and there is no voice. ${g.He} ${m.does(g, k)}. Then ${g.he} ${m.rest(g, k)}, turns ${g.his} face to the camera and looks into the lens with an easy, friendly expression, ${g.his} mouth closed, and holds still. ${m.stays(g, k)} ${SAME(g)} ${PHONE} ${NO_WORDS} Sound: only the quiet of an empty gym and the small sounds of the movement. No voice, no music.`;
 }
 /** The line after a move: an ordinary talking clip from the move clip's last frame, still holding the kit. */
 export function afterMovePrompt({ presenter, profile, line, seconds, said = [], move }) {
+  if (presenter.coach) { const c = G(presenter); return coachClipPrompt({ coach: presenter.coach, profile, line, seconds, said, holding: `${move.k ? "The coach keeps what the coach holds still where it is the whole time, never in front of the print on the coach's top. " : ""}${move.m.stays(c, move.k)}` }); }
   const g = G(presenter), she = presenter.gender === "man" ? "The man" : "The woman", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`, m = move.m, k = move.k;
   return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${g.He === "He" ? "His" : "Her"} mouth forms exactly these words, once, in time with ${g.his} voice. ${silentAfter(presenter)} ${k ? `${g.He} keeps what ${g.he} holds still where it is the whole time. ` : ""}${m.stays(g, k)} ${SAME(g)} ${PHONE} ${NO_WORDS} Sound: ${g.his} voice, close and clear, over the quiet of an empty gym. No music.`;
 }
 /** The move clip judged from its check (pure): the move was done, nobody speaks, one person, no lettering laid over it. */
 export function judgeMove(seen, move) {
-  const L = letteringOf(seen), kind = seen?.did_move === false ? "move" : norm(seen?.spoken) ? "voice" : seen?.people !== 1 ? "people" : L.fails.length ? "lettering" : null;
+  // A coach's move clip (stamped `coach`): the uniform's print and whatever is written in the room are its own; only words laid over the picture fail it.
+  const L0 = letteringOf(seen), L = seen?.coach === true ? { ...L0, fails: L0.fails.filter((x) => x.on === "overlay") } : L0, kind = seen?.did_move === false ? "move" : norm(seen?.spoken) ? "voice" : seen?.people !== 1 ? "people" : L.fails.length ? "lettering" : null;
   const why = kind === "move" ? `the move (${moveLabel(move)}) was not done` : kind === "voice" ? `someone speaks in the move's clip ("${norm(seen.spoken)}")` : kind === "people" ? `${seen?.people} people are in it` : kind === "lettering" ? `words appear in the picture: ${L.fails.map((x) => x.text).join(", ")}` : null;
   return { passed: !kind, why, kind, faults: (seen?.faults || []).filter(Boolean) };
 }
@@ -1256,9 +1321,10 @@ export const CAPTION_ACCENT = "#FFD84A";
 const FONTS = `@font-face{font-family:Anton;src:url("file://${join(REPO_ROOT, "assets/fonts/anton/Anton-Regular.ttf")}")}@font-face{font-family:Mont;src:url("file://${join(REPO_ROOT, "assets/fonts/montserrat/Montserrat[wght].ttf")}");font-weight:100 900}`;
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 /** A transparent 720 × 1280 PNG of the words. Meta's 9:16 live area is x 6–94%, y 14–65%: every block is laid inside it, and the page reports where each landed. */
-async function overlay(browser, out, inner, accent = CAPTION_ACCENT) {
+/** `low` (a coach's video): the block's BOTTOM sits on the edge of Meta's live area and it grows upward, so it never reaches the shirt's print, which a coach's pictures keep above 53% of the height. */
+async function overlay(browser, out, inner, accent = CAPTION_ACCENT, low = false) {
   const html = `<!doctype html><meta charset="utf-8"><style>${FONTS}html,body{margin:0;width:${W}px;height:${H}px;background:transparent;overflow:hidden}
-    .cap{position:absolute;left:8%;right:8%;top:54%;text-align:center;font:400 58px/1.12 Anton;color:#fff;letter-spacing:1px;-webkit-text-stroke:3px rgba(0,0,0,.85);paint-order:stroke fill;text-shadow:0 4px 16px rgba(0,0,0,.55)}
+    .cap{position:absolute;left:8%;right:8%;${low ? `bottom:${Math.round((1 - LIVE.bottom) * 1000) / 10 + 0.4}%` : "top:54%"};text-align:center;font:400 58px/1.12 Anton;color:#fff;letter-spacing:1px;-webkit-text-stroke:3px rgba(0,0,0,.85);paint-order:stroke fill;text-shadow:0 4px 16px rgba(0,0,0,.55)}
     .cap b{font-weight:400;color:${accent || CAPTION_ACCENT}}</style>${inner}`;
   const page = join(browser.work, `${basename(out)}.html`); writeFileSync(page, html);
   const { cdp, sessionId } = browser;
@@ -1418,7 +1484,7 @@ const clipName = (i, line, still, area, perArea, note = "") => `line-${i + 1}${p
 /** A clip's saved check passes by today's rules. */
 const passedCheck = (seen, line, profile, say = [], move = null) => !!seen && judgeClip(seen, line, { profile, say, move }).passed;
 /** The prompt of a cut's picture: the move's start position, or the standing presenter. */
-const cutStillPrompt = (i, presenter, profile, mv, kit) => (mv ? moveStillPrompt({ presenter, profile, move: mv, kit }) : stillPromptFor(i, presenter, profile));
+const cutStillPrompt = (i, presenter, profile, mv, kit) => (mv ? moveStillPrompt({ presenter, profile, move: mv, kit }) : presenter.coach ? coachFrameKey(presenter.coach, i) : stillPromptFor(i, presenter, profile));
 /**
  * What a script still needs filmed for these locations, by what is on file: { clips[{ line, area, seconds, on_file,
  * flagged }], seconds (to film, one clean pass), reused (seconds already filmed), flagged (lines whose takes are used
@@ -1426,18 +1492,24 @@ const cutStillPrompt = (i, presenter, profile, mv, kit) => (mv ? moveStillPrompt
  * still to make) }. No call, and nothing is written: before a script's first use of the store it looks where
  * `adoptClips` would bring files from. A take set aside is not on file; one kept on the owner's word is.
  */
-export function videoNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [], saidList = saidAs(), takes = 2, kind = "presenter" }) {
-  const presenter = presenterOf(profile), said = filmedLines(script.lines, closing), where = existsSync(store) ? store : legacy.find(hasStills) || store;
+export function videoNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, closing = closingLine(), coach = null, store = coach ? coachStore(gymDir, script.id, coach) : clipStore(gymDir, script.id), legacy = [], saidList = saidAs(), takes = 2, kind = "presenter" }) {
+  // A coach's pictures are real frames (no image call for a talking cut) and their clips are their own: nothing of the invented presenter's is brought in.
+  // A re-made picture of a coach takes its room from the gym's own room photo when the batch has one (its words-free, cleaned photo): asked to keep the room of a coach's frame, the image model garbled the wall's slogan, and asked for no wall words it left the gym.
+  const coachRoom = !!(coach && room && existsSync(room));
+  if (coach) room = `coach:${coach.key}`;
+  const presenter = coach ? { gender: null, coach, room: coachRoom } : presenterOf(profile), said = filmedLines(script.lines, closing), where = existsSync(store) ? store : (coach ? null : legacy.find(hasStills)) || store;
   const files = existsSync(where) ? readdirSync(where) : [], aside = asideOf(where), clips = []; let images = 0;
   // With exercises: the agent's pick for each cut, by the kit on file for the room (every kit until its photos are read).
-  const kit = kind === "active" ? knownKit(gymDir, room) || [...KIT] : null, moves = kind === "active" ? movesFor(script, { kit, closing }) : said.map(() => null);
+  const kit = kind === "active" ? knownKit(gymDir, coach ? null : room) || [...KIT] : null, moves = kind === "active" ? movesFor(script, { kit, closing, clear: !!coach }) : said.map(() => null);
   // The presenter's own picture, which every other picture is made from: a cut that opens on a move still needs it.
-  if (moves[0] && !(presenter && room && files.includes(stillName(0, stillPromptFor(0, presenter, profile), room)))) images++;
+  // A coach's cut whose line Google refused after its move is filmed standing from a real frame (see `standingMark`): it is no move cut any more.
+  if (coach) for (const i of moves.keys()) if (files.includes(standingMark(i))) moves[i] = null;
+  if (!coach && moves[0] && !(presenter && room && files.includes(stillName(0, stillPromptFor(0, presenter, profile), room)))) images++;
   const chk = (f) => readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), keptOn = (f) => !!ownerKeptClip(where, join(where, f)), takesOf = (nm) => files.filter((f) => /\.mp4$/.test(f) && (f === `${nm}.mp4` || f.startsWith(`${nm}-take`)));
   const usedUp = (all, live) => live.length > 0 && all.length >= takes + (all.length - live.length), moveCounted = new Set();
   for (const [i, raw] of said.entries()) {
     const mv = moves[i], still = presenter && room ? stillName(i, cutStillPrompt(i, presenter, profile, mv, kit), room) : null, perArea = /\{AREA\}/.test(raw);
-    if (!still || !files.includes(still)) images++;
+    if ((!still || !files.includes(still)) && !(coach && !mv)) images++;
     for (const area of perArea ? (areas.length ? areas : [""]) : [null]) {
       const line = fillLine(raw, area || ""), say = saidIn(line, saidList), note = saidNote(say), names = still ? [clipName(i, line, still, area, perArea, note), clipName(i, line, altOf(still), area, perArea, note)] : [];
       const mine = files.filter((f) => /\.mp4$/.test(f) && names.some((nm) => f === `${nm}.mp4` || f.startsWith(`${nm}-take`))), live = mine.filter((f) => !aside.has(f));
@@ -1490,17 +1562,21 @@ export function keepTake(store, name, why = "") {
  * `spent` may be passed in (a batch's running count) and is added to; `caps { seconds, images }` are never passed:
  * a call that would pass one is not made, and the videos that needed it are refused with that as the reason.
  */
-export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), store = clipStore(gymDir, script.id), legacy = [join(outDir, script.id)], saidList = saidAs(), kind = "presenter", log = () => {}, onProgress = () => {} }) {
-  const presenter = presenterOf(profile);
+export async function makePresenterVideos({ gymDir, outDir, script, areas, offer, audience = null, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 120, images: 6 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = realModels(profile), browser = null, closing = closingLine(), coach = null, store = coach ? coachStore(gymDir, script.id, coach) : clipStore(gymDir, script.id), legacy = [join(outDir, script.id)], saidList = saidAs(), kind = "presenter", log = () => {}, onProgress = () => {} }) {
+  // A real coach (coach-look.mjs → coachForVideo: consent on file, pictures cut from real frames) in place of the invented presenter.
+  if (coach && !coach.starts?.length) throw new Error(`${coach.name} has no starting picture: nothing is filmed`);
+  const roomPhoto = coach && room && existsSync(room) ? room : null;
+  if (coach) { room = `coach:${coach.key}`; legacy = []; }
+  const presenter = coach ? { gender: null, coach, room: !!roomPhoto } : presenterOf(profile);
   if (!VIDEO_KINDS.includes(kind)) throw new Error(`no such kind of presenter video: ${kind}`);
   if (!presenter) throw new Error("say who presents first (Ad defaults → Presenter): a woman or a man. Nothing is made until then");
   const errs = scriptProblems(script.lines, { offer, profile, closing, allow: factsFor(gymDir, offer) }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
   if (!areas?.length) throw new Error("a video needs a location");
   const whole = areas.find((a) => isWholeCountry(a)); if (whole) throw new Error(`"${whole}" is the whole country: a video says the area around the gym, never the country`);
-  if (!room || !existsSync(room)) throw new Error("a photo of the gym's room is needed, so the video is in the gym's own room (Photos & assets → a cleaned premises photo)");
+  if (!coach && (!room || !existsSync(room))) throw new Error("a photo of the gym's room is needed, so the video is in the gym's own room (Photos & assets → a cleaned premises photo)");
   if (!hasFfmpeg()) throw new Error("ffmpeg is not installed on this machine: run `brew install ffmpeg` once");
   // The captions are this batch's; the pictures and clips are the script's own, whatever batch films it.
-  const dir = join(outDir, script.id); mkdirSync(dir, { recursive: true });
+  const dir = join(outDir, coach ? `${script.id}--${coach.key}` : script.id); mkdirSync(dir, { recursive: true });
   const adopted = adoptClips(store, legacy); if (adopted) log(`what was already filmed for this script is reused (from ${basename(dirname(dirname(adopted)))})`);
   mkdirSync(store, { recursive: true });
   const own = !browser; if (own) browser = await launchBrowser();
@@ -1509,27 +1585,44 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
   const said = filmedLines(script.lines, closing), joined = said.length < script.lines.length;
   const label = (i) => (joined && i === said.length - 1 ? `lines ${i + 1} and ${i + 2} (one cut)` : `line ${i + 1}`);
   if (joined) log(`the closing line is filmed with line ${said.length} as one cut: Google's video model refuses it as a clip of its own`);
-  const refusedAll = (why) => ({ videos: areas.map((area) => ({ area, script_id: script.id, kind, failed: why })), spent });
+  const who = coach ? { coach: { id: coach.id, name: coach.name } } : {};
+  const refusedAll = (why) => ({ videos: areas.map((area) => ({ area, script_id: script.id, kind, ...who, failed: why })), spent });
   try {
     // With exercises: the kit the room shows (its photos read once), then the agent's pick for each cut.
-    const kit = kind === "active" ? await readKit({ gymDir, room, models, spent, log }) : null, moves = kind === "active" ? movesFor(script, { kit, closing }) : said.map(() => null);
+    const kit = kind === "active" ? await readKit({ gymDir, room: coach ? null : room, models, spent, log }) : null, moves = kind === "active" ? movesFor(script, { kit, closing, clear: !!coach }) : said.map(() => null);
+    if (coach) log(`${coach.name} presents: ${Math.min(coach.starts.length, said.length)} real picture(s) to start from${coach.voice ? "" : " (no voice description on file: a plain one is asked for)"}`);
+    if (coach) for (const i of moves.keys()) if (moves[i] && existsSync(join(store, standingMark(i)))) { log(`${label(i)}: filmed standing, from a real picture (its line was refused after the move)`); moves[i] = null; }
     if (kind === "active") log(`with exercises — ${moves.map((mv, i) => `${label(i)}: ${mv ? `${moveLabel(mv)}${mv.m.kind === "move" ? ", then the line" : ""}` : "standing"}`).join(" · ")}`);
     // A still for each line: the first from the room, the rest from the first (the same person) and the room. A cut
     // that opens on a move is pictured in its start position; the presenter's own picture is made first all the same.
-    const stills = []; let anchor = null;
-    for (const { i, prompt, only } of [...(moves[0] ? [{ i: 0, prompt: stillPromptFor(0, presenter, profile), only: true }] : []), ...said.map((_, k) => ({ i: k, prompt: cutStillPrompt(k, presenter, profile, moves[k], kit) }))]) {
+    const stills = []; let anchor = coach ? coach.refs[0] : null;
+    const refsFor = () => (coach ? [...coach.refs, ...(roomPhoto ? [roomPhoto] : [])] : anchor ? [anchor, room] : [room]);
+    for (const { i, prompt, only } of [...(moves[0] && !coach ? [{ i: 0, prompt: stillPromptFor(0, presenter, profile), only: true }] : []), ...said.map((_, k) => ({ i: k, prompt: cutStillPrompt(k, presenter, profile, moves[k], kit) }))]) {
       const out = join(store, stillName(i, prompt, room));
+      // A coach's talking cut starts from a real frame: it is copied in, and no picture is made.
+      if (coach && !moves[i] && !existsSync(out)) copyFileSync(coachFrame(coach, i), out);
       if (!existsSync(out)) {
         if (!within("images", 1)) return { videos: areas.map((area) => ({ area, script_id: script.id, failed: `the cap of ${caps.images} image calls was reached before the presenter's stills were made` })), spent };
         spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`still ${i + 1} of ${said.length}`);
         writeFileSync(out.replace(/\.jpg$/, ".prompt.txt"), prompt + "\n");
         // A picture Google refuses is asked for once more; refused again, nothing is filmed and that is said.
-        try { await models.image({ out, prompt, refs: anchor ? [anchor, room] : [room] }); }
+        try { await models.image({ out, prompt, refs: refsFor() }); }
         catch (e) {
           if (!isRefusal(e)) throw e; log(`  still ${i + 1}: refused by Google's image model — asked once more`);
-          try { await models.image({ out, prompt, refs: anchor ? [anchor, room] : [room] }); }
+          try { await models.image({ out, prompt, refs: refsFor() }); }
           catch (e2) { if (!isRefusal(e2)) throw e2; return refusedAll(`Google's image model refused the presenter's picture for ${label(i)} twice, under its content rules. Nothing else is lost: Run again asks once more; if it is refused again, change the presenter's look on Ad defaults`); }
         }
+      }
+      // A re-made picture of a coach is held against the real one: not the same person, or the print changed, and it is made once more (then kept, and the cut's own check and the owner's eye decide).
+      if (coach && moves[i] && models.same) {
+        const sf = out.replace(/\.jpg$/, ".same.json"); let same = readJson(sf);
+        if (!same) { spent.checks++; same = await models.same(coach.refs[0], out); writeFileSync(sf, JSON.stringify(same, null, 2) + "\n"); }
+        if (sameFails(same) && sameFails(same) !== "wall" && !same.again && within("images", 1)) {
+          log(`  still ${i + 1}: ${sameWhy(same, sameFails(same), coach.name)} — made once more`); spent.images++;
+          try { await models.image({ out, prompt, refs: refsFor() }); spent.checks++; same = { ...(await models.same(coach.refs[0], out)), again: true }; } catch (e) { if (!isRefusal(e)) throw e; same = { ...same, again: true }; }
+          writeFileSync(sf, JSON.stringify(same, null, 2) + "\n");
+        }
+        if (sameFails(same) && sameFails(same) !== "wall") log(`  still ${i + 1}: ${sameWhy(same, sameFails(same), coach.name)} — kept: watch this cut on Pick Ads`);
       }
       anchor ||= out; if (!only) stills.push(out);
     }
@@ -1553,6 +1646,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
           catch (e) { if (!isRefusal(e)) throw e; spent.seconds -= MOVE_SECONDS; take--; refused++; log(`  ${basename(file)}: refused by Google's video model under its content rules`); if (refused >= 2) break; continue; }
         }
         let seen = readJson(checkFile); if (!seen) { spent.checks++; seen = normalSeen(await models.watch(file, { move: mv })); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
+        if (coach && seen.coach !== true) { seen.coach = true; writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
         let j = judgeMove(seen, mv); if (!j.passed && ownerKeptClip(store, file)) j = { ...j, passed: true };
         judged.push({ file, ...j }); log(`  ${basename(file)}: ${j.passed ? `${moveLabel(mv)}, done in silence` : j.why}`);
       }
@@ -1579,11 +1673,13 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       const freshPicture = async () => {
         if (two) return "none"; // the line's picture is the move's last frame: another picture would break the shot
         const alt = altOf(pic0);
+        // A coach's talking cut: another real frame, where there is one (no picture is made).
+        if (coach && !mv) { const other = coach.starts.find((f) => f !== coachFrame(coach, i)); if (!other) return "none"; if (!existsSync(alt)) copyFileSync(other, alt); still = alt; return "ok"; }
         if (!existsSync(alt)) {
           if (!within("images", 1)) return "cap";
           spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`  a fresh picture of the presenter for ${label(i)}`);
           const again = mv ? cutStillPrompt(i, presenter, profile, mv, kit) : stillPrompt({ presenter, profile, spot: SPOTS[i % SPOTS.length], framing: FRAMINGS[(i + 1) % FRAMINGS.length], first: false });
-          try { await models.image({ out: alt, prompt: again, refs: [anchor, room] }); }
+          try { await models.image({ out: alt, prompt: again, refs: coach ? refsFor() : [anchor, room] }); }
           catch (e2) { if (!isRefusal(e2)) throw e2; return "refused"; }
         }
         still = alt; return "ok";
@@ -1612,20 +1708,29 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
             if (refused === 1) continue;
             if (refused === 2 && still === pic0) {
               const got = await freshPicture(); if (got === "ok") continue;
+              // A coach's line that Google refuses twice from the frame its move ended on (2026-11-17: a coach's last line after bicep curls, four times running, while the same closing words passed from every real frame): the cut is filmed standing instead, from a real picture of the coach — no picture is made — and stays so on every later run.
+              if (got === "none" && two && coach) {
+                writeFileSync(join(store, standingMark(i)), JSON.stringify({ on: today(), why: "the line was refused by Google's video model twice from the frame its move ended on", move: moveLabel(mv) }, null, 2) + "\n");
+                moves[i] = null; const pic = join(store, stillName(i, cutStillPrompt(i, presenter, profile, null, kit), room)); if (!existsSync(pic)) copyFileSync(coachFrame(coach, i), pic); stills[i] = pic;
+                log(`  ${label(i)}: refused twice after the move — filmed standing instead, from a real picture of ${coach.name}`);
+                return clipFor(i, area);
+              }
               stopped = { refused: true, why: got === "none" ? "refused by Google's video model under its content rules, twice" : got === "cap" ? `refused by Google's video model under its content rules (twice), and the cap of ${caps.images} image calls leaves none for a fresh picture to try it on` : "refused by Google's video model under its content rules (twice), and its image model refused a fresh picture to try it on" }; break;
             }
             stopped = { refused: true, why: `refused by Google's video model under its content rules, ${refused} times and on two pictures of the presenter` }; break;
           }
         }
         // The check on file is judged again by today's rules; one made before lettering said what it is on is watched again (a check call, no filming).
-        let seen = readJson(checkFile); if (!seen || staleCheck(seen)) { spent.checks++; seen = normalSeen(await models.watch(file, { said: say, move: mvJ })); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
+        let seen = readJson(checkFile); if (!seen || staleCheck(seen)) { spent.checks++; seen = normalSeen(await models.watch(file, { said: say, move: mvJ })); if (coach) { seen.coach = true; seen.coach_name = coach.name; } writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
         let j = judgeClip(seen, line, { profile, say, move: mvJ });
+        // A coach's take that is otherwise right is held against the picture it started from: the same person, the uniform's print and the gym's lettering unchanged.
+        if (coach && j.passed && seen.same == null && models.same) { spent.checks++; seen.same = await models.same(still, file); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); j = judgeClip(seen, line, { profile, say, move: mvJ }); }
         // Refused for its words: listened to once more by its sound alone, before a second is filmed again (a check call against a retake).
         if (!j.passed && j.kind === "words" && seen.heard == null && models.hear) { spent.checks++; seen.heard = await models.hear(file); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); j = judgeClip(seen, line, { profile, say, move: mvJ }); if (j.kind !== "words") log(`  ${basename(file)}: heard again by its sound alone, the words are as written`); }
         // The owner's "Use this take anyway": that file, unchanged since, passes on his word.
         if (!j.passed && ownerKeptClip(store, file)) j = { ...j, passed: true, kept: j.why, why: null, kind: null };
         judged.push({ file, take, ...j, check: seen });
-        log(`  ${basename(file)}: ${j.kept ? `kept on your word (${j.kept})` : j.passed ? "said as written, one person, no lettering" : j.why}${j.marks.length ? ` · in the room: ${j.marks.join("; ")}` : ""}${j.faults.length ? ` · noted: ${j.faults.join("; ")}${j.passed && !j.kept && !noteRetake && mv?.m.kind !== "move" && take < limit ? " — made once more" : ""}` : ""}`);
+        log(`  ${basename(file)}: ${j.kept ? `kept on your word (${j.kept})` : j.passed ? (coach ? `said as written, one person, ${coach.name} and the uniform as they are` : "said as written, one person, no lettering") : j.why}${j.marks.length ? ` · in the room: ${j.marks.join("; ")}` : ""}${j.faults.length ? ` · noted: ${j.faults.join("; ")}${j.passed && !j.kept && !noteRetake && mv?.m.kind !== "move" && take < limit ? " — made once more" : ""}` : ""}`);
         // Lettering that is in the picture itself (a sign, clothing) would be in every take from it: the next take is filmed from a fresh picture. A caption the video model laid over the picture is not the picture's fault.
         if (!j.passed && j.kind === "lettering" && j.lettering.fails.some((x) => x.on !== "overlay") && still === pic0 && take < limit) await freshPicture();
       }
@@ -1635,7 +1740,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       if (ok.length) { const best = ok.reduce((b, x) => (x.faults.length <= b.faults.length ? x : b)); r = { file: best.file, takes: take, passed: true, line, check: best.check, marks: best.marks, ...(best.kept ? { kept: best.kept } : {}), all }; }
       // None passed, but there is a take: the one nearest right (the words said as written before anything else) goes
       // into the cut, flagged, for the owner to watch and decide (2026-11-15: "I don't even see the final output").
-      else if (judged.length) { const rank = (t) => ({ lettering: 0, people: 1, move: 2, words: 3 })[t.kind] ?? 4, best = judged.reduce((b, x) => (rank(x) < rank(b) || (rank(x) === rank(b) && x.faults.length <= b.faults.length) ? x : b)); r = { file: best.file, takes: take, passed: false, flagged: true, kind: best.kind, why: best.why, line, check: best.check, marks: best.marks, all }; }
+      else if (judged.length) { const rank = (t) => ({ wall: 0, lettering: 0, uniform: 1, people: 1, move: 2, likeness: 2, words: 3 })[t.kind] ?? 4, best = judged.reduce((b, x) => (rank(x) < rank(b) || (rank(x) === rank(b) && x.faults.length <= b.faults.length) ? x : b)); r = { file: best.file, takes: take, passed: false, flagged: true, kind: best.kind, why: best.why, line, check: best.check, marks: best.marks, all }; }
       else r = { file: null, takes: take, passed: false, line, why: stopped?.why || "no take was made", ...(stopped?.refused ? { refused: true } : {}), all };
       r.seconds = seconds; r.per_area = perArea; r.move = mv; r.judged = judged.map((t) => ({ file: t.file, passed: t.passed }));
       // Two clips: the move's clip rides with the line's; its takes are the cut's takes too (Film this line again sets both aside); a move that was
@@ -1651,7 +1756,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       const none = lines.findIndex((l) => !l.file);
       if (none >= 0) {
         const l = lines[none];
-        videos.push({ area, script_id: script.id, lines, ...(l.refused ? { refused: true } : {}), failed: l.refused ? `${label(none)}: ${l.why}. Nothing else is lost: Run again tries only this cut; if it is refused again, change its words` : `${label(none)}: ${l.why}` }); continue;
+        videos.push({ area, script_id: script.id, ...who, lines, ...(l.refused ? { refused: true } : {}), failed: l.refused ? `${label(none)}: ${l.why}. Nothing else is lost: Run again tries only this cut; if it is refused again, change its words` : `${label(none)}: ${l.why}` }); continue;
       }
       onProgress({ stage: "cut", area });
       const overlays = [], blocks = []; let at = 0;
@@ -1664,18 +1769,18 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         // One picture of the block for each of its words, that word lit while it is said.
         for (const [k, c] of captions(l.line, sp.spans.map(([a, b]) => [at + a - from, at + b - from])).entries()) for (const w of captionWords(c)) {
           if (!(w.to > w.from)) continue;
-          const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}-${w.i}.png`), capHtml(c.text, w.i), captionAccentOf(profile) || CAPTION_ACCENT); overlays.push({ png: o.png, from: w.from, to: w.to }); if (w.i === 0) blocks.push(...o.blocks);
+          const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}-${w.i}.png`), capHtml(c.text, w.i), captionAccentOf(profile) || CAPTION_ACCENT, !!coach); overlays.push({ png: o.png, from: w.from, to: w.to }); if (w.i === 0) blocks.push(...o.blocks);
         }
         starts.push(Math.round(startAt * 100) / 100); at += cuts[i].to - cuts[i].from;
       }
       const outside = blocks.filter((b) => !inLive(b));
-      if (outside.length) { videos.push({ area, script_id: script.id, lines, failed: `the words do not fit Meta's live area: "${outside[0].text}"` }); continue; }
-      const file = assemble({ clips: seq, overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`) });
+      if (outside.length) { videos.push({ area, script_id: script.id, ...who, lines, failed: `the words do not fit Meta's live area: "${outside[0].text}"` }); continue; }
+      const file = assemble({ clips: seq, overlays, out: join(outDir, `${script.id}${coach ? `--${coach.key}` : ""}-${slug(area)}.mp4`) });
       const poster = file.replace(/\.mp4$/, ".jpg"); ff(["-ss", "0.8", "-i", file, "-frames:v", "1", "-q:v", "3", poster]);
       // Every line of the cut, for the owner's screen: where it starts, the take in it, the takes on file, what a fresh take costs, a word to listen for, and — where no take passed — why.
       const parts = lines.map((l, i) => ({ line: i + 1, label: label(i), text: l.line, clip: basename(l.file), takes: l.all, seconds: l.seconds, at: starts[i], ...(l.move ? { move: moveLabel(l.move) } : {}), ...(l.per_area ? { per_area: true } : {}), ...(saidIn(l.line, saidList).length ? { listen: saidIn(l.line, saidList).map((x) => ({ word: x.word, say: x.say })) } : {}), ...(l.kept ? { kept: l.kept } : {}), ...(l.passed ? {} : { flag: { why: l.why, kind: l.kind } }) }));
       const flags = parts.filter((p) => p.flag).map((p) => ({ line: p.line, label: p.label, why: p.flag.why, kind: p.flag.kind }));
-      videos.push({ area, script_id: script.id, kind, ...(kind === "active" ? { moves: parts.filter((p) => p.move).map((p) => ({ line: p.line, move: p.move })) } : {}), style: script.style?.name || null, pain: script.pain || null, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), parts, ...(flags.length ? { flags } : {}),
+      videos.push({ area, script_id: script.id, kind, ...who, ...(kind === "active" ? { moves: parts.filter((p) => p.move).map((p) => ({ line: p.line, move: p.move })) } : {}), style: script.style?.name || null, pain: script.pain || null, file, poster, seconds: Math.round(durationOf(file) * 10) / 10, lines, words: lines.map((l) => l.line), parts, ...(flags.length ? { flags } : {}),
         notes: [...new Set([...lines.flatMap((l) => l.check?.faults || []), ...lines.flatMap((l) => l.marks || []), ...parts.filter((p) => p.kept).map((p) => `${p.label} kept on your word (${p.kept})`)])] });
     }
     // What this call filmed, and what became of it: in a video, replaced by a retake, failed its check, or waiting on a video that could not be cut.

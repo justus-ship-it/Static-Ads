@@ -319,3 +319,35 @@ test("PP4 a white-paper video end to end: ONE picture of the presenter holding b
     assert.match(r9.videos[0].failed, /^sheet \d: the cap of 0 seconds of video was reached$|has too many words to be read on the paper: use fewer/);
   } finally { await browser.close(); rmSync(d, { recursive: true, force: true }); }
 });
+
+test("PP5 a white-paper video of a gym's real coach (2026-11-17): the one picture is re-made from two real pictures of the coach, the paper held a little lower so the logo on the chest shows above it; a picture that does not look like the coach is not used and another is made; the uniform's logo and the gym's own wall words are no failure in a sheet's clip; the video says who presents and is kept in the coach's own store", { timeout: 600000 }, async (t) => {
+  if (!hasFfmpeg()) return t.skip("ffmpeg is not installed");
+  const { d, g, profile } = gym({ presenter: null }), browser = await launchBrowser();
+  try {
+    const script = addSheetScript(g, { sheets: GOOD, offer: OFFER }, { profile }), areas = ["BISHAN"], out = join(d, "out");
+    const sd = join(g, "brand-assets", "video-samples", "starts", "mei"); mkdirSync(sd, { recursive: true });
+    const starts = ["video-01-4.2-close.jpg", "video-02-6.2-close.jpg"].map((n, i) => { const f = join(sd, n); writeFileSync(f, Buffer.concat([PNG, Buffer.from([i])])); return f; });
+    const coach = { id: "coach-mei", key: "mei", name: "Mei", voice: "a clear voice", starts, refs: starts, wears: { top: "black T-shirt", bottom: "black shorts", glasses: false }, uniform: { words: "STRONGER THAN YESTERDAY", logo: "a hexagon" } };
+    const own = () => [{ text: "b", on: "clothing" }, { text: "BE STRONG.", on: "sign" }];
+    assert.deepEqual((({ seconds, images }) => [seconds, images])(paperNeeds({ gymDir: g, script, areas, profile, coach })), [28, 1]);
+    const f = fakes({ areas, boxes: [BOX, BOX], lettering: own }), sames = [], logs = [];
+    f.models.same = async (start, target) => { sames.push([basename(start), basename(target)]); return sames.length === 1 ? { same_person: false, differences: ["a longer face"], shirt_changed: false, wall_changed: false } : { same_person: true, differences: [], shirt_changed: false, wall_changed: false }; };
+    const r = await makePaperVideos({ gymDir: g, outDir: out, script, areas, offer: OFFER, profile, browser, coach, caps: { seconds: 80, images: 2 }, models: f.models, log: (m) => logs.push(m) });
+    // Two pictures: the first did not look like the coach. Each from the coach's two real pictures, the paper below the logo.
+    assert.deepEqual([f.calls.image.length, f.calls.image.every((c) => c.refs.join() === starts.join()), sames.map((s) => s[0]), r.spent.images], [2, true, ["video-01-4.2-close.jpg", "video-01-4.2-close.jpg"], 2]);
+    assert.match(f.calls.image[0].prompt, /The person is the SAME real person as in the first and second images: exactly the same face, hair, build and skin, wearing the same clothes \(black T-shirt, black shorts\)/);
+    assert.match(f.calls.image[0].prompt, /Its top edge is just BELOW the logo on the chest of the top, so the coach's whole face, the collar and that logo show above the paper/);
+    assert.ok(/COMPLETELY BLANK/.test(f.calls.image[0].prompt) && !/\b(he|she|his|her)\b/i.test(f.calls.image[0].prompt));
+    assert.ok(logs.some((l) => /it does not look like Mei \(a longer face\)/.test(l)), logs.join("\n"));
+    // The clips: a real coach, the logo and the gym's lettering kept; seven sheets of four seconds.
+    assert.deepEqual([f.calls.clip.length, f.calls.clip.every((c) => /The person in the photograph is a real coach at this gym/.test(c.prompt) && /the logo on the coach's top and the gym's own lettering on the walls — which all stay exactly as they are/.test(c.prompt) && !/\b(he|she|his|her)\b/i.test(c.prompt))], [7, true]);
+    const v = r.videos[0];
+    assert.deepEqual([v.failed, v.flags, v.coach, v.kind, basename(v.file), existsSync(v.file)], [undefined, undefined, { id: "coach-mei", name: "Mei" }, "paper", `${script.id}--mei-bishan.mp4`, true], logs.join("\n"));
+    assert.deepEqual([existsSync(join(g, "video-clips", `${script.id}--mei`)), existsSync(clipStore(g, script.id))], [true, false], "the coach's own store; the invented presenter's is not touched");
+    // The same clip's check, judged as an invented presenter's, would fail on those words: the stamp is what lets the gym's own through.
+    const check = v.lines[0].check;
+    assert.deepEqual([check.coach, judgeSheet(check, v.lines[0].text).passed, judgeSheet({ ...check, coach: false }, v.lines[0].text).kind, judgeSheet({ ...check, seen: { ...check.seen, lettering: [...own(), { text: "SALE", on: "overlay" }] } }, v.lines[0].text).kind], [true, true, "lettering", "lettering"]);
+    assert.deepEqual((({ seconds, images, reused }) => [seconds, images, reused])(paperNeeds({ gymDir: g, script, areas, profile, coach })), [0, 0, 28]);
+    await assert.rejects(makePaperVideos({ gymDir: g, outDir: out, script, areas, offer: OFFER, profile, browser, coach: { ...coach, refs: [] }, models: f.models }), /Mei has no starting picture/);
+  } finally { await browser.close(); rmSync(d, { recursive: true, force: true }); }
+});

@@ -305,6 +305,12 @@ export const IMAGE_MODELS = Object.freeze({ pro: "gemini-3-pro-image-preview", f
  * member — a woman or a man, about what age, and any look the owner writes. A gym's own choice, and nothing is made
  * until it is set (Sculpt Society has no female coaches: a woman presenting there would mislead).
  */
+/**
+ * Who presents a gym's videos (2026-11-17): the invented presenter (as every gym had) or the gym's own real coaches
+ * (coach-look.mjs: named by the owner, consent on file, pictures cut from the gym's sample videos).
+ */
+export const PRESENTS = ["invented", "coaches"];
+export const presentsOf = (profile) => (profile?.creative_defaults?.presents === "coaches" ? "coaches" : "invented");
 export const PRESENTER_GENDERS = ["woman", "man"];
 export function presenterProblems(p) {
   if (p == null) return [];
@@ -544,6 +550,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       if (cd.look != null && !LOOKS.includes(cd.look)) errors.push(`creative_defaults.look must be one of ${LOOKS.join(", ")}`);
       for (const e of presenterProblems(cd.presenter)) errors.push(`creative_defaults.${e}`);
       for (const e of captionAccentProblems(cd.caption_accent)) errors.push(`creative_defaults.${e}`);
+      if (cd.presents != null && !PRESENTS.includes(cd.presents)) errors.push(`creative_defaults.presents must be ${PRESENTS.join(" or ")}`);
       if (cd.format != null && !SCENE_FORMATS[cd.format]) errors.push(`creative_defaults.format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
       if (cd.mix != null) for (const e of mixProblems(cd.mix)) errors.push(`creative_defaults.${e.replace(/^the mix's/, "mix:")}`);
       if (cd.ratio != null && !FEED_RATIOS.includes(cd.ratio)) errors.push(`creative_defaults.ratio must be ${FEED_RATIOS.join(", ")}: feed ads are made at 4:5 and Stories at 9:16 (the square is no longer made)`);

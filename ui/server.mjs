@@ -26,13 +26,14 @@ import { createServer } from "http";
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, realpathSync, rmSync, renameSync, mkdtempSync, openSync, readSync, closeSync } from "fs";
 import { join, resolve, dirname, extname, basename, sep } from "path";
 import { tmpdir } from "os";
+import { readCoaches, addCoach, setConsent, switchCoach, setSamples, addSample as addCoachSample, samples as coachSamples, extractFrames, groupsOf, buildStarts, setVoice, switchStart, setUniform, coachWhy, paperWhy, SAMPLES_DIR as COACH_SAMPLES_DIR, VIDEO_EXT as COACH_VIDEO_EXT, STILL_EXT as COACH_STILL_EXT } from "../skills/references/coach-look.mjs";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
   scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
-  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase, FEED_RATIOS, mixOf } from "../skills/references/client-config.mjs";
+  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase, FEED_RATIOS, mixOf, presentsOf, PRESENTS } from "../skills/references/client-config.mjs";
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
@@ -53,7 +54,7 @@ import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
 import { plainGemini } from "../skills/references/gemini-busy.mjs";
 import { scarcityOf, SHEETS, SHEET_WORDS, addSheetScript, decideSheetScript, draftSheetScripts, readySheetScripts, keptSheetScripts, readSheetScripts, sheetIssues, sheetCost } from "../skills/references/paper-video.mjs";
-import { movesFor, moveLabel, knownKit, KIT as VIDEO_KIT, MOVES as VIDEO_MOVES, MOVE_LEAD, USD_PER_IMAGE as VIDEO_USD_PER_IMAGE, factsFor as videoFactsFor, setAside, keepTake, clipStore, readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, plainWords, setPlain, LONG_SYLLABLES, readStyle, nameStyle, suggestFacts, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
+import { movesFor, moveLabel, knownKit, KIT as VIDEO_KIT, MOVES as VIDEO_MOVES, MOVE_LEAD, USD_PER_IMAGE as VIDEO_USD_PER_IMAGE, factsFor as videoFactsFor, setAside, keepTake, clipStore, coachStore, readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, plainWords, setPlain, LONG_SYLLABLES, readStyle, nameStyle, suggestFacts, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
 import { whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
@@ -76,6 +77,9 @@ const IMPORT_SCRIPT = join(REPO_ROOT, "skills", "references", "import-gym.mjs");
 const STORIES_SCRIPT = join(REPO_ROOT, "skills", "references", "make-stories.mjs");
 const REFRESH_SCRIPT = join(REPO_ROOT, "skills", "references", "refresh-scenes.mjs");
 const CLEAN_SCRIPT = join(REPO_ROOT, "skills", "references", "clean-photo.mjs");
+const COACH_SCRIPT = join(REPO_ROOT, "skills", "references", "coach-look.mjs");
+/** A sample video of a coach may be large (a minute of phone video is about 120 MB). */
+const MAX_SAMPLE_BYTES = 600 * 1024 * 1024;
 const READ_SCRIPT = join(REPO_ROOT, "skills", "references", "read-website.mjs");
 const IG_SCRIPT = join(REPO_ROOT, "skills", "references", "read-instagram.mjs");
 const CREATIVES_SCRIPT = join(REPO_ROOT, "skills", "references", "read-creatives.mjs");
@@ -141,7 +145,36 @@ function tokenOk(req) {
  *  argument shapes are fixed here rather than accepted from the browser. */
 const brandDir = (gym) => join(BRANDS, gym);
 const briefPath = (gym, batch) => join(BRANDS, gym, "batches", batch, "brief.json");
+/**
+ * A gym's real coaches (2026-11-17; coach-look.mjs): who is on the list with their consent, the sample videos and who
+ * each shows (the owner's click), what a reading found, each coach's starting pictures. Nothing here names anyone
+ * from a face: the groups are by what a person wears.
+ */
+function coachesView(gym) {
+  const dir = brandDir(gym), prof = readJsonFile(join(dir, "gym-profile.json")) || {}, d = readCoaches(dir), list = coachSamples(dir);
+  const url = (rel) => `/files/brands/${gym}/brand-assets/video-samples/${String(rel).split(sep).join("/")}`;
+  const thumb = (s) => {
+    if (s.kind !== "video") return url(s.name);
+    const base = basename(s.name, extname(s.name)), fd = join(dir, COACH_SAMPLES_DIR, "frames", base); if (!existsSync(fd)) return null;
+    const f = readdirSync(fd).filter((x) => /^at-.*\.jpg$/.test(x)).sort(), small = f.filter((x) => /\.look\.jpg$/.test(x)), pick = small[Math.min(1, small.length - 1)] || f[Math.min(2, f.length - 1)];
+    return pick ? url(join("frames", base, pick)) : null;
+  };
+  const whose = (name) => d.coaches.find((c) => (c.samples || []).includes(name))?.id || null;
+  // The video ads that show each coach, by batch, with how many of them are on Meta: what the owner pauses when a coach's consent is taken back (the app pauses nothing by itself).
+  const shown = new Map(), outs = join(dir, "outputs");
+  for (const b of existsSync(outs) ? readdirSync(outs).filter((x) => !x.startsWith("_")) : []) {
+    const batch = readJsonFile(join(outs, b, "batch.json")), pub = readJsonFile(join(outs, b, "publish.json"));
+    for (const a of batch?.ads || []) { const id = a.video?.coach?.id; if (!id) continue; const row = (shown.get(id) || shown.set(id, new Map()).get(id)).get(b) || { batch: b, ads: 0, on_meta: 0 }; row.ads++; if (pub?.ads?.[a.folder]?.id) row.on_meta++; shown.get(id).set(b, row); }
+  }
+  return { presents: presentsOf(prof), ffmpeg: hasFfmpeg(), uniform: d.uniform || null,
+    coaches: d.coaches.map((c) => ({ shown_in: [...(shown.get(c.id)?.values() || [])], id: c.id, name: c.name, note: c.note || null, status: c.status, off: c.off || null, consent: c.consent || null, voice: c.voice || null, wears: c.wears || null, samples: c.samples || [], why: coachWhy(c), paper_why: paperWhy(c), starts: (c.starts || []).map((s) => ({ ...s, url: url(s.file) })) })),
+    samples: list.map((s) => ({ name: s.name, kind: s.kind, original: s.original, seconds: s.seconds ?? null, coach: whose(s.name), thumb: thumb(s), read: s.read ? { top: s.read.top, glasses: s.read.glasses, spot: s.read.spot, words: s.read.heard?.words ?? 0, per_second: s.read.heard?.per_second ?? null, shirt_words: s.read.shirt_words } : null })),
+    groups: groupsOf(dir), unread: list.filter((s) => s.kind === "video" && !s.read).length,
+    reading: [...runs.values()].find((r) => !r.done && r.kind === "coach-read" && r.gym === gym)?.id || null };
+}
 const RUNNABLE = {
+  // Reading a gym's coach samples: two small check calls a video (the sound, the frames), then the starting pictures. No image call.
+  "coach-read": { label: "Read the coach videos", argv: ({ gym }) => [COACH_SCRIPT, "--brand-dir", brandDir(gym), "--read"] },
   checksync: { label: "Check skill/command sync", argv: () => ["skills/references/check-sync.mjs"] },
   // Offer-first batches (Step 6). Built from the gym and batch id only; the brief is the file on disk.
   "batch-plan": { label: "Plan batch (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--dry-run"] },
@@ -817,10 +850,12 @@ function checkBrief(gym, raw) {
   const nv = videoCount(brief?.videos); let videos = null;
   if (nv > 0) {
     const profile = readJsonFile(join(brandDir(gym), "gym-profile.json")) || {};
-    if (!presenterOf(profile)) errors.push("say who presents the videos first: Ad defaults → Presenter (a woman or a man)");
+    // A gym that presents with its real coaches needs neither an invented presenter nor a photo of the room: the coaches' own frames are both. Who can be filmed is said by the plan.
+    const withCoaches = presentsOf(profile) === "coaches" || !!brief.coach;
+    if (!withCoaches && !presenterOf(profile)) errors.push("say who presents the videos first: Ad defaults → Presenter (a woman or a man, or the gym's own coaches)");
     if (!hasFfmpeg()) errors.push("videos need ffmpeg on this machine: run `brew install ffmpeg` once in Terminal");
-    if (!(brief.reference || real[0])) errors.push("a video is filmed in the gym's own room: clean a premises photo on Photos & assets first");
-    try { const vp = videoPlan(brandDir(gym), brief); videos = { count: vp.count, active: vp.active, paper: vp.paper, videos: vp.videos, seconds: vp.seconds, reused: vp.reused, allow: vp.allow, max_seconds: vp.max_seconds, usd: vp.usd, usd_max: vp.usd_max, images: vp.images, scripts: vp.scripts.map((x) => x.id) }; }
+    if (!withCoaches && !(brief.reference || real[0])) errors.push("a video is filmed in the gym's own room: clean a premises photo on Photos & assets first");
+    try { const vp = videoPlan(brandDir(gym), brief); videos = { coaches: vp.coaches.map((c) => (c ? { id: c.id, name: c.name } : null)), count: vp.count, active: vp.active, paper: vp.paper, videos: vp.videos, seconds: vp.seconds, reused: vp.reused, allow: vp.allow, max_seconds: vp.max_seconds, usd: vp.usd, usd_max: vp.usd_max, images: vp.images, scripts: vp.scripts.map((x) => x.id) }; }
     catch (e) { if (typeof brief.offer === "string" && brief.offer.trim() && locs) errors.push(scrubTokens(e.message)); }
   }
   return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs + cardCount(cards) * locs + nv * locs, cards, videos, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format, mix } };
@@ -892,7 +927,7 @@ function reviewState(gym, id) {
     const s = storyOf.get(a.folder) || (a.story_file && existsSync(join(out, a.story_file)) ? { file: a.story_file } : null);
     return {
       folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, ratio: a.ratio || batch.ratio || "1x1", format: a.format || null, treatment: a.treatment, style: a.style, palette: a.palette,
-      ...(a.video_file && existsSync(join(out, a.video_file)) ? { video: fileUrl(gym, join(out, a.video_file)), video_seconds: a.video?.seconds ?? null, video_words: a.video?.words || [], video_script: a.video?.script_id || null, video_kind: ["active", "paper"].includes(a.video?.kind) ? a.video.kind : "presenter", video_parts: (a.video?.parts || []).map((p) => ({ line: p.line, label: p.label, text: p.text, at: p.at, seconds: p.seconds, takes: (p.takes || []).length, ...(p.move ? { move: p.move } : {}), ...(p.per_area ? { per_area: true } : {}), ...(p.listen ? { listen: p.listen } : {}), ...(p.kept ? { kept: p.kept } : {}), ...(p.again ? { again: true } : {}), ...(p.flag ? { flag: p.flag } : {}) })), video_flags: (a.video?.flags || []).length } : {}),
+      ...(a.video_file && existsSync(join(out, a.video_file)) ? { video: fileUrl(gym, join(out, a.video_file)), video_seconds: a.video?.seconds ?? null, video_words: a.video?.words || [], video_script: a.video?.script_id || null, video_kind: ["active", "paper"].includes(a.video?.kind) ? a.video.kind : "presenter", video_coach: a.video?.coach?.name || null, video_parts: (a.video?.parts || []).map((p) => ({ line: p.line, label: p.label, text: p.text, at: p.at, seconds: p.seconds, takes: (p.takes || []).length, ...(p.move ? { move: p.move } : {}), ...(p.per_area ? { per_area: true } : {}), ...(p.listen ? { listen: p.listen } : {}), ...(p.kept ? { kept: p.kept } : {}), ...(p.again ? { again: true } : {}), ...(p.flag ? { flag: p.flag } : {}) })), video_flags: (a.video?.flags || []).length } : {}),
       photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || a.story_failure || null, card: a.card || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
     };
   });
@@ -924,11 +959,12 @@ function videoTake(gym, id, { ad: folder, line, action } = {}) {
   if (!part) return "this video has no such line (a video made before 15 Nov 2026 is run again first: it costs nothing)";
   if (!["keep", "retake"].includes(action)) return "keep this take, or film the line again";
   if (action === "keep" && !part.flag) return `${part.label} passed its check: there is nothing to keep on your word`;
-  const store = clipStore(brandDir(gym), ad.video.script_id), why = part.flag?.why || null;
+  // A coach's clips are kept in the coach's own store for that script.
+  const store = ad.video.coach?.id ? coachStore(brandDir(gym), ad.video.script_id, { key: String(ad.video.coach.id).replace(/^coach-/, "") }) : clipStore(brandDir(gym), ad.video.script_id), why = part.flag?.why || null;
   try { if (action === "keep") keepTake(store, part.clip, why); else setAside(store, part.takes?.length ? part.takes : [part.clip], part.flag ? why : "the owner asked for a fresh take"); }
   catch (e) { return e.message; }
   for (const a of batch.ads) {
-    if (a.video?.script_id !== ad.video.script_id) continue;
+    if (a.video?.script_id !== ad.video.script_id || (a.video?.coach?.id || null) !== (ad.video.coach?.id || null)) continue;
     const p = (a.video.parts || []).find((x) => x.line === line && x.clip === part.clip); if (!p) continue;
     if (action === "keep") { delete p.flag; p.kept = why; a.video.flags = (a.video.flags || []).filter((f) => f.line !== line); if (!a.video.flags.length) delete a.video.flags; a.video.notes = [...(a.video.notes || []), `${p.label} kept on your word (${why})`]; }
     else p.again = true;
@@ -1989,6 +2025,50 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // /api/client/{gym}/coaches — a gym's real coaches and their sample videos (2026-11-17; coach-look.mjs).
+    //   GET → the view. PUT /sample/{name} (raw bytes: a video or a still; kept as it is, frames pulled; no call).
+    //   POST /presents { presents: invented | coaches } · POST /uniform { words, logo } · POST /coach { name, note }
+    //   PUT /coach/{id} { consent { face, voice, by } } | { on, reason } | { samples[] } | { voice } | { start, on, reason }
+    // Reading the samples is the run `coach-read` (the owner's click).
+    const chm = p.match(/^\/api\/client\/([^/]+)\/coaches(?:\/(sample|presents|uniform|coach)(?:\/([\w.-]+))?)?$/);
+    if (chm) {
+      const [, gym, what, x1] = chm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym);
+      if (!what && req.method === "GET") return json(res, 200, coachesView(gym));
+      try {
+        if (what === "sample" && x1 && req.method === "PUT") {
+          if (!hasFfmpeg()) return json(res, 409, { error: "sample videos need ffmpeg on this machine: run `brew install ffmpeg` once in Terminal" });
+          const ext = extname(x1).toLowerCase(); if (![...COACH_VIDEO_EXT, ...COACH_STILL_EXT].includes(ext)) return json(res, 400, { error: `a sample is a video (${COACH_VIDEO_EXT.join(", ")}) or a still (${COACH_STILL_EXT.join(", ")})` });
+          let buf; try { buf = await readRaw(req, MAX_SAMPLE_BYTES); } catch (e) { return json(res, e.status || 400, { error: e.status === 413 ? "this file is over 600 MB: send a shorter clip" : e.message }); }
+          const tmp = mkdtempSync(join(tmpdir(), "coach-sample-")), original = (req.headers["x-original-name"] ? decodeURIComponent(String(req.headers["x-original-name"])) : x1).replace(/[^\w.\- ]/g, "_").slice(0, 120), file = join(tmp, original.toLowerCase().endsWith(ext) ? original : `${original}${ext}`);
+          try { writeFileSync(file, buf); const rec = addCoachSample(dir, file); if (rec.kind === "video" && !rec.already) extractFrames(dir, rec.name, { every: 2 }); return json(res, 200, { ...coachesView(gym), added: rec.name, already: !!rec.already }); }
+          finally { rmSync(tmp, { recursive: true, force: true }); }
+        }
+        if (req.method !== "POST" && req.method !== "PUT") return json(res, 405, { error: "method not allowed" });
+        const body = await readBody(req);
+        if (what === "presents" && req.method === "POST") {
+          if (!PRESENTS.includes(body.presents)) return json(res, 400, { error: "who presents is the invented presenter or the gym's own coaches" });
+          const pf = join(dir, "gym-profile.json"), profile = readJsonFile(pf) || {};
+          (profile.creative_defaults ||= {}).presents = body.presents;
+          const { errors } = validateProfile(profile, { gymDir: dir }); if (errors.length) return json(res, 400, { error: errors[0] });
+          writeWhole(pf, JSON.stringify(profile, null, 2) + "\n"); return json(res, 200, coachesView(gym));
+        }
+        if (what === "uniform" && req.method === "POST") { setUniform(dir, { words: body.words, logo: body.logo }); return json(res, 200, coachesView(gym)); }
+        if (what === "coach" && !x1 && req.method === "POST") { addCoach(dir, { name: body.name, note: body.note }); return json(res, 200, coachesView(gym)); }
+        if (what === "coach" && x1 && req.method === "PUT") {
+          if (body.consent && typeof body.consent === "object") setConsent(dir, x1, { face: body.consent.face, voice: body.consent.voice === true, by: body.consent.by, note: body.consent.note });
+          else if (typeof body.on === "boolean" && typeof body.start === "string") switchStart(dir, x1, body.start, { on: body.on, reason: body.reason });
+          else if (typeof body.on === "boolean") switchCoach(dir, x1, { on: body.on, reason: body.reason });
+          else if (Array.isArray(body.samples)) { setSamples(dir, x1, body.samples.map(String)); buildStarts(dir); }
+          else if (typeof body.voice === "string") setVoice(dir, x1, body.voice);
+          else return json(res, 400, { error: "say what changes: the consent, on or off, the samples that show this coach, the voice, or a starting picture" });
+          return json(res, 200, coachesView(gym));
+        }
+      } catch (e) { return json(res, 400, { error: scrubTokens(e.message) }); }
+      return json(res, 404, { error: "not found" });
+    }
+
     // /api/client/{gym}/assets · /asset/{kind}/{name} — the gym's own files, from the panel's drop zone.
     const am = p.match(/^\/api\/client\/([^/]+)\/(assets|asset\/([a-z]+)\/([^/]+))$/);
     if (am) {
@@ -2240,7 +2320,7 @@ const server = createServer(async (req, res) => {
     if (bm) {
       const [, gym, what, id] = bm;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
-      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym).filter((x) => !x.people), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, limits: { photos: MAX_PHOTOS, calls: MAX_CALLS_CAP }, used_locations: usedLocations(gym), wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, cards_ready: cardsAvailable(brandDir(gym), { profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {} }), max_cards: MAX_CARDS, videos: { presenter: presenterOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), kept: readyScripts(brandDir(gym), null, { profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}, closing: closingLine(VIDEO_LIBRARY_DIR) }).map((x) => ({ id: x.id, offer: x.offer })), needs_edit: keptScripts(brandDir(gym)).filter((x) => scriptIssues(x, { profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}, closing: closingLine(VIDEO_LIBRARY_DIR), gymDir: brandDir(gym) }).length).map((x) => ({ id: x.id, offer: x.offer })), drafts: readScripts(brandDir(gym)).scripts.filter((x) => x.status === "draft").map((x) => ({ id: x.id, offer: x.offer })),
+      if (what === "batch-setup" && req.method === "GET") { const dm = (readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}).targeting_defaults?.demographics || {}; return json(res, 200, { photos: cleanPhotos(gym).filter((x) => !x.people), scenes: sceneStatus(gym), batches: listBatches(gym), maxLocations: MAX_LOCATIONS, limits: { photos: MAX_PHOTOS, calls: MAX_CALLS_CAP }, used_locations: usedLocations(gym), wordings: readWordings(brandDir(gym)), creative_defaults: profileView(gym).creative_defaults, cards_ready: cardsAvailable(brandDir(gym), { profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {} }), max_cards: MAX_CARDS, videos: { presenter: presenterOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), presents: presentsOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), coaches: readCoaches(brandDir(gym)).coaches.map((c) => ({ id: c.id, name: c.name, why: coachWhy(c), paper_why: paperWhy(c) })), kept: readyScripts(brandDir(gym), null, { profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}, closing: closingLine(VIDEO_LIBRARY_DIR) }).map((x) => ({ id: x.id, offer: x.offer })), needs_edit: keptScripts(brandDir(gym)).filter((x) => scriptIssues(x, { profile: readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}, closing: closingLine(VIDEO_LIBRARY_DIR), gymDir: brandDir(gym) }).length).map((x) => ({ id: x.id, offer: x.offer })), drafts: readScripts(brandDir(gym)).scripts.filter((x) => x.status === "draft").map((x) => ({ id: x.id, offer: x.offer })),
         // White-paper videos have scripts of their own kind (sheets): the ones ready, the kept ones that need an edit, the drafts.
         paper: (() => { const dir = brandDir(gym), prof = readJsonFile(join(dir, "gym-profile.json")) || {}, opts = { profile: prof, closing: closingLine(VIDEO_LIBRARY_DIR), gymDir: dir }, row = (x) => ({ id: x.id, offer: x.offer }); return { kept: readySheetScripts(dir, null, opts).map(row), needs_edit: keptSheetScripts(dir).filter((x) => sheetIssues(x, opts).length).map(row), drafts: readSheetScripts(dir).filter((x) => x.status === "draft").map(row) }; })(), samples: readSamples(VIDEO_LIBRARY_DIR).samples.filter((x) => !x.retired).length, max: MAX_VIDEOS, ffmpeg: hasFfmpeg(), usd_per_second: USD_PER_SECOND }, mix: mixOf(readJsonFile(join(brandDir(gym), "gym-profile.json")) || {}), formats: Object.keys(SCENE_FORMATS), photo_ages: [Number.isInteger(dm.age_min) ? dm.age_min : 25, Number.isInteger(dm.age_max) ? dm.age_max : 60] }); }
       if (what === "batch/check" && req.method === "POST") { const { brief } = await readBody(req); return json(res, 200, checkBrief(gym, brief)); }
@@ -2415,6 +2495,15 @@ const server = createServer(async (req, res) => {
         const max = body.max ?? 100;
         if (!Number.isInteger(max) || max < 1 || max > MAX_READ_CALLS) return json(res, 400, { error: `how many pictures to read must be 1 to ${MAX_READ_CALLS}` });
         const run = startRun(kind, { max });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "coach-read") {
+        if (!okSlug(body.gym) || !existsSync(brandDir(body.gym))) return json(res, 400, { error: "bad gym" });
+        const view = coachesView(body.gym);
+        if (view.reading) return json(res, 409, { error: "these samples are being read now: wait for it to end" });
+        if (!view.unread) return json(res, 400, { error: view.samples.length ? "every sample video has been read already: nothing to do" : "add sample videos of the coaches first" });
+        if (body.confirm?.unread !== view.unread) return json(res, 409, { error: "what is on file changed since you looked: look again and confirm what it says now", unread: view.unread });
+        const run = startRun(kind, { gym: body.gym }, { onDone: () => { try { buildStarts(brandDir(body.gym)); } catch { /* the reading's own log says what happened */ } } });
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "photo-survey" || kind === "photo-clean") {

@@ -45,7 +45,7 @@ import { callVision } from "./check-visual.mjs";
 import { launchBrowser, isWholeCountry } from "./render-composites.mjs";
 import { onAdProblems } from "./cards.mjs";
 import { COPY_MODEL, plainDashes } from "./draft-copy.mjs";
-import { themeOf, themeRule, readScripts, writeScripts, presenterOf, presenterWords, realModels, closingLine, endsWithClosing, closingAlone, plainWords, hardWords, PLAIN_RULE, FIRST_PERSON, TAP, IDEAL_BODY, countryNamed, factsFor, painsFor, painSources, fillLine, wordCount, videoLibraryDir, clipStore, asideOf, ownerKeptClip, durationOf, hasFfmpeg, letteringOf, LIVE, USD_PER_SECOND, USD_PER_IMAGE } from "./presenter-video.mjs";
+import { themeOf, themeRule, readScripts, writeScripts, coachStore, presenterOf, presenterWords, realModels, closingLine, endsWithClosing, closingAlone, plainWords, hardWords, PLAIN_RULE, FIRST_PERSON, TAP, IDEAL_BODY, countryNamed, factsFor, painsFor, painSources, fillLine, wordCount, videoLibraryDir, clipStore, asideOf, ownerKeptClip, durationOf, hasFfmpeg, letteringOf, LIVE, USD_PER_SECOND, USD_PER_IMAGE } from "./presenter-video.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 /** A sheet script is 6 to 9 sheets; a sheet is 2 to 8 words (the closing line and the sheet with the offer's name may be longer). Each sheet is one clip of 4 seconds. */
@@ -255,11 +255,16 @@ export async function draftSheetScripts({ brandDir, offer, audience = null, coun
 }
 
 // ── the prompts ──────────────────────────────────────────────────────────────
-const G = (p) => (p.gender === "man" ? { He: "He", he: "he", his: "his" } : { He: "She", he: "she", his: "her" });
+const G = (p) => (p.coach ? { He: "The coach", he: "the coach", his: "the coach's" } : p.gender === "man" ? { He: "He", he: "he", his: "his" } : { He: "She", he: "she", his: "her" });
 const NO_WORDS = "There is no text of any kind anywhere in the picture: no captions, no titles, no logos, no watermark, no lettering on walls, screens or clothing.";
 /** The one picture a white-paper video is made from: the presenter holding a stack of blank sheets, high and large. */
 export function blankPrompt({ presenter, profile }) {
   const g = G(presenter);
+  // A real coach (2026-11-17): the same person as in two real pictures of them, in the gym's uniform, the paper a little LOWER than the invented presenter holds it so the logo on the chest shows above it (the owner's choice: the words under it are covered).
+  if (presenter.coach) {
+    const c = presenter.coach, wears = [c.wears?.top, c.wears?.bottom, c.wears?.glasses ? "glasses" : null].filter(Boolean).join(", ");
+    return `A real photograph taken on a phone held upright, 9:16. The person is the SAME real person as in the first and second images: exactly the same face, hair, build and skin, wearing the same clothes${wears ? ` (${wears})` : ""}, with the same small microphone clipped at the collar if there is one. The coach stands facing the camera, close to it, framed from the waist up with the top of the head close to the top edge of the picture, and holds a small stack of plain white A4 paper sheets upright in front of the stomach with both hands. The paper is LARGE in the picture: about half the picture's width. Its top edge is just BELOW the logo on the chest of the top, so the coach's whole face, the collar and that logo show above the paper, and its bottom edge is at the hips. The front sheet is flat and faces the lens squarely, with no tilt and no curl; the coach's fingers hold the stack only at its left and right edges, so the whole face of the paper is clear. The paper is COMPLETELY BLANK: pure white, nothing written, printed or drawn on it. The coach looks straight into the lens with a small, friendly closed-mouth smile. ${presenter.room === true ? "The room is the gym in the THIRD image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, the coach is alone in it, and no words, sign or logo is on any wall" : "The room is the room of the first image — its walls, ceiling, lights, equipment and floor — and the coach is alone in it. The picture is framed so that NO lettering on any wall is in view: the coach stands where the wall behind is plain or only equipment shows, and no words, sign or logo is on any wall in the picture"}. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; the coach's hands look natural. Apart from the logo on the top there is no text anywhere: no captions, no titles, no watermark.`;
+  }
   return `A real photograph taken on a phone held upright, 9:16. ${g.He} is ${presenterWords(presenter, profile)}. ${g.He} stands on the open gym floor facing the camera, close to it, framed from the hips up with ${g.his} head near the top of the picture, and holds a small stack of plain white A4 paper sheets upright in front of ${g.his} chest with both hands. The paper is LARGE in the picture: about half the picture's width. Its top edge is just below ${g.his} chin, so ${g.his} whole face shows, and its bottom edge is above ${g.his} waist: the whole sheet sits in the upper two thirds of the picture. The front sheet is flat and faces the lens squarely, with no tilt and no curl; ${g.his} fingers hold the stack only at its left and right edges, so the whole face of the paper is clear. The paper is COMPLETELY BLANK: pure white, nothing written, printed or drawn on it. ${g.He} looks straight into the lens with a small, friendly closed-mouth smile. The room is the gym in the image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, and ${g.he} is alone. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; ${g.his} hands look natural. ${NO_WORDS}`;
 }
 /** One sheet's clip: hold it still, then let it drop (the last sheet is held to the end). The camera does not move. */
@@ -268,7 +273,9 @@ export function sheetClipPrompt({ presenter, seconds = SHEET_SECONDS, last = fal
   const act = last
     ? `${g.He} holds the stack of paper perfectly still for the whole clip so the hand-written words on the front sheet can be read, and gives one small nod. The sheet is not dropped.`
     : `For the first two and a half seconds ${g.he} holds the stack of paper perfectly still so the hand-written words on the front sheet can be read. Then ${g.he} lets the front sheet go: it slips off the stack and falls straight down out of the picture, and the sheet behind it is completely blank white paper with nothing written on it.`;
-  return `Bring this photograph to life as ${seconds} seconds of video. Nobody speaks: ${g.his} mouth stays closed in a small friendly smile and ${g.he} keeps looking into the camera. ${act} While the sheet is held, the writing stays exactly as it is in the photograph: every letter unchanged, sharp, steady and in the same place on the paper. The camera is fixed in place: it does not move closer, does not zoom and does not drift, and the framing stays exactly as in the photograph from the first frame to the last. ${g.He} does not walk and does not turn. Exactly one person is in the room for the whole clip. Keep ${g.his} face, hair, clothes and the room exactly as they are in the photograph. It looks like real footage shot on a phone: natural indoor light, real skin, nothing glossy or cinematic. One continuous shot with no scene cuts. Apart from the hand-written words on the front sheet there is no text anywhere: no captions, no subtitles, no titles, no logos, no watermark. Sound: the quiet of an empty gym and the soft rustle of paper. No voice. No music.`;
+  const kept = presenter.coach ? `The person in the photograph is a real coach at this gym: keep the coach's face, hair, build, clothes and the room exactly as they are in the photograph, so that the coach is recognisably the same person in every frame.` : `Keep ${g.his} face, hair, clothes and the room exactly as they are in the photograph.`;
+  const written = presenter.coach ? "Apart from the hand-written words on the front sheet, the logo on the coach's top and the gym's own lettering on the walls — which all stay exactly as they are — nothing is written anywhere: no captions, no subtitles, no titles, no watermark." : "Apart from the hand-written words on the front sheet there is no text anywhere: no captions, no subtitles, no titles, no logos, no watermark.";
+  return `Bring this photograph to life as ${seconds} seconds of video. Nobody speaks: ${g.his} mouth stays closed in a small friendly smile and ${g.he} keeps looking into the camera. ${act} While the sheet is held, the writing stays exactly as it is in the photograph: every letter unchanged, sharp, steady and in the same place on the paper. The camera is fixed in place: it does not move closer, does not zoom and does not drift, and the framing stays exactly as in the photograph from the first frame to the last. ${g.He} does not walk and does not turn. Exactly one person is in the room for the whole clip. ${kept} It looks like real footage shot on a phone: natural indoor light, real skin, nothing glossy or cinematic. One continuous shot with no scene cuts. ${written} Sound: the quiet of an empty gym and the soft rustle of paper. No voice. No music.`;
 }
 
 // ── the browser: find the paper, write on it ─────────────────────────────────
@@ -442,7 +449,8 @@ export function judgeSheet(check, text, { last = false } = {}) {
   const t = check?.timing || {}, seen = check?.seen || {}, reads = check?.reads || [], held = t.leave ?? t.duration ?? 0;
   const wrong = reads.find((r) => !sameWriting(r.written, inkText(text))), spoken = norm(seen.spoken);
   // The sheet's own words are no lettering: an entry mostly made of them is the paper.
-  const mine = new Set(inkText(text).toLowerCase().match(/[a-z0-9']+/g) || []), other = (Array.isArray(seen.lettering) ? seen.lettering : []).filter((x) => { const ws = String(x?.text || "").toLowerCase().match(/[a-z0-9']+/g) || []; return ws.length && ws.filter((w) => mine.has(w)).length / ws.length < 0.6; });
+  // A real coach's clip (stamped `coach`): the uniform's own print and the gym's own lettering on the walls are the room's own, as they are in a coach's spoken clip.
+  const mine = new Set(inkText(text).toLowerCase().match(/[a-z0-9']+/g) || []), other = (Array.isArray(seen.lettering) ? seen.lettering : []).filter((x) => { const ws = String(x?.text || "").toLowerCase().match(/[a-z0-9']+/g) || []; return ws.length && ws.filter((w) => mine.has(w)).length / ws.length < 0.6; }).filter((x) => !(check?.coach === true && x.on !== "overlay"));
   const L = letteringOf({ lettering: other });
   const kind = !reads.length || wrong ? "words" : spoken ? "voice" : seen.people !== 1 ? "people" : held < MIN_HOLD ? "drop" : !last && t.drop == null ? "drop" : L.fails.length ? "lettering" : null;
   const why = kind === "words" ? (wrong ? (norm(wrong.written) ? `the paper read "${norm(wrong.written)}"` : "the paper was blank when it was read") : "the paper could not be read back")
@@ -466,8 +474,10 @@ const passed = (check, text, last) => !!check && check.v === CHECK_V && judgeShe
  * spoken script: { clips[{ line, area, seconds, on_file, flagged }], seconds (to film, one clean pass), reused,
  * flagged, images }. No call, nothing written.
  */
-export function paperNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, store = clipStore(gymDir, script.id), takes = 2 }) {
-  const presenter = presenterOf(profile), files = existsSync(store) ? readdirSync(store) : [], aside = asideOf(store), clips = [], last = script.sheets.length - 1;
+export function paperNeeds({ gymDir, script, areas = [""], room = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, coach = null, store = coach ? coachStore(gymDir, script.id, coach) : clipStore(gymDir, script.id), takes = 2 }) {
+  const coachRoom = !!(coach && room && existsSync(room));
+  if (coach) room = `coach:${coach.key}`;
+  const presenter = coach ? { gender: null, coach, room: coachRoom } : presenterOf(profile), files = existsSync(store) ? readdirSync(store) : [], aside = asideOf(store), clips = [], last = script.sheets.length - 1;
   const main = presenter && room ? blankName(blankPrompt({ presenter, profile }), room) : null;
   // The picture in use: the first on file whose paper passed (one not looked at yet counts as usable).
   const blank = main ? blankFiles(main).find((b) => files.includes(b) && !readJson(join(store, paperFile(b)))?.problem) || null : null, key = blank ? paperKey(readJson(join(store, paperFile(blank)))) : "";
@@ -502,20 +512,25 @@ function joinSheets({ clips, out, fade = SHEET_FADE }) {
  * script_id, kind: "paper", file, poster, seconds, words, parts, flags?, notes } | { area, failed }], spent, tally }.
  * `caps { seconds, images }` are never passed: a call that would pass one is not made.
  */
-export async function makePaperVideos({ gymDir, outDir, script, areas, offer, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 80, images: 2 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = paperModels(profile), browser = null, closing = closingLine(), store = clipStore(gymDir, script.id), log = () => {}, onProgress = () => {} }) {
-  const presenter = presenterOf(profile);
+export async function makePaperVideos({ gymDir, outDir, script, areas, offer, room, profile = readJson(join(gymDir, "gym-profile.json")) || {}, caps = { seconds: 80, images: 2 }, spent = { seconds: 0, images: 0, checks: 0 }, takes = 2, models = paperModels(profile), browser = null, closing = closingLine(), coach = null, store = coach ? coachStore(gymDir, script.id, coach) : clipStore(gymDir, script.id), log = () => {}, onProgress = () => {} }) {
+  // A real coach (coach-look.mjs → coachForVideo) in place of the invented presenter: the one picture is re-made from two real pictures of them.
+  if (coach && !coach.refs?.length) throw new Error(`${coach.name} has no starting picture: nothing is filmed`);
+  // The room of a coach's re-made picture is the gym's own room photo when the batch has one (cleaned of words), with the coach's two real pictures for the person.
+  const roomPhoto = coach && room && existsSync(room) ? room : null;
+  if (coach) room = `coach:${coach.key}`;
+  const presenter = coach ? { gender: null, coach, room: !!roomPhoto } : presenterOf(profile), who = coach ? { coach: { id: coach.id, name: coach.name } } : {};
   if (!presenter) throw new Error("say who presents first (Ad defaults → Presenter): a woman or a man. Nothing is made until then");
   // The script's own rules, as they stand for a kept script: a scarcity sheet he said yes to (`scarce_ok`) is his word here too.
   // (2026-11-16: this check left his yes out, so a script he had kept and approved stopped a batch after two videos were filmed.)
   const errs = sheetProblems(script.sheets, { offer, profile, closing, facts: factsFor(gymDir, offer), approved: script.scarce_ok || [] }); if (errs.length) throw new Error(`this script cannot be made: ${errs.join("; ")}`);
   if (!areas?.length) throw new Error("a video needs a location");
   const whole = areas.find((a) => isWholeCountry(a)); if (whole) throw new Error(`"${whole}" is the whole country: a video says the area around the gym, never the country`);
-  if (!room || !existsSync(room)) throw new Error("a photo of the gym's room is needed, so the video is in the gym's own room (Photos & assets → a cleaned premises photo)");
+  if (!coach && (!room || !existsSync(room))) throw new Error("a photo of the gym's room is needed, so the video is in the gym's own room (Photos & assets → a cleaned premises photo)");
   if (!hasFfmpeg()) throw new Error("ffmpeg is not installed on this machine: run `brew install ffmpeg` once");
   mkdirSync(store, { recursive: true }); mkdirSync(outDir, { recursive: true });
   const own = !browser; if (own) browser = await launchBrowser();
   const within = (kind, n) => spent[kind] + n <= caps[kind], tally = { filmed: 0, in_videos: 0, replaced: 0, failed: 0, waiting: 0 };
-  const failAll = (why) => ({ videos: areas.map((area) => ({ area, script_id: script.id, kind: "paper", failed: why })), spent, tally });
+  const failAll = (why) => ({ videos: areas.map((area) => ({ area, script_id: script.id, kind: "paper", ...who, failed: why })), spent, tally });
   const last = script.sheets.length - 1, label = (i) => `sheet ${i + 1}`;
   try {
     // ── the one picture: the presenter holding blank sheets. One whose paper cannot be written on is made again (a fresh one each run, at most).
@@ -527,12 +542,14 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
         if (!within("images", 1)) { why = why ? `${why}, and the cap of ${caps.images} image call${caps.images === 1 ? "" : "s"} leaves none for another` : `the cap of ${caps.images} image call${caps.images === 1 ? "" : "s"} was reached before the presenter's picture was made`; break; }
         spent.images++; madeNow++; onProgress({ stage: "still", line: 1, paper: true }); log(pic === main ? "the presenter's picture, holding the blank sheets" : "a fresh picture of the presenter");
         writeFileSync(pic.replace(/\.jpg$/, ".prompt.txt"), prompt + "\n");
-        try { await models.image({ out: pic, prompt, refs: [room] }); }
+        try { await models.image({ out: pic, prompt, refs: coach ? [...coach.refs, ...(roomPhoto ? [roomPhoto] : [])] : [room] }); }
         catch (e) { if (!isRefusal(e)) throw e; why = "Google's image model refused the presenter's picture under its content rules"; log(`  ${why}`); continue; }
       }
       let p = readJson(paperFile(pic)); if (!p) { p = await findPaper(browser, pic); writeFileSync(paperFile(pic), JSON.stringify(p, null, 2) + "\n"); }
       // A paper the first finder got wrong (its sides do not agree) is found again; its sheets and clips are made afresh under new names.
       else if (!p.problem && paperKey(p) && !p.key) { p = { ...(await findPaper(browser, pic)), key: "r2" }; writeFileSync(paperFile(pic), JSON.stringify(p, null, 2) + "\n"); log("  the paper in the picture on file had been found wrongly: it is found again, and its sheets are written and filmed afresh"); }
+      // A coach's picture is held against a real one of them: a picture that is not the same person is not used, and another is made.
+      if (coach && !p.problem && models.same && p.same === undefined) { spent.checks++; p.same = await models.same(coach.refs[0], pic); if (p.same?.same_person === false) p.problem = `it does not look like ${coach.name}${(p.same.differences || []).length ? ` (${p.same.differences.slice(0, 3).join("; ")})` : ""}`; writeFileSync(paperFile(pic), JSON.stringify(p, null, 2) + "\n"); }
       if (!p.problem) { blank = pic; paper = p; break; }
       why = p.problem; log(`  ${basename(pic)}: ${p.problem}`);
     }
@@ -554,7 +571,7 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
         spent.checks++; reads.push({ at: round(at), ...(await models.read(frame)) }); rmSync(frame, { force: true });
       }
       spent.checks++; const seen = await models.watch(file, { paper: true });
-      return { v: CHECK_V, timing, reads, seen };
+      return { v: CHECK_V, timing, reads, seen, ...(coach ? { coach: true } : {}) };
     };
     const clipFor = async (i, area) => {
       const still = await stillFor(i, area), key = `${i}|${still.perArea ? area : ""}`; if (made.has(key)) return made.get(key);
@@ -604,7 +621,7 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
     for (const area of areas) {
       const sheets = []; for (const [i] of script.sheets.entries()) sheets.push(await clipFor(i, area));
       const none = sheets.findIndex((s) => !s.file);
-      if (none >= 0) { const s = sheets[none]; videos.push({ area, script_id: script.id, kind: "paper", ...(s.refused ? { refused: true } : {}), failed: s.words ? `${label(none)} ${s.why}` : s.refused ? `${label(none)}: ${s.why}. Nothing else is lost: Run again tries only this sheet; if it is refused again, change its words` : `${label(none)}: ${s.why}` }); continue; }
+      if (none >= 0) { const s = sheets[none]; videos.push({ area, script_id: script.id, kind: "paper", ...who, ...(s.refused ? { refused: true } : {}), failed: s.words ? `${label(none)} ${s.why}` : s.refused ? `${label(none)}: ${s.why}. Nothing else is lost: Run again tries only this sheet; if it is refused again, change its words` : `${label(none)}: ${s.why}` }); continue; }
       onProgress({ stage: "cut", area, paper: true });
       // Each clip is kept until its sheet has fallen out of the frame (the last one: while the sheet is held), and fades into the next; a sheet that is never dropped is cut at its end.
       const cuts = [], starts = []; let at = 0;
@@ -612,11 +629,11 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
         const t = s.check.timing, to = i === last ? Math.min(LAST_KEEP, t.leave != null ? Math.max(0.5, t.leave - 0.1) : t.duration) : t.drop != null && t.drop > 0 ? Math.min(t.duration - 0.04, t.drop + DROP_KEEP) : t.duration;
         cuts.push({ file: s.file, to: round(to) }); starts.push(round(at)); at += cuts[i].to - (sheets.length > 1 ? SHEET_FADE : 0);
       }
-      const file = joinSheets({ clips: cuts, out: join(outDir, `${script.id}-${slug(area)}.mp4`) });
+      const file = joinSheets({ clips: cuts, out: join(outDir, `${script.id}${coach ? `--${coach.key}` : ""}-${slug(area)}.mp4`) });
       const poster = file.replace(/\.mp4$/, ".jpg"); ff(["-ss", "0.8", "-i", file, "-frames:v", "1", "-q:v", "3", poster]);
       const parts = sheets.map((s, i) => ({ line: i + 1, label: label(i), text: s.text, clip: basename(s.file), takes: s.all, seconds: s.seconds, at: starts[i], ...(s.per_area ? { per_area: true } : {}), ...(s.kept ? { kept: s.kept } : {}), ...(s.passed ? {} : { flag: { why: s.why, kind: s.kind } }) }));
       const flags = parts.filter((p) => p.flag).map((p) => ({ line: p.line, label: p.label, why: p.flag.why, kind: p.flag.kind }));
-      videos.push({ area, script_id: script.id, kind: "paper", style: null, pain: null, file, poster, seconds: round(durationOf(file), 10), lines: sheets, words: sheets.map((s) => s.text), parts, ...(flags.length ? { flags } : {}),
+      videos.push({ area, script_id: script.id, kind: "paper", ...who, style: null, pain: null, file, poster, seconds: round(durationOf(file), 10), lines: sheets, words: sheets.map((s) => s.text), parts, ...(flags.length ? { flags } : {}),
         notes: [...new Set([...sheets.flatMap((s) => s.faults || []), ...sheets.flatMap((s) => s.marks || []), ...parts.filter((p) => p.kept).map((p) => `${p.label} kept on your word (${p.kept})`)])] });
     }
     // What this call filmed, and what became of it: in a video, replaced by a retake, failed its check, or waiting on a video that could not be cut.

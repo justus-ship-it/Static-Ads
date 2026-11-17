@@ -943,3 +943,61 @@ test("PV15 a clip with a room hum, and a name said as two words (2026-11-16, the
     assert.deepEqual([sameWords("If you live in Boat Key, listen", "If you live in Boat Quay, listen", { sounds: [["quay", "key", "kee"]] }), sameWords("If you live in Boat Kway, listen", "If you live in Boat Quay, listen", { sounds: [["quay", "key", "kee"]] })], [true, false]);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+test("PV16 a gym's real coach in place of the invented presenter (2026-11-17, the owner after a paid test: likeness yes, voice close enough, uniform yes): a talking cut starts from a real frame of the coach — no picture is made — in the coach's own clip store; the clip is told the coach's voice, to keep the uniform's print and the gym's lettering as they are and the camera where it is; the uniform and the gym's own wall words are no failure, a caption laid over the picture still is; every take that is otherwise right is held against the picture it started from — a changed wall or print is filmed again, a person who is not the same is flagged for the owner; with exercises, nothing is held in front of the print and the pose is re-made from two real pictures", { skip: !hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+  const { d, g, profile } = gym({ presenter: null });
+  try {
+    const script = addScript(g, { lines: GOOD, offer: OFFER }, { profile }), out = join(g, "outputs", "b1", "videos");
+    const sd = join(g, "brand-assets", "video-samples", "starts", "mei"); mkdirSync(sd, { recursive: true });
+    const starts = ["video-01-4.2-close.jpg", "video-02-6.2-close.jpg"].map((n, i) => { const f = join(sd, n); writeFileSync(f, Buffer.concat([PNG, Buffer.from([i])])); return f; });
+    const coach = { id: "coach-mei", key: "mei", name: "Mei", voice: "a clear, medium-low voice with a light Singaporean accent, warm and measured.", starts, refs: starts, wears: { top: "black T-shirt", bottom: "black shorts", glasses: false }, uniform: { words: "STRONGER THAN YESTERDAY", logo: "a hexagon" } };
+    const own = () => [{ text: "STRONGER THAN YESTERDAY", on: "clothing" }, { text: "BE STRONG.", on: "sign" }];
+    // The uniform and the gym's wall words are the room's own for a coach's clip, and only for one; a caption laid over it fails either way; what must hold is in `same`.
+    const seen = { spoken: GOOD[1], people: 1, lettering: own(), faults: [] };
+    assert.deepEqual([judgeClip(seen, GOOD[1], { profile }).kind, judgeClip({ ...seen, coach: true }, GOOD[1], { profile }).passed, judgeClip({ ...seen, coach: true, lettering: [...own(), { text: "SUBSCRIBE", on: "overlay" }] }, GOOD[1], { profile }).kind], ["lettering", true, "lettering"]);
+    const drift = (same) => { const j = judgeClip({ ...seen, coach: true, coach_name: "Mei", same }, GOOD[1], { profile }); return [j.passed, j.kind, j.why]; };
+    assert.deepEqual(drift({ same_person: true, differences: [], shirt_changed: false, wall_changed: false }), [true, null, null]);
+    assert.deepEqual(drift({ same_person: false, differences: ["a rounder face", "no watch"], shirt_changed: false, wall_changed: false }), [false, "likeness", "it does not look like Mei (a rounder face; no watch)"]);
+    assert.deepEqual(drift({ same_person: true, differences: [], shirt_reads: "STINGER THAN RDAY", shirt_changed: true, wall_changed: false }), [false, "uniform", 'the print on the uniform changed (it reads "STINGER THAN RDAY")']);
+    assert.deepEqual(drift({ same_person: true, differences: [], shirt_changed: false, wall_changed: true, wall_reads: "BE TH BE PON" }), [false, "wall", 'the gym\'s lettering on the wall changed (it reads "BE TH BE PON")']);
+    // What a run would film, before it: no picture to make.
+    const before = videoNeeds({ gymDir: g, script, areas: ["BISHAN"], profile, coach });
+    assert.deepEqual([before.images, before.seconds, before.reused], [0, S1 + S2 + S3, 0]);
+    // Line 2's first take turns the wall's words to nonsense; line 3 never looks like the coach.
+    const F = fakes({ lettering: own }), sames = [];
+    F.models.same = async (start, target) => { sames.push([plain(start), plain(target)]); return /line-2-[0-9a-f]{6}\.mp4$/.test(target) ? { same_person: true, differences: [], shirt_reads: "STRONGER THAN YESTERDAY", shirt_changed: false, wall_changed: true, wall_reads: "BE TH BE PON" } : /line-3/.test(target) ? { same_person: false, differences: ["a different face"], shirt_changed: false, wall_changed: false } : { same_person: true, differences: [], shirt_changed: false, wall_changed: false }; };
+    const logged = [], R = await makePresenterVideos({ gymDir: g, outDir: out, script, areas: ["BISHAN"], offer: OFFER, profile, coach, caps: { seconds: 120, images: 3 }, takes: 2, models: F.models, log: (m) => logged.push(m) });
+    const store = join(g, "video-clips", `${script.id}--mei`);
+    assert.deepEqual([F.calls.image.length, existsSync(store), existsSync(join(g, "video-clips", script.id)), R.spent.images], [0, true, false, 0], "no picture is made, and the invented presenter's store is not touched");
+    // Each cut starts from a real frame, one after the other, copied as it is.
+    assert.deepEqual(F.calls.clip.map((c) => [plain(c.out), plain(c.image)]), [["line-1-bishan.mp4", "still-1.jpg"], ["line-2.mp4", "still-2.jpg"], ["line-2-take2.mp4", "still-2.jpg"], ["line-3.mp4", "still-3.jpg"], ["line-3-take2.mp4", "still-3.jpg"]]);
+    assert.deepEqual([F.calls.clip[0], F.calls.clip[1], F.calls.clip[3]].map((c) => readFileSync(c.image).equals(readFileSync(starts[[0, 1, 0][[F.calls.clip[0], F.calls.clip[1], F.calls.clip[3]].indexOf(c)]]))), [true, true, true]);
+    const p = F.calls.clip[0].prompt;
+    assert.match(p, /The person in the photograph is a real coach at this gym: keep the coach's face, hair, build, clothes and the room exactly as they are/);
+    assert.match(p, /says, in this voice — a clear, medium-low voice with a light Singaporean accent, warm and measured — at an easy, natural pace: "People in Bishan, this one is for you\./);
+    assert.match(p, /the logo and the words STRONGER THAN YESTERDAY, sharp and readable, never warped, never changed — and so do any lettering on the walls behind/);
+    assert.match(p, /The camera is fixed on a tripod for the whole clip: it does not move closer, pull back, sway or turn/); assert.ok(!/handheld sway/.test(p)); assert.match(p, /nothing in front of the print on the coach's top/);
+    assert.ok(!/There is no text of any kind/.test(p) && !/\b(he|she|his|her|him)\b/i.test(p), "the gym's own words are kept, and a coach is never written as he or she");
+    // Held against the picture each take started from, only when the take is otherwise right.
+    assert.deepEqual(sames, [["still-1.jpg", "line-1-bishan.mp4"], ["still-2.jpg", "line-2.mp4"], ["still-2.jpg", "line-2-take2.mp4"], ["still-3.jpg", "line-3.mp4"], ["still-3.jpg", "line-3-take2.mp4"]]);
+    assert.ok(logged.some((l) => /line-2-[0-9a-f]{6}\.mp4: the gym's lettering on the wall changed \(it reads "BE TH BE PON"\)/.test(l)) && logged.some((l) => /line-2-[0-9a-f]{6}-take2\.mp4: said as written, one person, Mei and the uniform as they are/.test(l)), logged.join("\n"));
+    // The video is cut all the same, says who presents, and waits for the owner on the line that does not look like the coach.
+    const v = R.videos[0];
+    assert.deepEqual([v.failed, v.coach, v.file.split("/").pop(), v.flags, existsSync(v.file)], [undefined, { id: "coach-mei", name: "Mei" }, `${script.id}--mei-bishan.mp4`, [{ line: 3, label: "line 3", why: "it does not look like Mei (a different face)", kind: "likeness" }], true]);
+    assert.ok(!v.notes.some((n) => /STRONGER|BE STRONG/.test(n)), "the uniform and the wall are not notes on the video either");
+    // A second run films nothing; the flagged line waits.
+    const again = videoNeeds({ gymDir: g, script, areas: ["BISHAN"], profile, coach });
+    assert.deepEqual([again.seconds, again.flagged, again.images], [0, 1, 0]);
+    // With exercises: no move or hold that puts the kit over the print; the start position is re-made from the coach's two real pictures and held against the real one.
+    const F2 = fakes({ lettering: own, moved: () => true }), sames2 = [];
+    F2.models.same = async (start, target) => { sames2.push([plain(start), plain(target)]); return { same_person: true, differences: [], shirt_changed: false, wall_changed: false }; };
+    const R2 = await makePresenterVideos({ gymDir: g, outDir: out, script, areas: ["BISHAN"], offer: OFFER, profile, coach, kind: "active", caps: { seconds: 200, images: 4 }, takes: 2, models: F2.models });
+    assert.ok(R2.videos[0].moves.length >= 2 && !R2.videos[0].moves.some((m) => /Russian twists|goblet|held at the chest/.test(m.move)), JSON.stringify(R2.videos[0].moves));
+    assert.ok(F2.calls.image.length >= 2 && F2.calls.image.every((c) => c.refs.join() === starts.join() && /The person is the SAME real person as in the first and second images: exactly the same face, hair, build and skin, wearing the same clothes \(black T-shirt, black shorts\) — the print on the top exactly as it is in those images: the logo and the words STRONGER THAN YESTERDAY/.test(c.prompt) && /Nothing the coach holds is in front of the print on the top/.test(c.prompt) && /^[^]*The coach (stands|sits)/.test(c.prompt)), F2.calls.image[0]?.prompt);
+    assert.ok(sames2.some(([a, b]) => a === "video-01-4.2-close.jpg" && /^still-\d\.jpg$/.test(b)), JSON.stringify(sames2));
+    assert.ok(F2.calls.clip.some((c) => /Nobody speaks at any point: the coach's mouth stays closed/.test(c.prompt) && /The coach does two/.test(c.prompt)));
+    assert.deepEqual(R2.videos[0].coach, { id: "coach-mei", name: "Mei" });
+    // Without a starting picture nothing is filmed.
+    await assert.rejects(makePresenterVideos({ gymDir: g, outDir: out, script, areas: ["BISHAN"], offer: OFFER, profile, coach: { ...coach, starts: [] }, models: F.models }), /Mei has no starting picture: nothing is filmed/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

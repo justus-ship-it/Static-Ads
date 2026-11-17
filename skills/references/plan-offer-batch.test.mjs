@@ -1298,3 +1298,61 @@ test("B19 more photos for a batch that has its ads (2026-11-17, the owner, on a 
     await assert.rejects(runBatch({ brandDir: dir, brief: { ...grown.brief, generated: 4, mix: { workout: 4 }, max_calls: 5 }, deps, log: say }), /keeps what it has made, and its plan on disk has 3 photo\(s\) where the brief asks for 4/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("B20 a batch presented by the gym's real coaches (2026-11-17): the videos are shared evenly between the coaches who can be filmed, the same on every run, or all given to the one the brief names; no invented presenter and no photo of the room are needed, and no picture is made for a talking video; each video ad says who presents, and the publish list carries it; a white-paper video never goes to a coach whose white top the paper cannot be told from; nobody ready is refused in words", { skip: !(await import("./presenter-video.mjs")).hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+  const dir = brandSetup();
+  try {
+    process.env.VIDEO_LIBRARY_DIR = join(dir, "video-library");
+    const { addScript } = await import("./presenter-video.mjs"), { addSheetScript } = await import("./paper-video.mjs"), { setConsent } = await import("./coach-look.mjs");
+    const { execFileSync } = await import("node:child_process");
+    const { videoPlan, batchCoaches } = await import("./plan-offer-batch.mjs"), { keptAds } = await import("./meta-publish.mjs");
+    // The gym presents with its coaches: no presenter is set, and the brief has no photo of the room.
+    const profile = { ...JSON.parse(readFileSync(join(dir, "gym-profile.json"), "utf-8")), creative_defaults: { presents: "coaches" } };
+    writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(profile));
+    const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    const consent = { face: true, voice: true, by: "signed form", on: "2026-11-17" };
+    const coach = (key, name, top) => { const sd = join(dir, "brand-assets", "video-samples", "starts", key); mkdirSync(sd, { recursive: true });
+      const starts = ["video-01-4.2-close.jpg", "video-02-6.2-close.jpg"].map((n, i) => { writeFileSync(join(sd, n), Buffer.concat([PNG, Buffer.from([i, key.length])])); return { file: join("starts", key, n), sample: `video-0${i + 1}.mp4`, at: 4.2, framing: "close", spot: "on the turf lane", w: 900, clear: true }; });
+      return { id: `coach-${key}`, name, status: "on", consent, frames: [], voice: { description: `the voice of ${name}, clear and warm`, by: "read" }, samples: [], starts, wears: { top, bottom: "black shorts", glasses: false } }; };
+    writeFileSync(join(dir, "coaches.json"), JSON.stringify({ coaches: [coach("faye", "Faye", "white T-shirt"), coach("xena", "Xena", "black T-shirt")], uniform: { words: "STRONGER THAN YESTERDAY", logo: "a hexagon", by: "read" } }));
+    const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
+    const s1 = addScript(dir, { lines: LINES, offer: BRIEF.offer }, { profile }), s2 = addScript(dir, { lines: [LINES[0], LINES[1], "If you are ready for more energy every day, now is your time. Click the link below and we'll be in touch!"], offer: BRIEF.offer }, { profile });
+    addSheetScript(dir, { sheets: ["Do your work clothes feel tight?", "Live near {AREA}?", `Join our ${BRIEF.offer}`, "You get a coach beside you", "And a plan that fits your week", "Feel strong for everyday things", "Click the link below and we'll be in touch!"], offer: BRIEF.offer }, { profile });
+    const brief = { ...BRIEF, batch_id: "with-coaches", real: [], generated: 0, max_calls: 0, locations: ["BISHAN"], videos: { presenter: 2 } };
+    // The brief may name one coach, by id.
+    assert.deepEqual(validateBrief({ ...brief, coach: "Xena" }).filter((e) => /coach/.test(e)), ["coach must be one of the gym's coaches (its id), or left out to share the videos between them"]);
+    assert.deepEqual(validateBrief({ ...brief, coach: "coach-xena" }, { brandDir: dir }), []);
+    // The plan: one coach each, the same on every look; no picture to make; one coach for all when the brief says so.
+    const plan = videoPlan(dir, brief), names = plan.coaches.map((c) => c.name);
+    assert.deepEqual([[...names].sort(), plan.images, videoPlan(dir, brief).coaches.map((c) => c.name), videoPlan(dir, { ...brief, coach: "coach-faye" }).coaches.map((c) => c.name)], [["Faye", "Xena"], 0, names, ["Faye", "Faye"]]);
+    // White paper: only a coach the paper can be told from.
+    assert.deepEqual(videoPlan(dir, { ...brief, videos: { presenter: 1, paper: 1 } }).coaches.map((c, i) => [i === 1 ? "paper" : "spoken", c.name])[1], ["paper", "Xena"]);
+    assert.throws(() => videoPlan(dir, { ...brief, videos: { paper: 1 }, coach: "coach-faye" }), /Faye wears a white top in their samples: white paper cannot be told from it/);
+    assert.deepEqual(batchCoaches(dir, brief, { creative_defaults: {} }, ["presenter", "presenter"], "x"), [null, null], "a gym that has not chosen its coaches keeps the invented presenter");
+    // The run.
+    const made = { image: 0, clip: [], same: 0 }, said = new Map(), logs = [], calls = [];
+    const videoModels = {
+      async image() { made.image++; throw new Error("no picture is made for a coach's talking video"); },
+      async clip({ out, image, prompt, seconds }) { made.clip.push({ image, prompt }); said.set(out, prompt.match(/pace: "([^"]+)"/)[1]);
+        execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `color=c=gray:s=180x320:r=24:d=${seconds}`, "-f", "lavfi", "-i", `sine=frequency=330:duration=${seconds - 2}`, "-af", `adelay=700|700,apad=whole_dur=${seconds}`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", String(seconds), out]); },
+      async watch(file) { return { spoken: said.get(file), lettering: [{ text: "STRONGER THAN YESTERDAY", on: "clothing" }], people: 1, lips_match_speech: true, faults: [], looks_real: 9 }; },
+      async same() { made.same++; return { same_person: true, differences: [], shirt_changed: false, wall_changed: false }; },
+    };
+    const r = await runBatch({ brandDir: dir, brief, deps: { ...fakes(calls), browser, videoModels }, log: (m) => logs.push(m) });
+    const ads = r.batch.ads;
+    assert.deepEqual([made.image, made.clip.length, made.same, r.batch.failed, ads.length], [0, 6, 6, [], 2], logs.join(" | "));
+    assert.deepEqual([ads.map((a) => a.video.coach.name).sort(), ads.map((a) => a.video.script_id).sort(), ads.every((a) => a.format === "presenter-video" && existsSync(join(dir, "outputs", brief.batch_id, a.video_file)))], [["Faye", "Xena"], [s1.id, s2.id].sort(), true]);
+    assert.deepEqual(ads.map((a) => a.video.coach.name), names, "the plan's coach is the coach filmed");
+    for (const a of ads) assert.ok(existsSync(join(dir, "video-clips", `${a.video.script_id}--${a.video.coach.id.replace("coach-", "")}`)) && !existsSync(join(dir, "video-clips", a.video.script_id)), "each coach's clips are their own");
+    assert.ok(made.clip.every((c) => /a real coach at this gym/.test(c.prompt) && /in this voice — the voice of (Xena|Faye), clear and warm —/.test(c.prompt) && /STRONGER THAN YESTERDAY/.test(c.prompt)));
+    assert.ok(logs.some((l) => /presenter video from script .* — (Xena|Faye) presents/.test(l)), logs.join(" | "));
+    assert.deepEqual(keptAds(join(dir, "outputs", brief.batch_id)).map((a) => a.video_coach).sort(), ["Faye", "Xena"], "the publish list says who presents");
+    // A second run films nothing.
+    const before = made.clip.length; await runBatch({ brandDir: dir, brief, deps: { ...fakes(calls), browser, videoModels }, log: () => {} }); assert.equal(made.clip.length, before);
+    // Consent taken back: that coach is in no new video; nobody left is said in words.
+    setConsent(dir, "coach-faye", { face: false, voice: false, by: "message: please stop" });
+    assert.deepEqual(videoPlan(dir, brief).coaches.map((c) => c.name), ["Xena", "Xena"]);
+    setConsent(dir, "coach-xena", { face: false, voice: false, by: "message: please stop" });
+    assert.throws(() => videoPlan(dir, { ...brief, batch_id: "nobody" }), /no coach can be filmed yet — Faye has not consented to videos in their likeness; Xena has not consented to videos in their likeness/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
