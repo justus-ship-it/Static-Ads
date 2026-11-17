@@ -301,8 +301,8 @@ test("U7 the New Batch tab: typing updates the preview, a bad word shows its err
   await until(`document.querySelectorAll('#bPrev img').length===4 && [...document.querySelectorAll('#bPrev img')].every(i=>i.complete&&i.naturalWidth>0)`, "four preview images");
   assert.ok(await ev(`[...document.querySelectorAll('#bPrev figcaption')].every(f=>/fits/.test(f.textContent))`));
   assert.equal(await ev(`document.activeElement.id`), "bAud", "typing never loses focus");
-  // 10 new photos by default (the real batches' size), 2 looks, 1 location — and no photo of the empty room unless one is ticked (2026-11-11).
-  await until(`/= <b>20 ads<\\/b>/.test(document.querySelector('#bSummary').innerHTML) && !document.querySelector('#bRun').disabled`, "the summary and an enabled Run");
+  // 30 new photos by default (the owner's word, 2026-11-17; it was 10), 2 looks, 1 location — and no photo of the empty room unless one is ticked (2026-11-11).
+  await until(`/= <b>60 ads<\\/b>/.test(document.querySelector('#bSummary').innerHTML) && !document.querySelector('#bRun').disabled`, "the summary and an enabled Run");
   assert.deepEqual(await ev(`[B.draft.real, briefFromDraft().real]`), [[], []], "no premises photo is ticked by itself: an ad of the empty room is the owner's choice");
   // The room still matches: with no real photo in the batch and no room reference set, the first cleaned premises photo is the reference (never an ad).
   assert.deepEqual(await ev(`[B.check.brief.reference, B.check.brief.real]`), ["facility-clean/r1.png", []]);
@@ -318,7 +318,7 @@ test("U7 the New Batch tab: typing updates the preview, a bad word shows its err
   const modal = await ev(`document.querySelector('.modal').textContent`);
   assert.match(modal, /12 Week Total Body Reset/);
   assert.match(modal, /BISHAN/);
-  assert.match(modal, /Up to 20 Gemini image calls/, "10 new photos × 2 tries, the default");
+  assert.match(modal, /Up to 60 Gemini image calls/, "30 new photos × 2 tries, the default");
   await ev(`[...document.querySelectorAll('.modal button')].find(b=>b.textContent==='Cancel').click(); true`);
   assert.equal(await ev(`!!document.querySelector('.modal')`), false);
   assert.equal(await ev(`STATE.run ? 1 : 0`), runsBefore, "cancel runs nothing");
@@ -784,7 +784,7 @@ test("U12 profiles: GET says how finished a profile is; a save with a token or a
   const g = join(brands, GYM), pf = join(g, "gym-profile.json");
   let r = await (await call(`/api/client/${GYM}`)).json();
   assert.ok(r.completeness && Array.isArray(r.completeness.sections), "completeness comes with the profile");
-  assert.equal(r.creative_defaults.generated, 10, "the defaults are filled in for a profile that has none");
+  assert.equal(r.creative_defaults.generated, 30, "the defaults are filled in for a profile that has none (30 new photos since 2026-11-17; it was 10)");
   assert.deepEqual(r.creative_defaults.locations, []);
   const offers = r.completeness.sections.find((s) => s.id === "offers");
   assert.equal(offers.status, "done", "the batches already run give this gym its first wording");
@@ -3030,6 +3030,15 @@ test("U53 scenes drafted from the results (2026-11-11): the review says when the
     assert.match(await ev("document.querySelector('#rsReview').innerText"), /Not yet — 2 studio portraits in the mix, but no studio portrait scene is approved for men/);
     await ev("rsDraftScenes(0); true");
     assert.deepEqual(await ev("[document.querySelector('#rsDsAud').value, document.querySelector('#rsDsN').value, !!document.querySelector('#rsDsGo'), /no image calls/.test(document.querySelector('#gModal').innerText), /no lead on record yet/.test(document.querySelector('#gModal').innerText)]"), ["men", "6", true, true, true]);
+    // A number the dialog cannot take is said in the dialog, never a button that does nothing (2026-11-16: 30 was typed and nothing happened); up to 36 is
+    // taken and drafted twelve at a time, one round after another — the first run asks for 12, the next for what is left.
+    await ev("document.querySelector('#rsDsN').value = '99'; document.querySelector('#rsDsGo').click(); true");
+    assert.deepEqual(await ev("[!!document.querySelector('#gModal .modal'), document.querySelector('#rsDsErr').innerText, document.querySelector('#rsDsN').max]"), [true, "How many: a whole number from 1 to 36. More than 12 are drafted 12 at a time, one round after another.", "36"]);
+    await ev("document.querySelector('#rsDsN').value = '2.5'; document.querySelector('#rsDsGo').click(); true"); assert.equal(await ev("!!document.querySelector('#rsDsErr .msg')"), true);
+    await ev("(() => { window.__runs = []; window.__run0 = run; run = (p, after) => { window.__runs.push(p.count); window.__after = after; }; document.querySelector('#rsDsN').value = '30'; document.querySelector('#rsDsGo').click(); return true; })()");
+    assert.deepEqual(await ev("[!!document.querySelector('#gModal .modal'), window.__runs]"), [false, [12]]);
+    await ev("window.__after(0); true"); await ev("window.__after(0); true"); assert.deepEqual(await ev("window.__runs"), [12, 12, 6], "thirty: three rounds");
+    await ev("(async () => { try { await window.__after(1); } catch (e) {} run = window.__run0; return true; })()"); assert.deepEqual(await ev("window.__runs"), [12, 12, 6], "and no fourth");
     await ev("document.querySelector('#gModal').innerHTML = ''; true");
     // A job from the results reads so on its button and its confirmation (as a gym with results would have).
     await ev("RS.review.scenes = [{ format: 'workout', audience: 'men', count: 6, from_results: true, needed: false, approved: 2, drafts_waiting: 1, why: 'New versions of what earns this gym\\'s leads: its best workout picture has 198 leads at SGD 17.81 (scene m-squat-u53).' }]; RS.review.scenes_waiting = 1; paintResults(document.querySelector('#view')); true");
@@ -3737,7 +3746,7 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     { const p = JSON.parse(before); if (p.creative_defaults) delete p.creative_defaults.presenter; writeFileSync(pf, JSON.stringify(p, null, 2)); }
     // Nothing yet: nobody presents, no script, no sample.
     let [st, D] = await V();
-    assert.deepEqual([st, D.presenter, D.scripts, D.samples, D.genders, D.limits.max_videos, D.ffmpeg], [200, null, [], [], ["woman", "man"], 3, true]);
+    assert.deepEqual([st, D.presenter, D.scripts, D.samples, D.genders, D.limits.max_videos, D.ffmpeg], [200, null, [], [], ["woman", "man"], 9, true]);
     // Who presents.
     assert.equal((await V("/presenter", { method: "POST", body: { gender: "coach" } }))[0], 400);
     assert.equal((await V("/presenter", { method: "POST", body: { gender: "man", age: 12 } }))[0], 400);
@@ -3845,9 +3854,9 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     assert.deepEqual([c.summary.videos.reused, c.summary.videos.allow], [0, c.summary.videos.max_seconds], "nothing is filmed yet for this script, so nothing is reused and the run may film its whole allowance");
     assert.equal(c.summary.ads, (await check({})).summary.ads + 2, "one video for each location is one more ad each");
     c = await check({ videos: { presenter: 2 } }); assert.ok(c.errors.some((e) => /2 presenter videos asked for, but only 1 script is kept for "12 Week Total Body Reset": keep 1 more on Draft Scenes → Video scripts/.test(e)), c.errors.join(" | "));
-    c = await check({ videos: { presenter: 9 } }); assert.ok(c.errors.some((e) => /videos\.presenter must be a whole number from 0 to 3/.test(e)));
+    c = await check({ videos: { presenter: 10 } }); assert.ok(c.errors.some((e) => /videos\.presenter must be a whole number from 0 to 9/.test(e)));
     const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
-    assert.deepEqual([setup.videos.presenter.gender, setup.videos.kept, setup.videos.needs_edit, setup.videos.max, setup.videos.ffmpeg], ["man", [{ id, offer: BRIEF.offer }], [], 3, true]);
+    assert.deepEqual([setup.videos.presenter.gender, setup.videos.kept, setup.videos.needs_edit, setup.videos.max, setup.videos.ffmpeg], ["man", [{ id, offer: BRIEF.offer }], [], 9, true]);
     // Never the whole country (2026-11-14: "We can't say the full of Singapore no matter what"): a location that names it is refused for every kind of ad, and the areas a gym has used before are offered, never the country.
     c = await check({ locations: ["SINGAPORE"] }); assert.ok(c.errors.some((e) => /"SINGAPORE": location names the whole country: an ad says the area around the gym \(BOAT QUAY, BISHAN\), never the country/.test(e)), c.errors.join(" | "));
     c = await check({ locations: ["BISHAN", "Islandwide"] }); assert.ok(c.errors.some((e) => /"Islandwide": location names the whole country/.test(e)));
@@ -4104,6 +4113,13 @@ assert.equal(await ev("document.querySelector('#bVideosHint').innerText"), "1 sc
       await ev("document.querySelector('#rvVideoFail').click(); true");
       assert.deepEqual(await ev("[document.querySelector('#gModal h2').textContent, /v02 · BISHAN/.test(document.querySelector('#gModal .words').innerText) && /refused by Google/.test(document.querySelector('#gModal .words').innerText), [...document.querySelectorAll('#gModal button')].map(b => b.textContent)]"), ["A video not finished", true, ["Close", "Run again…"]]);
       await ev("document.querySelector('#gModal').innerHTML = ''; true");
+      // A plain Run again… on the bar as well (2026-11-17: "Where do I find the Run again button?" — it was only behind the red one): its confirmation says what the run would still make. (Not confirmed here: it would start a run.)
+      assert.match(await ev("document.querySelector('#rvRunAgain').textContent"), /^Run again…/);
+      await ev("document.querySelector('#rvRunAgain').click(); true"); await until("!!document.querySelector('#bRunAgainGo')");
+      assert.deepEqual(await ev("[document.querySelector('#gModal h2').textContent, /^(About \\d+ s of video to film \\(US\\$\\d+\\.\\d\\d\\), never more than \\d+ s \\(US\\$\\d+\\.\\d\\d\\)\\. Everything already filmed is reused\\.|No video left to film: the videos are cut again from the clips on file, at no cost\\.)$/.test(document.querySelector('#bAgainVideo').innerText), /v02 · BISHAN was not finished last time: .*refused by Google/.test(document.querySelector('#bAgainLeft').innerText), /The ads already made are kept, and so are your picks\\./.test(document.querySelector('#bAgainLeft').innerText)]"), ["Run this batch again?", true, true, true]);
+      await ev("document.querySelector('#gModal').innerHTML = ''; true");
+      // And on the finished batch's own card on Generate Creatives.
+      assert.equal((await (await call(`/api/client/${GYM}/batch-setup`)).json()).batches.find((x) => x.id === fid).left > 0, true);
       // Film this line again…: one dialog, what happens and what it costs, no field. (Not confirmed here: it would start a run.)
       await ev("document.querySelector('#rvLines [data-film=\"3\"]').click(); true");
       assert.deepEqual(await ev("[document.querySelector('#gModal h2').textContent, /^About \\d+ s of video \\(US\\$\\d+\\.\\d\\d\\), never more than \\d+ s \\(US\\$\\d+\\.\\d\\d\\): a take that fails its check is filmed once more\\.$/.test(document.querySelector('#rvFilmCost').innerText), /^Film it again — about US\\$\\d+\\.\\d\\d$/.test(document.querySelector('#rvFilmGo').textContent), /The take on file is set aside \\(kept, never used\\) and the line is filmed fresh/.test(document.querySelector('#gModal').innerText), document.querySelectorAll('#gModal input').length]"), ["Film this line again?", true, true, true, 0]);
@@ -4186,7 +4202,7 @@ test("U64 white-paper videos through the panel (2026-11-15): the third kind's sc
     const check = async (over) => (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u64-new", ...over } } })).json();
     let c = await check({ videos: { paper: 1 } });
     assert.deepEqual(c.errors, []); assert.deepEqual([c.summary.videos.count, c.summary.videos.paper, c.summary.videos.active, c.summary.videos.videos, c.summary.videos.scripts, c.summary.videos.images, c.summary.videos.seconds], [1, 1, 0, 2, [id], 1, 24 + 4 * 2]);
-    c = await check({ videos: { presenter: 1, active: 1, paper: 2 } }); assert.ok(c.errors.some((e) => /at most 3 presenter videos in all, talking, with exercises and white paper together/.test(e)), c.errors.join(" | "));
+    c = await check({ videos: { presenter: 4, active: 3, paper: 3 } }); assert.ok(c.errors.some((e) => /at most 9 presenter videos in all, talking, with exercises and white paper together/.test(e)), c.errors.join(" | "));
     c = await check({ offer: "6 Week Reset", videos: { paper: 1 } }); assert.ok(c.errors.some((e) => /1 white-paper video asked for, but no white-paper script is ready for "6 Week Reset": the white-paper scripts kept there are for "12 Week Total Body Reset"/.test(e)), c.errors.join(" | "));
     // A batch with a white-paper ad on disk, as the runner leaves it: sheet 2 did not pass.
     const folder = "101-v01-bishan-paper-video", mp4 = join(folder, "9x16", "v01-bishan_9x16_v1.mp4"), jpg = mp4.replace(/\.mp4$/, ".jpg"), store = join(g, "video-clips", id), WHY = 'the paper read "Live near Bishn?"';
@@ -4258,8 +4274,12 @@ test("U64 white-paper videos through the panel (2026-11-15): the third kind's sc
     assert.equal(await ev("JSON.stringify(briefFromDraft().videos)"), '{"paper":1}');
     await until("/white paper/.test(document.querySelector('#bVideoSum')?.innerText || '')");
     assert.match(await ev("document.querySelector('#bVideoSum').innerText"), /^1 presenter video \(1 white paper\) × 2 locations: about 32 s of video \(US\$2\.24\), never more than \d+ s \(US\$\d+\.\d\d\)$/);
-    await ev("bVideoPaperSet(9); true"); assert.deepEqual(await ev("[B.draft.videos_paper, document.querySelector('#bVideosPaper').value]"), [3, "3"]);
-    await ev("document.querySelector('#bVideos').value = '2'; bVideoSet(2); true"); assert.deepEqual(await ev("[B.draft.videos, document.querySelector('#bVideos').value]"), [0, "0"], "three videos between all kinds");
+    // Nine videos a batch between all kinds (2026-11-16: it was three, and the fields stopped there without a word): more than three is taken, and a number cut down says why beside the fields.
+    await ev("bVideoPaperSet(5); true"); assert.deepEqual(await ev("[B.draft.videos_paper, document.querySelector('#bVideosPaper').value, document.querySelector('#bVideosPaper').max, document.querySelector('#bVideosWhy').textContent]"), [5, "5", "9", ""]);
+    await ev("bVideoPaperSet(12); true"); assert.deepEqual(await ev("[B.draft.videos_paper, document.querySelector('#bVideosPaper').value, document.querySelector('#bVideosWhy').textContent]"), [9, "9", "A batch makes at most 9 videos in all, every kind together: with 0 presenter videos that leaves 9 white-paper."]);
+    await ev("document.querySelector('#bVideos').value = '2'; bVideoSet(2); true"); assert.deepEqual(await ev("[B.draft.videos, document.querySelector('#bVideos').value, document.querySelector('#bVideosWhy').textContent]"), [0, "0", "A batch makes at most 9 videos in all, every kind together: with 9 white-paper videos that leaves 0 presenter."], "nine videos between all kinds");
+    await ev("bVideoPaperSet(3); bVideoSet(4); bVideoActiveSet(6); true"); assert.deepEqual(await ev("[B.draft.videos, B.draft.videos_active, B.draft.videos_paper, document.querySelector('#bVideosWhy').textContent]"), [4, 4, 3, "“With exercises” is a share of the presenter videos above it: 4 at most. Raise that number first."]);
+    await ev("bVideoActiveSet(0); true");
     await ev("bVideoPaperSet(1); bVideoSet(1); true"); assert.equal(await ev("JSON.stringify(briefFromDraft().videos)"), '{"presenter":1,"paper":1}');
     await ev("bVideoSet(0); true");
     // An offer nothing is written for: the count's own line says so and gives the one thing to press.

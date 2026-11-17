@@ -177,14 +177,17 @@ const near = (a, b) => {
 export function sameWords(said, line, { names = [], sounds = [] } = {}) {
   const a = spoken(said), b = spoken(line);
   const named = new Set(names.flatMap((n) => spoken(n).map((t) => t.w)).filter((w) => w.length >= 4));
-  // `sounds`: words that are one word to the ear — a word and the way it is said here ("quay", "key", "kee").
+  // `sounds`: words that are one word to the ear — a word and the way it is said here ("quay", "key", "kee"). A word said
+  // as two ("BFIT" is said "Bee Fit": the group holds "bfit" and "beefit") is matched where the spaces are tried, and
+  // there the check's spelling of that sound may have one letter more or fewer ("Be Fit"); a changed letter is another word ("Bee Fat").
+  const sound = (A, B) => sounds.some((grp) => grp.includes(B) && grp.some((g) => g === A || (g.length >= 5 && g.length !== A.length && near(A, g))));
   const same = (x, y) => x.w === y.w || ((x.poss || y.poss) && (x.w + "s" === y.w || y.w + "s" === x.w)) || (named.has(y.w) && near(x.w, y.w)) || sounds.some((grp) => grp.includes(x.w) && grp.includes(y.w));
   let i = 0, j = 0;
   while (i < a.length && j < b.length) {
     if (same(a[i], b[j])) { i++; j++; continue; }
     // The same letters with the spaces elsewhere: up to three words on a side.
     let hit = null;
-    for (let p = 1; p <= 3 && !hit; p++) for (let q = 1; q <= 3 && !hit; q++) { if ((p === 1 && q === 1) || i + p > a.length || j + q > b.length) continue; if (a.slice(i, i + p).map((t) => t.w).join("") === b.slice(j, j + q).map((t) => t.w).join("")) hit = [p, q]; }
+    for (let p = 1; p <= 3 && !hit; p++) for (let q = 1; q <= 3 && !hit; q++) { if ((p === 1 && q === 1) || i + p > a.length || j + q > b.length) continue; const A = a.slice(i, i + p).map((t) => t.w).join(""), B = b.slice(j, j + q).map((t) => t.w).join(""); if (A === B || sound(A, B)) hit = [p, q]; }
     if (!hit) return false; i += hit[0]; j += hit[1];
   }
   return i === a.length && j === b.length;
@@ -439,7 +442,7 @@ export const saidIn = (line, list = []) => list.filter((x) => new RegExp(`(?<![A
 /** What names a clip beside its words and its picture: a changed way of saying a word films that line again, and no other. */
 const saidNote = (entries) => entries.map((x) => `${letters(x.word)}=${letters(x.say)}`).sort().join("|");
 /** Words that are one word to the ear: the word, the way it is written for the presenter, and other ways the check may spell that sound. */
-const soundsOf = (entries) => entries.map((x) => [x.word, ...String(x.say).split(/\s+/), ...(x.heard || [])].map(letters));
+const soundsOf = (entries) => entries.map((x) => [x.word, x.say, ...(x.heard || [])].map(letters));
 /**
  * Plain words (2026-11-15, the owner: "the vocabulary in the video … must be third grade reading and below. Right now,
  * 'mid-afternoon slumps', 'vitality', 'functional muscle', 'baseline', 'oversized jackets' should be 'jackets that are
@@ -775,8 +778,13 @@ export async function suggestPains({ brandDir, offer, audience = null, count = 6
   return { added, dropped, calls: 1, sources: { ads: src.ads.length, library: src.library.length } };
 }
 
-/** How many presenter videos a batch may ask for (each is one script, made once for every location). */
-export const MAX_VIDEOS = 3;
+/**
+ * How many presenter videos a batch may ask for, all kinds together (each is one script, made once for every location).
+ * Nine since 2026-11-16 — it was three, a cap set while video was unproven, and the count fields stopped at it without
+ * a word ("figure out why I can't type more than 3 … Fix it"). What bounds a batch now is the scripts ready for its
+ * offer (one for each video) and what the run says it will cost before it is confirmed.
+ */
+export const MAX_VIDEOS = 9;
 const kindCount = (videos, k) => (Number.isInteger(videos?.[k]) && videos[k] > 0 ? videos[k] : 0);
 /** The videos made from a spoken script: talking, and with exercises. */
 export const spokenCount = (videos) => kindCount(videos, "presenter") + kindCount(videos, "active");
@@ -1181,6 +1189,34 @@ export function moveClipPrompt({ presenter, profile, line, seconds, said = [], m
   return `Bring this photograph to life as ${seconds} seconds of video. ${body} Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${g.his} face, hair, clothes and the room exactly as they are in the photograph; what ${g.he} holds stays one solid object. ${PHONE} ${NO_WORDS} Sound: ${g.his} voice, close and clear, over the quiet of an empty gym. No music.`;
 }
 /**
+ * A move cut is TWO clips (2026-11-16, tested on the owner's yes and approved on the clip: "Build 3"). Filmed as one —
+ * the move, then the line, 13 to 14 seconds — a move cut was said as written one time in four: the line was scrambled
+ * after the move, or the time left over was filled with words nobody wrote, and every failed take paid for the move
+ * again. Now the MOVE is its own silent clip of `MOVE_SECONDS` (no words to get wrong), and the LINE is an ordinary
+ * talking clip that starts from the move clip's LAST FRAME, so the two read as one shot. A line that fails is filmed
+ * again alone. A cut whose one-clip take already passed keeps it: nothing on file is filmed again for this.
+ */
+export const MOVE_SECONDS = 4;
+const SAME = (g) => `Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${g.his} face, hair, clothes and the room exactly as they are in the photograph; what ${g.he} holds stays one solid object.`;
+/** The move alone, in silence: the reps, then still, facing the lens — the frame the line's clip starts from. */
+export function moveOnlyPrompt({ presenter, move }) {
+  const g = G(presenter), m = move.m, k = move.k;
+  return `Bring this photograph to life as ${MOVE_SECONDS} seconds of video. Nobody speaks at any point: ${g.his} mouth stays closed and there is no voice. ${g.He} ${m.does(g, k)}. Then ${g.he} ${m.rest(g, k)}, turns ${g.his} face to the camera and looks into the lens with an easy, friendly expression, ${g.his} mouth closed, and holds still. ${m.stays(g, k)} ${SAME(g)} ${PHONE} ${NO_WORDS} Sound: only the quiet of an empty gym and the small sounds of the movement. No voice, no music.`;
+}
+/** The line after a move: an ordinary talking clip from the move clip's last frame, still holding the kit. */
+export function afterMovePrompt({ presenter, profile, line, seconds, said = [], move }) {
+  const g = G(presenter), she = presenter.gender === "man" ? "The man" : "The woman", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`, m = move.m, k = move.k;
+  return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${g.He === "He" ? "His" : "Her"} mouth forms exactly these words, once, in time with ${g.his} voice. ${silentAfter(presenter)} ${k ? `${g.He} keeps what ${g.he} holds still where it is the whole time. ` : ""}${m.stays(g, k)} ${SAME(g)} ${PHONE} ${NO_WORDS} Sound: ${g.his} voice, close and clear, over the quiet of an empty gym. No music.`;
+}
+/** The move clip judged from its check (pure): the move was done, nobody speaks, one person, no lettering laid over it. */
+export function judgeMove(seen, move) {
+  const L = letteringOf(seen), kind = seen?.did_move === false ? "move" : norm(seen?.spoken) ? "voice" : seen?.people !== 1 ? "people" : L.fails.length ? "lettering" : null;
+  const why = kind === "move" ? `the move (${moveLabel(move)}) was not done` : kind === "voice" ? `someone speaks in the move's clip ("${norm(seen.spoken)}")` : kind === "people" ? `${seen?.people} people are in it` : kind === "lettering" ? `words appear in the picture: ${L.fails.map((x) => x.text).join(", ")}` : null;
+  return { passed: !kind, why, kind, faults: (seen?.faults || []).filter(Boolean) };
+}
+const moveBase = (i, mv, still) => `line-${i + 1}-move-${sha(`${mv.m.id}|${mv.k}|${basename(still)}`).slice(0, 6)}`;
+const frameOf = (clip) => clip.replace(/\.mp4$/, ".last.png");
+/**
  * The kit a gym's room shows, read from its own photos (the room reference and its cleaned premises photos, six at
  * most): one vision call a photo, once, kept by the photo's content in `video-clips/room-kit.json`. `knownKit` is
  * what is on file (null before any photo was read: a plan then counts on every kit, and the run reads the photos).
@@ -1247,10 +1283,48 @@ export function speechFrom(report, duration) {
   const r2 = (x) => Math.round(x * 100) / 100;
   return spans.length ? { start: r2(spans[0][0]), end: r2(spans[spans.length - 1][1]), spans: spans.map(([a, b]) => [r2(a), r2(b)]), duration } : { start: 0, end: duration, spans: [[0, duration]], duration };
 }
-/** Where someone speaks in a clip, measured from its sound (ffmpeg does the listening; no model call). */
+/**
+ * A clip with a room hum (2026-11-16, BFIT's first video: "the subtitles are way off"). The video model lays "the
+ * quiet of an empty gym" under the voice, and in some clips that hum peaks above `SILENCE_DB`: the whole clip then
+ * read as speech — nothing was trimmed (2.3 s of the presenter standing silent after the line) and the captions were
+ * spread over all 7 s of a line said in 4, so each ran further behind the voice. Four of BFIT's 25 clips. In such a
+ * clip the voice is told from the room by the clip's own levels: how loud it is in the band a voice sits in
+ * (`band`), every `step` seconds; the room is the quiet tenth (`floor`), the voice the loud twentieth (`top`); sound
+ * is speech from `above` dB over the room, and never nearer the voice than `below`. A quiet room (the floor `clean`
+ * dB or more under the voice) keeps the plain measure, which is right there and keeps a soft last syllable.
+ */
+export const VOICE = { step: 0.02, band: [200, 3500], above: 8, below: 12, range: 10, clean: 30 };
+/** How loud a clip is where a voice sits, every `VOICE.step` seconds, in dB (ffmpeg measures; no model call). */
+export function levelsOf(file, V = VOICE) {
+  const r = spawnSync("ffmpeg", ["-hide_banner", "-i", file, "-af", `aresample=16000,highpass=f=${V.band[0]},lowpass=f=${V.band[1]},asetnsamples=${Math.round(16000 * V.step)},astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-`, "-f", "null", "-"], { encoding: "utf-8", maxBuffer: 1e8 });
+  return [...String(r.stdout || "").matchAll(/RMS_level=(\S+)/g)].map((m) => (Number.isFinite(Number(m[1])) ? Math.max(-90, Number(m[1])) : -90));
+}
+/**
+ * Where someone speaks in a clip with a room hum, from its levels — the shape `speechFrom` answers, with `floor`,
+ * `top` and `level` (the line between room and voice). Null for a quiet room, a clip with nothing to tell apart, or
+ * no sound read: the plain measure is used.
+ */
+export function speechFromLevels(levels, duration, V = VOICE) {
+  if (!Array.isArray(levels) || levels.length < 10) return null;
+  const sorted = [...levels].sort((a, b) => a - b), pct = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))], floor = pct(0.1), top = pct(0.95);
+  if (top - floor < V.range || floor <= top - V.clean) return null;
+  const level = Math.min(floor + V.above, top - V.below), r2 = (x) => Math.round(x * 100) / 100, quiet = []; let q = -1;
+  for (let i = 0; i <= levels.length; i++) {
+    const low = i < levels.length && levels[i] < level;
+    if (low && q < 0) q = i;
+    if (!low && q >= 0) { if ((i - q) * V.step >= SILENCE_MIN - 1e-9) quiet.push([q * V.step, i === levels.length ? duration : i * V.step]); q = -1; }
+  }
+  const spans = []; let at = 0;
+  for (const [a, b] of quiet) { if (a - at >= MIN_VOICED) spans.push([at, a]); at = Math.max(at, b); }
+  if (duration - at >= MIN_VOICED) spans.push([at, duration]);
+  return spans.length ? { start: r2(spans[0][0]), end: r2(spans[spans.length - 1][1]), spans: spans.map(([a, b]) => [r2(a), r2(b)]), duration, floor, top, level } : null;
+}
+/** Where someone speaks in a clip, measured from its sound (ffmpeg does the listening; no model call): by its own levels where the room hums, else by its pauses. */
 export function speechOf(file) {
+  const duration = durationOf(file), hum = speechFromLevels(levelsOf(file), duration);
+  if (hum) return hum;
   const r = spawnSync("ffmpeg", ["-hide_banner", "-i", file, "-af", `silencedetect=noise=${SILENCE_DB}dB:d=${SILENCE_MIN}`, "-f", "null", "-"], { encoding: "utf-8" });
-  return speechFrom(r.stderr || "", durationOf(file));
+  return speechFrom(r.stderr || "", duration);
 }
 /** A line in caption chunks: up to `per` words, and never across the end of a sentence or a clause. Each { text (trailing commas and stops not shown), ends: it closes a clause }. */
 export function captionChunks(text, per = 3) {
@@ -1358,6 +1432,8 @@ export function videoNeeds({ gymDir, script, areas = [""], room = null, profile 
   const kit = kind === "active" ? knownKit(gymDir, room) || [...KIT] : null, moves = kind === "active" ? movesFor(script, { kit, closing }) : said.map(() => null);
   // The presenter's own picture, which every other picture is made from: a cut that opens on a move still needs it.
   if (moves[0] && !(presenter && room && files.includes(stillName(0, stillPromptFor(0, presenter, profile), room)))) images++;
+  const chk = (f) => readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), keptOn = (f) => !!ownerKeptClip(where, join(where, f)), takesOf = (nm) => files.filter((f) => /\.mp4$/.test(f) && (f === `${nm}.mp4` || f.startsWith(`${nm}-take`)));
+  const usedUp = (all, live) => live.length > 0 && all.length >= takes + (all.length - live.length), moveCounted = new Set();
   for (const [i, raw] of said.entries()) {
     const mv = moves[i], still = presenter && room ? stillName(i, cutStillPrompt(i, presenter, profile, mv, kit), room) : null, perArea = /\{AREA\}/.test(raw);
     if (!still || !files.includes(still)) images++;
@@ -1365,6 +1441,15 @@ export function videoNeeds({ gymDir, script, areas = [""], room = null, profile 
       const line = fillLine(raw, area || ""), say = saidIn(line, saidList), note = saidNote(say), names = still ? [clipName(i, line, still, area, perArea, note), clipName(i, line, altOf(still), area, perArea, note)] : [];
       const mine = files.filter((f) => /\.mp4$/.test(f) && names.some((nm) => f === `${nm}.mp4` || f.startsWith(`${nm}-take`))), live = mine.filter((f) => !aside.has(f));
       const on_file = live.some((f) => passedCheck(readJson(join(where, f.replace(/\.mp4$/, ".check.json"))), line, profile, say, mv) || !!ownerKeptClip(where, join(where, f)));
+      // A move cut is two clips (the move, then the line from its last frame) unless a one-clip take of it already passed: the move's clip is shared by every location.
+      if (mv?.m.kind === "move" && !on_file) {
+        const mAll = still ? takesOf(moveBase(i, mv, still)) : [], mLive = mAll.filter((f) => !aside.has(f)).sort(), mOk = mLive.find((f) => { const c = chk(f); return (!!c && judgeMove(c, mv).passed) || keptOn(f); }) || null, mUse = mOk || mLive[0] || null;
+        const lAll = mUse ? takesOf(clipName(i, line, frameOf(mUse), area, perArea, note)) : [], lLive = lAll.filter((f) => !aside.has(f)), lOk = lLive.some((f) => passedCheck(chk(f), line, profile, say, null) || keptOn(f)), lKept = lLive.some(keptOn);
+        const on = lOk && (!!mOk || lKept), flagged = !on && ((lOk && !mOk && usedUp(mAll, mLive)) || (!lOk && usedUp(lAll, lLive)));
+        const again = !mUse || (!mOk && !usedUp(mAll, mLive)), first = !moveCounted.has(i); moveCounted.add(i);
+        clips.push({ line, area, seconds: on ? (first ? MOVE_SECONDS : 0) + clipSeconds(line) : (again && first ? MOVE_SECONDS : 0) + (again || !lOk ? clipSeconds(line) : 0), move: moveLabel(mv), on_file: on, flagged });
+        continue;
+      }
       clips.push({ line, area, seconds: cutSeconds(line, mv), ...(mv ? { move: moveLabel(mv) } : {}), on_file, flagged: !on_file && live.length > 0 && mine.length >= takes + (mine.length - live.length) });
     }
   }
@@ -1450,19 +1535,49 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
     // A clip for each line — once, or once per location when the line says the area.
     const made = new Map(); // "i|area" or "i|" → { file, takes, passed, flagged?, check, line, why, all[] }
     const aside = asideOf(store), filmedNow = new Map(); // what this call filmed: file → seconds
+    const takesOn = (name) => readdirSync(store).filter((f) => (f === `${name}.mp4` || (f.startsWith(`${name}-take`) && f.endsWith(".mp4"))) && !aside.has(f)).sort();
+    const moveMade = new Map(); // cut → { file, frame, passed, why, kind, all[], judged[] } | null (none could be filmed)
+    const moveFor = async (i) => {
+      if (moveMade.has(i)) return moveMade.get(i);
+      const mv = moves[i], base = moveBase(i, mv, stills[i]), mineM = (f) => f === `${base}.mp4` || f.startsWith(`${base}-take`), limit = takes + [...aside].filter(mineM).length;
+      let take = 0, refused = 0; const judged = [];
+      while (take < limit && !judged.some((x) => x.passed)) {
+        take++; const file = join(store, `${base}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
+        if (aside.has(basename(file))) continue;
+        if (!(existsSync(file) && statSync(file).size > 1000)) {
+          if (!within("seconds", MOVE_SECONDS)) { take--; break; }
+          spent.seconds += MOVE_SECONDS; onProgress({ stage: "clip", line: i + 1, take, move: true }); log(`${label(i)}, the move, take ${take}: ${MOVE_SECONDS} s`);
+          const prompt = moveOnlyPrompt({ presenter, move: mv }); writeFileSync(file.replace(/\.mp4$/, ".prompt.txt"), prompt + "\n");
+          try { await models.clip({ out: file, image: stills[i], prompt, seconds: MOVE_SECONDS }); filmedNow.set(file, MOVE_SECONDS); }
+          catch (e) { if (!isRefusal(e)) throw e; spent.seconds -= MOVE_SECONDS; take--; refused++; log(`  ${basename(file)}: refused by Google's video model under its content rules`); if (refused >= 2) break; continue; }
+        }
+        let seen = readJson(checkFile); if (!seen) { spent.checks++; seen = normalSeen(await models.watch(file, { move: mv })); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
+        let j = judgeMove(seen, mv); if (!j.passed && ownerKeptClip(store, file)) j = { ...j, passed: true };
+        judged.push({ file, ...j }); log(`  ${basename(file)}: ${j.passed ? `${moveLabel(mv)}, done in silence` : j.why}`);
+      }
+      const best = judged.find((x) => x.passed) || judged[0] || null; let r = null;
+      if (best) { const frame = frameOf(best.file); if (!existsSync(frame)) ff(["-sseof", "-0.25", "-i", best.file, "-update", "1", frame]);
+        r = { file: best.file, frame, passed: best.passed, why: best.passed ? null : best.why, kind: best.passed ? null : best.kind, all: judged.map((x) => basename(x.file)), judged: judged.map((x) => ({ file: x.file, passed: x.passed })) }; }
+      else log(`  ${label(i)}: the move could not be filmed on its own: the cut is filmed the old way, the move and the line in one clip`);
+      moveMade.set(i, r); return r;
+    };
     const clipFor = async (i, area) => {
       const perArea = /\{AREA\}/.test(said[i]), key = `${i}|${perArea ? area : ""}`; if (made.has(key)) return made.get(key);
-      const mv = moves[i], line = fillLine(said[i], area), seconds = cutSeconds(line, mv);
+      const mv = moves[i], line = fillLine(said[i], area);
       const say = saidIn(line, saidList), nameFor = (pic) => clipName(i, line, pic, area, perArea, saidNote(say));
+      // A move cut is two clips — the move in silence, then the line from the move's last frame — unless a one-clip take of it already passed (that take stands: nothing on file is filmed again).
+      const isMove = mv?.m.kind === "move", oneClip = isMove && [stills[i], altOf(stills[i])].some((pic) => takesOn(nameFor(pic)).some((f) => passedCheck(readJson(join(store, f.replace(/\.mp4$/, ".check.json"))), line, profile, say, mv) || !!ownerKeptClip(store, join(store, f))));
+      const split = isMove && !oneClip ? await moveFor(i) : null, two = !!split?.file, pic0 = two ? split.frame : stills[i], mvJ = two ? null : mv, seconds = two ? clipSeconds(line) : cutSeconds(line, mv);
       // Takes the owner set aside (Film this line again) are counted and never used: each makes room for a fresh one.
-      const mine = (f) => [stills[i], altOf(stills[i])].some((pic) => f === `${nameFor(pic)}.mp4` || f.startsWith(`${nameFor(pic)}-take`));
+      const mine = (f) => [pic0, altOf(pic0)].some((pic) => f === `${nameFor(pic)}.mp4` || f.startsWith(`${nameFor(pic)}-take`));
       const limit = takes + [...aside].filter(mine).length;
       // The picture this line is filmed from: its own, or — once a clip was refused on that one — the second picture made for it.
-      let still = !existsSync(join(store, `${nameFor(stills[i])}.mp4`)) && existsSync(altOf(stills[i])) ? altOf(stills[i]) : stills[i];
+      let still = !existsSync(join(store, `${nameFor(pic0)}.mp4`)) && existsSync(altOf(pic0)) ? altOf(pic0) : pic0;
       let take = 0, refused = 0, noteRetake = false, stopped = null; const judged = [];
       // A second picture of the presenter for this line: after two refusals, or when lettering in the picture failed a take.
       const freshPicture = async () => {
-        const alt = altOf(stills[i]);
+        if (two) return "none"; // the line's picture is the move's last frame: another picture would break the shot
+        const alt = altOf(pic0);
         if (!existsSync(alt)) {
           if (!within("images", 1)) return "cap";
           spent.images++; onProgress({ stage: "still", line: i + 1 }); log(`  a fresh picture of the presenter for ${label(i)}`);
@@ -1484,7 +1599,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         if (!(existsSync(file) && statSync(file).size > 1000)) {
           if (!within("seconds", seconds)) { stopped = { why: `the cap of ${caps.seconds} seconds of video was reached` }; take--; break; }
           spent.seconds += seconds; onProgress({ stage: "clip", line: i + 1, area: perArea ? area : null, take }); log(`${label(i)}${perArea ? ` (${area})` : ""}, take ${take}: ${seconds} s`);
-          const prompt = mv ? moveClipPrompt({ presenter, profile, line, seconds, said: say, move: mv }) : clipPrompt({ presenter, profile, line, seconds, said: say }); writeFileSync(file.replace(/\.mp4$/, ".prompt.txt"), prompt + "\n");
+          const prompt = two ? afterMovePrompt({ presenter, profile, line, seconds, said: say, move: mv }) : mv ? moveClipPrompt({ presenter, profile, line, seconds, said: say, move: mv }) : clipPrompt({ presenter, profile, line, seconds, said: say }); writeFileSync(file.replace(/\.mp4$/, ".prompt.txt"), prompt + "\n");
           try { await models.clip({ out: file, image: still, prompt, seconds }); filmedNow.set(file, seconds); }
           catch (e) {
             // Google refused the request (its content rules): nothing was made, so nothing is counted and it is no take.
@@ -1494,24 +1609,24 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
             log(`  ${basename(file)}: refused by Google's video model under its content rules${refused === 1 && !ok.length ? " — asked once more" : ""}`);
             if (ok.length) break; // a take already passed: it is kept
             if (refused === 1) continue;
-            if (refused === 2 && still === stills[i]) {
+            if (refused === 2 && still === pic0) {
               const got = await freshPicture(); if (got === "ok") continue;
-              stopped = { refused: true, why: got === "cap" ? `refused by Google's video model under its content rules (twice), and the cap of ${caps.images} image calls leaves none for a fresh picture to try it on` : "refused by Google's video model under its content rules (twice), and its image model refused a fresh picture to try it on" }; break;
+              stopped = { refused: true, why: got === "none" ? "refused by Google's video model under its content rules, twice" : got === "cap" ? `refused by Google's video model under its content rules (twice), and the cap of ${caps.images} image calls leaves none for a fresh picture to try it on` : "refused by Google's video model under its content rules (twice), and its image model refused a fresh picture to try it on" }; break;
             }
             stopped = { refused: true, why: `refused by Google's video model under its content rules, ${refused} times and on two pictures of the presenter` }; break;
           }
         }
         // The check on file is judged again by today's rules; one made before lettering said what it is on is watched again (a check call, no filming).
-        let seen = readJson(checkFile); if (!seen || staleCheck(seen)) { spent.checks++; seen = normalSeen(await models.watch(file, { said: say, move: mv })); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
-        let j = judgeClip(seen, line, { profile, say, move: mv });
+        let seen = readJson(checkFile); if (!seen || staleCheck(seen)) { spent.checks++; seen = normalSeen(await models.watch(file, { said: say, move: mvJ })); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); }
+        let j = judgeClip(seen, line, { profile, say, move: mvJ });
         // Refused for its words: listened to once more by its sound alone, before a second is filmed again (a check call against a retake).
-        if (!j.passed && j.kind === "words" && seen.heard == null && models.hear) { spent.checks++; seen.heard = await models.hear(file); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); j = judgeClip(seen, line, { profile, say, move: mv }); if (j.kind !== "words") log(`  ${basename(file)}: heard again by its sound alone, the words are as written`); }
+        if (!j.passed && j.kind === "words" && seen.heard == null && models.hear) { spent.checks++; seen.heard = await models.hear(file); writeFileSync(checkFile, JSON.stringify(seen, null, 2) + "\n"); j = judgeClip(seen, line, { profile, say, move: mvJ }); if (j.kind !== "words") log(`  ${basename(file)}: heard again by its sound alone, the words are as written`); }
         // The owner's "Use this take anyway": that file, unchanged since, passes on his word.
         if (!j.passed && ownerKeptClip(store, file)) j = { ...j, passed: true, kept: j.why, why: null, kind: null };
         judged.push({ file, take, ...j, check: seen });
         log(`  ${basename(file)}: ${j.kept ? `kept on your word (${j.kept})` : j.passed ? "said as written, one person, no lettering" : j.why}${j.marks.length ? ` · in the room: ${j.marks.join("; ")}` : ""}${j.faults.length ? ` · noted: ${j.faults.join("; ")}${j.passed && !j.kept && !noteRetake && mv?.m.kind !== "move" && take < limit ? " — made once more" : ""}` : ""}`);
         // Lettering that is in the picture itself (a sign, clothing) would be in every take from it: the next take is filmed from a fresh picture. A caption the video model laid over the picture is not the picture's fault.
-        if (!j.passed && j.kind === "lettering" && j.lettering.fails.some((x) => x.on !== "overlay") && still === stills[i] && take < limit) await freshPicture();
+        if (!j.passed && j.kind === "lettering" && j.lettering.fails.some((x) => x.on !== "overlay") && still === pic0 && take < limit) await freshPicture();
       }
       const ok = judged.filter((t) => t.passed), all = judged.map((t) => basename(t.file));
       let r;
@@ -1522,6 +1637,10 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       else if (judged.length) { const rank = (t) => ({ lettering: 0, people: 1, move: 2, words: 3 })[t.kind] ?? 4, best = judged.reduce((b, x) => (rank(x) < rank(b) || (rank(x) === rank(b) && x.faults.length <= b.faults.length) ? x : b)); r = { file: best.file, takes: take, passed: false, flagged: true, kind: best.kind, why: best.why, line, check: best.check, marks: best.marks, all }; }
       else r = { file: null, takes: take, passed: false, line, why: stopped?.why || "no take was made", ...(stopped?.refused ? { refused: true } : {}), all };
       r.seconds = seconds; r.per_area = perArea; r.move = mv; r.judged = judged.map((t) => ({ file: t.file, passed: t.passed }));
+      // Two clips: the move's clip rides with the line's; its takes are the cut's takes too (Film this line again sets both aside); a move that was
+      // not done flags the cut for the owner, unless he has kept the line's take on his word.
+      if (two) { r.moveClip = split; r.seconds = MOVE_SECONDS + seconds; r.all = [...split.all, ...r.all]; r.judged = [...split.judged, ...r.judged];
+        if (!split.passed && r.passed && !r.kept) { r.passed = false; r.flagged = true; r.kind = split.kind; r.why = split.why; } }
       made.set(key, r); return r;
     };
     const videos = [];
@@ -1535,20 +1654,22 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       }
       onProgress({ stage: "cut", area });
       const overlays = [], blocks = []; let at = 0;
-      const cuts = [], starts = [];
+      const cuts = [], starts = [], seq = [];
       for (const [i, l] of lines.entries()) {
+        // A move filmed as its own clip plays first, whole; the line's clip follows from the frame the move ended on.
+        const startAt = at; if (l.moveClip) { const md = Math.round(durationOf(l.moveClip.file) * 100) / 100; seq.push({ file: l.moveClip.file, from: 0, to: md }); at += md; }
         // Where he speaks, measured from the sound; the clip is kept from a breath before to a breath after, and the captions follow the voice inside it.
-        const sp = speechOf(l.file), from = Math.max(0, sp.start - (l.move?.m.kind === "move" ? MOVE_KEEP : LEAD)), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? END_HOLD : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
+        const sp = speechOf(l.file), from = Math.max(0, sp.start - (l.move?.m.kind === "move" && !l.moveClip ? MOVE_KEEP : LEAD)), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? END_HOLD : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); seq.push(cuts[i]); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
         // One picture of the block for each of its words, that word lit while it is said.
         for (const [k, c] of captions(l.line, sp.spans.map(([a, b]) => [at + a - from, at + b - from])).entries()) for (const w of captionWords(c)) {
           if (!(w.to > w.from)) continue;
           const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}-${w.i}.png`), capHtml(c.text, w.i)); overlays.push({ png: o.png, from: w.from, to: w.to }); if (w.i === 0) blocks.push(...o.blocks);
         }
-        starts.push(Math.round(at * 100) / 100); at += cuts[i].to - cuts[i].from;
+        starts.push(Math.round(startAt * 100) / 100); at += cuts[i].to - cuts[i].from;
       }
       const outside = blocks.filter((b) => !inLive(b));
       if (outside.length) { videos.push({ area, script_id: script.id, lines, failed: `the words do not fit Meta's live area: "${outside[0].text}"` }); continue; }
-      const file = assemble({ clips: cuts, overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`) });
+      const file = assemble({ clips: seq, overlays, out: join(outDir, `${script.id}-${slug(area)}.mp4`) });
       const poster = file.replace(/\.mp4$/, ".jpg"); ff(["-ss", "0.8", "-i", file, "-frames:v", "1", "-q:v", "3", poster]);
       // Every line of the cut, for the owner's screen: where it starts, the take in it, the takes on file, what a fresh take costs, a word to listen for, and — where no take passed — why.
       const parts = lines.map((l, i) => ({ line: i + 1, label: label(i), text: l.line, clip: basename(l.file), takes: l.all, seconds: l.seconds, at: starts[i], ...(l.move ? { move: moveLabel(l.move) } : {}), ...(l.per_area ? { per_area: true } : {}), ...(saidIn(l.line, saidList).length ? { listen: saidIn(l.line, saidList).map((x) => ({ word: x.word, say: x.say })) } : {}), ...(l.kept ? { kept: l.kept } : {}), ...(l.passed ? {} : { flag: { why: l.why, kind: l.kind } }) }));
@@ -1557,7 +1678,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         notes: [...new Set([...lines.flatMap((l) => l.check?.faults || []), ...lines.flatMap((l) => l.marks || []), ...parts.filter((p) => p.kept).map((p) => `${p.label} kept on your word (${p.kept})`)])] });
     }
     // What this call filmed, and what became of it: in a video, replaced by a retake, failed its check, or waiting on a video that could not be cut.
-    const inCut = new Set(videos.filter((v) => v.file).flatMap((v) => v.lines.map((l) => l.file))), state = new Map([...made.values()].flatMap((r) => r.judged.map((t) => [t.file, t.passed]))), chosen = new Set([...made.values()].map((r) => r.file));
+    const inCut = new Set(videos.filter((v) => v.file).flatMap((v) => v.lines.flatMap((l) => [l.file, l.moveClip?.file]))), state = new Map([...made.values()].flatMap((r) => r.judged.map((t) => [t.file, t.passed]))), chosen = new Set([...made.values()].flatMap((r) => [r.file, r.moveClip?.file]));
     const tally = { filmed: 0, in_videos: 0, replaced: 0, failed: 0, waiting: 0 };
     for (const [f, s] of filmedNow) { tally.filmed += s; tally[inCut.has(f) ? "in_videos" : chosen.has(f) ? "waiting" : state.get(f) ? "replaced" : "failed"] += s; }
     return { videos, spent, tally };

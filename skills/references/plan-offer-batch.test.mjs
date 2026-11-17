@@ -19,7 +19,7 @@ import { launchBrowser, loadCatalogue, renderComposite } from "./render-composit
 import { fitLayouts } from "./check-visual.mjs";
 import { assignVariants } from "./assign-variants.mjs";
 import { cropImage } from "./clean-photo.mjs";
-import { ageTargets, ageBand, spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, madeShape, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
+import { ageTargets, ageBand, spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, growBatch, madeLooks, madeShape, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
 const sceneProblemsOf = (s) => sceneProblems(s).join("; ");
 import { poseProblem } from "./visual-prompts.mjs";
 import { rejectScene } from "./scene-library.mjs";
@@ -75,8 +75,12 @@ test("B1 a brief is refused before anything runs, with a reason for each problem
     [{ audience: "MEN — ONLY" }, /em\/en dash/],
     [{ batch_id: "Test Batch!" }, /batch_id/],
     [{ generated: 0, real: [] }, /no photos/],
-    [{ max_calls: 1 }, /must cover at least one call per generated photo/],
-    [{ max_calls: MAX_CALLS_CAP + 1 }, /split the batch/],
+    [{ max_calls: 1 }, /Most image calls \(1\) must cover at least one call for each new photo/],
+    // The limits in the screen's own words, with what to do (2026-11-16): 24 new photos and 80 image calls a batch (they were 12 and 40).
+    [{ max_calls: MAX_CALLS_CAP + 1 }, /Most image calls: a batch may use 150 at most and this asks for 151\. Set it to 150 or less/],
+    [{ generated: 51, max_calls: 60 }, /New photos: a batch makes 50 at most and this asks for 51\. Set it to 50, and make the rest as a second batch/],
+    [{ generated: 2.5 }, /New photos is a whole number from 0 to 50/],
+    [{ keep_made: "yes" }, /keep_made must be true or false/],
     [{ attempts: 0 }, /attempts/],
     [{ looks_per_photo: 0 }, /looks_per_photo/],
     [{ free: "yes" }, /free must be true or false/],
@@ -1057,7 +1061,7 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "with-videos", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN", "ANG MO KIO"], videos: { presenter: 1 } };
     // The brief's own rules.
-    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 9, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 3", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 10, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 9", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
     assert.deepEqual(validateBrief(brief, { brandDir: dir }), [], "videos alone are a batch");
     // The models: a still is a small picture; a clip is real video with a tone for speech between two silences; the watching pass hears the line.
     const made = { image: 0, clip: [], watch: 0 }, said = new Map();
@@ -1156,7 +1160,7 @@ test("B17 presenter videos with exercises in a batch (2026-11-15): a brief asks 
     const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "with-moves", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN"], videos: { active: 1 } };
     assert.deepEqual(validateBrief(brief, { brandDir: dir }), []);
-    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 2, active: 2 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 3 presenter videos in all, talking, with exercises and white paper together"]);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 6, active: 4 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 9 presenter videos in all, talking, with exercises and white paper together"]);
     const script = addScript(dir, { lines: LINES, offer: brief.offer }, { profile });
     const S = (i) => clipSeconds(fillLine(LINES[i], "BISHAN")), plan = videoPlan(dir, brief);
     assert.deepEqual([plan.kinds, plan.active, plan.count, plan.seconds, plan.images], [["active"], 1, 1, S(0) + S(1) + S(2) + 2 * MOVE_LEAD, 4]);
@@ -1164,14 +1168,15 @@ test("B17 presenter videos with exercises in a batch (2026-11-15): a brief asks 
     const made = { image: 0, clip: [] }, said = new Map(), logs = [];
     const videoModels = {
       async image({ out }) { made.image++; writeFileSync(out, readFileSync(join(dir, "brand-assets", "real", "r1.png"))); },
-      async clip({ out, prompt, seconds }) { made.clip.push([seconds, /For the first two seconds she says nothing and does two/.test(prompt)]); said.set(out, prompt.match(/pace: "([^"]+)"/)[1]);
+      async clip({ out, prompt, seconds }) { made.clip.push([seconds, /Nobody speaks at any point/.test(prompt)]); said.set(out, prompt.match(/pace: "([^"]+)"/)?.[1] ?? ""); // a move's own clip: silent, no line
         execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `color=c=gray:s=180x320:r=24:d=${seconds}`, "-f", "lavfi", "-i", `sine=frequency=330:duration=${seconds - 2}`, "-af", "adelay=700|700,apad=whole_dur=" + seconds, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", String(seconds), out]); },
       async watch(file) { return { spoken: said.get(file), lettering: [], people: 1, lips_match_speech: true, faults: [], looks_real: 9, did_move: true }; },
     };
     const r = await runBatch({ brandDir: dir, brief, deps: { ...fakes([]), browser, videoModels }, log: (m) => logs.push(m) });
     const batch = JSON.parse(readFileSync(join(r.out, "batch.json"), "utf-8")), ad = batch.ads[0], picks = movesFor(script, { kit: KIT }).map(moveLabel);
     assert.ok(logs.some((m) => /· v01: presenter video with exercises from script /.test(m)), logs.join("\n"));
-    assert.deepEqual([made.image, made.clip], [4, [[S(0) + MOVE_LEAD, true], [S(1), false], [S(2) + MOVE_LEAD, true]]]);
+    // A move cut is two clips (2026-11-16): the move alone in silence, then the line from its last frame.
+    assert.deepEqual([made.image, made.clip, MOVE_LEAD], [4, [[4, true], [S(0), false], [S(1), false], [4, true], [S(2), false]], 4]);
     assert.deepEqual([batch.ads.length, batch.videos, /-exercise-video$/.test(ad.folder), ad.treatment, ad.format, ad.video.kind, ad.video.moves, ad.video.parts.map((p) => p.move)], [1, { presenter: 0, active: 1 }, true, "video-presenter-active", "presenter-video", "active", picks.map((move, i) => ({ line: i + 1, move })), picks]);
     assert.equal(keptAds(r.out)[0].video_kind, "active", "the kind goes on to the publish plan");
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -1193,7 +1198,7 @@ test("B18 white-paper videos in a batch (2026-11-15): the third count — a brie
     const SHEETS = ["Do your work clothes feel tight?", "Live near {AREA}?", "Join our 12 Week Total Body Reset", "You get a coach beside you", "And a plan that fits your week", "Feel strong for everyday things", "Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "white-paper", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN"], videos: { paper: 1 } };
     assert.deepEqual(validateBrief(brief, { brandDir: dir }), []);
-    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 1, active: 1, paper: 2 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 3 presenter videos in all, talking, with exercises and white paper together"]);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 4, active: 3, paper: 3 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 9 presenter videos in all, talking, with exercises and white paper together"]);
     assert.throws(() => videoPlan(dir, brief), /1 white-paper video asked for, but no white-paper script is ready for "12 Week Total Body Reset": nothing is written for this offer yet: press Draft sheets… there, or write your own \(Draft Scenes → Video scripts → White-paper scripts\)/);
     const script = addSheetScript(dir, { sheets: SHEETS, offer: brief.offer }, { profile });
     const plan = videoPlan(dir, brief);
@@ -1219,5 +1224,50 @@ test("B18 white-paper videos in a batch (2026-11-15): the third count — a brie
     assert.deepEqual((({ seconds, reused, images }) => [seconds, reused, images])(videoPlan(dir, brief)), [0, 28, 0]);
     await runBatch({ brandDir: dir, brief, deps: { ...fakes([]), browser, videoModels }, log: () => {} });
     assert.deepEqual([made.image, made.clip.length], [1, 7]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("B19 more photos for a batch that has its ads (2026-11-17, the owner, on a batch made at the old limit whose ads he had picked: \"backfill the static creatives … I like all the other creatives I've approved so far\"): the photos it has stay as planned, the new ones are planned from scenes it has not used and numbered on, and the next run makes only them — every ad already made keeps its look, its picture and its folder, the new ads are numbered after the last, and a later run changes nothing", async () => {
+  const dir = brandSetup();
+  try {
+    const calls = [], logs = [], f = fakes(calls), say = (m) => { logs.push(m); if (process.env.BDEBUG) console.error(m); };
+    const check = async () => ({ ok: true, failures: [], notes: [], stray_text: [], excluded: [], dismissed: [], faces: [[280, 430, 400, 570]], focus: [0.5, 0.5], placement: { people_box: [240, 300, 980, 700], people_count: 1 } });
+    const deps = { ...f, check, browser };
+    const brief = { ...BRIEF, batch_id: "grow", real: [], locations: ["JURONG WEST"], look: "formula", generated: 2, max_calls: 3, attempts: 1 };
+    const sha = (out, a) => createHash("sha256").update(readFileSync(join(out, a.file))).digest("hex");
+    const first = await runBatch({ brandDir: dir, brief, deps, log: say });
+    const before = first.batch.ads.map((a) => [a.folder, a.candidate, a.treatment, a.style, a.palette, a.photos.join("+"), sha(first.out, a)]);
+    assert.deepEqual([first.batch.ads.length, calls.length, before.map((x) => x[0].split("-")[0])], [4, 2, ["101", "102", "103", "104"]]);
+    // Without the function: a brief that just asks for more plans every photo afresh (what a re-run always did) — so it is never done that way.
+    assert.deepEqual(madeLooks(first.batch, first.batch.photos).map((x) => [x.id, x.visual, x.treatment, x.style, x.palette]), [...new Map(first.batch.ads.map((a) => [a.candidate, [a.candidate, a.photos[0], a.treatment, a.style, a.palette]])).values()]);
+    // Nothing to add to, too many, a directed batch: refused in words, and nothing is written.
+    assert.throws(() => growBatch({ brandDir: dir, brief: { ...brief, batch_id: "never-run" }, add: { workout: 1 } }), /this batch has no ads yet: run it first/);
+    assert.throws(() => growBatch({ brandDir: dir, brief, add: { workout: 49 } }), /a batch makes 50 new photos at most: this one has 2, so 48 more at most/);
+    assert.throws(() => growBatch({ brandDir: dir, brief, add: {} }), /photos per kind, one or more in all/);
+    assert.throws(() => growBatch({ brandDir: dir, brief: { ...brief, direction: { words: "older couples" } }, add: { workout: 1 } }), /cannot be added to: make a second batch/);
+    // One more photo: planned from the one scene the batch has not used, as g03; the first two are word for word what they were.
+    const planPath = join(first.out, "visuals.json"), planned = JSON.parse(readFileSync(planPath, "utf-8")).visuals;
+    const grown = growBatch({ brandDir: dir, brief, add: { workout: 1 }, log: say });
+    const after = JSON.parse(readFileSync(planPath, "utf-8")).visuals;
+    assert.deepEqual([after.slice(0, 2), after.length, after[2].id, planned.map((v) => v.scene_id).includes(after[2].scene_id)], [planned, 3, "g03", false]);
+    assert.deepEqual([grown.brief.generated, grown.brief.mix, grown.brief.keep_made, grown.brief.max_calls, grown.added.length, grown.spent], [3, { workout: 3 }, true, 3, 1, 2]);
+    assert.ok(logs.some((l) => /· 1 photo\(s\) added to the plan \(g03 for /.test(l)), logs.join(" | "));
+    // The run: one image call, for the new photo alone.
+    const n = calls.length, second = await runBatch({ brandDir: dir, brief: grown.brief, deps, log: say });
+    assert.equal(calls.length - n, 1, "only the new photo is made");
+    assert.ok(logs.some((l) => /this batch keeps what it has made: the plan on disk \(3 photos\) is used as it is/.test(l)));
+    const now = second.batch.ads.map((a) => [a.folder, a.candidate, a.treatment, a.style, a.palette, a.photos.join("+"), sha(second.out, a)]);
+    assert.deepEqual(now.slice(0, 4), before, "every ad already made: the same folder, look, photo and picture, byte for byte");
+    assert.deepEqual([now.length, now.slice(4).map((x) => [x[0].split("-")[0], x[1], x[5]])], [6, [["105", "c05", "g03"], ["106", "c06", "g03"]]], "the new photo's two ads, numbered on");
+    const looks = now.map((x) => x.slice(2, 5).join("|")); assert.equal(new Set(looks).size, looks.length, "no look twice in the batch");
+    assert.deepEqual([new Set(now.slice(4).map((x) => x[2])).size, new Set(now.slice(4).map((x) => x[4])).size], [2, 2], "the new photo's two looks differ in layout and pairing");
+    assert.deepEqual([second.batch.photos.length, second.batch.mix, second.batch.image_calls], [3, { workout: 3 }, 3]);
+    // A later run (a video line filmed again, new words) changes nothing and makes nothing.
+    const m = calls.length, third = await runBatch({ brandDir: dir, brief: grown.brief, deps, log: say });
+    assert.deepEqual([calls.length - m, third.batch.ads.map((a) => [a.folder, a.candidate, a.treatment, a.style, a.palette, a.photos.join("+"), sha(third.out, a)])], [0, now]);
+    const words = await runBatch({ brandDir: dir, brief: { ...grown.brief, offer: "8 Week Strength Reset" }, renderOnly: true, deps, log: say });
+    assert.deepEqual(words.batch.ads.map((a) => [a.folder, a.treatment, a.style, a.palette]), now.map((x) => [x[0], x[2], x[3], x[4]]), "new words: the same looks and folders");
+    // The plan on disk and the brief must agree: a hand-edited number is refused before anything is made.
+    await assert.rejects(runBatch({ brandDir: dir, brief: { ...grown.brief, generated: 4, mix: { workout: 4 }, max_calls: 5 }, deps, log: say }), /keeps what it has made, and its plan on disk has 3 photo\(s\) where the brief asks for 4/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

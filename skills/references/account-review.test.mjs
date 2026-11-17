@@ -28,7 +28,8 @@ const workout = (id, over = {}) => ({ id, audience: "any", scene: `A woman lifts
 function gym({ scenes = null, brief = null } = {}) {
   const d = mkdtempSync(join(tmpdir(), "acct-review-")), g = join(d, "brands", "testgym");
   mkdirSync(g, { recursive: true });
-  writeFileSync(join(g, "gym-profile.json"), JSON.stringify(PROFILE_STARTER("testgym", "Test Gym", "SG")));
+  // These tests' figures are for a gym whose Ad default is 10 new photos (the app's own default is 30 since 2026-11-17).
+  { const p = PROFILE_STARTER("testgym", "Test Gym", "SG"); p.creative_defaults = { ...p.creative_defaults, generated: 10 }; writeFileSync(join(g, "gym-profile.json"), JSON.stringify(p)); }
   if (scenes) writeFileSync(join(g, "scenes.json"), JSON.stringify({ approved: true, approved_on: "2026-11-01", scenes }));
   if (brief) { mkdirSync(join(g, "batches", brief.batch_id), { recursive: true }); writeFileSync(join(g, "batches", brief.batch_id, "brief.json"), JSON.stringify(brief)); }
   return { d, g };

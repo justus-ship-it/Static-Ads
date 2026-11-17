@@ -54,7 +54,8 @@ test("P1 a profile's format is checked before it is saved: bad ids, colours, cal
     bad((x) => { x.creative_defaults.audiences = ["X".repeat(60)]; return x; }, /audience callout .*limit/);
     bad((x) => { x.creative_defaults.real_photos = ["facility-clean/nope.png"]; return x; }, /not in brand-assets/);
     bad((x) => { x.creative_defaults.real_photos = ["../../gym-profile.json"]; return x; }, /not in brand-assets/);
-    bad((x) => { x.creative_defaults.generated = 13; return x; }, /generated must be a whole number from 0 to 12/);
+    bad((x) => { x.creative_defaults.generated = 51; return x; }, /generated must be a whole number from 0 to 50/); // 50 new photos a batch since 2026-11-17 (12, then 24)
+    bad((x) => { x.creative_defaults.max_calls = 151; return x; }, /max_calls must be a whole number from 0 to 150/);
     bad((x) => { x.creative_defaults.max_calls = 4; x.creative_defaults.generated = 10; return x; }, /must cover one call per new photo/);
     bad((x) => { x.creative_defaults.spread = "yes"; return x; }, /spread must be true or false/);
     bad((x) => { x.meta_assets.page_id = "my page"; return x; }, /page id "my page" is not an id/);

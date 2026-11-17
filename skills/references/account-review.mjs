@@ -23,7 +23,7 @@ import { whatWins, whatWinsAcross, nextWave, mixSuggestion, refreshGym, gymRowsR
 import { gymTextRows } from "./meta-results.mjs";
 import { readCreatives, unreadCount } from "./read-creatives.mjs";
 import { ROOMS, SCENE_OPTIONAL_TAGS, SCENE_FORMATS, SCENE_TAGS, PORTRAIT_TAGS, allocateMix, formatOf, loadScenes, isDraft, isRetired } from "./scene-library.mjs";
-import { mixOf } from "./client-config.mjs";
+import { mixOf, MAX_PHOTOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
 import { scenePool, shows, sceneAudience, leanName, MAX_LEANS, LEAN_SHARE } from "./plan-offer-batch.mjs";
 export { readLedger as ledgerOf };
 import { cardsAvailable } from "./cards.mjs";
@@ -177,7 +177,7 @@ export function suggestBrief(gymDir, { rows = gymRowsRead(gymDir), every = rows,
   const offers = byValue(rows.filter(isActive), (r) => r.offer).filter((o) => o.leads > 0).sort((a, b) => b.leads - a.leads).slice(0, 4);
   if (offers.length) reasons.push({ field: "offer", text: `Running now: ${offers.map((o) => `${o.value} (${o.leads} leads at ${money(o.cost_per_lead, currency)})`).join(", ")}.` });
 
-  const generated = Math.max(0, Math.min(12, Number.isInteger(cd.generated) ? cd.generated : 10));
+  const generated = Math.max(0, Math.min(MAX_PHOTOS, Number.isInteger(cd.generated) ? cd.generated : CREATIVE_DEFAULTS.generated)); // the gym's Ad default, inside what a batch may make (a fixed 12 until 2026-11-17)
   const shares = mix?.changed ? mix.suggested : mix?.current || mixOf(profile);
   const photos = generated ? allocateMix(shares, generated) : {};
   if (generated) reasons.push({ field: "mix", text: `${Object.entries(photos).map(([f, n]) => `${n} ${f.replace("-", " ")}`).join(", ")} — ${mix?.changed ? `the suggested mix. ${(mix.reasons || []).join(" ")}` : "this gym's mix as it is."}` });

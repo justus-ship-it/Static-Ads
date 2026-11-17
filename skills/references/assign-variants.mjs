@@ -213,7 +213,7 @@ export function layoutWordsArea(layout, ratio, T) { return Math.round((layoutFor
  *   on this gym's own past ads (batch.json → text_cover), per layout and per style. The formula family's three layouts give
  *   the words the same room, so there the weight works through the styles, once the gym has ads to measure.
  */
-export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", exclude = {}, photoStats = null, allowed = null, prefer = null, words = 0, measured = null, catalogue = loadCatalogue(), ratio = "1x1" }) {
+export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", exclude = {}, photoStats = null, allowed = null, prefer = null, words = 0, measured = null, fixed = null, catalogue = loadCatalogue(), ratio = "1x1" }) {
   const { treatments: T, styles: S, palettes: P } = catalogue;
   const notes = [];
   if (!visuals?.length) throw new Error("the batch has no photos");
@@ -286,9 +286,19 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
   const used = new Set();
   const skipped = new Set(); // palettes passed over somewhere because they clashed with the photo
   const slots = [];
+  // Looks already made (`fixed`, 2026-11-17: a batch that grows keeps its ads): each keeps its layout, style, pairing, photos
+  // and id; they count as used, and only a photo short of its looks is given new ones — numbered on from the last id.
+  const have = new Set(visuals.map((v) => v.id));
+  const kept = (fixed || []).filter((f) => have.has(f.visual) && (f.images || []).every((id) => have.has(id))).sort((a, b) => String(a.id).localeCompare(String(b.id), "en", { numeric: true }));
+  const mine = new Map();
+  for (const f of kept) {
+    used.add(`${f.treatment}|${f.style}|${f.palette}`); mine.set(f.visual, [...(mine.get(f.visual) || []), f]);
+    if (f.treatment in count.L) count.L[f.treatment]++; if (f.style in count.S) count.S[f.style]++; if (f.palette in count.P) count.P[f.palette]++;
+  }
   for (const vi of order) {
-    const on = { L: new Set(), S: new Set(), P: new Set() };
-    for (let j = 0; j < perVisual; j++) {
+    const own = mine.get(visuals[vi].id) || [];
+    const on = { L: new Set(own.map((f) => f.treatment)), S: new Set(own.map((f) => f.style)), P: new Set(own.map((f) => f.palette)) };
+    for (let j = own.length; j < perVisual; j++) {
       let pick = null;
       const first = j === 0 && prefer?.[visuals[vi].id];
       const order2 = byUse(layouts, count.L, on.L).filter((la) => open(vi, la));
@@ -327,16 +337,18 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
   }
 
   slots.sort((a, b) => a.vi - b.vi || a.j - b.j);
-  const candidates = slots.map((s, i) => {
+  const base = kept.reduce((m, f) => Math.max(m, Number(String(f.id).replace(/\D/g, "")) || 0), 0);
+  const fresh = slots.map((s, i) => {
     const need = imagesNeeded(layoutFor(T.treatments[s.layout], ratio, T));
     // Extra photos for a collage or panels: the next photos in the batch, in order.
     const images = Array.from({ length: need }, (_, k) => visuals[(s.vi + k) % visuals.length].id);
     return {
-      id: `c${String(i + 1).padStart(2, "0")}`, visual: visuals[s.vi].id, images,
+      id: `c${String(base + i + 1).padStart(2, "0")}`, visual: visuals[s.vi].id, images,
       treatment: s.layout, style: s.style, palette: s.palette,
       palette_fit: s.fit ? { score: s.fit.score, hue_gap: s.fit.gap, share: s.fit.share, clash: s.fit.clash } : null,
     };
   });
+  const candidates = [...kept.map((f) => ({ id: f.id, visual: f.visual, images: f.images, treatment: f.treatment, style: f.style, palette: f.palette, palette_fit: null, kept: true })), ...fresh];
   // Colour fit outranks even spread: a palette that clashes with most photos is used less, and says so.
   const even = Math.floor(slots.length / palettes.length);
   // Only palettes that were actually passed over for clashing are blamed on colour; in a small batch

@@ -131,7 +131,7 @@ test("PP1 a white-paper script and its rules: six to nine sheets of two to eight
     assert.equal(sheetCost(own, ["BISHAN", "ANG MO KIO"]).seconds, 32);
     // The brief: a third count, three videos between all kinds.
     assert.deepEqual([videosProblems({ paper: 1 }), videoCount({ presenter: 1, active: 1, paper: 1 }), spokenCount({ presenter: 1, active: 1, paper: 1 }), paperCount({ paper: 2 }), videoKinds({ presenter: 1, active: 1, paper: 1 })], [[], 3, 2, 2, ["presenter", "active", "paper"]]);
-    assert.deepEqual(videosProblems({ presenter: 2, paper: 2 }), ["a batch makes at most 3 presenter videos in all, talking, with exercises and white paper together"]);
+    assert.deepEqual([videosProblems({ presenter: 2, paper: 2 }), videosProblems({ presenter: 6, paper: 4 })], [[], ["a batch makes at most 9 presenter videos in all, talking, with exercises and white paper together"]]);
     assert.deepEqual(videosProblems({ sheets: 1 }), ['videos: "sheets" is not a kind of video (presenter, active, paper)']);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

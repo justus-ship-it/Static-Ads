@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { presenterOf, presenterWords, presenterProblems, PRESENTER_GENDERS, scriptProblems, addScript, decideScript, readScripts, keptScripts, scriptCost, buildScriptPrompt, draftScripts, sameWords, fillLine, clipSeconds, captions, captionChunks, speechFrom, speechOf, LEAD, TAIL, END_HOLD, captionWords, CAPTION_ACCENT, addPain, stillPrompt, clipPrompt, makePresenterVideos, durationOf, hasFfmpeg, SCRIPTS_FILE, LINES, LINE_WORDS, CLIP_SECONDS, FIRST_PERSON, LIVE, USD_PER_SECOND, videoNeeds, setAside, keepTake, ownerKeptClip, judgeClip, letteringOf, spokenLine } from "./presenter-video.mjs";
+import { presenterOf, presenterWords, presenterProblems, PRESENTER_GENDERS, scriptProblems, addScript, decideScript, readScripts, keptScripts, scriptCost, buildScriptPrompt, draftScripts, sameWords, fillLine, clipSeconds, captions, captionChunks, speechFrom, speechOf, LEAD, TAIL, END_HOLD, captionWords, CAPTION_ACCENT, addPain, stillPrompt, clipPrompt, makePresenterVideos, durationOf, hasFfmpeg, SCRIPTS_FILE, LINES, LINE_WORDS, CLIP_SECONDS, FIRST_PERSON, LIVE, USD_PER_SECOND, videoNeeds, setAside, keepTake, ownerKeptClip, judgeClip, letteringOf, spokenLine, speechFromLevels, levelsOf, saidIn, setSaid, saidAs, VOICE } from "./presenter-video.mjs";
 import { PROFILE_STARTER, validateProfile } from "./client-config.mjs";
 
 // The shared library (the samples and the closing line) is never the real one in a test.
@@ -34,9 +34,9 @@ function fakes({ say = (line) => line, people = () => 1, text = () => [], faults
   const calls = { image: [], clip: [], watch: [] }, lineOf = new Map();
   return { calls, models: {
     async image({ out, prompt, refs }) { calls.image.push({ out, prompt, refs }); writeFileSync(out, PNG); },
-    async clip({ out, image, prompt, seconds }) { calls.clip.push({ out, image, prompt, seconds }); lineOf.set(out, prompt.match(/pace: "([^"]+)"/)[1]);
+    async clip({ out, image, prompt, seconds }) { calls.clip.push({ out, image, prompt, seconds }); lineOf.set(out, prompt.match(/pace: "([^"]+)"/)?.[1] ?? null); // a move's own clip has no line
       execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `color=c=gray:s=180x320:r=24:d=${seconds}`, "-f", "lavfi", "-i", `sine=frequency=330:duration=${seconds - QUIET_START - QUIET_END}`, "-af", `adelay=${QUIET_START * 1000}|${QUIET_START * 1000},apad=whole_dur=${seconds}`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", String(seconds), out]); },
-    async watch(file) { const n = calls.watch.push(file), line = lineOf.get(file); return { spoken: say(line, n, file), ...(lettering ? { lettering: lettering(line, n) } : { on_screen_text: text(line, n) }), people: people(line, n), lips_match_speech: true, faults: faults(line, n, file), looks_real: 9, ...(moved ? { did_move: moved(line, n, file) } : {}) }; },
+    async watch(file) { const n = calls.watch.push(file), said = lineOf.get(file), line = said === null ? "" : said; return { spoken: said === null ? "" /* a move's own clip: nobody speaks */ : say(line, n, file), ...(lettering ? { lettering: lettering(line, n) } : { on_screen_text: text(line, n) }), people: people(line, n), lips_match_speech: true, faults: faults(line, n, file), looks_real: 9, ...(moved ? { did_move: moved(line, n, file) } : {}) }; },
   } };
 }
 
@@ -292,8 +292,9 @@ test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the 
     assert.ok(!/STYLE A|Sample 1/.test(seen[1])); assert.equal(readSamples(L).samples.length, 1, "retired, never deleted");
     assert.equal(decideSample(L, s1.id, { retired: false }).retired, undefined);
     // A batch's videos: how many, and which scripts.
-    assert.deepEqual([videosProblems(undefined), videosProblems({ presenter: 2 }), videoCount({ presenter: 2 }), videoCount(null), MAX_VIDEOS], [[], [], 2, 0, 3]);
-    assert.deepEqual(videosProblems({ presenter: 4, talking: 1 }), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 3"]);
+    assert.deepEqual([videosProblems(undefined), videosProblems({ presenter: 2 }), videoCount({ presenter: 2 }), videoCount(null), MAX_VIDEOS], [[], [], 2, 0, 9]);
+    assert.deepEqual(videosProblems({ presenter: 10, talking: 1 }), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 9"]);
+    assert.deepEqual([MAX_VIDEOS, videosProblems({ presenter: 4 }), videosProblems({ presenter: 9 })], [9, [], []], "nine since 2026-11-16: it was three, and the count fields stopped there without a word");
     // No script for the offer: the refusal says which case it is and what to press (2026-11-12: a sample on the screen was taken for a script).
     const { noScriptWhy } = await import("./presenter-video.mjs");
     assert.throws(() => pickScripts(g, { count: 1, offer: OFFER, libraryDir: L }), /1 presenter video asked for, but no script is kept for "12 Week Full Body Transformation": keep 1 more on Draft Scenes → Video scripts \(nothing is written for this offer yet\. The sample script there is a template, not a script to film: press Draft scripts…, read the drafts and keep one\)$/);
@@ -730,7 +731,7 @@ test("PV12 plain words (2026-11-15, the owner: \"the vocabulary in the video …
 });
 
 test("PV13 the second kind, with exercises (2026-11-15, the owner, with a coach's video — a move in silence, then she stops and talks holding the kit: \"the coach is doing associated exercises too\"; \"agent must pick the moves … common in most gyms and look simple for the user to do. A clean and jerk is too hard … a bench press is not suitable … Russian twists with a plate or kettlebell squats would be highly adaptable\"): the same script filmed move, stop, talk — the agent picks a move for the first and last cut and a hold for the second from the pre-approved list, by the kit the room's own photos show; a move cut is pictured in its start position, asks for the move in silence before the line, is given the seconds for it, is checked for the move, and keeps a second and a half of it in the cut; a brief asks for the two kinds with one total", { skip: !hasFfmpeg() && "ffmpeg is not installed" }, async () => {
-  const { MOVES, KIT, VIDEO_KINDS, MOVE_LEAD, MOVE_KEEP, movesFor, moveLabel, kitFor, moveStillPrompt, moveClipPrompt, knownKit, kitPhotos, videosProblems, videoCount, videoKinds, MAX_VIDEOS, CLOSING_LINE } = await import("./presenter-video.mjs");
+  const { MOVES, KIT, VIDEO_KINDS, MOVE_LEAD, MOVE_KEEP, MOVE_SECONDS, movesFor, moveLabel, kitFor, moveStillPrompt, moveClipPrompt, knownKit, kitPhotos, videosProblems, videoCount, videoKinds, MAX_VIDEOS, CLOSING_LINE } = await import("./presenter-video.mjs");
   const { d, g, profile, room } = gym();
   try {
     // The list he pre-approved: eight moves, three holds; nothing technical, heavy-looking or face-down.
@@ -752,7 +753,7 @@ test("PV13 the second kind, with exercises (2026-11-15, the owner, with a coach'
     assert.deepEqual(long.map((p) => p?.m.kind), ["move", "hold", "hold"]);
     // A brief: the two kinds, MAX_VIDEOS between them; the talking ones are picked first.
     assert.deepEqual([videosProblems({ presenter: 1, active: 2 }), videoCount({ presenter: 1, active: 2 }), videoKinds({ presenter: 1, active: 2 }), videoCount({ active: 1 }), videoCount({ presenter: 2 })], [[], 3, ["presenter", "active", "active"], 1, 2]);
-    assert.match(videosProblems({ presenter: 2, active: 2 })[0], /at most 3 presenter videos in all/); assert.match(videosProblems({ active: MAX_VIDEOS + 1 })[0], /videos\.active must be a whole number from 0 to 3/); assert.match(videosProblems({ walking: 1 })[0], /not a kind of video \(presenter, active, paper\)/);
+    assert.match(videosProblems({ presenter: 6, active: 4 })[0], /at most 9 presenter videos in all/); assert.match(videosProblems({ active: MAX_VIDEOS + 1 })[0], /videos\.active must be a whole number from 0 to 9/); assert.match(videosProblems({ walking: 1 })[0], /not a kind of video \(presenter, active, paper\)/);
     // The prompts: the picture is the start of the move; the clip is the move in silence, then the line said in place; a hold is said as it is held.
     const P = presenterOf(profile), twist = { m: M("russian-twist"), k: "plate" }, seat = { m: M("seated"), k: "box" };
     assert.match(moveStillPrompt({ presenter: P, profile, move: twist, kit: KIT }), /The person is the SAME person as in the first image.*He sits on the gym floor, side-on to the camera.*holding one round black weight plate in both hands.*fills the width of the frame\..*There is no text of any kind/);
@@ -770,9 +771,17 @@ test("PV13 the second kind, with exercises (2026-11-15, the owner, with a coach'
     assert.ok(logged.some((m) => m === `with exercises — line 1: ${moveLabel(mine[0])}, then the line · line 2: ${moveLabel(mine[1])} · line 3: ${moveLabel(mine[2])}, then the line`), logged.join("\n"));
     assert.deepEqual(F1.calls.image.map((c) => c.refs.map(plain)), [["room.png"], ["still-1.jpg", "room.png"], ["still-1.jpg", "room.png"], ["still-1.jpg", "room.png"]], "the presenter's own picture first, from the room; every cut's picture from it and the room");
     assert.match(F1.calls.image[0].prompt, /standing beside the dumbbell rack/); assert.ok(F1.calls.image[1].prompt.includes(mine[0].m.pose({ He: "He", he: "he", his: "his" }, mine[0].k, (k) => ["dumbbell", "plate", "box"].includes(k))));
-    assert.deepEqual(F1.calls.clip.map((c) => c.seconds), [S1 + MOVE_LEAD, S2, S3 + MOVE_LEAD]); assert.match(F1.calls.clip[0].prompt, /For the first two seconds he says nothing and does two/); assert.match(F1.calls.clip[1].prompt, /keeps looking into the camera and says/);
+    // A move cut is TWO clips (2026-11-16, "Build 3"): the move alone in silence (4 s), then the line as an ordinary talking clip that starts from the move clip's last frame.
+    assert.deepEqual([F1.calls.clip.map((c) => c.seconds), F1.calls.clip.map((c) => /-move-[0-9a-f]{6}\.mp4$/.test(c.out)), F1.calls.clip.map((c) => /\.last\.png$/.test(c.image)), MOVE_SECONDS], [[MOVE_SECONDS, S1, S2, MOVE_SECONDS, S3], [true, false, false, true, false], [false, true, false, false, true], 4]);
+    assert.match(F1.calls.clip[0].prompt, /^Bring this photograph to life as 4 seconds of video\. Nobody speaks at any point: his mouth stays closed and there is no voice\. He does two .* and holds still\./); assert.doesNotMatch(F1.calls.clip[0].prompt, /pace: "/);
+    assert.ok(F1.calls.clip[1].prompt.includes('says, in a warm, natural Singaporean English voice, at an easy conversational pace: "People in Bishan, this one is for you.') && /When the sentence is finished he stops talking/.test(F1.calls.clip[1].prompt) && !/For the first two seconds/.test(F1.calls.clip[1].prompt), F1.calls.clip[1].prompt);
+    assert.equal(F1.calls.clip[1].image, F1.calls.clip[0].out.replace(/\.mp4$/, ".last.png"), "the line starts on the frame the move ended on"); assert.ok(existsSync(F1.calls.clip[1].image));
+    assert.match(F1.calls.clip[2].prompt, /keeps looking into the camera and says/);
+    assert.ok(logged.some((m) => /^line 1, the move, take 1: 4 s$/.test(m)) && logged.some((m) => /line-1-move-[0-9a-f]{6}\.mp4: .+, done in silence$/.test(m)), logged.join("\n"));
     assert.deepEqual([v.kind, v.failed, v.flags, v.moves, v.parts.map((p) => p.move)], ["active", undefined, undefined, [1, 2, 3].map((n) => ({ line: n, move: moveLabel(mine[n - 1]) })), mine.map(moveLabel)]);
-    assert.deepEqual(v.lines.map((l) => l.speech.kept[0]), [Math.max(0, QUIET_START - MOVE_KEEP), Math.round((QUIET_START - LEAD) * 100) / 100, Math.max(0, QUIET_START - MOVE_KEEP)], "the cut keeps the move before the first word; a hold is cut to its voice as always");
+    assert.deepEqual(v.lines.map((l) => l.speech.kept[0]), [0, 1, 2].map(() => Math.round((QUIET_START - LEAD) * 100) / 100), "every line is cut to its voice: the move plays before it, whole, as its own clip");
+    assert.deepEqual([v.parts[0].at, v.parts[0].seconds, v.parts[0].takes.length, Math.abs(v.parts[1].at - (MOVE_SECONDS + (v.lines[0].speech.kept[1] - v.lines[0].speech.kept[0]))) < 0.15, v.parts[1].seconds], [0, MOVE_SECONDS + S1, 2, true, S2], "a move cut's part starts on the move, lists both its clips as takes, and a fresh take of it is the move and the line");
+    assert.deepEqual([R.tally.filmed, R.tally.in_videos, R.tally.failed], [S1 + S2 + S3 + 2 * MOVE_SECONDS, S1 + S2 + S3 + 2 * MOVE_SECONDS, 0]);
     assert.deepEqual([need0.images, need0.seconds, need0.clips.map((c) => !!c.move)], [4, S1 + S2 + S3 + 2 * MOVE_LEAD, [true, true, true]], "before the first run the plan counts on every kit: the pictures and seconds are the same");
     // On file afterwards: nothing to film, nothing to picture; the same script filmed talking uses the same presenter's picture and films its own clips.
     const need1 = videoNeeds({ gymDir: g, script, areas: ["BISHAN"], room, profile, kind: "active" }); assert.deepEqual([need1.seconds, need1.images, need1.reused], [0, 0, S1 + S2 + S3 + 2 * MOVE_LEAD]);
@@ -780,10 +789,19 @@ test("PV13 the second kind, with exercises (2026-11-15, the owner, with a coach'
     assert.deepEqual([T.videos[0].kind, T.videos[0].moves, F2.calls.image.length, F2.calls.clip.map((c) => c.seconds)], ["presenter", undefined, 2, [S1, S2, S3]], "its own clips, the words alone; two pictures, the presenter's own being on file");
     assert.ok(F2.calls.image.every((c) => plain(c.refs[0]) === "still-1.jpg"), "one presenter for both kinds of the script");
     // The check: a move that was not done fails the take; the cut is made all the same, flagged, for the owner to decide.
-    const B = gym(), s2 = addScript(B.g, { lines: GOOD, offer: OFFER }, { profile: B.profile }), F3 = fakes({ moved: (line) => !/this one is for you/.test(line) });
+    const B = gym(), s2 = addScript(B.g, { lines: GOOD, offer: OFFER }, { profile: B.profile }), F3 = fakes({ moved: (line, n, file) => !/line-1-move-/.test(file) });
     try {
       const X = await makePresenterVideos({ gymDir: B.g, outDir: join(B.g, "outputs", "b1", "videos"), script: s2, areas: ["BISHAN"], offer: OFFER, room: B.room, profile: B.profile, kind: "active", caps: { seconds: 120, images: 8 }, takes: 1, models: F3.models });
-      assert.deepEqual([X.videos[0].flags.length, X.videos[0].flags[0].line, X.videos[0].flags[0].kind], [1, 1, "move"]); assert.match(X.videos[0].flags[0].why, /^the move \(.+\) was not done before the line$/);
+      assert.deepEqual([X.videos[0].flags.length, X.videos[0].flags[0].line, X.videos[0].flags[0].kind], [1, 1, "move"]); assert.match(X.videos[0].flags[0].why, /^the move \(.+\) was not done$/); assert.equal(F3.calls.clip.filter((c) => /line-1-/.test(c.out)).length, 2, "the line is still filmed, once, from the move's last frame");
+      // The move cannot be filmed on its own (refused twice): the cut is filmed the old way, the move and the line in one clip; and a one-clip take that passed stands — a later run films nothing for it.
+      const F4 = fakes({ moved: () => true }), real = F4.models.clip; F4.models.clip = async (o) => { if (/Nobody speaks at any point/.test(o.prompt)) throw new Error("Request blocked due to prohibited content guidelines"); return real(o); };
+      const C4 = gym(), s4 = addScript(C4.g, { lines: GOOD, offer: OFFER }, { profile: C4.profile }), lg4 = [], base4 = { gymDir: C4.g, outDir: join(C4.g, "o"), script: s4, areas: ["BISHAN"], offer: OFFER, room: C4.room, profile: C4.profile, kind: "active", caps: { seconds: 200, images: 8 }, takes: 2 };
+      const Y = await makePresenterVideos({ ...base4, models: F4.models, log: (m) => lg4.push(m) });
+      assert.deepEqual([Y.videos[0].failed, Y.videos[0].flags, F4.calls.clip.map((c) => c.seconds), /For the first two seconds he says nothing/.test(F4.calls.clip[0].prompt)], [undefined, undefined, [S1 + MOVE_LEAD, S2, S3 + MOVE_LEAD], true]);
+      assert.ok(lg4.some((m) => /the move could not be filmed on its own: the cut is filmed the old way/.test(m)), lg4.join("\n"));
+      const F5 = fakes({ moved: () => true }), Z = await makePresenterVideos({ ...base4, models: F5.models });
+      assert.deepEqual([F5.calls.clip.length, F5.calls.image.length, Z.videos[0].flags, videoNeeds({ gymDir: C4.g, script: s4, areas: ["BISHAN"], room: C4.room, profile: C4.profile, kind: "active" }).seconds], [0, 0, undefined, 0], "the one-clip takes that passed stand");
+      rmSync(C4.d, { recursive: true, force: true });
       assert.equal(judgeClip({ spoken: "Hi there", people: 1, lettering: [], faults: [], did_move: false }, "Hi there", { move: seat }).passed, true, "a hold has no move to check");
       assert.equal(judgeClip({ spoken: "Hi there", people: 1, lettering: [], faults: [] }, "Hi there", { move: twist }).passed, true, "a check that does not say is not held against the take");
       await assert.rejects(makePresenterVideos({ gymDir: B.g, outDir: join(B.g, "o"), script: s2, areas: ["BISHAN"], offer: OFFER, room: B.room, profile: B.profile, kind: "dancing", models: F3.models }), /no such kind of presenter video/);
@@ -880,7 +898,47 @@ test("PV14 takes said as written the first time (2026-11-16, the owner on a batc
     const picks = movesFor(script, { kit: KIT }), N = fakes({ faults: () => ["slight facial distortion"], moved: () => true }), nlog = [];
     v = await makePresenterVideos({ ...base, kind: "active", outDir: join(g, "n1"), store: join(g, "n1", "clips"), takes: 3, models: N.models, log: (m) => nlog.push(m) });
     const perCut = picks.map((p, i) => N.calls.clip.filter((c) => new RegExp(`/line-${i + 1}-`).test(c.out)).length);
-    assert.deepEqual([picks.map((p) => p?.m.kind), perCut, v.videos[0].failed, v.videos[0].notes], [["move", "hold", "move"], [1, 2, 1], undefined, ["slight facial distortion"]]);
+    assert.deepEqual([picks.map((p) => p?.m.kind), perCut, v.videos[0].failed, v.videos[0].notes], [["move", "hold", "move"], [2, 2, 2], undefined, ["slight facial distortion"]], "a move cut: its move and its line, once each; the hold: once more for the note");
     assert.ok(!nlog.some((l) => /line-1-.*made once more/.test(l)) && nlog.some((l) => /line-2-.*made once more/.test(l)), nlog.join("\n"));
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("PV15 a clip with a room hum, and a name said as two words (2026-11-16, the owner on BFIT's videos: \"the subtitles are way off\"; \"they pronounced 'BFIT' wrongly … supposed to be pronounced 'bee fit'\")", () => {
+  const d = mkdtempSync(join(tmpdir(), "pv15-"));
+  try {
+    // ── the voice in a room that hums: told from the room by the clip's own levels ──
+    const at = (from, to, db) => Array.from({ length: Math.round((to - from) / VOICE.step) }, () => db);
+    // 0.6 s of room, a line with one pause, then 2.4 s of the presenter standing silent in the same hum.
+    const hum = [...at(0, 0.6, -46), ...at(0.6, 2.7, -24), ...at(2.7, 3.0, -45), ...at(3.0, 4.6, -26), ...at(4.6, 7.0, -45)];
+    const sp = speechFromLevels(hum, 7);
+    assert.deepEqual([sp.start, sp.end, sp.spans], [0.6, 4.6, [[0.6, 2.7], [3, 4.6]]], "the line, not the 7 seconds: the clip is cut after the last word and the captions run on the voice");
+    assert.ok(sp.level > -46 && sp.level < -26, "the line between room and voice sits between them");
+    // A dip inside a word (under a fifth of a second) is no pause; a knock shorter than a quarter second is no speech.
+    assert.deepEqual(speechFromLevels([...at(0, 1, -46), ...at(1, 1.1, -24), ...at(1.1, 2, -46), ...at(2, 3, -24), ...at(3, 3.1, -45), ...at(3.1, 4, -24), ...at(4, 6, -46)], 6).spans, [[2, 4]]);
+    // A quiet room keeps the plain measure (it is right there, and keeps a soft last syllable); so does a clip with nothing to tell apart, or no sound read.
+    assert.deepEqual([speechFromLevels([...at(0, 1, -60), ...at(1, 4, -22), ...at(4, 6, -60)], 6), speechFromLevels(at(0, 6, -40), 6), speechFromLevels([], 6)], [null, null, null]);
+    // On a real file: a voice (a tone) from 0.8 s to 3.8 s over noise whose peaks pass the plain measure's line for the whole clip.
+    const file = join(d, "hum.mp4");
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=180x320:r=24:d=6", "-f", "lavfi", "-i", "sine=frequency=330:duration=3", "-f", "lavfi", "-i", "anoisesrc=d=6:c=white:a=0.05", "-filter_complex", "[1:a]volume=4,adelay=800|800,apad=whole_dur=6[t];[t][2:a]amix=inputs=2:normalize=0:duration=longest[a]", "-map", "0:v", "-map", "[a]", "-t", "6", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", file]);
+    assert.ok(levelsOf(file).length > 250, "a level every fiftieth of a second");
+    const plain = execFileSync("ffmpeg", ["-hide_banner", "-i", file, "-af", "silencedetect=noise=-30dB:d=0.2", "-f", "null", "-"], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+    const heard = speechOf(file);
+    assert.ok(heard.level != null && Math.abs(heard.start - 0.8) < 0.08 && Math.abs(heard.end - 3.8) < 0.08 && heard.spans.length === 1, JSON.stringify(heard));
+    assert.equal(typeof plain, "string");
+
+    // ── "BFIT" is said "Bee Fit": one word written, two spoken ──
+    const lib = join(d, "library"); mkdirSync(lib, { recursive: true });
+    setSaid(lib, "BFIT", "Bee Fit");
+    const list = saidAs(lib), line = "At BFIT, we have helped so many local adults get back to feeling their best.", own = "BFIT's 12 Week Full Body Transformation gives you a clear plan that fits your life.";
+    assert.deepEqual(saidIn(line, list).map((x) => [x.word, x.say]), [["BFIT", "Bee Fit"]]);
+    // The presenter is given the name the way it sounds, the possessive kept; the captions keep the script's own spelling.
+    assert.deepEqual([spokenLine(line, saidIn(line, list)), spokenLine(own, saidIn(own, list))], ["At Bee Fit, we have helped so many local adults get back to feeling their best.", "Bee Fit's 12 Week Full Body Transformation gives you a clear plan that fits your life."]);
+    // The check takes the name however it spells that sound; anything else is still a difference.
+    const sounds = [["bfit", "beefit"]], names = ["BFIT"], rest = ", we have helped so many local adults get back to feeling their best";
+    for (const name of ["BFIT", "Bee Fit", "Be Fit", "B-Fit", "Befit", "Bee-Fit"]) assert.ok(sameWords("At " + name + rest, line, { names, sounds }), name);
+    for (const name of ["Bee", "Bee Fit Fit", "Bee Fat", "Big Fit"]) assert.ok(!sameWords("At " + name + rest, line, { names, sounds }), name);
+    assert.ok(sameWords("Bee Fit's 12-week full body transformation gives you a clear plan that fits your life.", own, { names, sounds }));
+    // A word said as one word is what it was: either spelling, and no other sound.
+    assert.deepEqual([sameWords("If you live in Boat Key, listen", "If you live in Boat Quay, listen", { sounds: [["quay", "key", "kee"]] }), sameWords("If you live in Boat Kway, listen", "If you live in Boat Quay, listen", { sounds: [["quay", "key", "kee"]] })], [true, false]);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

@@ -277,7 +277,15 @@ function validate(profile, offer, resolved, gymDir) {
 export const PROFILE_SCHEMA = 3;
 const MAX_LOCATION_CALLOUTS = 4; // plan-offer-batch MAX_LOCATIONS: one version of every ad per location
 /** What the Generate Creatives screen opens with when a profile says nothing. The offer is never among them. */
-export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 10, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true, palettes: "reference", image_model: "pro", look: "reference", ratio: "4x5", format: "workout" };
+/**
+ * The most a batch makes (2026-11-16, the owner: "make it such that I can generate more than 12 static creatives at
+ * once"): `MAX_PHOTOS` new photos, and `MAX_CALLS_CAP` image calls over the batch's whole life (re-runs replace
+ * failed photos from what is left). They were 12 and 40, set while the pipeline was unproven; every figure is still
+ * said before a run is confirmed. A real, a card or a video is not a new photo.
+ */
+// The owner again the next day: "make the default amount of static creatives we create to be 30 … and the maximum to be 50". 150 calls is 50 photos at three tries.
+export const MAX_PHOTOS = 50, MAX_CALLS_CAP = 150;
+export const CREATIVE_DEFAULTS = { locations: [], audiences: [], real_photos: [], generated: 30, looks_per_photo: 2, attempts: 2, max_calls: null, spread: true, palettes: "reference", image_model: "pro", look: "reference", ratio: "4x5", format: "workout" };
 /** The feed ad's shape: square, or 4:5 (taller in the feed; what F45 Jurong West's running ads use). Stories are always 9:16. */
 // The feed ad's shape. One only since 2026-11-10 (the owner's rule): every feed ad is 4:5 and its Stories version 9:16;
 // the square is no longer made. A batch made at 1:1 before that keeps its shape (LEGACY_RATIOS, madeShape in plan-offer-batch).
@@ -512,7 +520,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       const rr = cd.room_reference;
       if (rr != null && rr !== "" && (typeof rr !== "string" || rr.includes("..") || !/^[a-z0-9-]+-clean\//.test(rr) || (gymDir && !existsSync(join(gymDir, "brand-assets", rr))))) errors.push(`creative_defaults.room_reference ${JSON.stringify(rr)} must be one of the cleaned photos (facility-clean or reference-clean)`);
       const int = (k, lo, hi) => { if (cd[k] != null && !(Number.isInteger(cd[k]) && cd[k] >= lo && cd[k] <= hi)) errors.push(`creative_defaults.${k} must be a whole number from ${lo} to ${hi}`); };
-      int("generated", 0, 12); int("looks_per_photo", 1, 6); int("attempts", 1, 5); int("max_calls", 0, 40);
+      int("generated", 0, MAX_PHOTOS); int("looks_per_photo", 1, 6); int("attempts", 1, 5); int("max_calls", 0, MAX_CALLS_CAP);
       if (Number.isInteger(cd.max_calls) && Number.isInteger(cd.generated) && cd.max_calls < cd.generated) errors.push(`creative_defaults.max_calls (${cd.max_calls}) must cover one call per new photo (${cd.generated})`);
       if (cd.spread != null && typeof cd.spread !== "boolean") errors.push("creative_defaults.spread must be true or false");
       if (cd.palettes != null && !PALETTE_MODES.includes(cd.palettes)) errors.push(`creative_defaults.palettes must be one of ${PALETTE_MODES.join(", ")}`);
