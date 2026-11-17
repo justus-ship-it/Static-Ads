@@ -918,8 +918,9 @@ test("PV15 a clip with a room hum, and a name said as two words (2026-11-16, the
     // A quiet room keeps the plain measure (it is right there, and keeps a soft last syllable); so does a clip with nothing to tell apart, or no sound read.
     assert.deepEqual([speechFromLevels([...at(0, 1, -60), ...at(1, 4, -22), ...at(4, 6, -60)], 6), speechFromLevels(at(0, 6, -40), 6), speechFromLevels([], 6)], [null, null, null]);
     // On a real file: a voice (a tone) from 0.8 s to 3.8 s over noise whose peaks pass the plain measure's line for the whole clip.
+    // (The noise is seeded and 24 dB under the voice: at half that level it sat on the quiet-room line itself and one run in twenty took the plain measure, 2026-11-17.)
     const file = join(d, "hum.mp4");
-    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=180x320:r=24:d=6", "-f", "lavfi", "-i", "sine=frequency=330:duration=3", "-f", "lavfi", "-i", "anoisesrc=d=6:c=white:a=0.05", "-filter_complex", "[1:a]volume=4,adelay=800|800,apad=whole_dur=6[t];[t][2:a]amix=inputs=2:normalize=0:duration=longest[a]", "-map", "0:v", "-map", "[a]", "-t", "6", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", file]);
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=180x320:r=24:d=6", "-f", "lavfi", "-i", "sine=frequency=330:duration=3", "-f", "lavfi", "-i", "anoisesrc=d=6:c=white:a=0.1:seed=7", "-filter_complex", "[1:a]volume=4,adelay=800|800,apad=whole_dur=6[t];[t][2:a]amix=inputs=2:normalize=0:duration=longest[a]", "-map", "0:v", "-map", "[a]", "-t", "6", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", file]);
     assert.ok(levelsOf(file).length > 250, "a level every fiftieth of a second");
     const plain = execFileSync("ffmpeg", ["-hide_banner", "-i", file, "-af", "silencedetect=noise=-30dB:d=0.2", "-f", "null", "-"], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
     const heard = speechOf(file);

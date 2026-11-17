@@ -29,6 +29,13 @@ export const MAX_SCENE_PEOPLE = 6;
  * its own quality rules (check-quality.mjs: a portrait is posed by design, a class is candid) and its own drafting
  * brief (refresh-scenes.mjs). A batch is made in one format (the mix is Phase 4).
  */
+/** Who a scene shows, read from its own words: "women", "men", "both", or null when it does not say (2026-11-17: an advert for anyone leans toward women). */
+export function whoIn(scene) {
+  const t = typeof scene === "string" ? scene : scene?.scene || "";
+  const w = /\b(woman|women|lady|ladies|girl|girls|female|she|her|hers|mother|mum|mums|mom|moms|sister|sisters|wife|girlfriends?)\b/i.test(t) || /[女媽姐妹]/.test(t);
+  const m = /\b(man|men|guy|guys|male|he|his|him|father|dad|dads|brother|brothers|husband|boyfriends?)\b/i.test(t) || /[男爸兄弟]/.test(t);
+  return w && m ? "both" : w ? "women" : m ? "men" : null;
+}
 export const SCENE_FORMATS = {
   workout: "people training in the gym, caught mid-movement: candid, nobody looking into the camera",
   "studio-portrait": "one or two people at ease on a plain backdrop (a seamless studio colour, a dark wall) or in front of the gym softened to a blur: an easy pose or a light movement, a smile, often looking into the camera",

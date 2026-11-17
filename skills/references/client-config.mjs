@@ -315,6 +315,22 @@ export function presenterProblems(p) {
   if (p.look != null && (typeof p.look !== "string" || p.look.length > 200)) errs.push("presenter.look is a few words, up to 200 characters");
   return errs;
 }
+/**
+ * The colour of the word being said in a gym's video captions (2026-11-17, BFIT: "make sure all captions also follow the
+ * corporate orange color based on their style guide"): `creative_defaults.caption_accent`, a hex. None = the standard
+ * warm yellow. The other words stay white with their dark outline, so the colour must read against that outline and
+ * must not be white itself.
+ */
+const lumOf = (hex) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+export function captionAccentProblems(hex) {
+  if (hex == null) return [];
+  if (typeof hex !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(hex)) return ["caption_accent must be a colour as #RRGGBB (e.g. #D15334)"];
+  const L = lumOf(hex);
+  if ((L + 0.05) / 0.05 < 3) return ["caption_accent is too dark to read over a video: the captions sit on a dark outline, so the highlighted word needs a brighter colour"];
+  if (1.05 / (L + 0.05) < 1.3) return ["caption_accent is nearly white: the highlighted word would look like the others"];
+  return [];
+}
+export const captionAccentOf = (profile) => { const h = profile?.creative_defaults?.caption_accent; return typeof h === "string" && !captionAccentProblems(h).length ? h.toUpperCase() : null; };
 export const imageModelFor = (profile) => IMAGE_MODELS[profile?.creative_defaults?.image_model] || IMAGE_MODELS[CREATIVE_DEFAULTS.image_model];
 /** Which colour pairings a gym's ads draw from: the reference catalogue (the loud pairings the
  *  high-performing ads use), the gym's own brand colours, or both in the same spread. */
@@ -527,6 +543,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       if (cd.image_model != null && !IMAGE_MODELS[cd.image_model]) errors.push(`creative_defaults.image_model must be one of ${Object.keys(IMAGE_MODELS).join(", ")}`);
       if (cd.look != null && !LOOKS.includes(cd.look)) errors.push(`creative_defaults.look must be one of ${LOOKS.join(", ")}`);
       for (const e of presenterProblems(cd.presenter)) errors.push(`creative_defaults.${e}`);
+      for (const e of captionAccentProblems(cd.caption_accent)) errors.push(`creative_defaults.${e}`);
       if (cd.format != null && !SCENE_FORMATS[cd.format]) errors.push(`creative_defaults.format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
       if (cd.mix != null) for (const e of mixProblems(cd.mix)) errors.push(`creative_defaults.${e.replace(/^the mix's/, "mix:")}`);
       if (cd.ratio != null && !FEED_RATIOS.includes(cd.ratio)) errors.push(`creative_defaults.ratio must be ${FEED_RATIOS.join(", ")}: feed ads are made at 4:5 and Stories at 9:16 (the square is no longer made)`);

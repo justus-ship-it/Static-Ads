@@ -140,11 +140,16 @@ export function loadCatalogue({ look = "reference" } = {}) {
     const [own, other] = look === "formula" ? [formula, reference] : [reference, formula];
     const out = { ...own };
     for (const [id, v] of Object.entries(other)) Object.defineProperty(out, id, { value: v, enumerable: false });
+    // A layout taken out of the default set (default_set: false — the collage and the centred stack, whose words run
+    // across the people by design: 2026-11-17) is still found by id, so a batch that has such ads re-renders them.
+    for (const [id, v] of Object.entries(own)) if (v && v.default_set === false) { delete out[id]; Object.defineProperty(out, id, { value: v, enumerable: false }); }
     return out;
   };
+  // The Stories treatments (a tall photo with the words on its own top) are found by id and seen by no loop: no batch plans with them.
+  const withStories = (map) => { for (const [id, v] of Object.entries(T.stories_treatments || {})) Object.defineProperty(map, id, { value: v, enumerable: false }); return map; };
   return {
     look,
-    treatments: { ...T, treatments: family(T.treatments, F.treatments) },
+    treatments: { ...T, treatments: withStories(family(T.treatments, F.treatments)) },
     palettes: { ...P, palettes: family(P.palettes, F.palettes) },
     styles: { ...S, styles: family(S.styles, F.styles) },
   };
@@ -180,7 +185,7 @@ const TEXT_BLOCKS = ["location", "audience", "duration", "offer_name"];
 const ANCHORS = ["top", "center", "bottom"];
 const ALIGNS = ["left", "center", "right"];
 const SCRIMS = ["none", "top", "bottom", "left", "right", "even", "local"]; // local: full strength behind the group's text, fading above and below
-const BACKGROUNDS = ["single", "collage", "panels"];
+const BACKGROUNDS = ["single", "collage", "panels", "split"]; // split: the photo fills the top photo_h_pct of the frame, the words sit on a plain panel under it
 
 /** Geometry rules every layout must meet before anything renders. Returns a list of problems.
  *  Regions are in % of the canvas, so these hold at any canvas size. `safe` is the ratio's safe
@@ -266,6 +271,13 @@ export function validateLayout(layout, id = "layout", canvas = [1, 1], safe = [5
       // has the same photo beside or above it.
       if (!(bg.min_images > bg.cols)) e.push(`${id}: a ${bg.cols}-column collage needs min_images of at least ${bg.cols + 1}, or a photo would repeat next to itself`);
     }
+    if (bg.type === "split") {
+      if (!(typeof bg.photo_h_pct === "number" && bg.photo_h_pct >= 40 && bg.photo_h_pct <= 90)) e.push(`${id}: a split needs photo_h_pct, the share of the height the photo takes (40–90)`);
+      if (bg.photo_y_pct != null && !(typeof bg.photo_y_pct === "number" && bg.photo_y_pct >= 0 && bg.photo_y_pct + (bg.photo_h_pct || 0) <= 100.01)) e.push(`${id}: a split's photo_y_pct (where the photo starts) and photo_h_pct must stay inside the frame`);
+      if (bg.backdrop != null && !/^#[0-9A-Fa-f]{6}$/.test(bg.backdrop)) e.push(`${id}: a split's backdrop is a colour as #RRGGBB (none = the pairing's own band colour)`);
+      // A group sits on the photo (an area line across its top) or on the panel under it, never across the edge between them.
+      for (const g of valid) { const r = box(g.region), y0 = bg.photo_y_pct || 0, y1 = y0 + bg.photo_h_pct; if ((r.y0 < y0 && r.y1 > y0) || (r.y0 < y1 && r.y1 > y1)) e.push(`${id}: group "${g.id}" crosses the edge between the photo and the panel`); }
+    }
     if (bg.type === "panels") {
       if (!/^#[0-9A-Fa-f]{6}$/.test(bg.backdrop || "")) e.push(`${id}: panels need a backdrop colour`);
       if (!bg.panels?.length) e.push(`${id}: panels need at least one panel`);
@@ -315,11 +327,28 @@ export function deriveLayout(layout, from, to, T = loadCatalogue().treatments) {
   };
 }
 
+/**
+ * A side column fitted to the space beside the people (2026-11-17, the owner: "the words cannot cover the models"). All in
+ * % of the canvas: `region` [x, y, w, h], `people` [{ x, y, w, h }] (each photo's people, head to foot, as they landed).
+ * Where the people reach into the column it is narrowed to the band they leave free, `gap_pct` clear of them — if that
+ * band is at least `min_w_pct` of the canvas wide; else it stays, and the finished ad fails on the words over the model
+ * as any layout would. Self-contained on purpose: the render page runs this same function (buildHtml injects its source).
+ */
+export function avoidRegion(region, av, people) {
+  const x = region[0], y = region[1], w = region[2], h = region[3], gap = av.gap_pct == null ? 2 : av.gap_pct, min = av.min_w_pct == null ? 30 : av.min_w_pct;
+  const hit = (people || []).filter((p) => p.x < x + w && p.x + p.w > x && p.y < y + h && p.y + p.h > y);
+  if (!hit.length) return { region, moved: null };
+  const left = Math.min.apply(null, hit.map((p) => p.x)), right = Math.max.apply(null, hit.map((p) => p.x + p.w));
+  const onRight = x + w / 2 >= 50, nx = onRight ? Math.max(x, right + gap) : x, nw = onRight ? x + w - nx : Math.min(x + w, left - gap) - x;
+  return nw >= min ? { region: [nx, y, nw, h], moved: "narrowed" } : { region, moved: null };
+}
+
 /** Every group's region ([x, y, w, h] in %) once the faces are known: a floating group moved or cut short (floatRegion),
  *  the others where the layout put them. `faces` are [{ x, y, w, h }] in % of the canvas; `safeTop` the safe area's top.
  *  The render page does exactly this before it sets a line. */
-export function placedRegions(layout, faces = [], safeTop = 5) {
+export function placedRegions(layout, faces = [], safeTop = 5, people = []) {
   return layout.groups.map((G) => {
+    if (G.avoid) return avoidRegion(G.region, G.avoid, people).region;
     if (!G.float) return G.region;
     const above = layout.groups.filter((o) => o !== G && o.region[1] + o.region[3] <= G.region[1]);
     const floorY = (above.length ? Math.max(...above.map((o) => o.region[1] + o.region[3])) : safeTop) + 1;
@@ -342,6 +371,34 @@ function validFocus(focus) {
   return list;
 }
 
+function validPeople(people) {
+  if (people == null) return [];
+  const box = (b) => b == null || (Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && v >= 0 && v <= 1000) && b[0] < b[2] && b[1] < b[3]);
+  if (!Array.isArray(people) || !people.every(box)) throw new Error("people must be one [ymin, xmin, ymax, xmax] box (or null) per photo, on a 0–1000 scale");
+  return people;
+}
+
+/**
+ * How much of the person below the face the words cover, 0–1 (2026-11-17, the owner on BFIT's batch: "The words cover
+ * most of the model and it doesn't look good … Way too many"): the page reports the people's box below the lowest
+ * chin as it landed on the canvas (`body_zones`), and every line of text, band and group band counts as words. Counted
+ * on a grid, so a band and the line on it are not counted twice. Null when the render has no such zone (no people
+ * box given, a collage or panels, a body too small to judge).
+ */
+export function bodyCover(report) {
+  const zones = (report?.body_zones || []).filter((z) => z.w > 0 && z.h > 0);
+  if (!zones.length || !report.canvas) return null;
+  const [W, H] = report.canvas;
+  if (zones.reduce((n, z) => n + z.w * z.h, 0) < 0.03 * W * H) return null; // a sliver of a shoulder is no body to judge
+  const words = [];
+  for (const b of report.blocks || []) { if (b.rect) words.push(b.rect); if (b.band) words.push(b.band); }
+  for (const g of report.groups || []) for (const k of g.band?.rects || []) words.push(k);
+  const hit = (list, x, y) => list.some((k) => x >= k.x && x < k.x + k.w && y >= k.y && y < k.y + k.h);
+  const N = 4; let body = 0, under = 0;
+  for (let y = N / 2; y < H; y += N) for (let x = N / 2; x < W; x += N) { if (!hit(zones, x, y)) continue; body++; if (hit(words, x, y)) under++; }
+  return body ? Math.round((under / body) * 1000) / 1000 : null;
+}
+
 function validFaces(faces) {
   if (faces == null) return [];
   const ok = Array.isArray(faces) && faces.every((perPhoto) => Array.isArray(perPhoto) && perPhoto.every((b) =>
@@ -353,14 +410,14 @@ function validFaces(faces) {
 /** How many photos a layout needs: one for a single photo, more for a collage or panels. */
 export function imagesNeeded(layout) {
   const bg = layout?.background;
-  return !bg || bg.type === "single" ? 1 : bg.min_images;
+  return !bg || bg.type === "single" || bg.type === "split" ? 1 : bg.min_images;
 }
 
 /** Merge layout × style × palette into one render spec. Everything that can be rejected before
  *  opening a browser is rejected here, with a message saying what to change. `styleSpec` and
  *  `treatmentSpec` let a caller pass a style or layout object directly instead of an id (used by
  *  the UI preview and the tests). */
-export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, scrimFloor = null, debug = false, catalogue = loadCatalogue() }) {
+export function buildSpec({ image, images, faces, people = null, text, treatment = "t1-bottom-stack", treatmentSpec, palette = "cyan-pink", style = "s1-heavy-sans", styleSpec, ratio = "1x1", focus, scrimFloor = null, debug = false, catalogue = loadCatalogue() }) {
   const { treatments: T, palettes: P, styles: S } = catalogue;
   const tr = treatmentSpec || T.treatments[treatment];
   if (!tr) throw new Error(`unknown treatment "${treatment}". Known: ${Object.keys(T.treatments).join(", ")}`);
@@ -392,6 +449,11 @@ export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-s
     const cjk = hasCJK(text[g.block]) && !!face.cjk && !!S.faces[face.cjk];
     if (cjk) { faceId = face.cjk; face = S.faces[faceId]; }
     let weight = sb.weight ?? 800;
+    // A narrow column sets its lines in tall, condensed letters (the layout's tall_type; 2026-11-17, the owner on the side
+    // words: "increase the height, without increasing the width"): each face's stand-in from the styles' own condensed
+    // faces — the heavy weights in the one, the lighter in the other — never a stretched or faux face. Script and CJK keep theirs.
+    const tallOf = layout.tall_type && !cjk && !face.script ? (S.tall_type?.[weight >= (S.tall_type.heavy_from ?? 700) ? "heavy" : "light"]) : null;
+    if (tallOf && S.faces[tallOf] && faceId !== tallOf && !Object.values(S.tall_type).includes(faceId)) { faceId = tallOf; face = S.faces[faceId]; weight = Math.min(Math.max(weight, face.weights[0]), face.weights[1]); }
     const [w0, w1] = face.weights;
     if (cjk) weight = Math.min(Math.max(weight, w0), w1);
     if (weight < w0 || weight > w1) {
@@ -443,7 +505,8 @@ export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-s
     layout: { groups, stack, clear_zones: layout.clear_zones || [] },
     // The line no other may outgrow: the duration in the reference set, the area callout in the formula.
     lead: tr.lead || "duration",
-    contrast: tr.contrast,
+    // A ratio's own layout may add to the treatment's contrast rules (the feed shape's letters carry their own rim: no haze).
+    contrast: { ...tr.contrast, ...(layout.contrast || {}) },
     palette_spec: pal,
     fonts: [...used.values()],
     script_min_px: S.script_rules.min_px,
@@ -451,6 +514,10 @@ export function buildSpec({ image, images, faces, text, treatment = "t1-bottom-s
     divider_contrast: DIVIDER_CONTRAST,
     // Faces per photo, from the visual check: [[ymin, xmin, ymax, xmax] …] on a 0–1000 scale. No letter may cover one.
     faces: validFaces(faces),
+    // The people in a single photo ([ymin, xmin, ymax, xmax], 0–1000, from the visual check) and how much of the person
+    // below the face the words may cover (the reference family, one photo under the words: the catalogue's body_cover).
+    people: validPeople(people),
+    body_cover_max: tr.family !== "formula" && ((ratio === "4x5" && !layout.background?.type) || layout.no_touch === true) && typeof T.body_cover?.max === "number" ? T.body_cover.max : null,
     background: layout.background || { type: "single" },
     images: photos.slice(0, layout.background?.type === "panels" ? need : undefined).map(imageDataUrl),
     // Where each photo is cropped: one [fx, fy] for a single photo, or one per photo for a collage or
@@ -473,7 +540,7 @@ function buildHtml(spec) {
   const pageSpec = { ...spec, palette: spec.palette_spec };
   // Escape "<" so no string can close the <script> it is embedded in.
   const json = JSON.stringify(pageSpec).replace(/</g, "\\u003c");
-  return readFileSync(TEMPLATE, "utf-8").replace("/*__FONTFACES__*/", faces).replace("/*__SPEC__*/", json).replace("/*__FLOAT__*/", () => floatRegion.toString());
+  return readFileSync(TEMPLATE, "utf-8").replace("/*__FONTFACES__*/", faces).replace("/*__SPEC__*/", json).replace("/*__FLOAT__*/", () => floatRegion.toString()).replace("/*__AVOID__*/", () => avoidRegion.toString());
 }
 
 // ── Chrome over the DevTools protocol ─────────────────────────────────────
@@ -674,7 +741,9 @@ export function verifyReport(spec, report) {
       if (spec.script_min_px && b.size < spec.script_min_px) f.push(`${tag} script is ${b.size}px, below the ${spec.script_min_px}px legibility floor`);
     }
     const C = spec.contrast;
-    const ok = b.contrast.after >= C.target || (b.steps.includes("stroke") && b.contrast.after >= C.stroke_min);
+    // A rimmed line reads by its own rim: thick enough, and far enough in tone from the letter's fill (checked here, not taken on the page's word).
+    const rimmed = b.steps.includes("rim") && b.rim && b.rim.contrast >= 4.5 && b.rim.width >= 0.06 * b.size;
+    const ok = b.contrast.after >= C.target || (b.steps.includes("stroke") && b.contrast.after >= C.stroke_min) || rimmed;
     if (!ok) f.push(`${tag} contrast ${b.contrast.after}:1 is below target with no valid fallback`);
   }
 
@@ -692,6 +761,13 @@ export function verifyReport(spec, report) {
     }
   }
 
+  // The words may cover only so much of the person below the face (the catalogue's body_cover): a look that hides
+  // more of them is no look for this photo, and the batch gives it another.
+  if (spec.body_cover_max != null) {
+    const cover = bodyCover(report);
+    if (cover != null && cover > spec.body_cover_max + 0.005) f.push(`the words cover ${Math.round(cover * 100)}% of the person below the face (${Math.round(spec.body_cover_max * 100)}% at most)`);
+  }
+
   const size = (id) => report.blocks.find((b) => b.block === id)?.size;
   const lead = size(spec.lead || "duration") ?? size("duration") ?? size("offer_name");
   for (const b of report.blocks) if (lead != null && b.size > lead) f.push(`hierarchy: "${b.block}" (${b.size}px) is larger than the lead line (${lead}px)`);
@@ -701,7 +777,7 @@ export function verifyReport(spec, report) {
 
 // ── High-level: inputs → verified PNG ─────────────────────────────────────
 
-export async function renderComposite(browser, { image, images, faces, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, scrimFloor = null, debug = false, catalogue }) {
+export async function renderComposite(browser, { image, images, faces, people = null, location, audience = null, offer, free = false, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, scrimFloor = null, debug = false, catalogue }) {
   const inputErrors = validateInputs({ location, audience, offer });
   if (inputErrors.length) return { ok: false, failures: inputErrors };
   const { duration, offer_name } = splitOffer(offer, free);
@@ -709,13 +785,13 @@ export async function renderComposite(browser, { image, images, faces, location,
   let spec;
   try {
     // A gym's own brand palettes ride in its catalogue (client-config catalogueFor); the default is the reference set.
-    spec = buildSpec({ image, images, faces, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, scrimFloor, debug, ...(catalogue ? { catalogue } : {}) });
+    spec = buildSpec({ image, images, faces, people, text, treatment, treatmentSpec, palette, style, styleSpec, ratio, focus, scrimFloor, debug, ...(catalogue ? { catalogue } : {}) });
   } catch (e) {
     return { ok: false, failures: [e.message] }; // rejected before any browser work
   }
   const { png, report } = await renderSpec(browser, spec);
   const failures = verifyReport(spec, report);
-  return { ok: failures.length === 0, failures, png, report, spec: { ...spec, images: spec.images.map(() => "(data url omitted)") } };
+  return { ok: failures.length === 0, failures, png, report, body_cover: bodyCover(report), spec: { ...spec, images: spec.images.map(() => "(data url omitted)") } };
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────

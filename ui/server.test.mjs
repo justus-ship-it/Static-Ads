@@ -528,10 +528,15 @@ test("U9c the page: the Direction fields feed the brief, the scene library card 
 test("U10 picks are saved in the batch folder as they are made — review.json, and selections.json in the gallery's format, which the Stories step reads; an excluded photo takes its ads with it", async () => {
   const out = join(brands, GYM, "outputs", BRIEF.batch_id);
   const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
-  // U9b ran the batch again, which re-renders the square ads and clears their Stories files: a Stories
-  // version whose file is gone is not offered, and a free re-render brings them back.
+  // U9b ran the batch again. A run keeps the Stories version of an ad it leaves as it was (2026-11-17; it used to remove
+  // them all with the ads' folders), so each one offered is a file that is there; a Stories version whose file is gone
+  // is not offered, and a free re-render brings it back.
   let r0 = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/review`)).json();
-  assert.ok(r0.ads.every((a) => a.story === null), "no broken 9:16 in the review");
+  for (const a of r0.ads.filter((x) => x.story !== null)) assert.equal((await fetch(panel.url + a.story)).status, 200, `${a.folder}: the Stories version offered is there`);
+  const lost = batch.ads.find((a) => existsSync(join(out, a.folder, "9x16")));
+  if (lost) rmSync(join(out, lost.folder, "9x16"), { recursive: true, force: true });
+  r0 = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/review`)).json();
+  assert.ok(r0.ads.filter((a) => !lost || a.folder === lost.folder).every((a) => a.story === null), "no broken 9:16 in the review");
   const again = await runAndWait({ kind: "batch-stories-rerender", gym: GYM, batch: BRIEF.batch_id });
   assert.equal(again.code, 0, again.lines.join("\n"));
   const stories = JSON.parse(readFileSync(join(out, "stories.json"), "utf-8"));

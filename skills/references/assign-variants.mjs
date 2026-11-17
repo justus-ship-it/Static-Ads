@@ -167,8 +167,11 @@ export function lumFit(stat, layout, palette, { target = 3 } = {}) {
 }
 
 /** A client's switched-off looks, from gym-profile.json → creative (validated by client-config.mjs). */
-export function excludeFromProfile(creative = {}) {
-  return { layouts: creative.exclude_layouts || [], styles: creative.exclude_styles || [], palettes: creative.exclude_palettes || [] };
+export function excludeFromProfile(creative = {}, { ratio = null, catalogue = null } = {}) {
+  // The feed shape's default set (2026-11-17): the layouts whose words run across the people are left out of a new 4:5
+  // batch of the reference family unless the gym asks for them (creative.include_layouts).
+  const off = ratio === "4x5" && catalogue && catalogue.look !== "formula" ? (catalogue.treatments.feed_default_off || []).filter((id) => catalogue.treatments.treatments[id] && !(creative.include_layouts || []).includes(id)) : [];
+  return { layouts: [...new Set([...(creative.exclude_layouts || []), ...off])], styles: creative.exclude_styles || [], palettes: creative.exclude_palettes || [] };
 }
 
 // ── seeded randomness ─────────────────────────────────────────────────────
@@ -213,6 +216,8 @@ export function layoutWordsArea(layout, ratio, T) { return Math.round((layoutFor
  *   on this gym's own past ads (batch.json → text_cover), per layout and per style. The formula family's three layouts give
  *   the words the same room, so there the weight works through the styles, once the gym has ads to measure.
  */
+/** The share of a batch's looks that set the words beside the model, where its photos allow (2026-11-17: "enough diversity and variation between words on the side, and words on the bottom. We need both"). */
+export const SIDE_SHARE = 0.4;
 export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", exclude = {}, photoStats = null, allowed = null, prefer = null, words = 0, measured = null, fixed = null, catalogue = loadCatalogue(), ratio = "1x1" }) {
   const { treatments: T, styles: S, palettes: P } = catalogue;
   const notes = [];
@@ -284,6 +289,9 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
   const need = (la) => imagesNeeded(layoutFor(T.treatments[la], ratio, T));
   const open = (vi, la) => !allowed || Array.from({ length: need(la) }, (_, k) => visuals[(vi + k) % visuals.length].id).every((id) => (allowed[id] || []).includes(la));
   const used = new Set();
+  // The layouts that set the words beside the model (a column fitted to the free side), and how many looks have gone to them.
+  const sideIds = new Set(layouts.filter((la) => layoutFor(T.treatments[la], ratio, T).groups.some((g) => g.avoid)));
+  let nSide = 0, nLooks = 0;
   const skipped = new Set(); // palettes passed over somewhere because they clashed with the photo
   const slots = [];
   // Looks already made (`fixed`, 2026-11-17: a batch that grows keeps its ads): each keeps its layout, style, pairing, photos
@@ -301,7 +309,13 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
     for (let j = own.length; j < perVisual; j++) {
       let pick = null;
       const first = j === 0 && prefer?.[visuals[vi].id];
-      const order2 = byUse(layouts, count.L, on.L).filter((la) => open(vi, la));
+      let order2 = byUse(layouts, count.L, on.L).filter((la) => open(vi, la));
+      // A photo with one place for the words and nowhere else (2026-11-17, the words keep off the model): its second look
+      // takes that place again, in another type and pairing, rather than the batch losing the ad.
+      if (!order2.length) order2 = byUse(layouts, count.L, new Set()).filter((la) => open(vi, la));
+      // Words beside the model are the scarce look (they need a free side): while they are short of their share, a photo that
+      // can carry them takes them first.
+      if (sideIds.size && nSide < SIDE_SHARE * (nLooks + 1)) order2.sort((a, b) => sideIds.has(b) - sideIds.has(a));
       // The words' weight: a layout with more room for the words (or less) counts as up to one use less used.
       if (words) order2.sort((a, b) => (count.L[a] - words * roomFor[a]) - (count.L[b] - words * roomFor[b]));
       if (first && order2.includes(first)) order2.sort((a, b) => (b === first) - (a === first));
@@ -328,7 +342,10 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
         }
         if (pick) break;
       }
+      if (!pick && allowed && j > 0) { notes.push(`${visuals[vi].id}: one look only — nothing else it can carry is free (${(allowed[visuals[vi].id] || []).map((x) => x.split("-")[0]).join(" ") || "none"})`); break; }
+      if (!pick && allowed && !(allowed[visuals[vi].id] || []).length) { notes.push(`${visuals[vi].id}: no look — no layout keeps its words off the model`); break; }
       if (!pick) throw new Error(`could not find an unused look for photo ${visuals[vi].id}${allowed ? ` among the layouts it can carry (${(allowed[visuals[vi].id] || []).join(", ") || "none"})` : ""}`);
+      nLooks++; if (sideIds.has(pick.layout)) nSide++;
       used.add(`${pick.layout}|${pick.style}|${pick.palette}`);
       on.L.add(pick.layout); on.S.add(pick.style); on.P.add(pick.palette);
       count.L[pick.layout]++; count.S[pick.style]++; count.P[pick.palette]++;
@@ -368,7 +385,7 @@ export function assignVariants({ visuals, perVisual, text = {}, seed = "batch", 
  * and new to its photo — keeping its layout, then its palette, where possible — and the
  * replacement is recorded. Nothing is ever shipped unverified.
  */
-export async function renderPlan(browser, plan, { text, texts = null, imageFor, facesFor = () => [], focusFor = () => null, catalogue = loadCatalogue() }) {
+export async function renderPlan(browser, plan, { text, texts = null, imageFor, facesFor = () => [], peopleFor = () => null, focusFor = () => null, catalogue = loadCatalogue() }) {
   const { treatments: T } = catalogue;
   const need = (la) => imagesNeeded(layoutFor(T.treatments[la], plan.ratio || "1x1", T));
   // Several texts (one per location) are rendered together: a look is kept only if it verifies for
@@ -386,8 +403,11 @@ export async function renderPlan(browser, plan, { text, texts = null, imageFor, 
   for (const c of plan.candidates) {
     const onPhoto = plan.candidates.filter((o) => o.visual === c.visual && o !== c);
     const tries = [[c.treatment, c.style, c.palette]];
-    for (const st of plan.pools.styles) for (const pa of [c.palette, ...plan.pools.palettes]) for (const la of [c.treatment, ...plan.pools.layouts]) {
-      if (onPhoto.some((o) => o.treatment === la || o.style === st || o.palette === pa)) continue;
+    // A layout the photo's other look already has comes last (2026-11-17): where the words can go in one place only, the
+    // second look takes that place again in another type and pairing rather than being lost.
+    const layoutsFor = [...new Set([c.treatment, ...plan.pools.layouts])], twice = (la) => onPhoto.some((o) => o.treatment === la);
+    for (const st of plan.pools.styles) for (const pa of [c.palette, ...plan.pools.palettes]) for (const la of [...layoutsFor.filter((la) => !twice(la)), ...layoutsFor.filter(twice)]) {
+      if (onPhoto.some((o) => o.style === st || o.palette === pa)) continue;
       if (!open(c, la)) continue; // not a layout one of its photos cannot carry, or that needs more photos than the batch has
       if (!taken.has(`${la}|${st}|${pa}`)) tries.push([la, st, pa]);
     }
@@ -399,7 +419,7 @@ export async function renderPlan(browser, plan, { text, texts = null, imageFor, 
       // fails and is swapped. Each photo is cropped where its check found it fits this layout.
       let renders = [];
       const renderAll = async (scrimFloor = null) => { renders = []; for (const t of all) {
-        const r = await renderComposite(browser, { images: ims.map(imageFor), faces: ims.map(facesFor), focus: ims.map((id) => focusFor(id, treatment)), ...t, treatment, style, palette, ratio: plan.ratio || "1x1", ...(scrimFloor ? { scrimFloor } : {}), catalogue });
+        const r = await renderComposite(browser, { images: ims.map(imageFor), faces: ims.map(facesFor), people: ims.map(peopleFor), focus: ims.map((id) => focusFor(id, treatment)), ...t, treatment, style, palette, ratio: plan.ratio || "1x1", ...(scrimFloor ? { scrimFloor } : {}), catalogue });
         renders.push({ text: t, r });
         if (!r.ok) break;
       } };

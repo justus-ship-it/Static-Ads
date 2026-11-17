@@ -96,7 +96,7 @@ import { execFileSync, spawnSync } from "child_process";
 import { loadGeminiKey, generateImage } from "./generate_ads_gemini.mjs";
 import { whenGeminiFree, isRefusal } from "./gemini-busy.mjs";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
-import { imageModelFor, countryRules, profileCountry, titleCase, PRESENTER_GENDERS, presenterProblems } from "./client-config.mjs";
+import { imageModelFor, countryRules, profileCountry, titleCase, PRESENTER_GENDERS, presenterProblems, captionAccentOf } from "./client-config.mjs";
 import { launchBrowser, isWholeCountry } from "./render-composites.mjs";
 import { onAdProblems } from "./cards.mjs";
 import { COPY_MODEL, plainDashes } from "./draft-copy.mjs";
@@ -1249,16 +1249,17 @@ export async function readKit({ gymDir, room = null, models, spent = null, log =
 /**
  * The captions' look (2026-11-14, the owner: "I like the classic simple look. But propose some variation either in
  * color or style, slightly" — he picked the third of five): white capitals with a thin outline and a soft shadow,
- * and the word being said in a warm yellow. No brand colour: it is the same on every gym's videos.
+ * and the word being said in a warm yellow — the same on every gym's videos, unless the gym has a caption colour of
+ * its own (`creative_defaults.caption_accent`, 2026-11-17: BFIT's corporate orange): then that word is in it.
  */
 export const CAPTION_ACCENT = "#FFD84A";
 const FONTS = `@font-face{font-family:Anton;src:url("file://${join(REPO_ROOT, "assets/fonts/anton/Anton-Regular.ttf")}")}@font-face{font-family:Mont;src:url("file://${join(REPO_ROOT, "assets/fonts/montserrat/Montserrat[wght].ttf")}");font-weight:100 900}`;
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 /** A transparent 720 × 1280 PNG of the words. Meta's 9:16 live area is x 6–94%, y 14–65%: every block is laid inside it, and the page reports where each landed. */
-async function overlay(browser, out, inner) {
+async function overlay(browser, out, inner, accent = CAPTION_ACCENT) {
   const html = `<!doctype html><meta charset="utf-8"><style>${FONTS}html,body{margin:0;width:${W}px;height:${H}px;background:transparent;overflow:hidden}
     .cap{position:absolute;left:8%;right:8%;top:54%;text-align:center;font:400 58px/1.12 Anton;color:#fff;letter-spacing:1px;-webkit-text-stroke:3px rgba(0,0,0,.85);paint-order:stroke fill;text-shadow:0 4px 16px rgba(0,0,0,.55)}
-    .cap b{font-weight:400;color:${CAPTION_ACCENT}}</style>${inner}`;
+    .cap b{font-weight:400;color:${accent || CAPTION_ACCENT}}</style>${inner}`;
   const page = join(browser.work, `${basename(out)}.html`); writeFileSync(page, html);
   const { cdp, sessionId } = browser;
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: false }, sessionId);
@@ -1663,7 +1664,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         // One picture of the block for each of its words, that word lit while it is said.
         for (const [k, c] of captions(l.line, sp.spans.map(([a, b]) => [at + a - from, at + b - from])).entries()) for (const w of captionWords(c)) {
           if (!(w.to > w.from)) continue;
-          const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}-${w.i}.png`), capHtml(c.text, w.i)); overlays.push({ png: o.png, from: w.from, to: w.to }); if (w.i === 0) blocks.push(...o.blocks);
+          const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}-${w.i}.png`), capHtml(c.text, w.i), captionAccentOf(profile) || CAPTION_ACCENT); overlays.push({ png: o.png, from: w.from, to: w.to }); if (w.i === 0) blocks.push(...o.blocks);
         }
         starts.push(Math.round(startAt * 100) / 100); at += cuts[i].to - cuts[i].from;
       }

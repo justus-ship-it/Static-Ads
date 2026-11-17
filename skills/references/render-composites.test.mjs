@@ -1229,3 +1229,62 @@ test("J1 CJK (2026-10-07, F45 Xinyi in Taipei): a line with Chinese characters i
   assert.deepEqual(splitOffer("40天川字肌計畫"), { duration: "40天", offer_name: "川字肌計畫" });
   assert.deepEqual(splitOffer("信義區專屬課程"), { duration: null, offer_name: "信義區專屬課程" });
 });
+
+// ── the words and the person (2026-11-17) ──────────────────────────────────
+import { bodyCover, avoidRegion } from "./render-composites.mjs";
+test("RC-body the words keep off the model on the feed shape: T1 sets them on a panel under the photo, a side column is fitted to the band the people leave free, and a look whose words cover more than 3% of the person below the face is refused", async () => {
+  const CAT = loadCatalogue(), T = CAT.treatments, L = (id, ratio) => layoutFor(T.treatments[id], ratio, T);
+  // (1) The feed shape's own geometry; the square and 9:16 as they were; the catalogue keeps all eight layouts.
+  assert.deepEqual([L("t1-bottom-stack", "4x5").background, L("t1-bottom-stack", "4x5").groups.map((g) => g.region), L("t1-bottom-stack", "4x5").contrast], [{ type: "split", photo_h_pct: 70 }, [[6, 72, 88, 22.5]], { rim: true }]);
+  for (const id of ["t2-top-bottom-split", "t5-offer-band"]) assert.deepEqual(L(id, "4x5").groups.map((g) => g.region), [[6, 5, 88, 9], [6, 74, 88, 20]], id);
+  for (const id of ["t3-right-column", "t6-left-column"]) assert.deepEqual([L(id, "4x5").groups.map((g) => g.avoid), L(id, "4x5").contrast, L(id, "1x1").groups[0].avoid], [[{ min_w_pct: 30, gap_pct: 2 }], { rim: true }, undefined], id);
+  assert.deepEqual(L("t1-bottom-stack", "1x1").groups[0].region, [6, 48, 88, 46], "the square is as it was");
+  assert.equal(L("t1-bottom-stack", "9x16").derived_from, "1x1", "9:16 is still derived from the square");
+  assert.deepEqual([T.body_cover.max, Object.keys(T.treatments).length, T.feed_default_off], [0.03, 8, ["t4-centred-stack", "t7-collage", "t8-panels-band"]]);
+  // (2) The measure, pure: a band and the line on it are counted once; no zone, or a sliver, is nothing to judge.
+  const rep = (zones, blocks) => ({ canvas: [1000, 1000], body_zones: zones, blocks, groups: [] });
+  const counted = bodyCover(rep([{ x: 200, y: 400, w: 400, h: 600 }], [{ rect: { x: 100, y: 700, w: 800, h: 150 }, band: { x: 90, y: 690, w: 820, h: 170 } }]));
+  assert.ok(Math.abs(counted - 170 / 600) < 0.01, `a band 170 px tall over a body 600 px tall is ${counted}, the line on it not counted again`);
+  assert.equal(bodyCover(rep([], [{ rect: { x: 0, y: 0, w: 1000, h: 1000 } }])), null);
+  assert.equal(bodyCover(rep([{ x: 0, y: 0, w: 100, h: 100 }], [{ rect: { x: 0, y: 0, w: 1000, h: 1000 } }])), null, "a body smaller than 3% of the picture is not judged");
+  // (3) A side column fitted to the people, pure: narrowed to the free band, a gap clear of them; too narrow a band and it stays.
+  const col = [48, 6, 46, 88], av = { min_w_pct: 30, gap_pct: 2 };
+  assert.deepEqual(avoidRegion(col, av, [{ x: 20, y: 10, w: 36, h: 80 }]), { region: [58, 6, 36, 88], moved: "narrowed" });
+  assert.deepEqual(avoidRegion([6, 6, 46, 88], av, [{ x: 44, y: 10, w: 40, h: 80 }]), { region: [6, 6, 36, 88], moved: "narrowed" });
+  assert.deepEqual(avoidRegion(col, av, [{ x: 20, y: 10, w: 50, h: 80 }]), { region: col, moved: null }, "24% is no band for words");
+  assert.deepEqual(avoidRegion(col, av, [{ x: 5, y: 10, w: 30, h: 80 }]), { region: col, moved: null }, "people clear of the column leave it as it is");
+  // (4) On a render. A person down the left of a 4:5 picture, reaching into the right-hand column.
+  const PORTRAIT = svg(`<rect width="100%" height="100%" fill="${SOLID}"/>`, 800, 1000); // a 4:5 photo: a box on the photo is the same box on the ad
+  const ad = (treatment, extra = {}) => renderComposite(browser, { image: PORTRAIT, location: "KATONG", offer: "12 Week Full Body Transformation", treatment, style: "s1-heavy-sans", palette: "white-on-dark", ratio: "4x5", ...extra });
+  const person = { people: [[150, 200, 1000, 560]], faces: [[[150, 320, 330, 440]]] };
+  const side = await ad("t3-right-column", person);
+  assert.equal(side.ok, true, side.failures.join(" | "));
+  assert.deepEqual([side.body_cover, side.report.groups[0].avoided], [0, "narrowed"], "the column stands beside the person");
+  assert.ok(Math.min(...side.report.blocks.map((b) => b.rect.x)) > 0.56 * 1080 + 0.02 * 1080 - 2, "every line starts clear of the person's box");
+  assert.equal(side.report.scrim.alpha, 0, "no shade runs down the side");
+  // A person across the whole width leaves no band: the column stays, and the ad is refused on the words over them.
+  const wide = await ad("t3-right-column", { people: [[150, 100, 1000, 900]], faces: [[[150, 300, 300, 420]]] });
+  assert.ok(wide.failures.some((f) => /^the words cover \d+% of the person below the face \(3% at most\)$/.test(f)), wide.failures.join(" | "));
+  // Under the photo: nothing is on the person, the photo fills the top 70%, and the words sit on the panel.
+  const under = await ad("t1-bottom-stack", { people: [[100, 250, 1000, 750]], faces: [[[100, 420, 280, 580]]] });
+  assert.equal(under.ok, true, under.failures.join(" | "));
+  assert.deepEqual([under.body_cover, under.report.background.type, under.report.background.split.photo.h], [0, "split", 945]);
+  assert.ok(Math.min(...under.report.blocks.map((b) => b.rect.y)) >= 945, "every line is under the photo");
+  // The centred stack across a person is refused; with no people box given (the Create preview, Stories) there is nothing to judge.
+  const mid = await ad("t4-centred-stack", { people: [[150, 300, 1000, 700]], faces: [[[20, 420, 140, 580]]] });
+  assert.ok(mid.failures.some((f) => /the words cover \d+% of the person below the face \(3% at most\)/.test(f)), mid.failures.join(" | "));
+  const blind = await ad("t4-centred-stack");
+  assert.equal(blind.ok, true, blind.failures.join(" | ")); assert.equal(blind.body_cover, null);
+  // The square and the formula family keep their own rules.
+  const F = loadCatalogue({ look: "formula" });
+  const fspec = buildSpec({ image: SOLID_BG, ...person, text: { location: "KATONG", audience: null, ...splitOffer("12 Week Full Body Transformation") }, treatment: "f1-callout-left", style: Object.keys(F.styles.styles)[0], palette: Object.keys(F.palettes.palettes)[0], ratio: "4x5", catalogue: F });
+  const sq = buildSpec({ image: SOLID_BG, ...person, text: { location: "KATONG", audience: null, ...splitOffer("12 Week Full Body Transformation") }, treatment: "t3-right-column", style: "s1-heavy-sans", palette: "white-on-dark", ratio: "1x1" });
+  assert.deepEqual([fspec.body_cover_max, sq.body_cover_max], [null, null]);
+  assert.throws(() => buildSpec({ image: SOLID_BG, people: [[5, 5]], text: { location: "KATONG", audience: null, ...splitOffer("12 Week Reset") } }), /people must be one/);
+  // A rimmed line reads by its own rim, and the check does not take the page's word for it.
+  const rim = await renderComposite(browser, { image: LIGHT, location: "KATONG", offer: "12 Week Full Body Transformation", treatment: "t3-right-column", style: "s1-heavy-sans", palette: "white-on-dark", ratio: "4x5" });
+  assert.equal(rim.ok, true, rim.failures.join(" | "));
+  const rimmed = rim.report.blocks.filter((b) => b.steps.includes("rim"));
+  assert.ok(rimmed.length && rimmed.every((b) => b.rim.contrast >= 4.5 && b.rim.width >= 0.06 * b.size) && rim.report.scrim.alpha === 0, "white letters on a pale photo take a dark rim, and no haze");
+  assert.ok(verifyReport(rim.spec, { ...rim.report, blocks: rim.report.blocks.map((b) => (b.rim ? { ...b, rim: { ...b.rim, contrast: 2 } } : b)) }).some((f) => /contrast .* is below target/.test(f)), "a rim too close to its fill does not count");
+});

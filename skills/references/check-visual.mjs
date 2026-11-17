@@ -38,6 +38,7 @@ import { createHash } from "crypto";
 import { tmpdir } from "os";
 import { loadCatalogue, layoutFor, placedRegions } from "./render-composites.mjs";
 import { describeSubjectArea, coveredSpans, MAX_SUBJECT_UNDER_TEXT, checkableNever } from "./visual-prompts.mjs";
+import { placedRegions as placedFor } from "./render-composites.mjs";
 import { loadGeminiKey } from "./generate_ads_gemini.mjs";
 
 // gemini-2.5-flash is listed by the API but refused for new keys (404, 2026-09-10); Google's own
@@ -132,7 +133,16 @@ export function floatedAreaBoxes(treatment, ratio, faces, catalogue = loadCatalo
   const pctFaces = faces.map(([y0, x0, y1, x1]) => { const w = (x1 - x0) / 10, h = (y1 - y0) / 10; return { x: Math.max(0, x0 / 10 - m * w), y: Math.max(0, y0 / 10 - m * h), w: w * (1 + 2 * m), h: h * (1 + 2 * m) }; });
   return placedRegions(L, pctFaces, (T.safe_area?.[ratio] || [5, 5, 90, 90])[1]).map(([x, y, w, h]) => [y * 10, x * 10, (y + h) * 10, (x + w) * 10]);
 }
+/** A layout's text areas once its side columns are fitted to the people (avoidRegion): boxes on the ad, 0–1000. `people` is their box on the ad, same scale. */
+export function avoidedAreaBoxes(treatment, ratio, people, catalogue = loadCatalogue()) {
+  const T = catalogue.treatments, L = layoutFor(T.treatments[treatment], ratio, T);
+  const c = people ? [Math.max(0, people[0]), Math.max(0, people[1]), Math.min(1000, people[2]), Math.min(1000, people[3])] : null;
+  const zone = c && c[2] > c[0] && c[3] > c[1] ? [{ x: c[1] / 10, y: c[0] / 10, w: (c[3] - c[1]) / 10, h: (c[2] - c[0]) / 10 }] : [];
+  return placedFor(L, [], (T.safe_area?.[ratio] || [5, 5, 90, 90])[1], zone).map(([x, y, w, h]) => [y * 10, x * 10, (y + h) * 10, (x + w) * 10]);
+}
 const valid = (b) => Array.isArray(b) && b.length === 4 && b[2] > b[0] && b[3] > b[1];
+/** How much of the people's box a photo over a panel may leave out of its window (a single full-frame photo: a tenth). */
+export const MAX_CUT_SPLIT = 0.4;
 const area = ([y0, x0, y1, x1]) => Math.max(0, y1 - y0) * Math.max(0, x1 - x0);
 const overlap = (a, b) => area([Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]);
 
@@ -202,7 +212,7 @@ export function bestCrop({ imageSize: [iw, ih], canvas: [W, H], people, faces = 
   let best = null;
   for (const fx of steps(roomX)) for (const fy of steps(roomY)) {
     const m = onAd(fx, fy), P = people && m(people), F = faces.map(m);
-    const areas = typeof areasIn === "function" ? areasIn(F) : areasIn; // a floating layout's areas depend on where the faces land
+    const areas = typeof areasIn === "function" ? areasIn(F, P) : areasIn; // a floating layout's areas depend on where the faces land; a fitted column's on where the people do
     const cut = P ? 1 - area(clip1000(P)) / area(P) : 0;
     const facesCut = F.filter((f) => area(clip1000(f)) < 0.95 * area(f)).length;
     const seen = P && clip1000(P);
@@ -226,7 +236,7 @@ function outsideCircle(b) {
 }
 
 /** Apply the rules to a vision answer. Returns { ok, stray_text, placement, failures }. */
-export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = true, maxPeople = null, imageSize: size = null, catalogue = loadCatalogue() }) {
+export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = true, maxPeople = null, imageSize: size = null, bodyMax = null, catalogue = loadCatalogue() }) {
   const failures = [], notes = [], placement = [];
   // Only lettering a viewer could read fails (2026-09-12: a warning label on a machine is fine, as is a
   // mark with no letters); those are noted for the gallery. An answer without the field fails, as before.
@@ -238,20 +248,34 @@ export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = t
   if (banned.length) failures.push(`shows what the client never allows: ${banned.map((t) => t.what).join("; ")}`);
   const layout = layoutFor(catalogue.treatments.treatments[treatment], ratio, catalogue.treatments);
   const kind = layout.background?.type || "single";
+  // The photo on top, the words on a panel under it (split): the photo is judged in its own window — the top photo_h_pct
+  // of the frame — against only the words that sit on it (an area line across the top), in that window's own scale.
+  const split = kind === "split" ? layout.background.photo_h_pct : null;
   // A layout whose groups float is judged where the renderer will really put them for these faces.
-  const areas = layout.groups.some((g) => g.float) ? (F) => floatedAreaBoxes(treatment, ratio, F, catalogue) : textAreaBoxes(treatment, ratio, catalogue);
+  const areas = split ? textAreaBoxes(treatment, ratio, catalogue).filter((a) => a[2] <= split * 10 + 1).map(([y0, x0, y1, x1]) => [(y0 * 100) / split, x0, (y1 * 100) / split, x1])
+    : layout.groups.some((g) => g.avoid) ? (F, P) => avoidedAreaBoxes(treatment, ratio, P, catalogue)
+    : layout.groups.some((g) => g.float) ? (F) => floatedAreaBoxes(treatment, ratio, F, catalogue) : textAreaBoxes(treatment, ratio, catalogue);
   const faces = (answer.face_boxes || []).filter(valid);
   const people = valid(answer.people_box) ? answer.people_box : null;
-  const rule = kind === "panels" ? "circle" : kind === "collage" ? "none" : describeSubjectArea(layout, { canvas: catalogue.treatments.canvas[ratio], covered: coveredSpans(ratio, catalogue.treatments) }) ? "subject-area" : "none";
+  const rule = kind === "panels" ? "circle" : kind === "collage" ? "none" : split ? (areas.length ? "subject-area" : "none") : describeSubjectArea(layout, { canvas: catalogue.treatments.canvas[ratio], covered: coveredSpans(ratio, catalogue.treatments) }) ? "subject-area" : "none";
   // A single photo is judged at its best crop (a square photo in a square ad has only one).
-  const crop = kind === "single" ? bestCrop({ imageSize: size || catalogue.treatments.canvas[ratio], canvas: catalogue.treatments.canvas[ratio], people, faces, areas, rule }) : null;
+  const [CW, CH] = catalogue.treatments.canvas[ratio], shown = split ? [CW, Math.round((CH * split) / 100)] : [CW, CH];
+  const crop = kind === "single" || split ? bestCrop({ imageSize: size || shown, canvas: shown, people, faces, areas, rule }) : null;
   const under = crop ? crop.under : 0;
   const facesUnderArea = crop ? crop.facesUnder : 0;
   // Placement is judged for the layout the photo was composed for; the batch's fit stage judges every
   // layout, so a photo that fails only here may still be kept for the layouts it fits.
   if (crop && crop.facesCut) placement.push(`every crop cuts off ${crop.facesCut} face(s)`);
-  if (crop && crop.cut > 0.1) placement.push(`the best crop still cuts off ${Math.round(crop.cut * 100)}% of the people`);
+  // Under a panel the foot of the photo is not shown, so more of a person may fall outside it (their legs, where the words used to sit); a face never.
+  if (crop && crop.cut > (split ? MAX_CUT_SPLIT : 0.1)) placement.push(`the best crop still cuts off ${Math.round(crop.cut * 100)}% of the people`);
   if (rule === "subject-area" && people && under > MAX_SUBJECT_UNDER_TEXT) placement.push(`${Math.round(under * 100)}% of the people sit under text areas (max ${MAX_SUBJECT_UNDER_TEXT * 100}%)`);
+  // The words do not sit on the model (`bodyMax`, the fit stage's rule for the feed shape: 2026-11-17): the text areas, where
+  // the renderer will put them for this photo, may take only so much of the people below the lowest chin.
+  if (bodyMax != null && kind === "single" && crop?.people) {
+    const P = clip1000(crop.people), chin = crop.faces.length ? Math.max(...crop.faces.map((f) => clip1000(f)[2])) : P[0], body = [Math.min(Math.max(P[0], chin), P[2]), P[1], P[2], P[3]];
+    const A = typeof areas === "function" ? areas(crop.faces, crop.people) : areas, over = area(body) ? A.reduce((n, a) => n + overlap(body, a), 0) / area(body) : 0;
+    if (over > bodyMax + 0.005) placement.push(`the words would sit over ${Math.round(over * 100)}% of the model (${Math.round(bodyMax * 100)}% at most)`);
+  }
   const outside = people && rule === "circle" ? outsideCircle(people) : 0;
   if (rule === "circle" && outside > MAX_OUTSIDE_CIRCLE) placement.push(`${Math.round(outside * 100)}% of the people fall outside the circular crop (max ${MAX_OUTSIDE_CIRCLE * 100}%)`);
   if (expectPeople && !people && (answer.people_count || 0) === 0) failures.push("no people found — the scene asked for people");
@@ -380,7 +404,9 @@ export async function confirmTiled(imagePath, items, { crop, maxSide = 1100, con
 export function fitLayouts(answer, { ratio = "1x1", imageSize: size = null, expectPeople = true, maxPeople = null, catalogue = loadCatalogue() } = {}) {
   const placementOnly = { ...answer, text_items: [], excluded_items: [] };
   return Object.fromEntries(Object.keys(catalogue.treatments.treatments).map((id) => {
-    const j = judgeVisual(placementOnly, { treatment: id, ratio, expectPeople, maxPeople, imageSize: size, catalogue });
+    // On the feed shape a look is open to a photo only where its words keep off the model (the catalogue's body_cover; the reference family).
+    const T = catalogue.treatments, bodyMax = ratio === "4x5" && T.treatments[id].family !== "formula" && typeof T.body_cover?.max === "number" ? T.body_cover.max : null;
+    const j = judgeVisual(placementOnly, { treatment: id, ratio, expectPeople, maxPeople, imageSize: size, bodyMax, catalogue });
     return [id, { ok: j.ok, focus: j.focus, rule: j.placement.rule, failures: j.failures }];
   }));
 }

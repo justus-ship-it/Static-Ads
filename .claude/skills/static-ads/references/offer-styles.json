@@ -389,6 +389,12 @@
   },
   "share_note": "A style may set 'share' on a line to override the layout's share, e.g. script needs a taller line (line-height 1.4) than an upright face.",
   "cjk_note": "Chinese, Japanese and Korean words (2026-10-07, F45 Xinyi in Taipei): the Latin faces have no CJK glyphs, so a line that carries any CJK character is set in its face's stand-in (`cjk` on each face: the sans faces, the condensed ones and the script go to Noto Sans TC; the serifs to Noto Serif TC), at the nearest weight the stand-in has, with the same effect; letter-spacing is capped (CJK is spaced by the glyph), there is no case, and the legibility floor is higher (a character carries more). The pixel leak test runs the CJK faces too.",
+  "tall_type": {
+    "heavy": "anton",
+    "light": "oswald",
+    "heavy_from": 700,
+    "note": "A layout that sets its words in a narrow column (tall_type: the side columns at the feed shape) uses these condensed faces in place of each line's own: a weight of heavy_from or more in the heavy one, a lighter line in the light one at its nearest weight. The same width carries letters about half as tall again. A script line and a CJK line keep their own face."
+  },
   "cjk_rules": {
     "min_px": 40,
     "max_tracking_em": 0.12

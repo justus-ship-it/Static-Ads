@@ -223,7 +223,13 @@ export const isStyleRule = (t) => STYLE_WORDS.test(String(t || "")) || (rulePart
 export const checkableNever = (list = []) => (list || []).filter((t) => t && !isStyleRule(t))
   .map((t) => (ruleParts(t).some((p) => FRAMING_WORDS.test(p)) ? ruleParts(t).filter((p) => !FRAMING_WORDS.test(p)).join(" or ") : t));
 
-export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, age = null, shotGuide = null, format = "workout", backdrop = null, catalogue = loadCatalogue() }) {
+/**
+ * Attractive people (2026-11-17, the owner: "attractive people in general. Attractive people get more clicks. Both men and
+ * women"). Said as how real, good-looking people look, never as a body to aspire to: ordinary training clothes, nothing
+ * revealing (Meta refuses sexually suggestive pictures and adverts that hold up an ideal body), and the realism rules stand.
+ */
+export const ATTRACTIVE_CLAUSE = "LOOKS: the people are naturally attractive and photogenic — good-looking in the way a well-cast advert's people are: healthy, clear skin, well-groomed hair, a warm and confident presence, fit and well in an everyday way. They are still real people in ordinary training clothes: nothing revealing, nothing glamorised, no retouched look.";
+export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography = {}, hasReference = false, anchor = false, brandNames = [], people = null, setting = null, age = null, shotGuide = null, format = "workout", backdrop = null, attractive = true, catalogue = loadCatalogue() }) {
   const portrait = format === "studio-portrait";
   const room = needsRoom({ format, backdrop }); // a plain backdrop shows no room: no reference, no must-show
   if (!room) hasReference = false;
@@ -237,7 +243,12 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
   const scrub = (t) => scrubNames(t, names);
   const never = (photography.never || []).filter((t) => !isAboutText(t)).map(scrub);
   const must = (photography.must || []).map(scrub);
-  const hint = tr.visual_hint.replace(/\s*No text, letters, signage, logos or watermarks anywhere\.\s*$/, "");
+  // The feed shape of the reference family: the words keep off the model (the catalogue's body_cover), so the photo is
+  // composed with the words' place empty of people — or, under a panel (split), with everything in the part that is shown.
+  const clear = ((ratio === "4x5" && tr.family !== "formula") || layout.no_touch === true) && typeof T.body_cover?.max === "number";
+  const split = layout.background?.type === "split" ? layout.background.photo_h_pct : null;
+  const hint = ((clear && tr.visual_hint_clear) || tr.visual_hint).replace(/\s*No text, letters, signage, logos or watermarks anywhere\.\s*$/, "");
+  const framing = (clear && tr.visual_framing_clear) || tr.visual_framing;
   const frame = generationFrame(layout, ratio);
   const gl = toGenFrame(layout, frame);
   const [cw, ch] = T.canvas[ratio];
@@ -263,6 +274,7 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
   // Said as what a real class looks like; the faults are never named, since naming invites them.
   if (!portrait && CANDID[setting]) lines.push(CANDID[setting]);
   // Ages on a bell curve over the owner's range (plan-offer-batch → ageTargets): the photo names one.
+  if (attractive) lines.push(ATTRACTIVE_CLAUSE);
   if (Number.isInteger(age)) lines.push(portrait ? `AGE: ${people === 2 ? "the people are" : "the person is"} about ${age} years old. If the scene gives another age, this age wins.` : `AGE: the person training is about ${age} years old${setting === "coached" ? "; the coach is any adult age" : ""}. If the scene gives them another age, this age wins.`);
   lines.push(REAL_CLAUSE);
   // The workout shot guide is read from workout adverts (mid-rep, peak effort): a portrait has its own look.
@@ -279,10 +291,19 @@ export function buildVisualPrompt({ treatment, scene, ratio = "1x1", photography
   lines.push(
     "",
     `COMPOSITION: ${hint}`,
-    ...(tr.visual_framing ? [`FRAMING: ${tr.visual_framing} ${portrait ? "If the scene's pose would not fit this framing, keep the pose and step the camera back or in until it does." : "If the scene's pose would not fit this framing, show a variant of the same exercise that does (for example a seated, kneeling or floor version)."}`] : []),
-    `Text will be laid over ${areas.join(" and over ")}. No face may fall inside ${areas.length > 1 ? "them" : "it"}, and keep ${areas.length > 1 ? "them" : "it"} free of busy detail behind the words; ` +
+    ...(framing ? [`FRAMING: ${framing} ${portrait ? "If the scene's pose would not fit this framing, keep the pose and step the camera back or in until it does." : "If the scene's pose would not fit this framing, show a variant of the same exercise that does (for example a seated, kneeling or floor version)."}`] : []),
+    split ? `Only the upper ${split}% of this photo is shown in the advert: the words sit on a plain panel under it, not on the photo. Keep every head, face and the action inside the upper ${split}%; what falls below it is cut away.`
+      : clear ? `Text will be laid over ${areas.join(" and over ")}. Nobody may be inside ${areas.length > 1 ? "them" : "it"}: no face, no part of anyone's body, nothing they hold. ${areas.length > 1 ? "They show" : "It shows"} only background — wall, floor, mat, equipment — kept free of busy detail behind the words.`
+      : `Text will be laid over ${areas.join(" and over ")}. No face may fall inside ${areas.length > 1 ? "them" : "it"}, and keep ${areas.length > 1 ? "them" : "it"} free of busy detail behind the words; ` +
       "the body may run into the text: the words may sit over a torso, arms or legs, never over a face.",
   );
+  if (split) lines.push(`SIZE: the main person fills most of the upper ${split}% of the frame — step in close; the frame may cut the body at the waist or the hips.`);
+  // A treatment that says its whole composition itself (the Stories tall photo) takes no size or placement line from the geometry.
+  else if (tr.composition_only) { if (tr.visual_size) lines.push(`SIZE: ${tr.visual_size}`); }
+  else if (clear && subjectArea && layout.background?.type !== "panels") {
+    lines.push(`Place the people wholly within ${subjectArea}, with a clear gap between them and where the text goes. ${portrait ? "Frame it as a portrait photographer would, a few steps away." : "Frame the shot close, the way a phone photo taken a few steps away looks."}`);
+    lines.push(maxH ? "SIZE: the people fit inside that band from top to bottom — a low, compact pose — and fill the frame from side to side." : "SIZE: the main person fills about 65% to 85% of the frame's height — step in close; the frame may cut the body at the knees or the waist.");
+  } else
   if (subjectArea && layout.background?.type !== "panels") {
     lines.push(`Place every face, and the subject's head and upper body, within ${subjectArea}. ${portrait ? "Frame it as a portrait photographer would, a few steps away" : "Frame the shot close, the way a phone photo taken a few steps away looks"}: the body may run into the text area.`);
     // Gemini overshoots a size slightly (run 6: 31% when asked for 30%), so the top of the range is 85% of the maximum.

@@ -59,6 +59,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 
   // Where a floating group sits once the faces are known — the same function the fit stage runs (render-composites.mjs).
   /*__FLOAT__*/
+  /*__AVOID__*/
 
   async function render() {
     const [W, H] = S.canvas;
@@ -91,6 +92,19 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
         const fy0 = Math.max(clip.y, at.y + (y0 / 1000) * at.h - m * ph), fy1 = Math.min(clip.y + clip.h, at.y + (y1 / 1000) * at.h + m * ph);
         if (fx1 > fx0 && fy1 > fy0) faceZones.push({ name: `face ${faceZones.length + 1}`, x: fx0, y: fy0, w: fx1 - fx0, h: fy1 - fy0 });
       }
+    };
+    // The people in a single photo, below the lowest chin: what the words may cover only so much of (verifyReport).
+    const bodyZones = [], peopleZones = [];
+    const placeBody = (k, at, clip) => {
+      const p = (S.people || [])[k]; if (!p) return;
+      { // the people, head to foot, as they landed: what a side column keeps clear of (avoidRegion)
+        const x0 = Math.max(clip.x, at.x + (p[1] / 1000) * at.w), x1 = Math.min(clip.x + clip.w, at.x + (p[3] / 1000) * at.w), y0 = Math.max(clip.y, at.y + (p[0] / 1000) * at.h), y1 = Math.min(clip.y + clip.h, at.y + (p[2] / 1000) * at.h);
+        if (x1 > x0 && y1 > y0) peopleZones.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+      }
+      const chin = Math.max(p[0], ...((S.faces || [])[k] || []).map((f) => f[2]));
+      const bx0 = Math.max(clip.x, at.x + (p[1] / 1000) * at.w), bx1 = Math.min(clip.x + clip.w, at.x + (p[3] / 1000) * at.w);
+      const by0 = Math.max(clip.y, at.y + (chin / 1000) * at.h), by1 = Math.min(clip.y + clip.h, at.y + (p[2] / 1000) * at.h);
+      if (bx1 > bx0 && by1 > by0) bodyZones.push({ x: bx0, y: by0, w: bx1 - bx0, h: by1 - by0 });
     };
     const focusAt = (k) => (S.focus_images && S.focus_images[k]) || [0.5, 0.5];
     const BG = S.background || { type: "single" };
@@ -130,8 +144,21 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
         ctx.restore();
         return { cx, cy, r, image: k };
       });
+    } else if (BG.type === "split") {
+      // The photo fills the top of the frame and the words sit on a plain panel under it: nothing is set over the photo.
+      // (photo_y_pct: where the photo starts — 0 by default; a Stories version may set its words on a panel ABOVE the photo.)
+      const py = Math.round(((BG.photo_y_pct || 0) / 100) * H), ph = Math.round((BG.photo_h_pct / 100) * H), panel = BG.backdrop || S.palette.band || "#121212";
+      ctx.fillStyle = panel; ctx.fillRect(0, 0, W, H);
+      ctx.save(); ctx.beginPath(); ctx.rect(0, py, W, ph); ctx.clip();
+      const atS = cover(imgs[0], 0, py, W, ph, S.focus || [0.5, 0.5]);
+      ctx.restore();
+      placeFaces(0, atS, { x: 0, y: py, w: W, h: ph });
+      placeBody(0, atS, { x: 0, y: py, w: W, h: ph });
+      background.split = { photo: { x: 0, y: py, w: W, h: ph }, backdrop: panel };
     } else {
-      placeFaces(0, cover(imgs[0], 0, 0, W, H, S.focus || [0.5, 0.5]), { x: 0, y: 0, w: W, h: H });
+      const at0 = cover(imgs[0], 0, 0, W, H, S.focus || [0.5, 0.5]);
+      placeFaces(0, at0, { x: 0, y: 0, w: W, h: H });
+      placeBody(0, at0, { x: 0, y: 0, w: W, h: H });
     }
     // (Collage tiles are exempt: text over a busy, darkened collage is that layout's design.)
     const px = ctx.getImageData(0, 0, W, H).data;
@@ -158,7 +185,10 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     //    when there is text on both sides of it, so a missing audience line never leaves a stray rule.
     // A floating group (the formula's lower block) moves clear of the faces: below the lowest one, or above the heads.
     const facePct = faceZones.map((z) => ({ x: (z.x / W) * 100, y: (z.y / H) * 100, w: (z.w / W) * 100, h: (z.h / H) * 100 }));
+    const peoplePct = peopleZones.map((z) => ({ x: (z.x / W) * 100, y: (z.y / H) * 100, w: (z.w / W) * 100, h: (z.h / H) * 100 }));
     const placed = L.groups.map((G) => {
+      // A side column is fitted to the band the people leave free beside them.
+      if (G.avoid) { const a = avoidRegion(G.region, G.avoid, peoplePct); return a.moved ? { ...G, region: a.region, avoided: a.moved } : G; }
       if (!G.float) return G;
       const above = L.groups.filter((o) => o !== G && o.region[1] + o.region[3] <= G.region[1]);
       const floorY = (above.length ? Math.max(...above.map((o) => o.region[1] + o.region[3])) : S.safe_area[1]) + 1;
@@ -439,6 +469,9 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
         const after = alpha ? worst(b, alpha) : b.before;
         const pre = alpha && b.before < C.target ? ["scrim"] : [];
         if (after >= C.target) return { after, steps: pre };
+        // The rim: a thick outline in the tone opposite the letter's fill, and a dark soft shadow round it. The letter is
+        // told from its own rim whatever the photo is, so nothing is laid over the photo (2026-11-17).
+        if (C.rim) return { after, steps: ["rim"] };
         if (b.strokeable && after >= C.stroke_min && C.chain.includes("stroke")) return { after, steps: [...pre, "stroke"] };
         const band = bestBand(b, S.palette.band);
         return { after: bandScore(b, band), steps: [...(alpha ? ["scrim"] : []), "band"], band };
@@ -446,7 +479,9 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       const score = (p, alpha) => p.filter((x) => x.steps.includes("band")).length * 10
         + p.filter((x) => x.steps.includes("stroke")).length + (alpha ? 0.5 : 0);
       // A floor from the other locations of the same ad (renderPlan): the scrim is at least that, and always drawn.
-      const F = Math.min(C.scrim_max_alpha, +((S.scrim_floor || {})[g.G.id] || 0));
+      // A family whose letters carry their own rim (contrast.rim) asks for no haze: the rim is what makes them read.
+      if (C.rim) A = 0;
+      const F = C.rim ? 0 : Math.min(C.scrim_max_alpha, +((S.scrim_floor || {})[g.G.id] || 0));
       if (F > A && g.G.scrim.direction !== "none") A = F;
       const noScrim = plan(0);
       const withScrim = A > 0 ? plan(A) : null;
@@ -555,7 +590,16 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       b.after = res.after;
       b.steps = res.steps;
       const autoStroke = b.judgeL > 0.18 ? "#000000" : "#FFFFFF"; // dark halo round light text, and vice versa
-      if (e === "hollow") {
+      if (res.steps.includes("rim")) {
+        // The letter's own fill (a hollow line is filled: an outline alone cannot be told from a busy photo), a rim in the
+        // tone opposite it — the pairing's own outline where that already stands out from the fill — and a soft dark shadow.
+        const fillHex = b.textHex || b.pal.fill, own = b.pal.outline && ratio(lumHex(fillHex), lumHex(b.pal.outline)) >= 4.5 ? b.pal.outline : null;
+        const rim = own || (lumHex(fillHex) > 0.18 ? "#000000" : "#FFFFFF"), w = 0.075 * s, halo = lumHex(rim) > 0.18 ? "rgba(0,0,0,0.85)" : "rgba(0,0,0,0.6)";
+        sp.style.webkitTextFillColor = fillHex; sp.style.paintOrder = "stroke fill";
+        sp.style.webkitTextStroke = `${w}px ${rim}`;
+        sp.style.textShadow = `0 0 ${0.05 * s}px ${halo}, 0 ${0.05 * s}px ${0.14 * s}px ${halo}`;
+        b.rim = { width: +w.toFixed(2), colour: rim, fill: fillHex, contrast: +ratio(lumHex(fillHex), lumHex(rim)).toFixed(2) };
+      } else if (e === "hollow") {
         sp.style.webkitTextFillColor = "transparent";
         sp.style.webkitTextStroke = `${0.05 * s}px ${b.textHex || b.pal.fill}`;
         sp.style.paintOrder = "normal";
@@ -692,11 +736,13 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
       canvas: [W, H],
       background,
       face_zones: faceZones,
+      body_zones: bodyZones,
       region: allRegions.length === 1 ? allRegions[0] : union(allRegions),
       scrim: { alpha: +Math.max(...groups.map((g) => g.A)).toFixed(3) },
       groups: groups.map((g) => ({
         id: g.G.id,
         floated: g.G.floated || null,
+        avoided: g.G.avoided || null,
         region: regionOf(g),
         anchor: g.G.anchor,
         align: g.G.align,
@@ -734,6 +780,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
           edge: align === "left" ? r.left : align === "right" ? r.right - trail : r.left + r.width / 2,
           ink_lines: inkLines(b),
           band: b.band || null,
+          rim: b.rim || null,
           judged_colours: b.judgeHexes,
           contrast: { before: b.before == null ? null : +b.before.toFixed(2), after: +b.after.toFixed(2) },
           steps: b.steps,

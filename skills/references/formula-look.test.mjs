@@ -77,7 +77,7 @@ test("F2 the floating block, by rule: no face under it and it stays; a face unde
   assert.deepEqual([floatRegion(top, tf, [face(15)], 6), floatRegion(top, tf, [face(10)], 6), floatRegion(top, tf, [face(30)], 6)], [{ region: [5, 5, 90, 8.5], moved: "shrunk" }, { region: top, moved: null }, { region: top, moved: null }]);
   const L = layoutFor(FORMULA.treatments.treatments["f1-callout-left"], "4x5", FORMULA.treatments);
   assert.deepEqual(placedRegions(L, [face(60)], 5), [[5, 5, 90, 13.5], [5, 72.5, 90, 22.5]]);
-  assert.deepEqual(placedRegions(layoutFor(REF.treatments.treatments["t1-bottom-stack"], "4x5", REF.treatments), [face(60)], 5), [[6, 48, 88, 46]], "a layout without a float is where it was");
+  assert.deepEqual(placedRegions(layoutFor(REF.treatments.treatments["t1-bottom-stack"], "4x5", REF.treatments), [face(60)], 5), [[6, 72, 88, 22.5]], "a layout without a float is where it was (the bottom stack's own 4:5 place, on the panel under the photo, since 2026-11-17)");
 });
 
 test("F3 the formula rendered for real: 4:5 and 9:16, plain type with no contrast stroke, the callout the lead line, every word inside the safe area; the block moves below or above a face and says so; a face under the callout that leaves it no room fails as any layout would; Chinese words take their stand-in faces; a reference layout renders at 4:5 too", async () => {
@@ -131,7 +131,8 @@ test("F4 the fit stage judges a floating layout where the renderer will put it: 
   assert.deepEqual([f.placement.faces_under_text_area, f.ok], [0, true], f.failures.join("; "));
   assert.deepEqual(floatedAreaBoxes("f1-callout-left", "4x5", answer.face_boxes, FORMULA).map((b) => b.map(Math.round)), [[50, 50, 185, 950], [729, 50, 950, 950]], "the block from just under the face to its own bottom edge");
   assert.deepEqual(textAreaBoxes("f1-callout-left", "4x5", FORMULA).map((b) => b.map(Math.round)), [[50, 50, 185, 950], [680, 50, 950, 950]]);
-  const t = judgeVisual(answer, { treatment: "t1-bottom-stack", ratio: "4x5", imageSize: [1080, 1350], catalogue: REF });
+  // (The reference family's fixed block on a photo, at the foot: T5 at this shape. T1 sets its words on a panel under the photo since 2026-11-17.)
+  const t = judgeVisual({ ...answer, face_boxes: [[800, 400, 900, 600]] }, { treatment: "t5-offer-band", ratio: "4x5", imageSize: [1080, 1350], catalogue: REF });
   assert.equal(t.placement.faces_under_text_area, 1, "a fixed block has the face under it");
   assert.deepEqual(Object.keys(fitLayouts(answer, { ratio: "4x5", imageSize: [1080, 1350], catalogue: FORMULA })), ["f1-callout-left", "f2-callout-centre", "f3-offer-card"]);
   assert.equal(Object.keys(fitLayouts(answer, { ratio: "4x5", imageSize: [1080, 1350], catalogue: REF })).length, 8);

@@ -50,6 +50,7 @@ import { pickSheetScripts, paperNeeds, makePaperVideos } from "./paper-video.mjs
 import { plainGemini } from "./gemini-busy.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
+import { whoIn } from "./scene-library.mjs";
 import { ROOMS, SCENE_OPTIONAL_TAGS, SCENE_TAGS, PORTRAIT_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName, MAX_SCENE_PEOPLE, sceneProblems, sceneWarnings, loadScenes, readLibrary, isRetired, isDraft, approveScenes } from "./scene-library.mjs";
 import { draftScenes, validateDirection } from "./refresh-scenes.mjs";
 
@@ -226,6 +227,8 @@ export const VARIETY_WEIGHTS = { exercise: 3, age: 3, setting: 2, equipment: 2, 
 // scene tags. A scene that shows a lean is preferred until LEAN_SHARE of its kind's photos show it; the rest keep the
 // batch's variety, so the other values go on being tested. It only ever picks among approved scenes.
 export const LEAN_SHARE = 0.6, MAX_LEANS = 6;
+/** An advert for anyone leans toward women (2026-11-17, the owner: "always steer slightly towards women if it's 'any'" — two photos in three). */
+export const WOMEN_SHARE = 2 / 3;
 /** How large the words are set on the picture, when the gym's results say it matters (2026-11-11): which layout an ad gets is weighted toward more room for the words, or less. The words themselves are always the owner's. */
 export const WORDS_WEIGHTS = ["bolder", "quieter"];
 export const LEAN_TAGS = ["exercise", ...Object.keys(SCENE_TAGS), ...Object.keys(PORTRAIT_TAGS), "eye_contact", "people", ...Object.keys(SCENE_OPTIONAL_TAGS)];
@@ -313,7 +316,7 @@ export function unshowable(mustShow = {}, scenes = []) {
   return Object.entries(mustShow || {}).flatMap(([tag, values]) => (values || []).filter((v) => !scenes.some((sc) => shows(sc, tag, v))).map((v) => `${tag} "${v}"`));
 }
 
-export function planVisuals({ count, scenes, audience, seed = "batch", mustShow = {}, catalogue = loadCatalogue(), ratio = "1x1", exclude = {}, ages = null, mix = null, lean = [] }) {
+export function planVisuals({ count, scenes, audience, seed = "batch", mustShow = {}, catalogue = loadCatalogue(), ratio = "1x1", exclude = {}, ages = null, mix = null, lean = [], womenTarget = null }) {
   if (!count) return [];
   const rand = rngFrom(`${seed}|visuals`);
   const shuffle = (xs) => { const a = [...xs]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -355,10 +358,15 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
     const low = Math.min(...(vals || []).map((v) => shownCount(tag, v)));
     return n + (vals || []).filter((v) => shows(sc, tag, v)).reduce((m, v) => m + (shownCount(tag, v) - low), 0);
   }, 0);
+  // Women first, for an advert that is for anyone: `womenTarget` photos show women alone; a scene that shows them is preferred
+  // until that many do, and once the other photos have their number a scene with men in it waits its turn. Above general
+  // variety and a lean, below the age and a scene never repeating.
+  let nWomen = 0;
   for (let i = 0; i < count; i++) {
     let pick = null;
     for (const s of suits) {
       if (left && !(left[formatOf(s)] > 0)) continue; // this format has its photos
+      const who = womenTarget == null ? null : whoIn(s), steer = womenTarget == null ? 0 : who === "women" ? (nWomen < womenTarget ? 1 : 0) : (i - nWomen >= count - womenTarget ? -1 : 0);
       const asked = wanted.filter((w) => !w.done && shows(s, w.tag, w.value)).length;
       const novelty = Object.entries(VARIETY_WEIGHTS).reduce((n, [k, w]) => n + (s[k] != null && !seen[k].has(s[k]) ? w : 0), 0)
         // Once every value has appeared, keep them even: a fourth older man counts against a scene.
@@ -373,7 +381,7 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
       // The photo's target age (the bell curve): a scene of that age band first, one of another band last.
       const ageFit = ages && s.age ? (s.age === ageBand(ages[i]) ? 1 : -1) : 0;
       // A repeated scene is worst; then less new; then a busier layout. Ties keep the seeded order.
-      const score = -usedS.get(s) * 100000 + testing * 6000 + ageFit * 3000 + asked * 1000 + leaning * 500 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
+      const score = -usedS.get(s) * 100000 + testing * 6000 + ageFit * 3000 + steer * 2000 + asked * 1000 + leaning * 500 - tilt * 200 + novelty * 10 - usedL.get(la) * 4;
       if (!pick || score > pick.score) pick = { la, s, score };
     }
     if (!pick) throw new Error("no scene in the library fits any layout the batch can use");
@@ -382,6 +390,7 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
     for (const k of Object.keys(VARIETY_WEIGHTS)) if (pick.s[k] != null) { seen[k].add(pick.s[k]); uses[k].set(pick.s[k], (uses[k].get(pick.s[k]) || 0) + 1); }
     for (const w of wanted) if (shows(pick.s, w.tag, w.value)) w.done = true;
     for (const l of leans) if (ofKind(l, pick.s)) l.n++;
+    if (womenTarget != null && whoIn(pick.s) === "women") nWomen++;
     const tags = Object.fromEntries(["exercise", ...Object.keys(SCENE_TAGS), ...Object.keys(PORTRAIT_TAGS), "eye_contact"].filter((k) => pick.s[k] != null).map((k) => [k, pick.s[k]]));
     out.push({ id: `g${String(i + 1).padStart(2, "0")}`, treatment: pick.la, scene: pick.s.scene, scene_id: pick.s.id || null, pose: pick.s.pose, people: pick.s.people, ...(formatOf(pick.s) !== "workout" ? { format: formatOf(pick.s) } : {}), tags, ...(ages ? { age: ages[i] } : {}), look: CHECK_LOOK });
     Object.defineProperty(out.at(-1), "src", { value: pick.s, enumerable: false }); // for the even-spread rule; not written out
@@ -397,6 +406,7 @@ export function planVisuals({ count, scenes, audience, seed = "batch", mustShow 
   }
   const notShown = [...leftOut, ...wanted.filter((w) => !w.done).map((w) => `${w.tag} "${w.value}"`)];
   if (notShown.length) out.notShown = notShown; // no scene shows it, or too few photos for everything asked
+  if (womenTarget != null) out.women = { target: womenTarget, photos: nWomen, scenes: suits.filter((s) => whoIn(s) === "women").length };
   if (leans.length) out.leaned = leans.map(({ tag, value, format, n, cap, shown, test }) => ({ tag, value, ...(format ? { format } : {}), ...(test ? { test: true } : {}), photos: n, cap, shown })); // how far each lean was followed
   return out;
 }
@@ -437,7 +447,10 @@ export function growBatch({ brandDir, brief, add, outDir = null, scenesPath = nu
     return unused.length ? unused : all;
   });
   const seed = `${brief.seed || brief.batch_id}|more${old.length}`;
-  const extra = planVisuals({ count: n, scenes, audience, seed, catalogue, ratio, exclude: excludeFromProfile(profile.creative), ages: ageTargets({ range: brief.age_range, count: n, seed }), mix: add, lean: brief.lean || [] })
+  // An advert for anyone leans toward women across the whole batch: the new photos make up what the ones it has are short of.
+  const womenHave = old.filter((v) => whoIn(v.scene) === "women").length;
+  const womenTarget = audience === "any" ? Math.max(0, Math.min(n, Math.round(WOMEN_SHARE * (old.length + n)) - womenHave)) : null;
+  const extra = planVisuals({ count: n, scenes, audience, seed, catalogue, ratio, exclude: excludeFromProfile(profile.creative, { ratio, catalogue }), ages: ageTargets({ range: brief.age_range, count: n, seed }), mix: add, lean: brief.lean || [], womenTarget })
     .map((v, i) => ({ ...v, id: `g${String(old.length + i + 1).padStart(2, "0")}` }));
   const mix = {}; for (const v of [...old, ...extra]) mix[v.format || "workout"] = (mix[v.format || "workout"] || 0) + 1;
   const spendPath = join(out, "spend.json"), spent = existsSync(spendPath) ? JSON.parse(readFileSync(spendPath, "utf-8")).image_calls : JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).image_calls ?? 0;
@@ -642,7 +655,7 @@ export function progressWriter(out, base) {
  * Run a batch. Injectable for tests: generate, check (a generated photo's check), checkPhoto (a real
  * photo's tiled check), checkRef, compositor, gallery (builds gallery.html), log.
  */
-export async function runBatch({ brandDir, brief, outDir = null, dryRun = false, renderOnly = false, approveScenes: confirmScenes = false, scenesPath = null, deps = {}, log = console.log }) {
+export async function runBatch({ brandDir, brief, outDir = null, dryRun = false, renderOnly = false, keepVideos = false, approveScenes: confirmScenes = false, scenesPath = null, deps = {}, log = console.log }) {
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
   // The reference palettes, the gym's brand palettes, or both (creative_defaults.palettes).
   // The batch's look family (its own, else the gym's default) picks the catalogue; the feed ad's shape likewise.
@@ -652,7 +665,6 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   const errs = validateBrief(brief, { brandDir, catalogue });
   if (errs.length) throw new Error(`the brief cannot run:\n- ${errs.join("\n- ")}`);
   const looks = brief.looks_per_photo ?? 2, seed = brief.seed || brief.batch_id;
-  const exclude = excludeFromProfile(profile.creative);
   const audience = brief.audience ?? null;
   const texts = brief.locations.map((location) => ({ location, audience, offer: brief.offer, free: brief.free === true }));
   const photography = profile.brand_lock?.photography || {};
@@ -668,6 +680,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   const mix = batchMix(brief, profile), format = mixName(mix) || brief.format || "workout";
   const made = madeShape(out);
   const ratio = made || brief.ratio || profile.creative_defaults?.ratio || CREATIVE_DEFAULTS.ratio;
+  const exclude = excludeFromProfile(profile.creative, { ratio, catalogue });
   if (made && brief.ratio && brief.ratio !== made) log(`· this batch was made at ${made.replace("x", ":")} and keeps that shape (the brief asked for ${brief.ratio.replace("x", ":")})`);
   mkdirSync(out, { recursive: true });
   const at = (p) => (existsSync(join(brandDir, "brand-assets", p)) ? join(brandDir, "brand-assets", p) : resolve(p));
@@ -710,7 +723,8 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     if (visuals.length !== g) throw new Error(`the brief cannot run:\n- this batch keeps what it has made, and its plan on disk has ${visuals.length} photo(s) where the brief asks for ${g}`);
     log(`· this batch keeps what it has made: the plan on disk (${visuals.length} photos) is used as it is`);
   } else if (renderOnly && existsSync(plannedPath)) visuals = JSON.parse(readFileSync(plannedPath, "utf-8")).visuals;
-  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: directed || !spreadable ? {} : brief.must_show, catalogue, ratio, exclude, ages: ageTargets({ range: brief.age_range, count: g, seed }), mix: quota, lean: directed ? [] : brief.lean || [] });
+  else visuals = planVisuals({ count: g, scenes, audience: sceneAudience(audience, brief.scene_audience), seed, mustShow: directed || !spreadable ? {} : brief.must_show, catalogue, ratio, exclude, ages: ageTargets({ range: brief.age_range, count: g, seed }), mix: quota, lean: directed ? [] : brief.lean || [], womenTarget: !directed && sceneAudience(audience, brief.scene_audience) === "any" ? Math.round(WOMEN_SHARE * g) : null });
+  if (visuals.women) log(`· for anyone, leaning toward women: ${visuals.women.photos} of ${g} photo${g === 1 ? "" : "s"} show women (${visuals.women.target} wanted)${visuals.women.photos < visuals.women.target ? ` — the library has ${visuals.women.scenes} such scene${visuals.women.scenes === 1 ? "" : "s"} for this batch: draft more on Draft Scenes` : ""}`);
   if (directed && brief.lean?.length) log("· the lean is ignored for a directed batch: its reference or words decide what the photos show");
   if (visuals.leaned) log(`· leaning on what earns leads: ${visuals.leaned.map((l) => l.shown ? `${leanName(l)} in ${l.photos} photo${l.photos === 1 ? "" : "s"}` : `${leanName(l)} — no approved scene shows it`).join("; ")}`);
   if (visuals.notShown) log(`  note: not everything asked for is shown — left out: ${visuals.notShown.join(", ")}`);
@@ -815,6 +829,8 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       const rep = await generateVisuals({
         visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio, shotGuide: deps.shotGuide !== undefined ? deps.shotGuide : readShotGuide(),
         refs: reference ? [at(reference)] : [], roomRefs: Object.fromEntries(Object.entries(profile.creative_defaults?.room_references || {}).filter(([, p]) => typeof p === "string" && existsSync(at(p))).map(([k, p]) => [k, at(p)])), maxCalls: left, attempts: plan.attempts,
+        // On the feed shape of the reference family the words keep off the model: a photo that misses its own layout is kept for a place that fits, not made again.
+        layoutRetry: !(ratio === "4x5" && look !== "formula"),
         // The gym's image model (creative_defaults.image_model, Pro by default); tests inject their own.
         generate: deps.generate || ((p, parts, o) => generateImage(p, parts, { ...o, model: imageModelFor(profile) })), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
         onProgress: (e) => {
@@ -847,12 +863,13 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
 
     // ── 3 fit ──
     prog.set({ stage: "fit", calls });
-    const allowed = {}, focus = {}, faces = {};
+    const allowed = {}, focus = {}, faces = {}, peopleOf = {};
+    const validBox = (b) => (Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && v >= 0 && v <= 1000) && b[0] < b[2] && b[1] < b[3] ? b : null);
     for (const p of photos) {
       const fit = fitLayouts(p.answer, { ratio, imageSize: imageSize(readFileSync(p.file)), expectPeople: p.expectPeople, maxPeople: p.maxPeople, catalogue });
       allowed[p.id] = Object.keys(fit).filter((id) => fit[id].ok && !(exclude.layouts || []).includes(id));
       focus[p.id] = Object.fromEntries(Object.entries(fit).map(([id, f]) => [id, f.focus]));
-      faces[p.id] = p.answer.face_boxes || [];
+      faces[p.id] = p.answer.face_boxes || []; peopleOf[p.id] = validBox(p.answer.people_box);
       p.fit = Object.fromEntries(Object.entries(fit).map(([id, f]) => [id, f.ok ? "ok" : f.failures.join("; ")]));
     }
     for (const p of photos) if (p.primary && !allowed[p.id].includes(p.primary)) log(`  ${p.id}: passed its own check but not its layout's fit at the batch ratio`);
@@ -872,7 +889,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
         // ── 5 render ──
         prog.set({ stage: "render" });
         const fileOf = Object.fromEntries(photos.map((p) => [p.id, p.file]));
-        results = await renderPlan(browser, planned, { texts, imageFor: (id) => fileOf[id], facesFor: (id) => faces[id], focusFor: (id, la) => focus[id]?.[la] || null, catalogue });
+        results = await renderPlan(browser, planned, { texts, imageFor: (id) => fileOf[id], facesFor: (id) => faces[id], peopleFor: (id) => peopleOf[id] || null, focusFor: (id, la) => focus[id]?.[la] || null, catalogue });
       }
       // ── 5b cards ── text-led ads: the gym's reviews, statements and timelines set on a plain card, for the feed and for Stories.
       if (cardCount(brief.cards)) {
@@ -880,7 +897,8 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
         cardRenders = await renderBatchCards(browser, { brandDir, brief, profile, seed, audience, log });
       }
       // ── 5c videos ── a presenter talking to camera: one kept script each, made once for every location. The only step that makes video.
-      if (videoCount(brief.videos)) {
+      if (videoCount(brief.videos) && keepVideos) log("· the videos are left exactly as they are (--keep-videos): nothing is filmed and nothing is cut again");
+      else if (videoCount(brief.videos)) {
         if (ratio !== "4x5") throw new Error("videos are made for a 4:5 batch (they are 9:16 themselves): this batch was made as a square before, so it takes none");
         prog.set({ stage: "videos" });
         videoRun = await renderBatchVideos(browser, { brandDir, out, brief, profile, seed, audience, log, prog, models: deps.videoModels || null });
@@ -890,7 +908,19 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
     // ── 6 gallery ──
     prog.set({ stage: "gallery" });
     const old = existsSync(join(out, "batch.json")) ? JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")) : null;
-    for (const a of old?.ads || []) rmSync(join(out, a.folder), { recursive: true, force: true }); // only folders this batch made before
+    // The videos left as they are (keepVideos): their ads, folders and record are carried over untouched.
+    const heldVideos = keepVideos ? (old?.ads || []).filter((a) => a.video_file && existsSync(join(out, a.video_file))) : [];
+    // A picture ad's Stories version outlives a run that leaves its look, photos and words as they were (2026-11-17: every
+    // run removed the folders and the 9:16s with them, so Stories had to be made again after any Run again). It is set
+    // aside here and put back once the ad is written; an ad that changed, or is gone, loses it as before.
+    const adKey = (a) => JSON.stringify([a.folder, a.candidate, a.location, a.treatment, a.style, a.palette, a.photos, a.words]);
+    const aside = join(out, ".stories-held"), heldStories = new Map();
+    rmSync(aside, { recursive: true, force: true });
+    for (const a of old?.ads || []) {
+      if (a.video_file || a.card || !existsSync(join(out, a.folder, "9x16"))) continue;
+      mkdirSync(aside, { recursive: true }); renameSync(join(out, a.folder, "9x16"), join(aside, a.folder)); heldStories.set(adKey(a), a.folder);
+    }
+    for (const a of old?.ads || []) if (!heldVideos.includes(a)) rmSync(join(out, a.folder), { recursive: true, force: true }); // only folders this batch made before
     // A batch that keeps what it has made: an ad that was there keeps its number (its folder is what the picks, the Stories
     // versions and the publish record know it by); a new one takes the next number after the last.
     const keptNo = new Map((brief.keep_made === true ? old?.ads || [] : []).map((a) => [`${a.candidate}|${a.location}`, Number(String(a.folder).split("-")[0])]));
@@ -911,9 +941,15 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
         replaced: c.replaced || null,
         // How much of the picture the words cover (2026-11-11), measured from the render itself: the boxes of its lines over the canvas.
         ...(() => { const rep = c.renders[a.location_index].r.report, [W, H] = rep?.canvas || []; if (!W || !H || !rep.blocks?.length) return {}; return { text_cover: Math.round((rep.blocks.reduce((t, b) => t + (b.rect ? b.rect.w * b.rect.h : 0), 0) / (W * H)) * 1000) / 1000 }; })(),
+        // How much of the person below the face the words cover (2026-11-17): the same render's own measure, null for a collage or panels.
+        ...(typeof c.renders[a.location_index].r.body_cover === "number" ? { body_cover: c.renders[a.location_index].r.body_cover } : {}),
       };
     });
     const failed = results.filter((r) => r.failed).map((r) => ({ candidate: r.id, photo: r.visual, failures: r.failed }));
+    let storiesBack = 0;
+    for (const a of ads) { const from = heldStories.get(adKey(a)); if (from && existsSync(join(aside, from))) { renameSync(join(aside, from), join(out, a.folder, "9x16")); storiesBack++; } }
+    rmSync(aside, { recursive: true, force: true });
+    if (heldStories.size) log(`· Stories versions: ${storiesBack} kept with their ads${heldStories.size > storiesBack ? `, ${heldStories.size - storiesBack} dropped (the ad changed its look or words, or is gone)` : ""}`);
     // The cards join the batch's ads after its photo ads, numbered on: each carries its kind as its format, what it was
     // made from, and its own Stories file (a card's 9:16 is set with it, at no cost).
     let cardNo = 101 + ads.length;
@@ -939,11 +975,14 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
       ads.push({ folder, file: poster, video_file: video, candidate: v.id, location: v.area, location_index: li, photos: [], photo_files: [], treatment: paper ? "video-paper" : active ? "video-presenter-active" : "video-presenter", style: "video", palette: null, ratio: "9x16", format: "presenter-video",
         video: { kind: paper ? "paper" : active ? "active" : "presenter", ...(active ? { moves: v.moves || [] } : {}), script_id: v.script_id, style: v.style || null, pain: v.pain || null, seconds: v.seconds, words: v.words, notes: v.notes || [], parts: v.parts || [], ...(v.flags?.length ? { flags: v.flags } : {}) }, crop: [], words: { location: v.area, audience, offer: brief.offer, free: brief.free === true }, replaced: null });
     }
+    for (const a of heldVideos) ads.push(a);
+    if (keepVideos) for (const x of old?.failed || []) if (x.video) failed.push(x);
     // image_calls is what the batch has cost in all, across runs: a free re-render must not wipe out the
     // record of the calls that made its photos (the panel showed "0 image calls" after one).
     const batch = {
       batch_id: brief.batch_id, made: new Date().toISOString(), ratio, look, ...(brief.words_weight ? { words_weight: brief.words_weight } : {}), ...(cardRenders.length ? { cards: Object.fromEntries(["review", "statement", "timeline"].map((k) => [k, cardRenders.filter((c) => c.kind === k && !c.failed).length]).filter(([, n]) => n > 0)) } : {}), format, mix: Object.fromEntries(Object.keys(SCENE_FORMATS).map((f) => [f, photos.filter((p) => p.format === f).length]).filter(([, n]) => n > 0)), ...(brief.lean?.length && !directed ? { lean: brief.lean } : {}), image_calls: spent, image_calls_this_run: calls,
       photos: photos.map((p) => ({ id: p.id, kind: p.kind, file: p.source || p.file, primary: p.primary || null, scene_id: p.scene_id || null, ...(p.format ? { format: p.format } : {}), ...(p.notes?.length ? { notes: p.notes } : {}), allowed: allowed[p.id], fit: p.fit })),
+      ...(keepVideos && old?.videos ? { videos: old.videos, video_seconds: old.video_seconds, video_run: old.video_run } : {}),
       ...(videoRun ? { videos: Object.fromEntries([["presenter", "presenter"], ["active", "active"], ["paper", "paper"]].map(([k, kind]) => [k, new Set(videoRun.videos.filter((v) => !v.failed && (v.kind || "presenter") === kind).map((v) => v.id)).size]).filter(([k, n]) => n > 0 || k === "presenter")), video_seconds: videoRun.spent.seconds, video_run: videoRun.tally } : {}),
       ads, failed,
     };
@@ -978,18 +1017,18 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 if (isMain) {
   const { values: v } = parseArgs({ options: {
     "brand-dir": { type: "string" }, brief: { type: "string" }, out: { type: "string" },
-    "dry-run": { type: "boolean", default: false }, "render-only": { type: "boolean", default: false },
+    "dry-run": { type: "boolean", default: false }, "render-only": { type: "boolean", default: false }, "keep-videos": { type: "boolean", default: false },
     "approve-scenes": { type: "boolean", default: false },
   } });
   if (!v["brand-dir"] || !v.brief) {
-    console.error("Usage: plan-offer-batch.mjs --brand-dir <brands/x> --brief <batches/id/brief.json> [--dry-run] [--render-only] [--approve-scenes] [--out <dir>]");
+    console.error("Usage: plan-offer-batch.mjs --brand-dir <brands/x> --brief <batches/id/brief.json> [--dry-run] [--render-only] [--keep-videos] [--approve-scenes] [--out <dir>]");
     process.exit(1);
   }
   const brandDir = resolve(v["brand-dir"]);
   const briefPath = [resolve(v.brief), join(brandDir, v.brief)].find(existsSync);
   if (!briefPath) { console.error(`brief not found: ${v.brief}`); process.exit(1); }
   try {
-    const r = await runBatch({ brandDir, brief: JSON.parse(readFileSync(briefPath, "utf-8")), outDir: v.out, dryRun: v["dry-run"], renderOnly: v["render-only"], approveScenes: v["approve-scenes"] });
+    const r = await runBatch({ brandDir, brief: JSON.parse(readFileSync(briefPath, "utf-8")), outDir: v.out, dryRun: v["dry-run"], renderOnly: v["render-only"], keepVideos: v["keep-videos"], approveScenes: v["approve-scenes"] });
     if (!r.dryRun) console.log(`gallery: ${join(r.out, "gallery.html")}`);
     exitWhenWritten(0);
   } catch (e) {

@@ -301,7 +301,13 @@ test("B4 the planner only picks layouts each photo can carry; a generated photo'
       assert.equal(new Set(on.map((c) => c.treatment)).size, on.length, "a photo never repeats a layout");
     }
   }
-  assert.throws(() => assignVariants({ visuals: [{ id: "g01" }], perVisual: 2, allowed: { g01: ["t1-bottom-stack"] } }), /could not find an unused look for photo g01 among the layouts it can carry \(t1-bottom-stack\)/);
+  // A photo with one place for its words and nowhere else (2026-11-17, the words keep off the model): its second look takes that
+  // place again in another type and pairing, rather than the batch losing the ad or the plan being refused.
+  const one = assignVariants({ visuals: [{ id: "g01" }], perVisual: 2, allowed: { g01: ["t1-bottom-stack"] } }).candidates;
+  assert.deepEqual([one.map((c) => c.treatment), new Set(one.map((c) => c.style)).size, new Set(one.map((c) => c.palette)).size], [["t1-bottom-stack", "t1-bottom-stack"], 2, 2]);
+  // A photo no layout can carry gets no look, and the plan says so.
+  const none = assignVariants({ visuals: [{ id: "g01" }, { id: "g02" }], perVisual: 2, allowed: { g01: [], g02: ["t1-bottom-stack"] } });
+  assert.ok(none.candidates.every((c) => c.visual === "g02") && none.notes.some((n) => /g01: no look — no layout keeps its words off the model/.test(n)), JSON.stringify(none.notes));
   // A small batch leaves most palettes unused because it has few ads, not because of colour: say so only when a palette really clashed.
   const grey = { overall: { hue: 0, strength: 0 }, layouts: Object.fromEntries(Object.keys(CAT.treatments.treatments).map((k) => [k, { hue: 0, strength: 0, cells: [] }])) };
   const small = assignVariants({ visuals: [{ id: "r01" }, { id: "r02" }], perVisual: 2, text: { audience: "MEN" }, photoStats: [grey, grey], seed: "n" });
@@ -461,8 +467,10 @@ test("B7e a photo whose own layout's ad does not verify still joins the batch, w
     const compositor = { async compose(file, faces, v) { return v.id.startsWith("g01") ? { ok: false, failures: ['"duration" covers a face (face 1)'] } : { ok: true, failures: [] }; }, async close() {} };
     const deps = { ...fakes(calls), browser, compositor };
     const r = await runBatch({ brandDir: dir, brief: { ...BRIEF, max_calls: 4, attempts: 2 }, deps, log: (m) => logs.push(m) });
-    assert.equal(calls.length, 3, "g01 twice (its retry), g02 once");
-    assert.ok(logs.some((l) => /g01: g01-a2\.png passes the picture checks; its own layout did not work out .* kept for the layouts it fits/.test(l)), logs.join(" | "));
+    // On the feed shape a good photo that misses its own layout is not made again (2026-11-17: the words keep off the model, and
+    // that rule must never cost an image call): it is kept for a place that fits.
+    assert.equal(calls.length, 2, "g01 once — no retry for its layout — and g02 once");
+    assert.ok(logs.some((l) => /g01: g01\.png passes the picture checks; its own layout did not work out .* kept for the layouts it fits/.test(l)), logs.join(" | "));
     const g01 = r.batch.photos.find((p) => p.id === "g01");
     assert.ok(g01, "g01 is in the batch");
     assert.equal(g01.primary, null, "with no primary look");
@@ -476,7 +484,7 @@ test("B7e a photo whose own layout's ad does not verify still joins the batch, w
     delete pics.g01.checks; writeFileSync(join(r.out, "pictures.json"), JSON.stringify(pics));
     const logs2 = [];
     const r2 = await runBatch({ brandDir: dir, brief: { ...BRIEF, max_calls: 4, attempts: 2 }, deps, log: (m) => logs2.push(m) });
-    assert.equal(calls.length, 3, "no new call");
+    assert.equal(calls.length, 2, "no new call");
     assert.ok(logs2.some((l) => /g01: g01(-a2)?\.png passes the picture checks; its own layout did not work out — kept for the layouts it fits/.test(l)), logs2.join(" | "));
     assert.equal(r2.batch.photos.find((p) => p.id === "g01").primary, null);
     assert.equal(JSON.parse(readFileSync(join(r.out, "pictures.json"), "utf-8")).g01.checks, CHECKS_VERSION);
@@ -1265,8 +1273,27 @@ test("B19 more photos for a batch that has its ads (2026-11-17, the owner, on a 
     // A later run (a video line filmed again, new words) changes nothing and makes nothing.
     const m = calls.length, third = await runBatch({ brandDir: dir, brief: grown.brief, deps, log: say });
     assert.deepEqual([calls.length - m, third.batch.ads.map((a) => [a.folder, a.candidate, a.treatment, a.style, a.palette, a.photos.join("+"), sha(third.out, a)])], [0, now]);
+    // A picture ad's Stories version outlives a run that leaves the ad as it was (2026-11-17: every run used to remove it with the folder).
+    const story = join(third.out, now[0][0], "9x16"); mkdirSync(story, { recursive: true }); writeFileSync(join(story, "c01_9x16_v1.png"), "the story");
+    // The videos left as they are (--keep-videos): a video ad on record is carried over untouched — its folder, its file, its place in the batch.
+    const vfolder = "190-v01-bishan-presenter-video", vfile = join(vfolder, "9x16", "v01-bishan_9x16_v1.mp4"), vposter = join(vfolder, "9x16", "v01-bishan_9x16_v1.jpg");
+    mkdirSync(join(third.out, vfolder, "9x16"), { recursive: true }); writeFileSync(join(third.out, vfile), "the video"); writeFileSync(join(third.out, vposter), "its frame");
+    const bj = JSON.parse(readFileSync(join(third.out, "batch.json"), "utf-8"));
+    const vad = { folder: vfolder, file: vposter, video_file: vfile, candidate: "v01", location: "BISHAN", location_index: 0, photos: [], photo_files: [], treatment: "video-presenter", style: "video", palette: null, ratio: "9x16", format: "presenter-video", video: { kind: "presenter", script_id: "v-1", seconds: 20 }, crop: [], words: {}, replaced: null };
+    bj.ads.push(vad); bj.videos = { presenter: 1 }; bj.video_seconds = 20; writeFileSync(join(third.out, "batch.json"), JSON.stringify(bj));
+    const held = await runBatch({ brandDir: dir, brief: grown.brief, keepVideos: true, deps, log: say });
+    assert.equal(readFileSync(join(held.out, now[0][0], "9x16", "c01_9x16_v1.png"), "utf-8"), "the story", "the Stories version is still with its ad");
+    assert.ok(logs.some((l) => /· Stories versions: 1 kept with their ads$/.test(l)) && !existsSync(join(held.out, ".stories-held")), logs.slice(-6).join(" | "));
+    assert.deepEqual([held.batch.ads.length, held.batch.ads.at(-1), held.batch.videos, held.batch.video_seconds, readFileSync(join(held.out, vfile), "utf-8")], [7, vad, { presenter: 1 }, 20, "the video"], "the video ad is carried over as it was");
+    assert.deepEqual(held.batch.ads.slice(0, 6).map((a) => [a.folder, sha(held.out, a)]), now.map((x) => [x[0], x[6]]), "and the picture ads are what they were");
+    // Without it, a run whose brief asks for no video drops a video ad it did not make, as before.
+    const dropped = await runBatch({ brandDir: dir, brief: grown.brief, deps, log: say });
+    assert.deepEqual([dropped.batch.ads.length, existsSync(join(dropped.out, vfolder))], [6, false]);
     const words = await runBatch({ brandDir: dir, brief: { ...grown.brief, offer: "8 Week Strength Reset" }, renderOnly: true, deps, log: say });
     assert.deepEqual(words.batch.ads.map((a) => [a.folder, a.treatment, a.style, a.palette]), now.map((x) => [x[0], x[2], x[3], x[4]]), "new words: the same looks and folders");
+    // New words are a new ad: its old Stories version goes, and the log says so.
+    assert.ok(!existsSync(join(words.out, now[0][0], "9x16")) && logs.some((l) => /· Stories versions: 0 kept with their ads, 1 dropped \(the ad changed its look or words, or is gone\)/.test(l)), logs.slice(-6).join(" | "));
+    assert.ok(words.batch.ads.every((a) => typeof a.text_cover === "number"), "every picture ad records how much of the picture its words cover");
     // The plan on disk and the brief must agree: a hand-edited number is refused before anything is made.
     await assert.rejects(runBatch({ brandDir: dir, brief: { ...grown.brief, generated: 4, mix: { workout: 4 }, max_calls: 5 }, deps, log: say }), /keeps what it has made, and its plan on disk has 3 photo\(s\) where the brief asks for 4/);
   } finally { rmSync(dir, { recursive: true, force: true }); }

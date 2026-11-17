@@ -37,8 +37,8 @@ import { join, resolve, basename, dirname, extname } from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { execFileSync } from "child_process";
-import { loadCatalogue, launchBrowser, layoutFor, imageDataUrl } from "./render-composites.mjs";
-import { fitLayouts, imageSize } from "./check-visual.mjs";
+import { loadCatalogue, launchBrowser, layoutFor, imageDataUrl, renderComposite } from "./render-composites.mjs";
+import { fitLayouts, imageSize, judgeVisual } from "./check-visual.mjs";
 import { poseProblem } from "./visual-prompts.mjs";
 import { checkSibling } from "./check-quality.mjs";
 import { renderPlan } from "./assign-variants.mjs";
@@ -162,7 +162,188 @@ export const storiesFile = (feedFile, feed = "1x1") => feedFile.replace(`/${feed
 /** `only`: the candidates (c11) or folders of the kept ads to make Stories versions for — the rest of the
  *  batch's record is kept as it is. `fresh`: try a photo again even where its earlier attempts failed
  *  (the attempts on disk no longer count), for a single ad the owner wants another go at. */
-export async function runStories({ brandDir, batchId, batchDir = null, maxCalls = DEFAULT_MAX_CALLS, attempts = 2, dryRun = false, renderOnly = false, only = null, fresh = false, deps = {}, log = console.log }) {
+/**
+ * Whether a feed ad's Stories version is one of the designs (stories_designs: a tall photo with the words on its own
+ * top, else the feed photo with the words beside the model, else the feed photo with its top colour carried up) or goes
+ * the photo way below. The designs are for a feed ad of the reference family made at 4:5 with one photo, its words set
+ * on the photo or under it — and, in the run, for a generated photo only (a real photo's shape is its own).
+ */
+export function designed(ad, { feed, catalogue }) {
+  const T = catalogue.treatments;
+  if (feed !== "4x5" || catalogue.look === "formula" || !T.stories_designs || (ad.photos || []).length !== 1) return false;
+  const tr = T.treatments[ad.treatment]; if (!tr) return false;
+  const bg = layoutFor(tr, feed, T).background?.type || "single";
+  return bg === "single" || bg === "split";
+}
+/** A box on the feed photo (0–1000) as it lands in the 9:16 frame when the photo sits full width from `py` px down. */
+const inFrame = (box, py, ph, H) => (box ? [((py + (box[0] / 1000) * ph) / H) * 1000, box[1], ((py + (box[2] / 1000) * ph) / H) * 1000, box[3]] : null);
+/** The feed photo in the tall frame, full width from `py` px down, its own edge colours carried above and below it and the joins feathered: a PNG. */
+async function extendPhoto(browser, file, { py, W, H, feather = [220, 160] }) {
+  const { cdp, sessionId, work } = browser, page = join(work, `extend-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
+  writeFileSync(page, `<!doctype html><meta charset="utf-8"><canvas id="c" width="${W}" height="${H}"></canvas><script>
+    window.done = new Promise((res, rej) => { const im = new Image(); im.onerror = () => rej(new Error("photo did not load")); im.onload = () => {
+      const c = document.getElementById("c"), x = c.getContext("2d"), ph = Math.round(${W} * im.naturalHeight / im.naturalWidth), py = ${py};
+      const t = document.createElement("canvas"); t.width = ${W}; t.height = ph; const tx = t.getContext("2d"); tx.drawImage(im, 0, 0, ${W}, ph);
+      const avg = (y0, y1) => { const d = tx.getImageData(0, y0, ${W}, y1 - y0).data; let r = 0, g = 0, b = 0, n = 0; for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; } return "rgb(" + Math.round(r / n) + "," + Math.round(g / n) + "," + Math.round(b / n) + ")"; };
+      x.fillStyle = avg(0, 50); x.fillRect(0, 0, ${W}, py + ph / 2); x.fillStyle = avg(ph - 50, ph); x.fillRect(0, py + ph / 2, ${W}, ${H});
+      const top = py > 0 ? ${feather[0]} : 0, bot = py + ph < ${H} ? ${feather[1]} : 0, gr = tx.createLinearGradient(0, 0, 0, ph);
+      gr.addColorStop(0, top ? "rgba(0,0,0,0)" : "rgba(0,0,0,1)"); if (top) gr.addColorStop(top / ph, "rgba(0,0,0,1)"); if (bot) gr.addColorStop(1 - bot / ph, "rgba(0,0,0,1)"); gr.addColorStop(1, bot ? "rgba(0,0,0,0)" : "rgba(0,0,0,1)");
+      tx.globalCompositeOperation = "destination-in"; tx.fillStyle = gr; tx.fillRect(0, 0, ${W}, ph);
+      x.drawImage(t, 0, py); res(c.toDataURL("image/png"));
+    }; im.src = ${JSON.stringify(imageDataUrl(file))}; });
+  </script>`);
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: false }, sessionId);
+  const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `file://${page}` }, sessionId); await loaded;
+  const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression: "window.done", awaitPromise: true, returnByValue: true }, sessionId);
+  if (exceptionDetails || !result?.value) throw new Error("the photo could not be set in the tall frame");
+  return Buffer.from(result.value.split(",")[1], "base64");
+}
+
+/**
+ * Stories for one batch (2026-11-17, the owner's order: "D as first choice, if the new tall photo doesn't look good or it
+ * blocks the model, we go with C, then last resort B"). For each kept ad that takes a design (`designed`), in the
+ * catalogue's order: **tall** — a new 9:16 photo of the same people, made once per photo (one image call, one try, under
+ * the run's cap), checked like any photo and against the feed photo, used where its model keeps clear of the words' place;
+ * **side** — the feed photo in the middle of the frame with the words beside the model; **top** — the feed photo at the
+ * foot with its top colour carried up and the words on that. Every one is verified with the words off the model. The
+ * other ads (a collage, circles, a real photo, a square batch from before, the formula family) go the photo way
+ * (runStoriesPhotos) as they always did; `designs: false` sends every ad that way.
+ */
+export async function runStories(opts) {
+  const { brandDir, batchId, batchDir = null, maxCalls = DEFAULT_MAX_CALLS, dryRun = false, renderOnly = false, only = null, fresh = false, designs = true, deps = {}, log = console.log } = opts;
+  const out = batchDir || join(brandDir, "outputs", batchId);
+  if (designs === false || !existsSync(join(out, "batch.json")) || !existsSync(join(out, "selections.json"))) return runStoriesPhotos(opts);
+  const batch = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")), profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
+  const catalogue = catalogueFor(profile, null, { look: batch.look }), T = catalogue.treatments, feed = batch.ratio || "1x1", D = T.stories_designs;
+  const photoOf = Object.fromEntries(batch.photos.map((p) => [p.id, p]));
+  let chosen = resolveSelections(out).filter((a) => !a.card && !a.video_file);
+  if (only) { const want = new Set(only); chosen = chosen.filter((ad) => want.has(ad.candidate) || want.has(ad.folder)); }
+  if (only && chosen.length) log(`· only ${chosen.map((x) => x.folder).join(", ")}${fresh ? " — its tall photo is tried again" : ""}; the other ads' Stories versions stay as they are`);
+  const mine = (ad) => designed(ad, { feed, catalogue }) && photoOf[ad.photos[0]]?.kind === "generated";
+  const ads = chosen.filter(mine), rest = chosen.filter((ad) => !mine(ad));
+  if (!ads.length) return runStoriesPhotos(opts);
+  const order = D.order || ["tall", "side", "top"], pids = [...new Set(ads.map((a) => a.photos[0]))];
+  const storiesPath = join(out, "stories.json"), spendPath = join(out, "spend.json"), visualsDir = join(out, "visuals");
+  const readJson = (p) => (existsSync(p) ? JSON.parse(readFileSync(p, "utf-8")) : null);
+  const tallId = (pid) => `${pid}-${RATIO}-tall`;
+  const before = readJson(storiesPath)?.photos || {};
+  const settled = (pid) => { const r = before[tallId(pid)]; return !!r && !!r.file && existsSync(r.file) && (!fresh || r.status === "passed"); };
+  const toMake = order.includes("tall") && !renderOnly ? pids.filter((pid) => !settled(pid)) : [];
+  log(`· stories: ${ads.length} ad(s) on ${pids.length} photo(s) take a design — a tall photo first (${toMake.length} to make, one image call each${pids.length - toMake.length ? `, ${pids.length - toMake.length} on file` : ""}), else the words beside the model, else the photo's own colour carried up${rest.length ? `; ${rest.length} other ad(s) go the usual way` : ""}`);
+  const base = rest.length ? await runStoriesPhotos({ ...opts, only: rest.map((a) => a.folder) }) : null;
+  const plan = { ...(base?.plan || { photos: [], ads: [], generated: 0, real: 0 }), designed: ads.length, tall: toMake.length };
+  if (dryRun) return { out, plan, dryRun: true };
+
+  mkdirSync(visualsDir, { recursive: true });
+  const existing = readJson(storiesPath), prior = existing?.photos || {}, spend = readJson(spendPath) || {};
+  const spentBefore = spend.stories_image_calls ?? existing?.image_calls ?? 0;
+  const pictures = readJson(join(out, "pictures.json")) || {}, visualsById = Object.fromEntries((readJson(join(out, "visuals.json"))?.visuals || []).map((v) => [v.id, v]));
+  const brief = readJson(join(out, "brief.json")) || {};
+  const at = (p) => (existsSync(p) ? p : existsSync(join(brandDir, "brand-assets", p)) ? join(brandDir, "brand-assets", p) : resolve(p));
+  const photography = profile.brand_lock?.photography || {}, brandNames = [profile.display_name].filter(Boolean);
+  const [W, H] = T.canvas[RATIO];
+  let calls = 0;
+  const saveSpend = () => writeFileSync(spendPath, JSON.stringify({ ...spend, stories_image_calls: spentBefore + calls, stories_max_calls: maxCalls }, null, 2) + "\n");
+
+  // ── the tall photos: one try each, under the cap ──
+  const left = Math.max(0, maxCalls - spentBefore);
+  if (toMake.length && !left) log(`- the stories budget of ${maxCalls} image calls is spent: no tall photo is made; the ads take the feed photo`);
+  const making = toMake.slice(0, left);
+  if (toMake.length > making.length && left) log(`- the cap leaves ${left} image call(s): ${toMake.length - making.length} photo(s) get no tall photo and take the feed photo`);
+  if (making.length) {
+    const baseCheck = deps.check || checkPicture, sibling = deps.sibling || checkSibling, rulings = deps.rulings || loadRulings(brandDir);
+    // The batch's own checks, then — only when they pass — the same people as the feed photo.
+    const check = withRulings(async (file, o) => {
+      const pic = await baseCheck(file, o);
+      if (!pic.ok || !o.anchor) return pic;
+      let sb; try { sb = await sibling(o.anchor, file); } catch (e) { sb = { ok: false, failures: [`sibling check could not run: ${e.message}`], notes: [] }; }
+      return { ...pic, ok: sb.ok, failures: [...(pic.failures || []), ...sb.failures], notes: [...(pic.notes || []), ...(sb.notes || [])] };
+    }, rulings);
+    const reference = brief.reference || brief.real?.[0] || null;
+    const visuals = making.map((pid) => { const v = visualsById[pid] || {}; return { id: tallId(pid), for: pid, treatment: "st-tall", scene: v.scene, scene_id: v.scene_id, pose: v.pose, people: v.people, ...(v.format ? { format: v.format } : {}), tags: v.tags, ...(Number.isInteger(v.age) ? { age: v.age } : {}), anchor: at(photoOf[pid].file) }; }).filter((v) => v.scene);
+    const rep = await generateVisuals({
+      visuals, photography, brandNames, outDir: visualsDir, ratio: RATIO, shotGuide: deps.shotGuide !== undefined ? deps.shotGuide : readShotGuide(), refs: reference && existsSync(at(reference)) ? [at(reference)] : [], anchorFor: (v) => v.anchor,
+      maxCalls: left, attempts: 1, layoutRetry: false, generate: deps.generate || ((p, parts, o) => generateImage(p, parts, { ...o, model: imageModelFor(profile) })), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), compositor: null, log,
+      onProgress: (e) => { if (e.event === "generating") { calls = Math.max(calls, e.calls || 0); saveSpend(); } },
+    });
+    calls = Math.max(calls, rep.image_calls || 0); saveSpend();
+    for (const r of rep.results) {
+      const c = r.check;
+      prior[r.id] = { status: r.status === "passed" ? "passed" : "flagged", kind: "tall", for: r.for, treatment: "st-tall", file: r.file || null, checks: STORIES_CHECKS, answer: c?.placement ? { people_box: c.placement.people_box, face_boxes: c.faces || [], people_count: c.placement.people_count } : null, notes: c?.notes || [], failures: r.status === "passed" ? [] : c?.failures || (r.reason ? [r.reason] : []) };
+    }
+  }
+
+  // ── each ad: the first design that keeps its words off the model and verifies ──
+  const made = [], failed = [], used = { tall: 0, side: 0, top: 0 }, ext = new Map();
+  const browser = deps.browser || await launchBrowser();
+  try {
+    const extended = async (pid, which, py) => {
+      const key = `${pid}|${which}`; if (ext.has(key)) return ext.get(key);
+      const file = join(visualsDir, `${pid}-${RATIO}-ext-${which}.png`);
+      writeFileSync(file, await extendPhoto(browser, at(photoOf[pid].file), { py, W, H, feather: D.feather_px }));
+      ext.set(key, file); return file;
+    };
+    for (const ad of ads) {
+      const pid = ad.photos[0], feedFile = at(photoOf[pid].file), chk = pictures[pid]?.check, [iw, ih] = imageSize(readFileSync(feedFile)), ph = Math.round((W * ih) / iw);
+      const words = { location: ad.words.location, audience: ad.words.audience ?? null, offer: ad.words.offer, free: ad.words.free === true }, look = { palette: ad.palette, style: ad.style, ratio: RATIO, catalogue };
+      const feedTr = T.treatments[ad.treatment], feedL = layoutFor(feedTr, feed, T);
+      // The side columns of the feed shape, the ad's own first, set inside the Stories frame's live band.
+      const own = feedL.groups.find((g) => g.avoid), columns = [...(own ? [own] : []), ...["t3-right-column", "t6-left-column"].map((id) => layoutFor(T.treatments[id], feed, T).groups.find((g) => g.avoid)).filter((g) => g && (!own || g.region[0] !== own.region[0]))];
+      const sideLayout = (g0) => ({ no_touch: true, tall_type: true, contrast: { rim: true }, groups: [{ ...structuredClone(g0), region: [g0.region[0], D.side.column_y[0], g0.region[2], D.side.column_y[1]], avoid: D.side.avoid }], clear_zones: [] });
+      let done = null; const why = [];
+      for (const design of order) {
+        if (design === "tall") {
+          const rec = prior[tallId(pid)];
+          if (!rec || rec.status !== "passed" || !rec.file || !existsSync(rec.file) || !rec.answer) { why.push(rec ? `the tall photo did not pass its checks${rec.failures?.length ? ` (${rec.failures.join("; ")})` : ""}` : "no tall photo was made"); continue; }
+          // The words across the top of the tall photo where its top is free; else beside the model, in a column fitted to
+          // the side the model leaves free (the image model keeps the heads higher than it is asked to: 3 of the first 4).
+          const fit = judgeVisual({ ...rec.answer, text_items: [], excluded_items: [] }, { treatment: "st-tall", ratio: RATIO, imageSize: imageSize(readFileSync(rec.file)), bodyMax: T.body_cover?.max ?? null, expectPeople: true, catalogue });
+          const onTall = { image: rec.file, faces: [rec.answer.face_boxes || []], people: [rec.answer.people_box], ...words, ...look };
+          let r = fit.ok ? await renderComposite(browser, { ...onTall, focus: [fit.focus], treatment: "st-tall" }) : null, where = "top";
+          if (!r?.ok) for (const g0 of columns) {
+            const rs = await renderComposite(browser, { ...onTall, treatment: ad.treatment, treatmentSpec: { ...feedTr, family: "stories", layouts: { [RATIO]: sideLayout(g0) } } });
+            if (rs.ok) { r = rs; where = "side"; break; }
+          }
+          if (r?.ok) { done = { design, r, image: tallId(pid), file: rec.file, where }; break; }
+          why.push(`in the tall photo the model leaves no room for the words, above or beside (${fit.ok ? r.failures.join("; ") : fit.failures.join("; ")})`);
+        } else if (design === "side") {
+          if (ph > H * 0.72) { why.push("the feed photo is too tall to stand in the middle of the frame"); continue; }
+          const py = Math.round((D.side.photo_y_pct / 100) * H), image = await extended(pid, "mid", py);
+          let r = null;
+          for (const g0 of own ? [own] : columns) {
+            r = await renderComposite(browser, { image, faces: [(chk?.faces || []).map((b) => inFrame(b, py, ph, H))], people: [inFrame(chk?.placement?.people_box || null, py, ph, H)], ...words, treatment: ad.treatment, treatmentSpec: { ...feedTr, family: "stories", layouts: { [RATIO]: sideLayout(g0) } }, ...look });
+            if (r.ok) break;
+          }
+          if (r?.ok) { done = { design, r, image: basename(image, ".png"), file: image }; break; }
+          why.push(`beside the model: ${r ? r.failures.join("; ") : "no column to set the words in"}`);
+        } else if (design === "top") {
+          const py = Math.min(Math.round((D.top.photo_y_pct / 100) * H), H - ph), image = await extended(pid, "foot", py);
+          const g = { id: "main", region: D.top.region, anchor: "center", align: "center", gap_pct: 0.6, scrim: { direction: "none", fade_pct: 0 }, stack: D.stack };
+          const r = await renderComposite(browser, { image, faces: [(chk?.faces || []).map((b) => inFrame(b, py, ph, H))], people: [inFrame(chk?.placement?.people_box || null, py, ph, H)], ...words, treatment: ad.treatment, treatmentSpec: { ...feedTr, family: "stories", layouts: { [RATIO]: { no_touch: true, contrast: { rim: true }, groups: [g], clear_zones: [] } } }, ...look });
+          if (r.ok) { done = { design, r, image: basename(image, ".png"), file: image }; break; }
+          why.push(`the colour carried up: ${r.failures.join("; ")}`);
+        }
+      }
+      if (!done) { failed.push({ candidate: ad.candidate, folders: [ad.folder], failures: why }); log(`⚑ ${ad.folder}: no Stories design verified (${why.join(" · ")})`); continue; }
+      const sf = storiesFile(ad.file, feed);
+      mkdirSync(dirname(join(out, sf)), { recursive: true }); writeFileSync(join(out, sf), done.r.png);
+      used[done.design]++;
+      made.push({ folder: ad.folder, file: sf, file_1x1: ad.file, candidate: ad.candidate, location: ad.location, photos: [done.image], photo_files: [basename(done.file)], treatment: ad.treatment, style: ad.style, palette: ad.palette, ratio: RATIO, crop: [[0.5, 0.5]], words: ad.words, design: done.design, ...(done.where ? { placed: done.where } : {}), ...(why.length ? { passed_over: why } : {}) });
+      if (why.length) log(`· ${ad.folder}: ${done.design === "side" ? "the words beside the model" : done.design === "top" ? "the photo's colour carried up" : "the tall photo"} — ${why.join(" · ")}`);
+    }
+  } finally { if (!deps.browser) await browser.close(); }
+
+  // The record: these ads' entries replaced, everything else as it stands (the photo way's own ads, failures and photos).
+  const now = readJson(storiesPath), folders = new Set(ads.map((a) => a.folder)), keep = (list) => (now?.[list] || []).filter((x) => !(x.folders || [x.folder]).some((f) => folders.has(f)));
+  const stories = { batch_id: batch.batch_id, made: new Date().toISOString(), ratio: RATIO, image_calls: spentBefore + calls, image_calls_this_run: calls + (base?.calls || 0), max_calls: maxCalls, photos: { ...(now?.photos || {}), ...Object.fromEntries(Object.entries(prior).filter(([, r]) => r.kind === "tall")) }, ads: [...keep("ads"), ...made], failed: [...keep("failed"), ...failed], left_out: keep("left_out") };
+  writeFileSync(storiesPath, JSON.stringify(stories, null, 2) + "\n");
+  (deps.gallery || ((dir) => execFileSync(process.execPath, [join(HERE, "gallery-selector.mjs"), "--output-dir", dir], { stdio: "ignore" })))(out);
+  log(`· ${made.length} Stories version(s): ${used.tall} on a tall photo, ${used.side} with the words beside the model, ${used.top} with the photo's colour carried up${failed.length ? `; ${failed.length} did not verify and are left out` : ""}; ${calls} image call(s) for tall photos this run`);
+  return { out, plan, stories, calls: calls + (base?.calls || 0), results: base?.results || [], used };
+}
+
+/** The photo way: a native 9:16 photo for each single-photo look (or a band of the feed ad's crop), collage and panels from the batch's photos. */
+export async function runStoriesPhotos({ brandDir, batchId, batchDir = null, maxCalls = DEFAULT_MAX_CALLS, attempts = 2, dryRun = false, renderOnly = false, only = null, fresh = false, deps = {}, log = console.log }) {
   const out = batchDir || join(brandDir, "outputs", batchId);
   if (!existsSync(join(out, "batch.json"))) throw new Error(`no finished batch at ${out}`);
   if (!existsSync(join(out, "selections.json"))) throw new Error(`no selections.json in ${out}: open the gallery, pick, Save Selections, and put the file in the batch folder`);

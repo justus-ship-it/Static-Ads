@@ -43,11 +43,11 @@ export function makeCompositor(catalogue = loadCatalogue()) {
   let browser = null;
   const T = catalogue.treatments;
   return {
-    async compose(file, faces, v, text, ratio, out, focus) {
+    async compose(file, faces, v, text, ratio, out, focus, people = null) {
       const bg = layoutFor(T.treatments[v.treatment], ratio, T).background?.type || "single";
       if (bg !== "single") return { ok: true, skipped: "needs the batch's other photos" };
       browser ||= await launchBrowser();
-      const r = await renderComposite(browser, { image: file, faces: [faces || []], focus, ...text, treatment: v.treatment, style: v.look?.style, palette: v.look?.palette, ratio, catalogue });
+      const r = await renderComposite(browser, { image: file, faces: [faces || []], people: people ? [people] : null, focus, ...text, treatment: v.treatment, style: v.look?.style, palette: v.look?.palette, ratio, catalogue });
       if (r.png) writeFileSync(out, r.png);
       return { ok: r.ok, failures: r.failures, ad: r.png ? out : null, face_zones: r.report?.face_zones?.length ?? 0 };
     },
@@ -80,7 +80,7 @@ async function assess(file, v, { ratio, text, check, compositor, outDir, never =
   try { pic = await check(file, { treatment: v.treatment, ratio, expectPeople: v.people !== false, maxPeople: typeof v.people === "number" ? v.people : null, never, scene: v.scene, setting: v.tags?.setting ?? v.setting ?? null, format: v.format || "workout", anchor: v.anchor ?? null }); } catch (e) { pic = { ok: false, failures: [`check could not run: ${e.message}`] }; }
   let ad = null;
   if (pic.ok && text && compositor) {
-    try { ad = await compositor.compose(file, pic.faces, v, text, ratio, join(outDir, `${v.id}-ad.png`), pic.focus); } catch (e) { ad = { ok: false, failures: [`ad could not render: ${e.message}`] }; }
+    try { ad = await compositor.compose(file, pic.faces, v, text, ratio, join(outDir, `${v.id}-ad.png`), pic.focus, pic.placement?.people_box || null); } catch (e) { ad = { ok: false, failures: [`ad could not render: ${e.message}`] }; }
   }
   const failures = [...(pic.failures || []), ...(ad && !ad.ok ? ad.failures.map((f) => `finished ad: ${f}`) : [])];
   // Faces and the judged crop are kept: the batch planner renders every look with them.
@@ -105,7 +105,7 @@ export async function checkRefTiled(path, { never = [] } = {}) {
 /** `generate`, `check` and `compositor` are injectable, so the flow and the call budget can be tested offline.
  *  `onProgress(event)` hears each photo as it goes — { id, event: "generating" | "checking" | "tried" | "done",
  *  attempt, file, status, failures, notes, calls } — for the panel's Generating screen; it can never stop a run. */
-export async function generateVisuals({ visuals, text = null, photography = {}, shotGuide = null, brandNames = [], outDir, ratio = "1x1", refs = [], roomRefs = {}, anchorFor = null, maxCalls = visuals.length, attempts = 1, generate = generateImage, check = checkPicture, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log, onProgress = null }) {
+export async function generateVisuals({ visuals, text = null, photography = {}, shotGuide = null, brandNames = [], outDir, ratio = "1x1", refs = [], roomRefs = {}, anchorFor = null, maxCalls = visuals.length, attempts = 1, layoutRetry = true, generate = generateImage, check = checkPicture, checkRef = (p) => checkRefTiled(p, { never: photography.never || [] }), compositor = text ? makeCompositor() : null, log = console.log, onProgress = null }) {
   const tell = (e) => { try { onProgress?.(e); } catch {} };
   mkdirSync(outDir, { recursive: true });
   // A reference photo carrying lettering gets it copied into every visual, so it is refused first.
@@ -135,7 +135,9 @@ export async function generateVisuals({ visuals, text = null, photography = {}, 
     writeFileSync(join(outDir, `${v.id}.prompt.txt`), prompt + "\n");
     const tries = [];
     let final = null;
-    for (let attempt = 1; attempt <= attempts && !(final && final.status === "passed"); attempt++) {
+    // `layoutRetry: false` (the feed shape, where the words keep off the model): a good photo whose own layout did not work out is
+    // not made again — the batch gives it a place that fits — so a strict placement rule never costs an image call.
+    for (let attempt = 1; attempt <= attempts && !(final && final.status === "passed") && !(layoutRetry === false && tries.at(-1)?.picture_ok); attempt++) {
       if (calls >= maxCalls) {
         if (!tries.length) log(`- ${v.id}: skipped (budget of ${maxCalls} calls reached)`);
         final ||= { ...v, status: "skipped", reason: `call budget of ${maxCalls} reached` };

@@ -13,6 +13,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { countryRules, postalOk, profileCountry, COUNTRIES, validateProfile, profileCompleteness, PROFILE_STARTER, PROFILE_SCHEMA, CREATIVE_DEFAULTS, scaffold, brandRoles, brandPalettes, catalogueFor, contrast, PALETTE_MODES, calloutGender, pinFor, pinUsable, withPoint, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES, IMAGE_MODELS, imageModelFor, titleCase, KEEP_CAPS } from "./client-config.mjs";
 import { loadCatalogue } from "./render-composites.mjs";
+import { captionAccentProblems, captionAccentOf } from "./client-config.mjs";
+
+test("P24 a gym's own caption colour (2026-11-17, BFIT's corporate orange): a hex that reads on the captions' dark outline and is not white; anything else is refused at save", () => {
+  assert.deepEqual([captionAccentProblems("#D15334"), captionAccentProblems("#ffd84a"), captionAccentProblems(null)], [[], [], []]);
+  assert.match(captionAccentProblems("orange")[0], /must be a colour as #RRGGBB/);
+  assert.match(captionAccentProblems("#171D1A")[0], /too dark to read over a video/);
+  assert.match(captionAccentProblems("#F1F1F1")[0], /nearly white/);
+  const p = PROFILE_STARTER("bfit", "BFIT");
+  assert.equal(captionAccentOf(p), null, "none set: the standard yellow");
+  p.creative_defaults = { ...p.creative_defaults, caption_accent: "#d15334" };
+  assert.equal(captionAccentOf(p), "#D15334");
+  assert.ok(!validateProfile(p).errors.some((e) => /caption_accent/.test(e)));
+  p.creative_defaults.caption_accent = "#000000";
+  assert.ok(validateProfile(p).errors.some((e) => /creative_defaults\.caption_accent is too dark/.test(e)), JSON.stringify(validateProfile(p).errors));
+  assert.equal(captionAccentOf(p), null, "a colour that cannot be used is not used");
+});
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems, MAX_WORDINGS } from "./ad-wordings.mjs";
 
 const gymDir = () => {
