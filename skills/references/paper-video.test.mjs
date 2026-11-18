@@ -371,3 +371,41 @@ test("PP6 a coach's white-paper picture takes its room from the gym's own room p
     assert.deepEqual((({ seconds, images }) => [seconds, images])(paperNeeds({ gymDir: g, script, areas, profile, coach, room })), [0, 0]);
   } finally { await browser.close(); rmSync(d, { recursive: true, force: true }); }
 });
+
+test("PP7 the edit a white-paper script needs, proposed by the agent (2026-11-19): one text call told what is wrong, the rules and to make the smallest edit; the answer is checked in code and one that still breaks a rule is asked for once more, then not offered; the sheet about limited places is the owner's — a proposal that changes it is not offered, a script whose only fault is that sheet makes no call — and nothing is saved", async () => {
+  const { proposeSheetEdit, buildSheetEditPrompt } = await import("./paper-video.mjs");
+  const { d, g, profile } = gym();
+  try {
+    const file = join(g, "video-scripts.json"), own = addSheetScript(g, { sheets: GOOD, offer: OFFER }, { profile });
+    const never = async () => { throw new Error("never asked"); };
+    await assert.rejects(proposeSheetEdit({ brandDir: g, id: own.id, libraryDir: d, ask: never }), /this script breaks no rule: nothing to propose/);
+    await assert.rejects(proposeSheetEdit({ brandDir: g, id: "p-nope", libraryDir: d, ask: never }), /no such white-paper script/);
+    // A kept script that a later rule catches: sheet 4 has words that are not plain.
+    const set = (fn) => { const data = JSON.parse(readFileSync(file, "utf-8")); fn(data.sheets.find((s) => s.id === own.id)); writeFileSync(file, JSON.stringify(data, null, 2)); };
+    set((s) => { s.sheets[3] = "You get guidance and accountability"; });
+    const before = readFileSync(file, "utf-8"), asked = [], fixed = GOOD.slice();
+    let r = await proposeSheetEdit({ brandDir: g, id: own.id, libraryDir: d, ask: async (img, p, schema) => { asked.push(p); assert.deepEqual(schema.required, ["sheets", "note"]); return { sheets: fixed, note: "Sheet 4 said in small words." }; } });
+    assert.deepEqual([r.sheets, r.changed, r.note, r.yours, r.calls], [GOOD, [4], "Sheet 4 said in small words.", [], 1]);
+    assert.ok(r.problems.length && r.problems.every((p) => /^sheet 4: /.test(p)), r.problems.join("; "));
+    assert.match(asked[0], /silent video advert for Test Gym's programme "12 Week Full Body Transformation"/); assert.match(asked[0], /\n4\. You get guidance and accountability\n/);
+    assert.match(asked[0], /WHAT IS WRONG WITH IT:\n- sheet 4: /); assert.match(asked[0], /Make the SMALLEST edit that mends this\. Keep every sheet that breaks no rule exactly as it is, word for word and in its place/);
+    assert.match(asked[0], /Never add a sheet about limited places, a number, a date or any fact about the gym/); assert.match(asked[0], /PLAIN WORDS: the reading level of a nine-year-old/);
+    assert.match(asked[0], /The last sheet is exactly this and nothing else: "Click the link below and we'll be in touch!"/);
+    assert.equal(readFileSync(file, "utf-8"), before, "nothing is saved: the owner approves it through the usual edit");
+    // Still broken the first time: asked once more, told what the answer broke.
+    const two = []; r = await proposeSheetEdit({ brandDir: g, id: own.id, libraryDir: d, ask: async (img, p) => { two.push(p); return two.length === 1 ? { sheets: GOOD.map((x, i) => (i === 3 ? "You get more vitality each day" : x)), note: "x" } : { sheets: GOOD, note: "y" }; } });
+    assert.deepEqual([r.calls, r.changed], [2, [4]]); assert.match(two[1], /WHAT IS WRONG WITH IT:\n- sheet 4: "vitality" is not a plain word/);
+    await assert.rejects(proposeSheetEdit({ brandDir: g, id: own.id, libraryDir: d, ask: async () => ({ sheets: GOOD.map((x, i) => (i === 3 ? "You get more vitality each day" : x)), note: "x" }) }), /the agent's edit still breaks a rule \(sheet 4: "vitality" is not a plain word — say "energy"\): edit the script yourself/);
+    // A sheet about limited places that stands on nobody's word yet: it is the owner's to settle, never the agent's to change.
+    const LIM = GOOD.map((x, i) => (i === 5 ? "But we have limited spots!" : x));
+    set((s) => { s.sheets = LIM.map((x, i) => (i === 3 ? "You get guidance and accountability" : x)); s.status = "kept"; s.scarce_ok = []; });
+    const seen = []; r = await proposeSheetEdit({ brandDir: g, id: own.id, libraryDir: d, ask: async (img, p) => { seen.push(p); return { sheets: LIM, note: "Sheet 4 said in small words." }; } });
+    assert.deepEqual([r.sheets, r.changed, r.yours.length], [LIM, [4], 1]); assert.match(r.yours[0], /sheet 6 says places are limited/); assert.ok(r.problems.every((p) => !/places are limited/.test(p)));
+    assert.match(seen[0], /Sheet 6 says places are limited: leave it exactly as it is, letter for letter/); assert.ok(!/places are limited \("limited spots"\)/.test(seen[0]), "the agent is not asked to mend the owner's sheet");
+    await assert.rejects(proposeSheetEdit({ brandDir: g, id: own.id, libraryDir: d, ask: async () => ({ sheets: LIM.map((x, i) => (i === 5 ? "Only 10 spots left!" : x)), note: "x" }) }), /the edit changed what the script says about limited places: that sheet is the owner's/);
+    await assert.rejects(proposeSheetEdit({ brandDir: g, id: own.id, libraryDir: d, ask: async () => ({ sheets: GOOD, note: "dropped it" }) }), /the edit changed what the script says about limited places/);
+    set((s) => { s.sheets = LIM; });
+    await assert.rejects(proposeSheetEdit({ brandDir: g, id: own.id, libraryDir: d, ask: never }), /what this script needs is yours to say, not the agent's: sheet 6 says places are limited/);
+    assert.match(buildSheetEditPrompt({ profile, script: { offer: OFFER, sheets: GOOD }, problems: ["sheet 2 is 9 words"], facts: ["Only 10 places"] }).prompt, /THE FACTS the owner has typed as true of this programme \(said as they are; state no other\):\n- Only 10 places/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

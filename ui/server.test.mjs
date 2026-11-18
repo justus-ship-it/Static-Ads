@@ -1492,6 +1492,29 @@ test("U21 creating on Facebook from the panel: refused without the Meta link, wi
     assert.ok(await ev("[...document.querySelectorAll('#view button.primary')].some(b=>/Continue creating on Facebook/.test(b.textContent) && !b.disabled)"));
     await ev("pbCreateConfirm(); true");
     assert.match(await ev("document.querySelector('#bModal').textContent"), /every object paused/);
+    // A full ad set (2026-11-18): Meta allows 50 ads in an ad set and counts paused ones, and an ad made again is a new ad
+    // beside its old one. The screen says it before anything is uploaded; archiving the replaced ads is the owner's tick,
+    // and the run takes it only when what was ticked is what is true now.
+    await ev("bClose(); true");
+    rec = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8"));
+    const fullSet = Object.keys(rec.adsets)[0]; rec.adsets[fullSet].on_meta = { ads: 50 }; writeFileSync(join(out, "publish.json"), JSON.stringify(rec, null, 2));
+    let full = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+    assert.deepEqual([full.room.by_adset[fullSet].over, full.room.archive, full.room.same], [false, 0, plan.counts.ads], "nothing to make again: a full ad set is no problem");
+    r = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { words: { message: "New words beside every ad, so each one is made again.", headline: "Six weeks" } } });
+    assert.equal(r.status, 200);
+    full = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+    const set = full.room.by_adset[fullSet], inSet = full.plan.ads.filter((x) => x.adset === fullSet).length;
+    assert.deepEqual([set.have, set.adds, set.after, set.over, set.replaced, set.short, full.room.archive, full.room.max], [50, inSet, 50 + inSet, true, inSet, 0, inSet, 50], JSON.stringify(full.room));
+    const again = { ads: full.plan.counts.ads, adsets: full.plan.counts.adsets, per_day: full.plan.budget.per_day_total };
+    r = await call("/api/run", { method: "POST", body: { kind: "batch-publish", gym: GYM, batch: BRIEF.batch_id, confirm: { ...again, archive: inSet + 1 } } });
+    assert.equal(r.status, 409); assert.match((await r.json()).error, /the old ads to archive are not what was confirmed/);
+    const reload = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u21b#/${GYM}/publish/${BRIEF.batch_id}` }, sessionId); await reload;
+    const t1 = Date.now(); while (Date.now() - t1 < 20000 && !(await ev("!!PB.data && !!PB.data.room && /On Facebook/.test(document.querySelector('#view')?.textContent||'')"))) await new Promise((x) => setTimeout(x, 120));
+    await ev("pbCreateConfirm(); true");   // the confirmation is where it is said, beside the button that would upload
+    const roomText = await ev("document.querySelector('#pbRoom')?.textContent || ''");
+    assert.match(roomText, /An ad set is full\. Facebook allows 50 ads in an ad set, and paused ones count/); assert.match(roomText, new RegExp(`holds 50 ads on Facebook and this adds ${inSet}`));
+    assert.match(roomText, /An archived ad can never be turned on again/); assert.match(roomText, /Without the tick nothing is uploaded/);
+    assert.deepEqual(await ev("(() => { const b = document.querySelector('#pbArchive'); return [b.checked, Number(b.dataset.n)]; })()"), [false, inSet], "the archive is never ticked for the owner");
   } finally { await panel.stop(); panel = main; graph.server.close(); }
 });
 
@@ -4407,4 +4430,112 @@ test("U66 Review Data → Videos · who presents and which kind (2026-11-18): th
     ["VIDEOS · WHO PRESENTS AND WHICH KIND", [["finding", "Mei: SGD 13.33 a lead over 30 leads, 35% under invented presenter (SGD 20.45 over 22)."]], ["Mei | 2 | 1 | SGD 400 | 30 | SGD 13.33 | 2.00% | solid · 20+ leads", "Invented presenter | 1 | 1 | SGD 450 | 22 | SGD 20.45 | 1.50% | solid · 20+ leads"], ["Talking · SGD 17.02 · solid · 20+ leads", "White paper · — · no lead yet"], false]);
   assert.match(await ev("document.querySelector('#u66box #rsVideos').innerText"), /Each video is one script filmed by one coach, so a coach's figure is also their scripts' figure/);
   assert.equal(await ev("videosCard({ videos: { ads: 0 } })"), "");
+});
+
+test("U67 Add photos to a batch that has its ads (2026-11-19): the route says what the batch can still take; a dry look says what adding comes to and writes nothing; the add itself is taken only when what was confirmed is what is true now, and then the plan on disk and the brief grow (keep_made) with every photo the batch had left as planned; a batch of added real-footage videos is refused for this and for every run but creating on Facebook, and its offer name is changed with nothing rendered; the page's dialog shows the numbers and offers no run for real footage", async () => {
+  const g = join(brands, GYM), scenesWas = existsSync(join(g, "scenes.json")) ? readFileSync(join(g, "scenes.json"), "utf-8") : null;
+  const sc = (id, ex, eq) => ({ id, audience: "men", pose: "upright", people: 1, scene: `A man doing a ${ex.replace(/-/g, " ")} on the gym floor, mid-rep.`, exercise: ex, age: "prime", setting: "solo", equipment: eq });
+  const lib = [sc("ga", "goblet-squat", "dumbbells"), sc("gb", "deadlift", "barbell"), sc("gc", "lunge", "bodyweight"), sc("gd", "shoulder-press", "dumbbells"), sc("ge", "squat", "barbell")];
+  writeFileSync(join(g, "scenes.json"), JSON.stringify({ approved: true, scenes: lib }));
+  const id = "grow-u", brief = { batch_id: id, ...WORDS, free: false, generated: 2, real: [], looks_per_photo: 2, max_calls: 2, attempts: 1, scenes: null, seed: "grow-u" };
+  const out = join(g, "outputs", id); mkdirSync(join(g, "batches", id), { recursive: true }); mkdirSync(out, { recursive: true });
+  writeFileSync(join(g, "batches", id, "brief.json"), JSON.stringify(brief, null, 2));
+  const planned = lib.slice(0, 2).map((s, i) => ({ id: `g0${i + 1}`, scene_id: s.id, scene: s.scene, format: "workout", treatment: "t1-bottom-stack", pose: s.pose, people: 1, tags: { exercise: s.exercise } }));
+  writeFileSync(join(out, "visuals.json"), JSON.stringify({ visuals: planned }, null, 2));
+  writeFileSync(join(out, "batch.json"), JSON.stringify({ batch_id: id, made: "2026-11-19T00:00:00Z", ratio: "4x5", image_calls: 2, photos: [], ads: [], failed: [] }));
+  writeFileSync(join(out, "spend.json"), JSON.stringify({ image_calls: 2 }));
+  try {
+    const url = `/api/client/${GYM}/batch/${id}/grow`, planText = readFileSync(join(out, "visuals.json"), "utf-8");
+    let r = await (await call(url)).json();
+    assert.ok(Array.isArray(r.kinds), JSON.stringify(r));
+    assert.deepEqual([r.have, r.max_more, r.why, r.max_photos, r.kinds.find((k) => k.format === "workout")], [2, 48, null, 50, { format: "workout", approved: 5, unused: 3 }]);
+    assert.equal((await call(url, { method: "POST", body: { add: {} } })).status, 400);
+    assert.equal((await call(url, { method: "POST", body: { add: { workout: 1.5 } } })).status, 400);
+    // A dry look: the numbers, the scenes it would use (none the batch has), nothing written.
+    let d = await call(url, { method: "POST", body: { add: { workout: 2 }, dry: true } }); assert.equal(d.status, 200); d = await d.json();
+    assert.deepEqual([d.photos, d.total, d.calls, d.scenes.length, d.scenes.every((s) => !["ga", "gb"].includes(s.scene)), d.scenes.map((s) => s.id)], [2, 4, 2, 2, true, ["g03", "g04"]]);
+    assert.equal(readFileSync(join(out, "visuals.json"), "utf-8"), planText, "a dry look writes nothing");
+    // Confirmed with other numbers: refused, nothing written.
+    r = await call(url, { method: "POST", body: { add: { workout: 2 }, confirm: { total: 5, calls: 2 } } });
+    assert.equal(r.status, 409); assert.match((await r.json()).error, /not what was confirmed/);
+    assert.equal(readFileSync(join(out, "visuals.json"), "utf-8"), planText);
+    // The page's dialog, on the dry numbers (nothing is added from it here).
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u67#/${GYM}/batch` }, sessionId); await loaded;
+    let t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(`!!document.querySelector('[data-grow="${id}"]')`))) await new Promise((x) => setTimeout(x, 120));
+    await ev(`bGrow(${JSON.stringify(id)}); true`);
+    t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!document.querySelector('#bGrowCard') && !!GROW.dry && !GROW.busy"))) await new Promise((x) => setTimeout(x, 120));
+    const card = await ev("document.querySelector('#bGrowCard').innerText");
+    assert.match(card, /Add photos to this batch/); assert.match(card, /keep their looks, their numbers and your picks/); assert.match(card, /5 approved scenes, 3 not in this batch yet/);
+    assert.deepEqual(await ev("[GROW.dry.photos, GROW.dry.total, GROW.dry.calls]"), [3, 5, 3], "it opens on what the batch has room and scenes for");
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+    // The add: the plan on disk and the brief grow; the photos the batch had are word for word what they were.
+    r = await call(url, { method: "POST", body: { add: { workout: 2 }, confirm: { total: 4, calls: 2 } } });
+    assert.equal(r.status, 200, JSON.stringify(await r.clone().json())); r = await r.json();
+    const after = JSON.parse(readFileSync(join(out, "visuals.json"), "utf-8")).visuals, saved = JSON.parse(readFileSync(join(g, "batches", id, "brief.json"), "utf-8"));
+    assert.deepEqual([after.slice(0, 2), after.length, after.slice(2).map((v) => v.id), saved.generated, saved.keep_made, saved.max_calls, r.brief.generated], [planned, 4, ["g03", "g04"], 4, true, 4, 4]);
+    assert.equal((await (await call(url)).json()).have, 4);
+
+    // Real footage, added as it is: no photos to add, no run but creating on Facebook, and the offer name changed with nothing made.
+    const fid = "footage-u", fout = join(g, "outputs", fid); mkdirSync(join(g, "batches", fid), { recursive: true }); mkdirSync(join(fout, "101-v01-bishan-real-video", "9x16"), { recursive: true });
+    writeFileSync(join(g, "batches", fid, "brief.json"), JSON.stringify({ batch_id: fid, offer: "6 Week Total Body Reset", locations: ["BISHAN"], audience: null, free: false, generated: 0, real: [], imported: "real-footage" }));
+    const base = "101-v01-bishan-real-video/9x16/v01-bishan_9x16_v1"; writeFileSync(join(fout, `${base}.mp4`), "video"); writeFileSync(join(fout, `${base}.jpg`), Buffer.from(svg(108, 192, "").split(",")[1], "base64"));
+    writeFileSync(join(fout, "batch.json"), JSON.stringify({ batch_id: fid, made: "2026-11-19T00:00:00Z", imported: "real-footage", ratio: "4x5", image_calls: 0, photos: [], videos: { real: 1 }, failed: [],
+      ads: [{ folder: "101-v01-bishan-real-video", file: `${base}.jpg`, video_file: `${base}.mp4`, candidate: "v01", location: "BISHAN", location_index: 0, photos: [], photo_files: [], treatment: "video-real", style: "video", palette: null, ratio: "9x16", format: "presenter-video", video: { kind: "real", title: "The pitch", seconds: 30, words: ["A line."], notes: [] }, crop: [], words: { location: "BISHAN", audience: null, offer: "6 Week Total Body Reset", free: false }, replaced: null }] }));
+    r = await call(`/api/client/${GYM}/batch/${fid}/grow`); assert.equal(r.status, 409); assert.match((await r.json()).error, /videos cut from the gym's own footage, added as they are/);
+    for (const kind of ["batch", "batch-rerender", "batch-stories", "batch-plan"]) { r = await call("/api/run", { method: "POST", body: { kind, gym: GYM, batch: fid, confirm: {} } }); assert.equal(r.status, 409, kind); assert.match((await r.json()).error, /nothing to make or run again/); }
+    const rv = await (await call(`/api/client/${GYM}/batch/${fid}/review`)).json();
+    assert.deepEqual([rv.imported, rv.ads.map((a) => [a.number, a.video_kind, a.video_title, a.video_seconds, !!a.video])], ["real-footage", [[101, "real", "The pitch", 30, true]]]);
+    r = await call(`/api/client/${GYM}/batch/${fid}/footage-words`, { method: "POST", body: { offer: "6 Week Full Body Transformation" } });
+    assert.equal(r.status, 200); assert.deepEqual((await r.json()).now, { offer: "6 Week Full Body Transformation", audience: null });
+    assert.equal(JSON.parse(readFileSync(join(fout, "batch.json"), "utf-8")).ads[0].words.offer, "6 Week Full Body Transformation");
+    assert.equal((await call(`/api/client/${GYM}/batch/${id}/footage-words`, { method: "POST", body: { offer: "Another Offer" } })).status, 400, "only a batch of added videos");
+    const again = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u67b#/${GYM}/review/${fid}` }, sessionId); await again;
+    t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("!!document.querySelector('#rvImported')"))) await new Promise((x) => setTimeout(x, 120));
+    assert.match(await ev("document.querySelector('#rvImported').textContent"), /Real footage, added as it is/);
+    assert.deepEqual(await ev("[document.querySelector('#rvGrow').hidden, !!document.querySelector('#rvRunAgain'), /Real footage · the gym’s own clips/.test(document.querySelector('#rvCards figcaption').textContent), /real footage · The pitch/.test(document.querySelector('#rvInfo').textContent)]"), [true, false, true, true]);
+  } finally {
+    rmSync(join(g, "batches", id), { recursive: true, force: true }); rmSync(out, { recursive: true, force: true });
+    rmSync(join(g, "batches", "footage-u"), { recursive: true, force: true }); rmSync(join(g, "outputs", "footage-u"), { recursive: true, force: true });
+    if (scenesWas != null) writeFileSync(join(g, "scenes.json"), scenesWas);
+  }
+});
+
+test("U68 Propose an edit… for a white-paper script (2026-11-19): a script that breaks no rule has nothing to propose and one that is not there is said, both with no model call; a kept script a later rule catches shows Propose an edit… on its row, beside what is wrong, and the proposal comes up in the sheet boxes with what changed, saved only by the owner's click", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8"), scriptsFile = join(g, "video-scripts.json"), had = existsSync(scriptsFile) ? readFileSync(scriptsFile, "utf-8") : null;
+  const V = async (path = "", opts) => { const r = await call(`/api/client/${GYM}/video${path}`, opts); return [r.status, await r.json()]; };
+  const SHEETS = ["Do your work clothes feel tight?", "Live near {AREA}?", `Join our ${BRIEF.offer}`, "You get a coach beside you", "And a plan that fits your week", "Feel strong for everyday things", "Click the link below and we'll be in touch!"];
+  try {
+    rmSync(scriptsFile, { force: true });
+    await V("/presenter", { method: "POST", body: { gender: "man", age: 36 } });
+    let [st, D] = await V("/sheets", { method: "POST", body: { offer: BRIEF.offer, sheets: SHEETS } });
+    assert.equal(st, 200, JSON.stringify(D)); const id = D.sheet_scripts[0].id;
+    [st, D] = await V(`/sheets/${id}/propose`, { method: "POST", body: {} });
+    assert.equal(st, 400); assert.equal(D.error, "this script breaks no rule: nothing to propose");
+    [st, D] = await V(`/sheets/p-nothing/propose`, { method: "POST", body: {} });
+    assert.equal(st, 400); assert.match(D.error, /no such white-paper script/);
+    assert.equal((await call(`/api/client/${GYM}/video/sheets/${id}/propose`, { method: "POST", body: {}, token: null })).status, 403);
+    // A rule that came after it was kept: sheet 4 is no longer in plain words.
+    const data = JSON.parse(readFileSync(scriptsFile, "utf-8")); data.sheets[0].sheets[3] = "You get guidance and accountability"; writeFileSync(scriptsFile, JSON.stringify(data, null, 2));
+    [st, D] = await V(); assert.ok(D.sheet_scripts[0].problems.some((p) => /^sheet 4: /.test(p)), JSON.stringify(D.sheet_scripts[0].problems));
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const until = async (cond) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(cond))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(cond), cond); };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u68#/${GYM}/scenes` }, sessionId); await loaded;
+    await until("!!document.querySelector('#vsTabs')");
+    await ev("VS.offer = null; vsTab('paper'); true");
+    await until(`!!document.querySelector('#psList [data-sheets="${id}"]')`);
+    assert.deepEqual(await ev(`(() => { const row = document.querySelector('#psList [data-sheets="${id}"]'), b = row.querySelector('[data-ps-propose]'); return [row.dataset.state, b && b.textContent, /Press Propose an edit… and the agent writes it for you to approve, or Edit… to do it yourself/.test(row.querySelector('[data-problems]')?.textContent || '')]; })()`), ["edit", "Propose an edit…", true]);
+    // The proposal as the route answers it, in the dialog (the model is not called here: the answer is given to the page).
+    await ev(`(() => { const real = window.fetch; window.fetch = async (url, opts) => /\\/video\\/sheets\\/[\\w-]+\\/propose$/.test(String(url)) ? new Response(JSON.stringify({ proposal: { id: ${JSON.stringify(id)}, sheets: ${JSON.stringify(SHEETS)}, changed: [4], note: "Sheet 4 said in small words.", problems: ["sheet 4: \\"guidance\\" is not a plain word"], yours: [] } }), { status: 200, headers: { "content-type": "application/json" } }) : real(url, opts); return true; })()`);
+    await ev(`psPropose(${JSON.stringify(id)}); true`);
+    await until("!!document.querySelector('#psProposal')");
+    assert.match(await ev("document.querySelector('#psProposal').textContent"), /Changed: sheet 4 — Sheet 4 said in small words\. The other sheets are as you had them/);
+    assert.deepEqual(await ev("[document.querySelector('#psSheet3').value, document.querySelector('#psSheet3').style.borderColor !== '', document.querySelector('#psSheet0').style.borderColor, !!document.querySelector('#psYours')]"), ["You get a coach beside you", true, "", false]);
+    assert.equal(JSON.parse(readFileSync(scriptsFile, "utf-8")).sheets[0].sheets[3], "You get guidance and accountability", "nothing is saved until he approves it");
+    await ev("psEditRun(); true");
+    const t0 = Date.now(); while (Date.now() - t0 < 10000 && JSON.parse(readFileSync(scriptsFile, "utf-8")).sheets[0].sheets[3] !== "You get a coach beside you") await new Promise((x) => setTimeout(x, 120));
+    assert.equal(JSON.parse(readFileSync(scriptsFile, "utf-8")).sheets[0].sheets[3], "You get a coach beside you", "Use this edit saves it through the usual edit");
+  } finally { writeFileSync(pf, before); if (had != null) writeFileSync(scriptsFile, had); else rmSync(scriptsFile, { force: true }); }
 });

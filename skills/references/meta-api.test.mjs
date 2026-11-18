@@ -1005,3 +1005,90 @@ test("M18 video ads on Meta (2026-11-12): a kept video is an ad of the plan like
     rmSync(d, { recursive: true, force: true });
   }
 });
+
+test("M19 a full ad set (2026-11-18): Meta allows 50 ads in an ad set and counts paused ones, and an ad made again is a new ad beside its old one — so before anything is uploaded the ad set's ads are counted on Meta; over the limit the run stops in words with nothing uploaded; with the owner's tick the old ads being replaced are archived first (paused ones only, noted on the record) and the new ones made; an old ad that is switched on is never archived; an ad set with room, or a count that cannot be read, goes on as before", async () => {
+  const { buildPlan, createPlan, freshRecord, remakePreview, ADSET_MAX_ADS } = await import("./meta-publish.mjs");
+  const d = mkdtempSync(join(tmpdir(), "meta-room-"));
+  try {
+    mkdirSync(join(d, "101-x", "4x5"), { recursive: true }); mkdirSync(join(d, "102-y", "4x5"), { recursive: true });
+    const A = join(d, "101-x", "4x5", "a.png"), B = join(d, "102-y", "4x5", "b.png");
+    writeFileSync(A, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1])); writeFileSync(B, Buffer.from([0x89, 0x50, 0x4e, 0x47, 2]));
+    const W = { location: "BISHAN", audience: "MEN WANTED", offer: "12 Week Total Body Reset" };
+    const kept = [{ folder: "101-c-bishan", file: "101-x/4x5/a.png", location: "BISHAN", words: W, story: null }, { folder: "102-c-bishan", file: "102-y/4x5/b.png", location: "BISHAN", words: W, story: null }];
+    const profile = { display_name: "Sculpt Society", gym_abbr: "SCS", website: "https://sculptsociety.com.sg", locale: { country: "SG", currency: "SGD" },
+      meta_assets: { ad_account_id: "act_111", page_id: "77", instagram_user_id: "88", lead_form_id: "4001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+      campaign_defaults: { budget: { level: "adset", amount: 50, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", radius_km: 5, callouts: ["BISHAN"] }] }, demographics: { age_min: 25, age_max: 60 } } };
+    const batch = { batch_id: "2026-09-13-men" }, plan = () => buildPlan({ profile, batch, kept, presets: { presets: [] } });
+    let n = 0; const seen = []; let held = null;
+    const others = (k) => Array.from({ length: k }, (_, i) => ({ id: "x" + i, status: "PAUSED", effective_status: "PAUSED" }));
+    Object.assign(answers, {
+      "act_111/adimages": (q) => { seen.push(["adimages"]); return { images: { [q.get("name")]: { hash: "h-" + q.get("bytes") } } }; },
+      "act_111/campaigns": () => ({ id: "c" + ++n }), "act_111/adsets": () => ({ id: "s" + ++n }),
+      "act_111/adcreatives": () => { seen.push(["adcreatives"]); return { id: "cr" + ++n }; },
+      "act_111/ads": () => { seen.push(["ads"]); return { id: "ad" + ++n }; },
+      "c1": () => ({ id: "c1", status: "PAUSED", effective_status: "PAUSED" }), "s2": () => ({ id: "s2", status: "PAUSED", effective_status: "PAUSED" }),
+      "ad4": (q) => { if (q.get("status")) seen.push(["archive", "ad4", q.get("status")]); return { success: true }; },
+      "ad6": (q) => { if (q.get("status")) seen.push(["archive", "ad6", q.get("status")]); return { success: true }; },
+    });
+    const path = join(d, "publish.json"), rec = freshRecord(path, { batch_id: batch.batch_id, account: "act_111" }), from = calls.length, asked = () => calls.slice(from).some((c) => c.path === "s2/ads");
+    // The first create: the ad set is made in this run, so nothing is counted.
+    const r1 = await createPlan(plan(), { client: client(), batchDir: d, record: rec, log: () => {} });
+    assert.deepEqual([r1.ads, rec.ads["101-c-bishan"].id, rec.ads["102-c-bishan"].id, asked()], [2, "ad4", "ad6", false]);
+    assert.deepEqual([remakePreview(plan(), rec, d).same, remakePreview(plan(), rec, d).remade, remakePreview(plan(), rec, d).by_adset.BISHAN], [2, [], { have: 2, adds: 0, after: 2, over: false, replaced: 0, short: 0 }]);
+    // Nothing to add: a re-run asks Meta nothing about the room.
+    await createPlan(plan(), { client: client(), batchDir: d, record: rec, log: () => {} });
+    assert.equal(asked(), false);
+
+    // One image changes: that ad is made again, a new ad beside the old. From the files alone the ad set has room…
+    writeFileSync(A, Buffer.from([0x89, 0x50, 0x4e, 0x47, 9]));
+    const p1 = remakePreview(plan(), rec, d);
+    assert.deepEqual([p1.same, p1.remade, p1.by_adset.BISHAN, p1.archive], [1, [{ folder: "101-c-bishan", adset: "BISHAN", old_id: "ad4", why: "its image changed" }], { have: 2, adds: 1, after: 3, over: false, replaced: 0, short: 0 }, 0]);
+    // …but Meta holds 50 there (others made by hand): the run stops before anything is uploaded, and says what to do.
+    answers["s2/ads"] = () => ({ data: held });
+    held = [{ id: "ad4", status: "PAUSED", effective_status: "PAUSED" }, { id: "ad6", status: "PAUSED", effective_status: "PAUSED" }, ...others(48), { id: "gone", status: "ARCHIVED", effective_status: "ARCHIVED" }];
+    seen.length = 0;
+    await assert.rejects(createPlan(plan(), { client: client(), batchDir: d, record: rec, log: () => {} }), /the ad set BISHAN holds 50 ads on Meta and this run adds 1 \(1 to replace an older version\): Meta allows 50 in an ad set, paused ones included\. Nothing was uploaded\. Press Continue creating and tick "Archive the old ads these replace" \(1 old ad; an archived ad can never be turned on again\), or archive 1 ad of this ad set in Ads Manager yourself\./);
+    let saved = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([seen, saved.error.step, saved.error.what, saved.adsets.BISHAN.on_meta.ads, saved.ads["101-c-bishan"].id, saved.superseded.length], [[], "room", "BISHAN", 50, "ad4", 0], "an archived ad on Meta is not counted");
+    // The record now knows Meta's count, so the screen can offer the tick.
+    const p2 = remakePreview(plan(), rec, d);
+    assert.deepEqual([p2.by_adset.BISHAN, p2.archive, p2.short], [{ have: 50, adds: 1, after: 51, over: true, replaced: 1, short: 0 }, 1, 0]);
+    // An old ad that is switched on is never archived: refused, with the tick or without.
+    held[0].status = "ACTIVE";
+    await assert.rejects(createPlan(plan(), { client: client(), batchDir: d, record: rec, archiveReplaced: true, log: () => {} }), /None of the new ads replaces an old one that could be archived: archive 1 ad of this ad set in Ads Manager, or exclude some ads on Pick Ads\. Nothing was uploaded\./);
+    assert.deepEqual(seen, []);
+    // With the owner's tick: the old ad is archived, then the image, the creative and the ad are made.
+    held[0].status = "PAUSED"; seen.length = 0; const log = [];
+    const r3 = await createPlan(plan(), { client: client(), batchDir: d, record: rec, archiveReplaced: true, log: (m) => log.push(m) });
+    saved = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([seen, r3.ads, r3.run.archived, r3.run.made.ads, saved.error, !!saved.done], [[["archive", "ad4", "ARCHIVED"], ["adimages"], ["adcreatives"], ["ads"]], 2, 1, 1, null, true]);
+    const old = saved.superseded.find((s) => s.id === "ad4");
+    assert.deepEqual([saved.ads["101-c-bishan"].id !== "ad4", saved.ads["101-c-bishan"].archived, old.archived, /archived to make room: the ad set held 50 of Meta's 50 ads/.test(old.archived_why), saved.ads["102-c-bishan"].id], [true, undefined, new Date().toISOString().slice(0, 10), true, "ad6"]);
+    assert.ok(log.some((l) => /ad 101-c-bishan: the old ad ad4 archived to make room \(the ad set held 50 of 50\)/.test(l)), log.join("\n"));
+    // An archived old ad no longer counts on the record's side.
+    assert.deepEqual(remakePreview(plan(), rec, d).same, 2);
+
+    // An ad set with room: the tick archives nothing (only "if it is still full").
+    writeFileSync(B, Buffer.from([0x89, 0x50, 0x4e, 0x47, 8]));
+    held = [{ id: saved.ads["101-c-bishan"].id, status: "PAUSED", effective_status: "PAUSED" }, { id: "ad6", status: "PAUSED", effective_status: "PAUSED" }, ...others(40)];
+    seen.length = 0;
+    const r4 = await createPlan(plan(), { client: client(), batchDir: d, record: rec, archiveReplaced: true, log: () => {} });
+    saved = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([seen.map((c) => c[0]), r4.run.archived, saved.superseded.find((s) => s.id === "ad6").archived, saved.adsets.BISHAN.on_meta.ads], [["adimages", "adcreatives", "ads"], undefined, undefined, 42]);
+    // Too many even with the old ones archived: said with the number, nothing uploaded.
+    writeFileSync(A, Buffer.from([0x89, 0x50, 0x4e, 0x47, 7]));
+    held = [{ id: saved.ads["101-c-bishan"].id, status: "PAUSED", effective_status: "PAUSED" }, ...others(49)];
+    const kept3 = [...kept, { folder: "103-c-bishan", file: "102-y/4x5/b.png", location: "BISHAN", words: W, story: null }];
+    seen.length = 0;
+    await assert.rejects(createPlan(buildPlan({ profile, batch, kept: kept3, presets: { presets: [] } }), { client: client(), batchDir: d, record: rec, archiveReplaced: true, log: () => {} }), /holds 50 ads on Meta and this run adds 2 \(1 new, 1 to replace an older version\).*Archiving the 1 old ad being replaced would still leave it 1 over: archive 1 ad of this ad set in Ads Manager, or exclude some ads on Pick Ads\. Nothing was uploaded\./);
+    assert.deepEqual(seen, []);
+    // A count that cannot be read: the record's own count stands, and the run goes on.
+    delete answers["s2/ads"]; delete rec.adsets.BISHAN.on_meta; seen.length = 0;
+    const r5 = await createPlan(plan(), { client: client(), batchDir: d, record: rec, log: () => {} });
+    assert.deepEqual([seen.map((c) => c[0]), r5.run.made.ads], [["adimages", "adcreatives", "ads"], 1]);
+    assert.equal(ADSET_MAX_ADS, 50);
+  } finally {
+    for (const k of ["act_111/adimages", "act_111/campaigns", "act_111/adsets", "act_111/adcreatives", "act_111/ads", "c1", "s2", "s2/ads", "ad4", "ad6"]) delete answers[k];
+    rmSync(d, { recursive: true, force: true });
+  }
+});

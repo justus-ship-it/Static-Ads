@@ -37,7 +37,7 @@ import {
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
-import { buildPlan, keptAds, CTA_TYPES, findIdentity, setIdentity, regulatedFor, hasIdentity, findPin, publishReadiness } from "../skills/references/meta-publish.mjs";
+import { buildPlan, keptAds, CTA_TYPES, findIdentity, setIdentity, regulatedFor, hasIdentity, findPin, publishReadiness, remakePreview, ADSET_MAX_ADS } from "../skills/references/meta-publish.mjs";
 import { readForms, templateFrom, proposeForm, formProblems, createForm, readLeadForms, writeLeadForms } from "../skills/references/lead-forms.mjs";
 import { runImport, importProposal, applyImport, readImport, STEPS as IMPORT_STEPS, HISTORY_TOP } from "../skills/references/import-gym.mjs";
 import { TARGETING_LIBRARY_DIR, readLibrary as readTargetingLibrary, seedDrafts as seedTargetingDrafts, liveEntries as liveTargeting, approveEntry as approveTargeting, retireEntry as retireTargeting, restoreEntry as restoreTargeting, addEntry as addTargeting, asPreset as libraryPreset } from "../skills/references/targeting-library.mjs";
@@ -53,14 +53,15 @@ import { cycleFrom } from "../skills/references/cycle.mjs";
 import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
 import { plainGemini } from "../skills/references/gemini-busy.mjs";
-import { scarcityOf, SHEETS, SHEET_WORDS, addSheetScript, decideSheetScript, draftSheetScripts, readySheetScripts, keptSheetScripts, readSheetScripts, sheetIssues, sheetCost } from "../skills/references/paper-video.mjs";
+import { scarcityOf, SHEETS, SHEET_WORDS, addSheetScript, decideSheetScript, draftSheetScripts, readySheetScripts, keptSheetScripts, readSheetScripts, sheetIssues, sheetCost, proposeSheetEdit } from "../skills/references/paper-video.mjs";
 import { movesFor, moveLabel, knownKit, KIT as VIDEO_KIT, MOVES as VIDEO_MOVES, MOVE_LEAD, USD_PER_IMAGE as VIDEO_USD_PER_IMAGE, factsFor as videoFactsFor, setAside, keepTake, clipStore, coachStore, readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, plainWords, setPlain, LONG_SYLLABLES, readStyle, nameStyle, suggestFacts, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
 import { videoResults, whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
 import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
-import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, MAX_PHOTOS, madeShape, batchMix, videoPlan } from "../skills/references/plan-offer-batch.mjs";
+import { FOOTAGE_NO_RUN, setFootageWords } from "../skills/references/footage-video.mjs";
+import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, MAX_PHOTOS, madeShape, batchMix, videoPlan, growOptions, growBatch } from "../skills/references/plan-offer-batch.mjs";
 import { ROOMS, libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
 import { launchBrowser, renderComposite, validateInputs, isWholeCountry } from "../skills/references/render-composites.mjs";
@@ -180,13 +181,13 @@ const RUNNABLE = {
   "batch-plan": { label: "Plan batch (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--dry-run"] },
   // A directed batch's drafted scenes are approved by the Run confirmation (approveScenes is set by the
   // server once the confirmed ids match the drafts on disk — never taken from the browser).
-  batch: { label: "Run batch", needsBrief: true, spends: true, argv: ({ gym, batch, approveScenes }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), ...(approveScenes === true ? ["--approve-scenes"] : [])] },
+  batch: { label: "Run batch", needsBrief: true, spends: true, argv: ({ gym, batch, approveScenes, keepVideos }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), ...(approveScenes === true ? ["--approve-scenes"] : []), ...(keepVideos === true ? ["--keep-videos"] : [])] },
   "batch-rerender": { label: "Re-render batch with its words (free)", needsBrief: true, argv: ({ gym, batch }) => [BATCH_SCRIPT, "--brand-dir", brandDir(gym), "--brief", briefPath(gym, batch), "--render-only"] },
   // Stories/Reels (9:16) versions of the selected ads (Step 8): the batch id and the confirmed call cap only.
   "batch-stories": { label: "Make Stories versions", needsBrief: true, spends: "stories", argv: ({ gym, batch, confirm, only }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--max-calls", String(confirm.max_calls), ...(only ? ["--only", only, "--fresh"] : [])] },
   // Publishing (E3): the plan on disk is created on Meta, every object paused. The confirmation names what
   // the plan holds now (ad sets, ads, the day's budget) so what is created is what was read; `first` limits a run.
-  "batch-publish": { label: "Create on Facebook (paused)", needsBrief: true, spends: "publish", argv: ({ gym, batch, confirm }) => [PUBLISH_SCRIPT, "--gym", gym, "--brand-dir", brandDir(gym), "--batch", batch, "--create", ...(confirm.first ? ["--first", String(confirm.first)] : [])] },
+  "batch-publish": { label: "Create on Facebook (paused)", needsBrief: true, spends: "publish", argv: ({ gym, batch, confirm }) => [PUBLISH_SCRIPT, "--gym", gym, "--brand-dir", brandDir(gym), "--batch", batch, "--create", ...(confirm.first ? ["--first", String(confirm.first)] : []), ...(confirm.archive ? ["--archive-replaced"] : [])] },
   "batch-stories-rerender": { label: "Re-render Stories versions (free)", needsBrief: true, argv: ({ gym, batch }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--render-only"] },
   // A scene refresh (text calls only): the audience, the count and the direction — words and/or an
   // uploaded reference image — each checked for shape before it becomes an argument.
@@ -747,7 +748,7 @@ function listBatches(gym) {
       id, words: { offer: brief.offer, locations: brief.locations, audience: brief.audience ?? null },
       made: batch?.made || null, ads: batch?.ads?.length || 0, image_calls: batch?.image_calls ?? null,
       // A finished batch may still have something to make (2026-11-17): a photo or video that failed last time, or videos a new run would film or cut again. Its card offers Run again… for these.
-      left: (batch?.failed || []).length, videos: videoCount(brief.videos),
+      left: (batch?.failed || []).length, videos: videoCount(brief.videos), imported: brief.imported || null,
       gallery: existsSync(join(out, "gallery.html")) ? `/files/brands/${gym}/outputs/${id}/gallery.html` : null,
       // For the campaign cards: the first ad as a thumbnail, whether picks and Stories exist.
       thumb: batch?.ads?.[0] ? `/files/brands/${gym}/outputs/${id}/${batch.ads[0].file}` : null,
@@ -927,7 +928,7 @@ function reviewState(gym, id) {
     const s = storyOf.get(a.folder) || (a.story_file && existsSync(join(out, a.story_file)) ? { file: a.story_file } : null);
     return {
       folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, ratio: a.ratio || batch.ratio || "1x1", format: a.format || null, treatment: a.treatment, style: a.style, palette: a.palette,
-      ...(a.video_file && existsSync(join(out, a.video_file)) ? { video: fileUrl(gym, join(out, a.video_file)), video_seconds: a.video?.seconds ?? null, video_words: a.video?.words || [], video_script: a.video?.script_id || null, video_kind: ["active", "paper"].includes(a.video?.kind) ? a.video.kind : "presenter", video_coach: a.video?.coach?.name || null, video_parts: (a.video?.parts || []).map((p) => ({ line: p.line, label: p.label, text: p.text, at: p.at, seconds: p.seconds, takes: (p.takes || []).length, ...(p.move ? { move: p.move } : {}), ...(p.per_area ? { per_area: true } : {}), ...(p.listen ? { listen: p.listen } : {}), ...(p.kept ? { kept: p.kept } : {}), ...(p.again ? { again: true } : {}), ...(p.flag ? { flag: p.flag } : {}) })), video_flags: (a.video?.flags || []).length } : {}),
+      ...(a.video_file && existsSync(join(out, a.video_file)) ? { video: fileUrl(gym, join(out, a.video_file)), video_seconds: a.video?.seconds ?? null, video_words: a.video?.words || [], video_script: a.video?.script_id || null, video_kind: ["active", "paper", "real"].includes(a.video?.kind) ? a.video.kind : "presenter", video_title: a.video?.title || null, video_coach: a.video?.coach?.name || null, video_parts: (a.video?.parts || []).map((p) => ({ line: p.line, label: p.label, text: p.text, at: p.at, seconds: p.seconds, takes: (p.takes || []).length, ...(p.move ? { move: p.move } : {}), ...(p.per_area ? { per_area: true } : {}), ...(p.listen ? { listen: p.listen } : {}), ...(p.kept ? { kept: p.kept } : {}), ...(p.again ? { again: true } : {}), ...(p.flag ? { flag: p.flag } : {}) })), video_flags: (a.video?.flags || []).length } : {}),
       photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || a.story_failure || null, card: a.card || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
     };
   });
@@ -941,6 +942,7 @@ function reviewState(gym, id) {
     // Videos that could not be cut at all (a line with no take: refused by Google, or the cap), said where the ads are picked.
     video_failures: (batch?.failed || []).filter((f) => f.video).map((f) => ({ candidate: f.candidate, location: f.location || null, why: [].concat(f.failures || []).join("; ") })),
     // What a fresh take costs, and what a run of this batch would film anyway (a line not on file yet), so Film this line again… says the whole of it.
+    imported: readJsonFile(briefPath(gym, id))?.imported || null,   // videos added as they are: the page offers no run and no more photos
     video_cost: (() => { const brief = readJsonFile(briefPath(gym, id)) || {}; let pending = 0; try { pending = videoCount(brief.videos) ? videoPlan(brandDir(gym), brief)?.seconds || 0 : 0; } catch {} return { usd_per_second: USD_PER_SECOND, takes: brief.attempts ?? 2, pending }; })(),
   };
 }
@@ -1185,6 +1187,12 @@ async function singaporeIdentityFor(gym) {
 // (its headless Chrome and that browser's helpers) with one signal; a run that ignores it is killed after 4 s.
 // Creating on Meta is never stopped part-way: an object made between a call and its record would be made twice.
 const UNSTOPPABLE = new Set(["batch-publish"]);
+/** The room in each ad set for what a create would add (from the files alone: no Meta call); null before a batch is on Meta. */
+function roomFor(plan, out, first = null) {
+  const rec = readJsonFile(join(out, "publish.json"));
+  if (!rec?.campaign?.id) return null;
+  try { const r = remakePreview(plan, rec, out, { first }); return { max: ADSET_MAX_ADS, same: r.same, fresh: r.fresh.length, remade: r.remade, by_adset: r.by_adset, archive: r.archive, short: r.short }; } catch { return null; }
+}
 const TERMINAL_STAGES = new Set(["done", "failed", "stopped"]);
 function killGroup(pid, signal) {
   try { process.kill(-pid, signal); return true; } catch {}
@@ -1865,6 +1873,15 @@ const server = createServer(async (req, res) => {
       try { const r = await proposeEdit({ brandDir: brandDir(gym), id, libraryDir: VIDEO_LIBRARY_DIR }); return json(res, 200, { proposal: { id, lines: r.lines, changed: r.changed, note: r.note, problems: r.problems } }); }
       catch (e) { return json(res, 400, { error: scrubTokens(plainGemini(e)) }); }
     }
+    // POST /video/sheets/{id}/propose — the same for a white-paper script (2026-11-19): the smallest edit that mends it, checked in
+    // code, never touching the sheet about limited places (that sheet is the owner's word). Nothing is saved.
+    const vsm = p.match(/^\/api\/client\/([^/]+)\/video\/sheets\/([\w-]+)\/propose$/);
+    if (vsm && req.method === "POST") {
+      const [, gym, id] = vsm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      try { const r = await proposeSheetEdit({ brandDir: brandDir(gym), id, libraryDir: VIDEO_LIBRARY_DIR }); return json(res, 200, { proposal: { id, sheets: r.sheets, changed: r.changed, note: r.note, problems: r.problems, yours: r.yours } }); }
+      catch (e) { return json(res, 400, { error: scrubTokens(plainGemini(e)) }); }
+    }
     // How a word is said, for every gym ("Quay" is "kee"): POST /said { word, say } — an empty say takes the word off the list.
     // White-paper scripts (2026-11-15; paper-video.mjs) — the words on the sheets of a silent video, their own kind of script:
     // POST /sheets { sheets, offer } (the owner's own, kept at once); POST /sheets/draft { offer, audience?, count, facts? }
@@ -2239,7 +2256,7 @@ const server = createServer(async (req, res) => {
         if (rid && req.method === "PUT") { const { note, retired } = await readBody(req); return view({ ref: editCopyRef(dir, decodeURIComponent(rid), { note, retired }) }); }
       } catch (e) { return json(res, 400, { error: e.message }); }
     }
-    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull|drift\/take|video\/take)$/);
+    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull|drift\/take|video\/take|grow|footage-words)$/);
     if (rv) {
       const [, gym, id, what] = rv;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
@@ -2280,7 +2297,7 @@ const server = createServer(async (req, res) => {
         const lead_form_name = formNameFor(dir, profile, plan.lead_form_id);
         const readiness = publishReadiness(plan, { formName: lead_form_name });
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, readiness, lead_form_name, settings, thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")) });
+        return json(res, 200, { plan, readiness, lead_form_name, settings, thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")), room: roomFor(plan, out) });
       }
       if (what === "drift/take" && req.method === "POST") {
         const { kind, callout } = await readBody(req);
@@ -2303,6 +2320,37 @@ const server = createServer(async (req, res) => {
         } catch (e) { return json(res, 502, { error: scrubTokens(e.message) }); }
       }
       if (what === "review" && req.method === "GET") return json(res, 200, { ...reviewState(gym, id), words: (({ offer, locations, audience }) => ({ offer, locations, audience: audience ?? null }))(readJsonFile(briefPath(gym, id))), run: activeRun(gym, id) });
+      // Add photos to a batch that has its ads (2026-11-18): GET says what it can take; POST { add, dry } says what
+      // that would cost with nothing written; POST { add, confirm { total, calls } } adds them to the plan and the
+      // brief — only when what was confirmed is what is true now — and the page then starts the batch's own run,
+      // which makes the new photos alone: every ad already made keeps its look, its folder and the owner's pick.
+      // A batch of added videos (footage-video.mjs): its offer name and audience are changed here, with nothing to render.
+      if (what === "footage-words" && req.method === "POST") {
+        const body = await readBody(req);
+        try { const r = setFootageWords({ brandDir: brandDir(gym), batchId: id, offer: typeof body.offer === "string" ? body.offer.trim() : undefined, audience: body.audience === undefined ? undefined : String(body.audience || "").trim() }); try { recordUse(brandDir(gym), r.now.offer); } catch {} return json(res, 200, { ok: true, ...r }); }
+        catch (e) { return json(res, /^no batch/.test(e.message) ? 404 : 400, { error: e.message }); }
+      }
+      if (what === "grow" && (req.method === "GET" || req.method === "POST")) {
+        const dir = brandDir(gym), brief = readJsonFile(briefPath(gym, id));
+        if (!brief) return json(res, 404, { error: "no such batch" });
+        if (brief.imported) return json(res, 409, { error: FOOTAGE_NO_RUN });
+        const options = () => { const o = growOptions({ brandDir: dir, brief }); return { ...o, max_photos: MAX_PHOTOS, videos: Object.values(brief.videos || {}).some((n) => n > 0) }; };
+        if (req.method === "GET") return json(res, 200, options());
+        const body = await readBody(req), add = Object.fromEntries(Object.entries(body.add || {}).filter(([, n]) => n !== 0 && n != null));
+        const o = options();
+        if (o.why) return json(res, 409, { error: o.why });
+        if (!Object.keys(add).length || Object.values(add).some((n) => !Number.isInteger(n) || n < 1)) return json(res, 400, { error: "say how many photos to add: a whole number, one or more, for at least one kind" });
+        let dry; const notes = [];
+        try { dry = growBatch({ brandDir: dir, brief, add, dry: true, log: (m) => notes.push(String(m).replace(/^\s*(note:|·)\s*/, "")) }); } catch (e) { return json(res, 400, { error: e.message }); }
+        const n = Object.values(add).reduce((t, x) => t + x, 0), answer = { add, photos: n, total: dry.total, calls: dry.calls, max_calls: dry.brief.max_calls, notes: notes.filter((m) => !/added to the plan/.test(m)), scenes: dry.added.map((v) => ({ id: v.id, scene: v.scene_id, format: v.format || "workout" })) };
+        if (body.dry === true) return json(res, 200, { ...o, ...answer });
+        if (activeRun(gym, id) || orphanBatch(gym, id)) return json(res, 409, { error: "this batch is being made right now: wait for the run to end, or stop it" });
+        const c = body.confirm || {};
+        if (c.total !== answer.total || c.calls !== answer.calls) return json(res, 409, { error: "what adding these photos comes to is not what was confirmed: read the numbers again and confirm" });
+        let grown;
+        try { grown = growBatch({ brandDir: dir, brief, add, briefPath: briefPath(gym, id) }); } catch (e) { return json(res, 400, { error: e.message }); }
+        return json(res, 200, { ok: true, ...answer, brief: (({ offer, locations, audience, max_calls, generated }) => ({ offer, locations, audience: audience ?? null, max_calls, generated }))(grown.brief) });
+      }
       if (what === "video/take" && req.method === "POST") {
         if (activeRun(gym, id) || orphanBatch(gym, id)) return json(res, 409, { error: "this batch is being made right now: wait for the run to end, or stop it" });
         const body = await readBody(req), err = videoTake(gym, id, { ad: String(body.ad || ""), line: Number(body.line), action: body.action });
@@ -2532,6 +2580,8 @@ const server = createServer(async (req, res) => {
         if (!okSlug(body.gym) || !okSlug(body.batch)) return json(res, 400, { error: "a batch run needs gym and batch" });
         const brief = readJsonFile(briefPath(body.gym, body.batch));
         if (!brief) return json(res, 404, { error: `no brief for batch ${body.batch}` });
+        // Videos added as they are (footage-video.mjs): nothing to plan, run, re-render or make Stories of. Publishing is as for any batch.
+        if (brief.imported && kind !== "batch-publish") return json(res, 409, { error: FOOTAGE_NO_RUN });
         // A directed batch: the scenes its plan drafted are approved by this confirmation — only when
         // the ids confirmed are exactly the drafts on disk now, so what runs is what was read.
         delete body.approveScenes;
@@ -2570,7 +2620,15 @@ const server = createServer(async (req, res) => {
           const agreed = c.ads === plan.counts.ads && c.adsets === plan.counts.adsets && c.per_day === plan.budget.per_day_total;
           if (!agreed) return json(res, 409, { error: "the plan differs from what was confirmed (ads, ad sets or the day's budget) — read the Publish Ads screen again and confirm" });
           if (c.first != null && !(Number.isInteger(c.first) && c.first >= 1 && c.first <= plan.counts.ads)) return json(res, 400, { error: `"first" is a whole number of ads, 1 to ${plan.counts.ads}` });
-          body.confirm = { first: c.first ?? null };
+          // Archiving the old ads a full ad set's remade ads replace is the owner's tick, and only for the number
+          // the screen showed: what was confirmed must be what is true now (an archived ad can never be turned on again).
+          let archive = false;
+          if (c.archive != null && c.archive !== 0 && c.archive !== false) {
+            const room = roomFor(plan, out, c.first ?? null);
+            if (!Number.isInteger(c.archive) || c.archive !== (room?.archive || 0)) return json(res, 409, { error: `the old ads to archive are not what was confirmed (${room?.archive || 0} now): read the Publish Ads screen again and confirm` });
+            archive = true;
+          }
+          body.confirm = { first: c.first ?? null, archive };
         } else if (spec.spends) {
           const c = body.confirm || {};
           const agreed = c.offer === brief.offer && JSON.stringify(c.locations) === JSON.stringify(brief.locations) && (c.audience ?? null) === (brief.audience ?? null) && c.max_calls === (brief.max_calls ?? brief.generated ?? 0);

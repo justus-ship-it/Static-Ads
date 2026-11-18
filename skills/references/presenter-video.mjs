@@ -1332,13 +1332,13 @@ const FONTS = `@font-face{font-family:Anton;src:url("file://${join(REPO_ROOT, "a
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 /** A transparent 720 × 1280 PNG of the words. Meta's 9:16 live area is x 6–94%, y 14–65%: every block is laid inside it, and the page reports where each landed. */
 /** `low` (a coach's video): the block's BOTTOM sits on the edge of Meta's live area and it grows upward, so it never reaches the shirt's print, which a coach's pictures keep above 53% of the height. */
-async function overlay(browser, out, inner, accent = CAPTION_ACCENT, low = false) {
+export async function overlay(browser, out, inner, accent = CAPTION_ACCENT, low = false, scale = 1) {
   const html = `<!doctype html><meta charset="utf-8"><style>${FONTS}html,body{margin:0;width:${W}px;height:${H}px;background:transparent;overflow:hidden}
     .cap{position:absolute;left:8%;right:8%;${low ? `bottom:${Math.round((1 - LIVE.bottom) * 1000) / 10 + 0.4}%` : "top:54%"};text-align:center;font:400 58px/1.12 Anton;color:#fff;letter-spacing:1px;-webkit-text-stroke:3px rgba(0,0,0,.85);paint-order:stroke fill;text-shadow:0 4px 16px rgba(0,0,0,.55)}
     .cap b{font-weight:400;color:${accent || CAPTION_ACCENT}}</style>${inner}`;
   const page = join(browser.work, `${basename(out)}.html`); writeFileSync(page, html);
   const { cdp, sessionId } = browser;
-  await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: false }, sessionId);
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: scale, mobile: false }, sessionId);
   await cdp.send("Emulation.setDefaultBackgroundColorOverride", { color: { r: 0, g: 0, b: 0, a: 0 } }, sessionId);
   const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `file://${page}` }, sessionId); await loaded;
   const box = await cdp.send("Runtime.evaluate", { expression: `document.fonts.ready.then(() => JSON.stringify([...document.querySelectorAll('.cap')].map(e => { const r = e.getBoundingClientRect(); return { text: e.innerText.replace(/\\s+/g, ' ').trim(), top: r.top / ${H}, bottom: r.bottom / ${H}, left: r.left / ${W}, right: r.right / ${W} }; })))`, awaitPromise: true, returnByValue: true }, sessionId);
@@ -1449,7 +1449,7 @@ export function captionWords(c) {
   return ws.map((w, i) => { const d = ((w.length + 1) / total) * (c.to - c.from), o = { i, word: w, from: r2(at), to: i === ws.length - 1 ? c.to : r2(at + d) }; at += d; return o; });
 }
 /** A caption block in capitals, the word at `lit` marked as the one being said. */
-const capHtml = (text, lit) => `<div class="cap">${String(text).toUpperCase().split(" ").filter(Boolean).map((w, i) => (i === lit ? `<b>${esc(w)}</b>` : esc(w))).join(" ")}</div>`;
+export const capHtml = (text, lit) => `<div class="cap">${String(text).toUpperCase().split(" ").filter(Boolean).map((w, i) => (i === lit ? `<b>${esc(w)}</b>` : esc(w))).join(" ")}</div>`;
 /** How long the last clip is held after its last word, so the video does not end on a clipped syllable (there is no end card). */
 export const END_HOLD = 0.45;
 /** Cut the clips together — each { file, from, to }, its spoken part — at one size and rate, and lay the timed words over it all. The video ends on the last clip. */

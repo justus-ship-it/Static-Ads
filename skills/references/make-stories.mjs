@@ -165,12 +165,17 @@ export const storiesFile = (feedFile, feed = "1x1") => feedFile.replace(`/${feed
 /**
  * Whether a feed ad's Stories version is one of the designs (stories_designs: a tall photo with the words on its own
  * top, else the feed photo with the words beside the model, else the feed photo with its top colour carried up) or goes
- * the photo way below. The designs are for a feed ad of the reference family made at 4:5 with one photo, its words set
- * on the photo or under it — and, in the run, for a generated photo only (a real photo's shape is its own).
+ * the photo way below. The designs are for a feed ad made at 4:5 with one photo, its words set on the photo or under
+ * it — and, in the run, for a generated photo only (a real photo's shape is its own). **Both look families
+ * (2026-11-19)**: a formula ad (the callout across the top, plain type — Jurong West's look) takes the same three
+ * designs in its own type and pairing, the callout leading (`FORMULA_STACK`), aligned as its feed ad is; before, its
+ * Stories version went the photo way, with the offer over the model's legs.
  */
+/** The lines of a formula ad in a Stories design's one block: the callout leads, as on its feed ad (the reference stack's lead is the duration). */
+export const FORMULA_STACK = [{ block: "location", share: 1.5, max_lines: 1, min_px: 44 }, { block: "audience", share: 0.6, max_lines: 1, min_px: 26, optional: true }, { block: "duration", share: 0.95, max_lines: 1, min_px: 40 }, { block: "offer_name", share: 1.25, max_lines: 2, min_px: 34 }];
 export function designed(ad, { feed, catalogue }) {
   const T = catalogue.treatments;
-  if (feed !== "4x5" || catalogue.look === "formula" || !T.stories_designs || (ad.photos || []).length !== 1) return false;
+  if (feed !== "4x5" || !T.stories_designs || (ad.photos || []).length !== 1) return false;
   const tr = T.treatments[ad.treatment]; if (!tr) return false;
   const bg = layoutFor(tr, feed, T).background?.type || "single";
   return bg === "single" || bg === "split";
@@ -289,7 +294,10 @@ export async function runStories(opts) {
       const feedTr = T.treatments[ad.treatment], feedL = layoutFor(feedTr, feed, T);
       // The side columns of the feed shape, the ad's own first, set inside the Stories frame's live band.
       const own = feedL.groups.find((g) => g.avoid), columns = [...(own ? [own] : []), ...["t3-right-column", "t6-left-column"].map((id) => layoutFor(T.treatments[id], feed, T).groups.find((g) => g.avoid)).filter((g) => g && (!own || g.region[0] !== own.region[0]))];
-      const sideLayout = (g0) => ({ no_touch: true, tall_type: true, contrast: { rim: true }, groups: [{ ...structuredClone(g0), region: [g0.region[0], D.side.column_y[0], g0.region[2], D.side.column_y[1]], avoid: D.side.avoid }], clear_zones: [] });
+      // A formula ad (its callout leads): the designs' one block carries its lines in its own order of size, aligned as its feed ad is.
+      const formula = feedTr.lead === "location", stack = formula ? FORMULA_STACK : D.stack, align = formula ? feedL.groups[0]?.align || "center" : "center";
+      const sideLayout = (g0) => ({ no_touch: true, tall_type: true, contrast: { rim: true }, groups: [{ ...structuredClone(g0), ...(formula ? { stack } : {}), region: [g0.region[0], D.side.column_y[0], g0.region[2], D.side.column_y[1]], avoid: D.side.avoid }], clear_zones: [] });
+      const tallLayout = () => { const l = structuredClone(T.treatments["st-tall"].layouts[RATIO]); l.groups = l.groups.map((g) => ({ ...g, stack, align })); return l; };
       let done = null; const why = [];
       for (const design of order) {
         if (design === "tall") {
@@ -299,7 +307,7 @@ export async function runStories(opts) {
           // the side the model leaves free (the image model keeps the heads higher than it is asked to: 3 of the first 4).
           const fit = judgeVisual({ ...rec.answer, text_items: [], excluded_items: [] }, { treatment: "st-tall", ratio: RATIO, imageSize: imageSize(readFileSync(rec.file)), bodyMax: T.body_cover?.max ?? null, expectPeople: true, catalogue });
           const onTall = { image: rec.file, faces: [rec.answer.face_boxes || []], people: [rec.answer.people_box], ...words, ...look };
-          let r = fit.ok ? await renderComposite(browser, { ...onTall, focus: [fit.focus], treatment: "st-tall" }) : null, where = "top";
+          let r = fit.ok ? await renderComposite(browser, formula ? { ...onTall, focus: [fit.focus], treatment: ad.treatment, treatmentSpec: { ...feedTr, family: "stories", layouts: { [RATIO]: tallLayout() } } } : { ...onTall, focus: [fit.focus], treatment: "st-tall" }) : null, where = "top";
           if (!r?.ok) for (const g0 of columns) {
             const rs = await renderComposite(browser, { ...onTall, treatment: ad.treatment, treatmentSpec: { ...feedTr, family: "stories", layouts: { [RATIO]: sideLayout(g0) } } });
             if (rs.ok) { r = rs; where = "side"; break; }
@@ -318,7 +326,7 @@ export async function runStories(opts) {
           why.push(`beside the model: ${r ? r.failures.join("; ") : "no column to set the words in"}`);
         } else if (design === "top") {
           const py = Math.min(Math.round((D.top.photo_y_pct / 100) * H), H - ph), image = await extended(pid, "foot", py);
-          const g = { id: "main", region: D.top.region, anchor: "center", align: "center", gap_pct: 0.6, scrim: { direction: "none", fade_pct: 0 }, stack: D.stack };
+          const g = { id: "main", region: D.top.region, anchor: "center", align, gap_pct: 0.6, scrim: { direction: "none", fade_pct: 0 }, stack };
           const r = await renderComposite(browser, { image, faces: [(chk?.faces || []).map((b) => inFrame(b, py, ph, H))], people: [inFrame(chk?.placement?.people_box || null, py, ph, H)], ...words, treatment: ad.treatment, treatmentSpec: { ...feedTr, family: "stories", layouts: { [RATIO]: { no_touch: true, contrast: { rim: true }, groups: [g], clear_zones: [] } } }, ...look });
           if (r.ok) { done = { design, r, image: basename(image, ".png"), file: image }; break; }
           why.push(`the colour carried up: ${r.failures.join("; ")}`);

@@ -292,13 +292,13 @@ export const gymRowsRead = (gymDir) => gymRowsSplit(gymDir).rows;
  * still needs. Nothing here changes a batch: it is read by the owner.
  */
 export const VIDEO_MIN_LEADS = 20, VIDEO_GAP = 0.25;
-export const INVENTED = "invented presenter";
+export const INVENTED = "invented presenter", REAL_FOOTAGE = "real footage";   // a video cut from the gym's own footage shows a real person: never counted as the invented presenter
 export function videoResults(rows, { currency = "SGD" } = {}) {
   const mine = (rows || []).filter((r) => r.media === "video" && r.video_kind);
   const sum = (rs) => { const spend = round2(rs.reduce((t, r) => t + (r.spend || 0), 0)), leads = rs.reduce((t, r) => t + (r.leads || 0), 0), impressions = rs.reduce((t, r) => t + (r.impressions || 0), 0), clicks = rs.reduce((t, r) => t + (r.clicks || 0), 0); return { ads: rs.length, running: rs.filter(isActive).length, spend, impressions, clicks, leads, cost_per_lead: leads ? round2(spend / leads) : null, ctr: impressions ? round2((clicks / impressions) * 100) : null, confidence: confidence(leads) }; };
   const split = (key) => { const by = new Map(); for (const r of mine) { const v = key(r); if (v == null || v === "") continue; by.set(v, [...(by.get(v) || []), r]); }
     return [...by.entries()].map(([value, rs]) => ({ value, ...sum(rs) })).sort((a, b) => (b.leads >= 5) - (a.leads >= 5) || (a.leads >= 5 && b.leads >= 5 ? a.cost_per_lead - b.cost_per_lead : 0) || b.leads - a.leads || b.spend - a.spend || String(a.value).localeCompare(String(b.value))); };
-  const by_coach = split((r) => r.video_coach || INVENTED), by_kind = split((r) => r.video_kind), by_style = split((r) => r.video_style);
+  const by_coach = split((r) => r.video_coach || (r.video_kind === REAL_FOOTAGE ? REAL_FOOTAGE : INVENTED)), by_kind = split((r) => r.video_kind), by_style = split((r) => r.video_style);
   const said = [], money = (x) => `${currency} ${x.toFixed(2)}`;
   for (const [what, list] of [["who presents", by_coach], ["the kind of video", by_kind]]) {
     if (list.length < 2) continue;

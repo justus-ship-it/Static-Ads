@@ -212,6 +212,8 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
       return [...pins.values()].sort((a, b) => b.adsets - a.adsets);
     },
     /** Every ad set the account has run, with its targeting — the raw material of the targeting library. */
+    /** The ads an ad set holds on Meta (the listing leaves out archived and deleted ones, which do not count toward its limit). */
+    adsetAds: (adsetId) => list(`${adsetId}/ads`, { fields: "id,status,effective_status" }),
     adsetHistory: (adAccountId) => list(`${actId(adAccountId)}/adsets`, { fields: "id,name,status,effective_status,created_time,updated_time,daily_budget,campaign{id,name,objective},targeting{age_min,age_max,genders,flexible_spec,exclusions,custom_audiences,excluded_custom_audiences,geo_locations,targeting_automation,publisher_platforms}", limit: 100 }),
     /** Spend and leads per ad set over its whole life (or a preset window): `lead` is Meta's count of instant-form leads. */
     adsetInsights: async (adAccountId, { datePreset = "maximum" } = {}) => (await list(`${actId(adAccountId)}/insights`, { level: "adset", fields: "adset_id,adset_name,spend,impressions,clicks,actions,date_start,date_stop", date_preset: datePreset, limit: 100 })).map((r) => ({

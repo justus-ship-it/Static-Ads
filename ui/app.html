@@ -1800,7 +1800,7 @@ function paintList(){
   box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>{ const r = b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
       <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':b.failed?` · <span class="pill warn">${b.failed.stage==='failed'?'stopped on an error':'did not finish'} · ${b.failed.image_calls} call${b.failed.image_calls===1?'':'s'} used</span>`:b.stopped?` · <span class="pill warn">stopped · ${b.stopped.image_calls} call${b.stopped.image_calls===1?'':'s'} used</span>`:' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}${b.published?` · <span class="pill ${b.published.status==='live'?'on':''}">on Facebook · ${esc(b.published.status)}${b.published.leads!=null?` · ${b.published.leads} leads${b.published.cost_per_lead!=null?` at ${b.published.cost_per_lead}`:''}`:''}</span>`:''}</div>
-      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button><button class="sm" onclick="bWords('${esc(b.id)}')">Change words</button>${b.left||b.videos?`<button class="sm" data-again="${esc(b.id)}" onclick="bRunAgain('${esc(b.id)}')" title="${b.left?`${b.left} not finished last time. `:''}Makes only what is missing; everything already made is reused.">Run again…</button>`:''}`:`${b.stopped||b.failed?`<button class="sm primary" onclick="bRunAgain('${esc(b.id)}')">Run again…</button><button class="sm" onclick="openGenerating('${esc(b.id)}')">Open</button>`:''}<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
+      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button>${b.imported?`<span class="hint" data-imported="${esc(b.id)}">Real footage, added as it is: nothing to generate or run again.</span>`:''}${b.imported?`<button class="sm" data-fwords="${esc(b.id)}" onclick="bFootageWords('${esc(b.id)}')">Change the offer name…</button>`:''}<button class="sm" ${b.imported?'hidden':''} onclick="bWords('${esc(b.id)}')">Change words</button><button class="sm" ${b.imported?'hidden':''} data-grow="${esc(b.id)}" onclick="bGrow('${esc(b.id)}')" title="More photos for this batch. The ads it has keep their looks, numbers and your picks.">Add photos…</button>${b.left||b.videos?`<button class="sm" data-again="${esc(b.id)}" onclick="bRunAgain('${esc(b.id)}')" title="${b.left?`${b.left} not finished last time. `:''}Makes only what is missing; everything already made is reused.">Run again…</button>`:''}`:`${b.stopped||b.failed?`<button class="sm primary" onclick="bRunAgain('${esc(b.id)}')">Run again…</button><button class="sm" onclick="openGenerating('${esc(b.id)}')">Open</button>`:''}<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
     </div></div>`; }).join('')}</div>` : '<div class="hint">No campaigns yet. Fill in the brief above and press Generate.</div>';
 }
 
@@ -1990,11 +1990,88 @@ async function bRunAgain(id){
     <div class="summary">${b.generated??0} new photo${(b.generated??0)===1?'':'s'} + ${(b.real||[]).length} real · up to <b>${b.max_calls} image call${b.max_calls===1?'':'s'}</b> in all</div>
     <div class="row"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" id="bRunAgainGo" onclick="window.__bRunAgainGo()">Yes, run again — up to ${b.max_calls} image call${b.max_calls===1?'':'s'}</button></div></div></div>`;
 }
+/**
+ * Add photos to a batch that has its ads (2026-11-18). The ads it has keep their looks, their numbers and the picks;
+ * the new photos are planned as the batch's own were, from scenes it has not used, and their ads are numbered on.
+ * The numbers shown are the server's own (asked again on every change), and the run starts only on the confirmation.
+ */
+const GROW = { id:null, opts:null, add:{}, dry:null, err:null, busy:false, seq:0 };
+async function bGrow(id){
+  Object.assign(GROW, { id, opts:null, add:{}, dry:null, err:null, busy:false });
+  try { GROW.opts = await api(`/api/client/${STATE.sel}/batch/${id}/grow`); } catch(e){ toast(e.message, 'err'); return; }
+  const O = GROW.opts;
+  if (!O.why){ const first = O.kinds.find(k=>k.format==='workout') || O.kinds[0]; GROW.add = { [first.format]: Math.min(10, O.max_more, first.unused || 10) }; }   // it opens on scenes the batch has not used: more than that repeats scenes, and is the owner's to type
+  bGrowPaint(); if (!O.why) bGrowAsk();
+}
+function bGrowCount(){ return Object.values(GROW.add).reduce((t,x)=>t+(x||0),0); }
+function bGrowPaint(){
+  const O = GROW.opts, D = GROW.dry, n = bGrowCount(), s = (k,w) => `${k} ${w}${k===1?'':'s'}`;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card" id="bGrowCard">
+    <h2>Add photos to this batch</h2>
+    ${O.why ? `<div class="msg warn" id="bGrowWhy">${esc(O.why)}</div><div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Close</button></div>` : `
+    <p class="hint">The ads this batch has keep their looks, their numbers and your picks. The new photos are made the way the batch's own were, from scenes it has not used yet, and their ads are numbered on.${O.videos?' The videos are left exactly as they are.':''} Stories versions of the new ads are made from Pick Ads afterwards.</p>
+    ${O.kinds.map(k=>`<div class="row" style="align-items:center;margin:8px 0"><label for="bGrow-${k.format}" style="margin:0;min-width:190px">New ${esc(FORMAT_PLURAL[k.format]||k.format)}</label><input id="bGrow-${k.format}" data-grow-kind="${k.format}" type="number" min="0" max="${O.max_more}" value="${GROW.add[k.format]||0}" style="width:80px" oninput="bGrowSet('${k.format}', this.value)"><span class="hint" style="margin:0">${s(k.approved,'approved scene')}, ${k.unused} not in this batch yet</span></div>`).join('')}
+    <div class="hint" id="bGrowLimit">This batch has ${s(O.have,'photo')}; a batch holds ${O.max_photos} at most, so up to ${O.max_more} more.</div>
+    ${GROW.err ? `<div class="msg err" id="bGrowErr">${esc(GROW.err)}</div>` : ''}
+    ${D && !GROW.err ? `<div class="summary" id="bGrowSum"><b>${s(D.photos,'new photo')}</b> · at most <b>${s(D.calls,'more image call')}</b> · the batch will have ${D.total} photos${(D.notes||[]).map(m=>`<div class="hint" style="margin:4px 0 0">${esc(m)}</div>`).join('')}</div>` : ''}
+    <div class="row" style="margin-top:12px"><button onclick="$('#gModal').innerHTML=''">Cancel</button><div class="spacer"></div><button class="primary" id="bGrowGo" ${!D || GROW.err || GROW.busy || !n ? 'disabled' : ''} onclick="bGrowGo()">${D && !GROW.err ? `Add ${s(D.photos,'photo')} — up to ${s(D.calls,'image call')}` : GROW.busy ? 'Working it out…' : 'Add photos'}</button></div>`}
+  </div></div>`;
+}
+function bGrowSet(format, v){
+  const O = GROW.opts, n = Math.round(Number(v)); GROW.err = null; GROW.dry = null;
+  if (v !== '' && !(Number.isInteger(n) && n >= 0)) GROW.err = 'The number of photos is a whole number, 0 or more.';
+  GROW.add[format] = Number.isInteger(n) && n > 0 ? n : 0;
+  if (!GROW.err && bGrowCount() > O.max_more) GROW.err = `This batch has ${O.have} photos and a batch holds ${O.max_photos} at most: add ${O.max_more} or fewer, and make the rest as a second batch.`;
+  if (!GROW.err && !bGrowCount()) GROW.err = 'Say how many photos to add: one or more.';
+  bGrowLive(); if (!GROW.err) bGrowAsk();
+}
+/** Repaint what changes without rebuilding the fields (the cursor stays where it is). */
+function bGrowLive(){
+  const keep = document.activeElement?.dataset?.growKind, at = keep ? document.activeElement.selectionStart : null;
+  bGrowPaint();
+  if (keep){ const el = $(`#bGrow-${keep}`); if (el){ el.focus(); try { el.setSelectionRange(at, at); } catch{} } }
+}
+async function bGrowAsk(){
+  const seq = ++GROW.seq, add = Object.fromEntries(Object.entries(GROW.add).filter(([,n])=>n>0));
+  GROW.busy = true; bGrowLive();
+  try { const d = await api(`/api/client/${STATE.sel}/batch/${GROW.id}/grow`, { method:'POST', body:{ add, dry:true } }); if (seq !== GROW.seq) return; GROW.dry = d; GROW.err = null; }
+  catch(e){ if (seq !== GROW.seq) return; GROW.dry = null; GROW.err = e.message; }
+  GROW.busy = false; if ($('#bGrowCard')) bGrowLive();
+}
+async function bGrowGo(){
+  const D = GROW.dry, id = GROW.id; if (!D || GROW.busy) return;
+  GROW.busy = true; bGrowLive();
+  let r; try { r = await api(`/api/client/${STATE.sel}/batch/${id}/grow`, { method:'POST', body:{ add:D.add, confirm:{ total:D.total, calls:D.calls } } }); }
+  catch(e){ GROW.busy = false; GROW.err = e.message; bGrowLive(); return; }
+  $('#gModal').innerHTML = '';
+  const b = r.brief;
+  run({kind:'batch', gym:STATE.sel, batch:id, keepVideos:true, confirm:{ offer:b.offer, locations:b.locations, audience:b.audience??null, max_calls:b.max_calls }}, async()=>{ try { await reloadScenes(); } catch{} });
+  openGenerating(id);
+}
 function bClose(){ $('#bModal').innerHTML=''; B.pending=null; B.pendingScenes=null; }
 /** Cancel: nothing runs, and a brief that only the confirmation had saved is discarded again. */
 async function bCancel(){
   const id = B.pending?.batch_id, fresh = B.createdByConfirm; bClose();
   if (fresh && id){ try { await api(`/api/client/${STATE.sel}/batch/${id}`, {method:'DELETE'}); B.savedId = null; } catch(e){} }
+}
+// A batch of videos added as they are: its offer name and audience are the owner's to change, with nothing to render.
+async function bFootageWords(id, after){
+  let v; try { v = await api(`/api/client/${STATE.sel}/batch/${id}`); } catch(e){ toast(e.message, 'err'); return; }
+  const br = v.brief || {};
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card" id="bFwCard" style="max-width:520px">
+    <h2>Change the offer name</h2>
+    <p class="hint">These videos are real footage, added as they are: the words are not in the pictures, so nothing is made again. The campaign and its ads are named by these words the next time you open Publish Ads.</p>
+    <label for="bFwOffer">Offer</label><input id="bFwOffer" value="${esc(br.offer||'')}" style="width:100%">
+    <label for="bFwAud" style="margin-top:8px">Audience callout <span class="hint">(optional)</span></label><input id="bFwAud" value="${esc(br.audience||'')}" style="width:100%">
+    <div class="msg err" id="bFwErr" hidden style="margin-top:8px"></div>
+    <div class="row" style="margin-top:12px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="bFwSave">Save</button></div></div></div>`;
+  $('#bFwSave').onclick = async () => {
+    const err = $('#bFwErr'); err.hidden = true;
+    try { await api(`/api/client/${STATE.sel}/batch/${id}/footage-words`, { method:'POST', body: { offer: $('#bFwOffer').value, audience: $('#bFwAud').value } }); }
+    catch(e){ err.textContent = e.message; err.hidden = false; return; }
+    $('#gModal').innerHTML = ''; toast('Offer name changed', 'ok');
+    if (after) after(); else { B.setup = await api(`/api/client/${STATE.sel}/batch-setup`); if ($('#view') && STATE.tab==='batch') paintList(); }
+  };
 }
 async function bDiscard(id){
   const b = (B.setup?.batches||[]).find(x=>x.id===id);
@@ -2103,7 +2180,7 @@ function paintReview(v){
     </div>
     <div class="rv-count" id="rvCount"></div>
     ${(d.video_failures||[]).length ? `<button class="sm" id="rvVideoFail" style="border-color:var(--err);color:var(--err)" onclick="rvVideoFailShow()">${d.video_failures.length} video${d.video_failures.length===1?'':'s'} not finished…</button>` : ''}
-    ${(d.video_cost?.pending||0) > 0 || (d.video_failures||[]).length ? `<button class="sm" id="rvRunAgain" onclick="bRunAgain(R.id)" title="Makes only what is missing; everything already made is reused.">Run again…${(d.video_cost?.pending||0) > 0 ? ` · ${d.video_cost.pending} s of video to film` : ''}</button>` : ''}
+    <button class="sm" id="rvGrow" ${d.imported?'hidden':''} onclick="bGrow(R.id)" title="More photos for this batch. The ads it has keep their looks, numbers and your picks.">Add photos…</button>${(d.video_cost?.pending||0) > 0 || (d.video_failures||[]).length ? `<button class="sm" id="rvRunAgain" onclick="bRunAgain(R.id)" title="Makes only what is missing; everything already made is reused.">Run again…${(d.video_cost?.pending||0) > 0 ? ` · ${d.video_cost.pending} s of video to film` : ''}</button>` : ''}
     ${R.mode==='ads' && d.locations.length>1 ? `<div class="chips" style="margin:0">${['all',...d.locations].map(l=>`<span class="chip ${R.loc===l?'sel':''}" onclick="rvLoc(${esc(JSON.stringify(l))})">${l==='all'?'All locations':esc(l)}</span>`).join('')}</div>` : ''}
     <select id="rvShow" onchange="rvShow(this.value)" title="Which to show">
       ${[['all','Show all'],['todo','To review'],['keep','Kept'],['exclude','Excluded']].map(([k,l])=>`<option value="${k}" ${R.show===k?'selected':''}>${l}</option>`).join('')}
@@ -2130,6 +2207,9 @@ function paintFoot(busy){
   const d = R.data, box = $('#rvFoot'); if (!box) return;
   const st = d.stories;
   box.innerHTML = !d.made ? `<span>The ads render once every photo is in. You can review the photos meanwhile.</span>${d.run?`<button class="sm" onclick="openGenerating('${esc(R.id)}')">Watch progress →</button>`:''}<span class="spacer"></span>`
+    : d.imported ? `<span id="rvImported">Real footage, added as it is. Each video is 9:16 already, so there is no Stories version to make and nothing to run again.</span>
+      <button class="sm ok" onclick="openPublish('${esc(R.id)}')" ${busy?'disabled':''}>Publish Ads →</button>
+      <span class="spacer"></span><span id="rvSaved">${d.saved?'Picks saved':''}</span>`
     : `<span>${st ? `${st.ads} Stories version${st.ads===1?'':'s'} · ${st.image_calls} image call${st.image_calls===1?'':'s'}${st.left_out?` · ${st.left_out} left out`:''}` : 'No Stories versions yet'}</span>
       <button class="sm primary" onclick="rvStoriesConfirm()" ${busy?'disabled':''}>${st?'Make Stories versions again…':'Make Stories versions…'}</button>
       ${st?`<button class="sm" onclick="rvStoriesRerender()" ${busy?'disabled':''}>Re-render Stories (free)</button>`:''}
@@ -2168,8 +2248,8 @@ const waits = !photo && it.video_flags > 0 && st !== 'exclude';
     info.innerHTML = `<b>${esc(it.id)}</b>${it.scene_id?`<span>${esc(it.scene_id)}</span>`:''}<span>in ${it.ads} ad${it.ads===1?'':'s'}</span>${it.primary?`<span>made for ${esc(layoutName(it.primary))}</span>`:''}${it.scene?`<span class="scene">${esc(it.scene)}</span>`:''}${(it.notes||[]).length?`<span class="note" title="${esc(it.notes.join(' · '))}">${esc(it.notes.join(' · '))}</span>`:''}`;
   } else if (it.video) {
     // A video ad: it plays here, sound and all. Keep and Exclude work as for any ad; a video is 9:16 already, so it has no Stories version to make.
-    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · ${it.video_kind==='paper'?'White-paper video · no voice':'Presenter video'}${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${rvLinesPanel(it)}${STAMPS}</div>`;
-    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${it.video_kind==='paper'?'white-paper video':'presenter video'}</span>${it.video_coach?`<span id="rvCoach">${esc(it.video_coach)} presents · your eye is the check that it looks and sounds like them</span>`:''}${it.video_flags?`<span class="note">waiting for you: ${it.video_flags} ${rvNoun(it)}${it.video_flags===1?'':'s'} did not pass its check</span>`:''}${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
+    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · ${it.video_kind==='paper'?'White-paper video · no voice':it.video_kind==='real'?'Real footage · the gym’s own clips, cut and captioned':'Presenter video'}${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${rvLinesPanel(it)}${STAMPS}</div>`;
+    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${it.video_kind==='paper'?'white-paper video':it.video_kind==='real'?`real footage${it.video_title?` · ${esc(it.video_title)}`:''}`:'presenter video'}</span>${it.video_coach?`<span id="rvCoach">${esc(it.video_coach)} presents · your eye is the check that it looks and sounds like them</span>`:''}${it.video_flags?`<span class="note">waiting for you: ${it.video_flags} ${rvNoun(it)}${it.video_flags===1?'':'s'} did not pass its check</span>`:''}${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
   } else {
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
       <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="" draggable="false">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>${STAMPS}</div>`;
@@ -3171,9 +3251,9 @@ function vsDecide(id, status){ vsSend('PUT', `/script/${id}`, { status }); }
 function psBlock(D, all = D.sheet_scripts || []){
   const live = all.filter(s=>s.status!=='retired'), gone = all.filter(s=>s.status==='retired'), L = D.limits || {}, S = L.sheets || [6,9], Wd = L.sheet_words || [2,8];
   const row = (s) => vsRow({ key:'paper:'+s.id, attr:`data-sheets="${esc(s.id)}"`, s, first: esc(s.sheets[0]), meta:`${s.sheets.length} sheets · ${s.cost.seconds} s · US$${s.cost.usd.toFixed(2)}`, pills: vsEditPill(s),
-    action: vsState(s)==='read' ? `<button class="sm primary" data-keep onclick="psKeep('${s.id}')">Keep</button>` : '',
+    action: vsState(s)==='read' ? `<button class="sm primary" data-keep onclick="psKeep('${s.id}')">Keep</button>` : vsState(s)==='edit' ? `<button class="sm primary" data-ps-propose onclick="psPropose('${s.id}')">Propose an edit…</button>` : '',
     more: s.status==='retired' ? [vsItem('Restore', `psDecide('${s.id}','draft')`)] : [...(s.status==='kept' ? [vsItem('Put back', `psDecide('${s.id}','draft')`)] : []), vsItem('Retire…', `psRetire('${s.id}')`)],
-    body: `${s.pain?`<div class="hint" data-pain style="margin:0 0 4px">About: ${esc(s.pain)}</div>`:''}<ol style="margin:2px 0 0 18px;line-height:1.55">${s.sheets.map((l,i)=>`<li>${esc(l)}${s.scarcity&&s.scarcity.sheet===i+1?` <span class="pill ${s.scarcity.by?'':'warn'}" data-scarcity="${s.scarcity.by||'ask'}">${s.scarcity.by==='fact'?'places limited · from your facts':s.scarcity.by==='you'?'places limited · on your word':'places limited · the agent’s suggestion: Keep asks if it is true'}</span>`:''}</li>`).join('')}</ol>${(s.problems||[]).length?`<div class="hint" data-problems style="color:var(--warn);margin-top:4px">Needs an edit before it is filmed: ${esc(s.problems.join('; '))}. Press Edit….</div>`:''}${s.reason?`<div class="hint">Retired: ${esc(s.reason)}</div>`:''}${s.status!=='retired'?`<div class="row" style="gap:6px;margin-top:8px"><button class="sm" onclick="psEdit('${s.id}')">Edit…</button></div>`:''}` });
+    body: `${s.pain?`<div class="hint" data-pain style="margin:0 0 4px">About: ${esc(s.pain)}</div>`:''}<ol style="margin:2px 0 0 18px;line-height:1.55">${s.sheets.map((l,i)=>`<li>${esc(l)}${s.scarcity&&s.scarcity.sheet===i+1?` <span class="pill ${s.scarcity.by?'':'warn'}" data-scarcity="${s.scarcity.by||'ask'}">${s.scarcity.by==='fact'?'places limited · from your facts':s.scarcity.by==='you'?'places limited · on your word':'places limited · the agent’s suggestion: Keep asks if it is true'}</span>`:''}</li>`).join('')}</ol>${(s.problems||[]).length?`<div class="hint" data-problems style="color:var(--warn);margin-top:4px">Needs an edit before it is filmed: ${esc(s.problems.join('; '))}. Press <b>Propose an edit…</b> and the agent writes it for you to approve, or Edit… to do it yourself.</div>`:''}${s.reason?`<div class="hint">Retired: ${esc(s.reason)}</div>`:''}${s.status!=='retired'?`<div class="row" style="gap:6px;margin-top:8px"><button class="sm" onclick="psEdit('${s.id}')">Edit…</button></div>`:''}` });
   return `<div id="psBlock"><details class="how"><summary>How this works</summary><p class="hint" style="margin:6px 0 0"><b>White-paper scripts</b> · a silent video: the presenter holds hand-written sheets and drops them one by one.</p>
     <p class="hint" style="margin:6px 0 0">The words on the sheets, in order: ${S[0]} to ${S[1]} sheets of ${Wd[0]} to ${Wd[1]} words, <b>in words a nine-year-old knows</b>. One sheet names the offer in its exact words; the last sheet is the closing line. Every drafted script has <b>one sheet that says places are limited</b>: with your number when you have typed one under What each challenge includes, else with no number, as the agent’s suggestion — <b>Keep asks you if it is true</b>, and you can put your own number in. Software writes the words on the paper, so they are exact; nobody speaks and there is no music.</p></details>
     <div id="psList">${live.length ? vsGrouped(live, row) : '<p class="hint" id="psNone">No white-paper script for this offer yet. Press <b>Draft sheets…</b> and the agent writes some; read them, then <b>Keep</b> the one you want filmed.</p>'}</div>
@@ -3201,6 +3281,15 @@ function psOwn(){ vsModal('Your own white-paper script', `<p class="hint">Six to
 function psOwnRun(){ vsSend('POST', '/sheets', { offer: $('#vsOfferIn').value.trim(), sheets: psRead() }); }
 function psEdit(id){ const s = (VS.data.sheet_scripts||[]).find(x=>x.id===id); if (!s) return; VS.editing = id; vsModal('Edit the sheets', `<p class="hint">For “${esc(s.offer)}”. It is checked again when you save. The last sheet is the closing line: “${esc(VS.data.closing.text)}” A changed sheet is a new clip; the others are reused.</p>${psForm(s.sheets)}`, 'psEditRun()', 'Save'); }
 function psEditRun(){ vsSend('PUT', `/sheets/${VS.editing}`, { sheets: psRead() }); }
+// The edit a white-paper script needs, proposed by the agent (2026-11-19): it comes up in the edit boxes with what changed and why;
+// he changes anything he likes and saves it through the usual edit (checked again). The sheet about limited places is never the agent's to change.
+async function psPropose(id){
+  const s = (VS.data.sheet_scripts||[]).find(x=>x.id===id); if (!s) return;
+  let d; try { d = await api(`/api/client/${STATE.sel}/video/sheets/${id}/propose`, { method:'POST', body:{} }); } catch(e){ toast(e.message, 'err'); return; }
+  const P = d.proposal; VS.editing = id;
+  vsModal('The agent’s proposed edit', `<p class="hint" id="psProposal">For “${esc(s.offer)}”. <b>${P.changed.length ? `Changed: sheet${P.changed.length===1?'':'s'} ${P.changed.join(', ')}` : 'Changed'}</b>${P.note ? ` — ${esc(P.note)}` : ''} The other sheets are as you had them. Change anything you like before you approve it: it is checked again when you save, and nothing is saved until then.</p><p class="hint" style="margin-top:0">It needed an edit because: ${esc(P.problems.join('; '))}.</p>${(P.yours||[]).length?`<p class="hint" id="psYours" style="margin-top:0;color:var(--warn)">Still yours to settle, since it is a claim about the gym: ${esc(P.yours.join('; '))}.</p>`:''}${psForm(P.sheets)}`, 'psEditRun()', 'Use this edit');
+  for (const n of P.changed) { const t = $('#psSheet'+(n-1)); if (t) t.style.borderColor = 'var(--navy)'; }
+}
 function psDecide(id, status){ vsSend('PUT', `/sheets/${id}`, { status }); }
 // Keeping a draft whose scarcity sheet is the agent's suggestion: the owner says it is true, or changes its words first (2026-11-16).
 function psKeep(id){ const s = (VS.data.sheet_scripts||[]).find(x=>x.id===id); if (!s) return; if (!s.scarcity || s.scarcity.by) return psDecide(id, 'kept');
@@ -3616,13 +3705,25 @@ function pbCreateConfirm(){
     <p class="hint">In ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account: the campaign, ${P.counts.adsets} ad set${P.counts.adsets===1?'':'s'} and ${P.counts.ads} ad${P.counts.ads===1?'':'s'} as shown on this screen — every object <b>paused</b>. Nothing runs or spends until you switch it on in Ads Manager. Made already: ${made} ad${made===1?'':'s'}, reused.${P.counts.videos?` <span id="pbCreateVideo">${P.counts.videos} of the ads ${P.counts.videos===1?'is a video':'are videos'}: each is uploaded to the ad account and Meta takes a minute or two to process it before its ad can be made, so this run takes longer.</span>`:''}</p>
     <div class="summary"><b>${esc(P.campaign.name)}</b> · ${money(P.budget.per_day_total,cur)} a day once switched on${P.words.placeholders.length?' · <span style="color:var(--warn)">placeholder words</span>':''}</div>
     <div class="summary" id="pbCreateForm" style="margin-top:-4px">Leads go to the form <b>${esc(PB.data.lead_form_name || P.lead_form_id || 'none')}</b> ${pbFormConfirmed() ? '<span class="pill on">confirmed</span>' : `<span class="pill warn">not confirmed yet</span> <a href="#" onclick="bClose();pbFormChoose();return false">choose and confirm it first</a>`}</div>
+    ${pbRoomBlock()}
     <div class="row"><label for="pbFirst" style="margin:0">Only the first</label><input id="pbFirst" type="number" min="1" max="${P.counts.ads}" placeholder="all" style="width:80px"><span class="hint" style="margin:0">ads this run (leave empty for all ${P.counts.ads})</span></div>
     <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" onclick="pbCreateGo()">Yes, create them paused</button></div></div></div>`;
 }
+/** A full ad set, said before anything is uploaded (2026-11-18): Meta allows 50 ads in an ad set and counts paused ones,
+ *  and an ad made again is a new ad beside its old one. The archive is the owner's tick; it can never be undone. */
+function pbRoomBlock(){
+  const R = PB.data.room; if (!R) return '';
+  const over = Object.entries(R.by_adset||{}).filter(([,x]) => x.over); if (!over.length) return '';
+  const n = (k, w='ad') => `${k} ${w}${k===1?'':'s'}`;
+  const lines = over.map(([c,x]) => `<div><b>${esc(c)}</b> holds ${n(x.have)} on Facebook and this adds ${x.adds}${x.replaced ? ` (${x.replaced} to replace an older version of ${x.replaced===1?'itself':'themselves'})` : ''}: ${x.after} in all.${x.short ? ` <span style="color:var(--err)">Even with the old ones archived it is ${x.short} over: archive ${n(x.short)} of this ad set in Ads Manager, or exclude ${n(x.short)} on Pick Ads.</span>` : ''}</div>`).join('');
+  return `<div class="summary" id="pbRoom" style="margin-top:-4px;border-color:var(--warn)"><b>An ad set is full.</b> Facebook allows ${R.max} ads in an ad set, and paused ones count. ${lines}
+    ${R.archive ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px"><input type="checkbox" id="pbArchive" data-n="${R.archive}" style="margin-top:3px"><span>Archive the ${n(R.archive, 'old ad')} these replace, to make room. <b>An archived ad can never be turned on again.</b> Only paused ones are archived, and only if the ad set is still full when the run starts.</span></label>
+    <div class="hint" style="margin:6px 0 0">Without the tick nothing is uploaded and the run stops with this reason.</div>` : ''}</div>`;
+}
 function pbCreateGo(){
-  const P = PB.data.plan, v = $('#pbFirst').value.trim(), first = v ? parseInt(v, 10) : null; bClose();
+  const P = PB.data.plan, v = $('#pbFirst').value.trim(), first = v ? parseInt(v, 10) : null, box = $('#pbArchive'), archive = box && box.checked ? Number(box.dataset.n) : 0; bClose();
   if (v && !(Number.isInteger(first) && first >= 1)) { toast('"Only the first" is a whole number of ads.', 'err'); return; }
-  run({kind:'batch-publish', gym:PB.gym, batch:PB.id, confirm:{ ads:P.counts.ads, adsets:P.counts.adsets, per_day:P.budget.per_day_total, ...(first ? { first } : {}) }}, async()=>{ PB.data = null; if (STATE.tab==='publish' && STATE.batch===PB.id) viewPublish($('#view')); });
+  run({kind:'batch-publish', gym:PB.gym, batch:PB.id, confirm:{ ads:P.counts.ads, adsets:P.counts.adsets, per_day:P.budget.per_day_total, ...(first ? { first } : {}), ...(archive ? { archive } : {}) }}, async()=>{ PB.data = null; if (STATE.tab==='publish' && STATE.batch===PB.id) viewPublish($('#view')); });
   paintPublish($('#view'));
 }
 function pbSet(path, val){ setPath(PB.settings, path, val); pbSave(); }

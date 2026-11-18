@@ -18,7 +18,7 @@ import { runBatch } from "./plan-offer-batch.mjs";
 import { buildVisualPrompt, ANCHOR_CLAUSE } from "./visual-prompts.mjs";
 import { generateVisuals } from "./generate-visuals.mjs";
 import { judgeSibling } from "./check-quality.mjs";
-import { runStoriesPhotos as runStories, runStories as runStoriesAll, designed, planStories, bandImage, storiesFile, STORIES_CHECKS, RATIO, STACK_MIN_H, STACK_GAP } from "./make-stories.mjs";
+import { runStoriesPhotos as runStories, runStories as runStoriesAll, designed, FORMULA_STACK, planStories, bandImage, storiesFile, STORIES_CHECKS, RATIO, STACK_MIN_H, STACK_GAP } from "./make-stories.mjs";
 
 const CAT = loadCatalogue();
 const T = CAT.treatments;
@@ -718,7 +718,7 @@ test("S17 the Stories designs, in the owner's order (2026-11-17): a new tall pho
   try {
     const { out, batch } = await finishedBatch(dir);
     const K = (treatment, photos = ["g01"], feed = "4x5", catalogue = CAT) => designed({ treatment, photos }, { feed, catalogue });
-    assert.deepEqual([K("t3-right-column"), K("t1-bottom-stack"), K("t2-top-bottom-split"), K("t7-collage", ["g01", "g02", "r01", "r02"]), K("t8-panels-band", ["g01", "g02"]), K("t3-right-column", ["g01"], "1x1"), K("f1-callout-left", ["g01"], "4x5", loadCatalogue({ look: "formula" }))], [true, true, true, false, false, false, false]);
+    assert.deepEqual([K("t3-right-column"), K("t1-bottom-stack"), K("t2-top-bottom-split"), K("t7-collage", ["g01", "g02", "r01", "r02"]), K("t8-panels-band", ["g01", "g02"]), K("t3-right-column", ["g01"], "1x1"), K("f1-callout-left", ["g01"], "4x5", loadCatalogue({ look: "formula" })), K("f1-callout-left", ["g01"], "1x1", loadCatalogue({ look: "formula" }))], [true, true, true, false, false, false, true, false]);
     assert.deepEqual([T.stories_designs.order, !!T.treatments["st-tall"], Object.keys(T.treatments).includes("st-tall")], [["tall", "side", "top"], true, false], "the tall treatment is found by id and seen by no loop");
     const gens = batch.ads.filter((a) => a.photos.length === 1 && a.photos[0].startsWith("g")), others = batch.ads.filter((a) => !gens.includes(a)), pids = [...new Set(gens.map((a) => a.photos[0]))];
     assert.ok(gens.length > 0 && others.length > 0 && pids.length === 2);
@@ -754,5 +754,35 @@ test("S17 the Stories designs, in the owner's order (2026-11-17): a new tall pho
     // designs: false is the photo way for every ad.
     const r4 = await runStoriesAll({ brandDir: dir, batchId: "test-batch", maxCalls: 20, designs: false, deps: { ...deps, check: check9 }, log: () => {} });
     assert.ok(r4.stories.ads.length > 0 && r4.stories.ads.every((a) => !a.design));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("S18 a formula ad takes the Stories designs too (2026-11-19, the owner: new-style Stories for Jurong West's look): the same order — a tall photo with the words on its own top, else the words beside the model, else the photo's colour carried up — in the ad's own type and pairing with the callout leading, never the offer over the model; before, a formula ad's Stories version went the photo way", async () => {
+  const dir = brandSetup();
+  try {
+    // A formula feed batch: the model's face in the middle of the frame, clear of the callout across the top and the offer low down.
+    const mid = async () => ({ ok: true, failures: [], notes: [], stray_text: [], excluded: [], dismissed: [], faces: [[280, 430, 400, 570]], focus: [0.5, 0.5], placement: { people_box: [240, 300, 980, 700], people_count: 1 } });
+    const made = await runBatch({ brandDir: dir, brief: { ...BRIEF, look: "formula", real: [] }, deps: { generate: generate([]), check: mid, checkRef: async () => [], checkPhoto: async () => ({ text: [], never: [], people_count: 0, people_box: null, face_boxes: [] }), compositor: null, browser }, log: () => {} });
+    const out = made.out, batch = made.batch;
+    writeFileSync(join(out, "selections.json"), JSON.stringify({ ...Object.fromEntries(batch.ads.map((x) => [x.folder, { [x.ratio]: x.file }])), excluded: [] }));
+    const F = loadCatalogue({ look: "formula" });
+    assert.equal(batch.look, "formula"); assert.ok(batch.ads.length >= 2 && batch.ads.every((a) => /^f\d-/.test(a.treatment) && /^fs\d-/.test(a.style) && /^f-/.test(a.palette) && a.photos.length === 1), JSON.stringify(batch.ads.map((a) => [a.treatment, a.style, a.palette])));
+    assert.ok(batch.ads.every((a) => designed(a, { feed: "4x5", catalogue: F })));
+    assert.deepEqual([FORMULA_STACK.map((x) => x.block), FORMULA_STACK[0].share > Math.max(...FORMULA_STACK.slice(1).map((x) => x.share))], [["location", "audience", "duration", "offer_name"], true], "the callout is the line no other outgrows");
+    const calls = [], logs = [];
+    const tall = async (file) => { const b = basename(file).startsWith("g02-") ? [120, 60, 1000, 940] : [340, 300, 1000, 700]; return { ok: true, failures: [], notes: [], stray_text: [], excluded: [], dismissed: [], faces: [[b[0] + 10, 440, b[0] + 90, 560]], focus: [0.5, 0.5], placement: { people_box: b, people_count: 1 } }; };
+    const check = async (file, opts) => (/-9x16-tall/.test(basename(file)) ? tall(file) : check9(file, opts));
+    const deps = { generate: generate(calls), check, sibling: async () => ({ ok: true, failures: [], notes: [] }), checkRef: async () => [], compositor: null, browser, gallery: () => {} };
+    const r = await runStoriesAll({ brandDir: dir, batchId: "test-batch", maxCalls: 10, deps, log: (m) => logs.push(m) });
+    assert.deepEqual(r.stories.failed || [], [], logs.join(" | "));
+    assert.equal(calls.filter((c) => /upper 40% of the frame/.test(c.prompt)).length, 2, "one tall photo for each photo, one try");
+    const by = new Map(r.stories.ads.map((a) => [a.folder, a]));
+    for (const ad of batch.ads) {
+      const s = by.get(ad.folder); assert.ok(s?.design, `${ad.folder}: ${logs.join(" | ")}`);
+      assert.deepEqual([s.file, s.treatment, s.style, s.palette, s.words, pngSize(readFileSync(join(out, s.file)))], [storiesFile(ad.file, "4x5"), ad.treatment, ad.style, ad.palette, ad.words, [1080, 1920]], "its own look and words, at 9:16");
+      if (ad.photos[0] === "g01") assert.deepEqual([s.design, s.placed, s.photos], ["tall", "top", ["g01-9x16-tall"]], ad.folder);
+      else { assert.ok(["side", "top"].includes(s.design), JSON.stringify(s)); assert.match(s.passed_over[0], /in the tall photo the model leaves no room for the words, above or beside/); }
+    }
+    assert.ok(logs.some((l) => /stories: \d+ ad\(s\) on 2 photo\(s\) take a design/.test(l)), logs.join(" | "));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

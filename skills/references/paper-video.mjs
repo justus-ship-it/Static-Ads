@@ -184,6 +184,48 @@ export const keptSheetScripts = (gymDir, offer = null) => readSheetScripts(gymDi
 /** What a sheet script on file breaks by today's rules: empty when it may be filmed. */
 export const sheetIssues = (script, { profile = {}, closing = closingLine(), plain = plainWords(), gymDir = null } = {}) => sheetProblems(script.sheets, { offer: script.offer, profile, closing, plain, facts: gymDir ? factsFor(gymDir, script.offer) : [], approved: script.scarce_ok || [], ask: script.status === "draft" });
 export const readySheetScripts = (gymDir, offer = null, opts = {}) => keptSheetScripts(gymDir, offer).filter((x) => !sheetIssues(x, { gymDir, ...opts }).length);
+/**
+ * The edit a white-paper script needs, proposed by the agent for the owner to approve (2026-11-19; the spoken
+ * scripts have had it since 2026-11-14). One text call, a second only when the first answer still breaks a rule;
+ * every proposal is checked in code and one that still breaks a rule is not offered. Nothing is saved:
+ * { sheets, changed (sheet numbers), note, problems (what it mends), yours (what only the owner can settle) }.
+ * **The sheet about limited places is never the agent's to change**: it is a claim about the gym that stands on the
+ * owner's word, and a sheet saved through Edit counts as his — so a proposal that touches, adds or drops one is not
+ * offered, and a script whose only fault is that sheet is said to be his to settle, with no call.
+ */
+const SHEET_EDIT_SCHEMA = { type: "OBJECT", properties: { sheets: { type: "ARRAY", items: { type: "STRING" } }, note: { type: "STRING" } }, required: ["sheets", "note"] };
+const SCARCITY_PROBLEM = /says places are limited|the number you typed for this offer/;
+export function buildSheetEditPrompt({ profile = {}, script, problems, closing = closingLine(), facts = [] }) {
+  const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean), scarce = scarceSheets(script.sheets, script.offer).map((x) => x.sheet);
+  return { schema: SHEET_EDIT_SCHEMA, prompt: [
+    `This is the script of a silent video advert for ${gym}'s programme "${script.offer}". One person holds a stack of hand-written sheets of paper; the viewer reads the front sheet, it is dropped, and the next one shows. The script is the words on the sheets, in order:\n${script.sheets.map((s, i) => `${i + 1}. ${s}`).join("\n")}`,
+    `WHAT IS WRONG WITH IT:\n${problems.map((p) => `- ${p}`).join("\n")}`,
+    `Make the SMALLEST edit that mends this. Keep every sheet that breaks no rule exactly as it is, word for word and in its place. A sheet with too many words is said in fewer words, or split over two sheets with "…" at the break; where a word is not a plain word, write the whole sheet again in small words so that it still reads as a sentence.${scarce.length ? ` Sheet ${scarce.join(" and ")} says places are limited: leave it exactly as it is, letter for letter.` : ""} Never add a sheet about limited places, a number, a date or any fact about the gym.`,
+    `THE RULES every sheet is held to. ${SHEETS[0]} to ${SHEETS[1]} sheets. Each sheet is ${SHEET_WORDS[0]} to ${SHEET_WORDS[1]} words — the last sheet and the sheet with the programme's name may be longer. One sheet names the programme in its exact words, "${script.offer}". The last sheet is exactly this and nothing else: "${closing}". The gym speaks as "we" and "our"; never "I", "my" or "me". The place is only ever written {AREA}; never a country or a city. Never: a price, free, a trial, before and after, a guarantee, a promised result, a number of kilos or sizes, an ideal body, "tap", an emoji, a hashtag, an em dash.${never.length ? ` Never these words: ${never.join(", ")}.` : ""}`,
+    PLAIN_RULE,
+    facts.length ? `THE FACTS the owner has typed as true of this programme (said as they are; state no other):\n${facts.map((f) => `- ${f}`).join("\n")}` : "",
+    `Answer with every sheet of the script after the edit, in order, and a note of one sentence saying what you changed.`,
+  ].filter(Boolean).join("\n\n") };
+}
+export async function proposeSheetEdit({ brandDir, id, libraryDir = videoLibraryDir(), ask = callVision, model = COPY_MODEL }) {
+  const profile = readJson(join(brandDir, "gym-profile.json")) || {}, script = readScripts(brandDir).sheets.find((x) => x.id === id);
+  if (!script) throw new Error(`no such white-paper script: ${id}`);
+  const closing = closingLine(libraryDir), plain = plainWords(libraryDir), facts = factsFor(brandDir, script.offer);
+  const rules = (ss) => sheetProblems(ss, { offer: script.offer, profile, closing, plain, facts, approved: script.scarce_ok || [], ask: script.status === "draft" });
+  const all = rules(script.sheets), yours = all.filter((p) => SCARCITY_PROBLEM.test(p)), problems = all.filter((p) => !SCARCITY_PROBLEM.test(p));
+  if (!all.length) throw new Error("this script breaks no rule: nothing to propose");
+  if (!problems.length) throw new Error(`what this script needs is yours to say, not the agent's: ${yours[0]}`);
+  const scarceWas = scarceSheets(script.sheets, script.offer).map((x) => lettersOf(x.text)).sort().join("|");
+  let left = problems, calls = 0;
+  for (let round = 0; round < 2; round++) {
+    const { prompt, schema } = buildSheetEditPrompt({ profile, script, problems: left, closing, facts });
+    const answer = await ask(null, prompt, schema, { model }); calls++;
+    const sheets = tidy(answer?.sheets, closing);
+    left = scarceSheets(sheets, script.offer).map((x) => lettersOf(x.text)).sort().join("|") !== scarceWas ? ["the edit changed what the script says about limited places: that sheet is the owner's, leave it exactly as it is and add none"] : rules(sheets).filter((p) => !SCARCITY_PROBLEM.test(p));
+    if (!left.length) { const was = script.sheets.map(norm); return { sheets, changed: sheets.map((s, i) => (s === (was[i] ?? "") ? 0 : i + 1)).filter(Boolean).concat(was.length > sheets.length ? [sheets.length] : []).filter((x, i, a) => a.indexOf(x) === i), note: norm(answer?.note), problems, yours, calls }; }
+  }
+  throw new Error(`the agent's edit still breaks a rule (${left[0]}): edit the script yourself`);
+}
 /** Why an offer has no white-paper script ready, and what to press. */
 export function noSheetScriptWhy(gymDir, offer, { libraryDir = videoLibraryDir(), profile = readJson(join(gymDir, "gym-profile.json")) || {} } = {}) {
   const all = readSheetScripts(gymDir).filter((s) => s.status !== "retired"), opts = { profile, closing: closingLine(libraryDir), plain: plainWords(libraryDir), gymDir };

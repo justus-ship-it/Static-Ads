@@ -19,7 +19,7 @@ import { launchBrowser, loadCatalogue, renderComposite } from "./render-composit
 import { fitLayouts } from "./check-visual.mjs";
 import { assignVariants } from "./assign-variants.mjs";
 import { cropImage } from "./clean-photo.mjs";
-import { ageTargets, ageBand, spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, growBatch, madeLooks, madeShape, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
+import { ageTargets, ageBand, spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, growBatch, growOptions, madeLooks, madeShape, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
 const sceneProblemsOf = (s) => sceneProblems(s).join("; ");
 import { poseProblem } from "./visual-prompts.mjs";
 import { rejectScene } from "./scene-library.mjs";
@@ -1255,6 +1255,13 @@ test("B19 more photos for a batch that has its ads (2026-11-17, the owner, on a 
     assert.throws(() => growBatch({ brandDir: dir, brief: { ...brief, direction: { words: "older couples" } }, add: { workout: 1 } }), /cannot be added to: make a second batch/);
     // One more photo: planned from the one scene the batch has not used, as g03; the first two are word for word what they were.
     const planPath = join(first.out, "visuals.json"), planned = JSON.parse(readFileSync(planPath, "utf-8")).visuals;
+    // What the batch can still take (the panel's Add photos dialog), and a dry look at adding: neither writes anything.
+    const opts = growOptions({ brandDir: dir, brief }), wk = opts.kinds.find((k) => k.format === "workout");
+    assert.deepEqual([opts.have, opts.max_more, opts.why, opts.attempts, wk.unused, wk.approved >= 3], [2, 48, null, 1, wk.approved - 2, true]);
+    assert.match(growOptions({ brandDir: dir, brief: { ...brief, batch_id: "never-run" } }).why, /this batch has no ads yet: run it first/);
+    assert.match(growOptions({ brandDir: dir, brief: { ...brief, direction: { words: "older couples" } } }).why, /cannot be added to: make a second batch/);
+    const planText = readFileSync(planPath, "utf-8"), dry = growBatch({ brandDir: dir, brief, add: { workout: 1 }, dry: true });
+    assert.deepEqual([dry.total, dry.calls, dry.added.map((v) => v.id), dry.brief.generated, dry.brief.keep_made, readFileSync(planPath, "utf-8") === planText], [3, 1, ["g03"], 3, true, true], "a dry look says what adding comes to and writes nothing");
     const grown = growBatch({ brandDir: dir, brief, add: { workout: 1 }, log: say });
     const after = JSON.parse(readFileSync(planPath, "utf-8")).visuals;
     assert.deepEqual([after.slice(0, 2), after.length, after[2].id, planned.map((v) => v.scene_id).includes(after[2].scene_id)], [planned, 3, "g03", false]);

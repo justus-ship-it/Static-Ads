@@ -49,6 +49,7 @@ import { videosProblems, videoCount, spokenCount, paperCount, videoKinds, pickSc
 import { pickSheetScripts, paperNeeds, makePaperVideos } from "./paper-video.mjs";
 import { pickCoaches, coachForVideo } from "./coach-look.mjs";
 import { plainGemini } from "./gemini-busy.mjs";
+import { FOOTAGE_NO_RUN } from "./footage-video.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { whoIn } from "./scene-library.mjs";
@@ -428,7 +429,25 @@ const shortLayout = (id) => id.split("-")[0];
  * **keeps what the batch has made** (`keep_made`): the next run makes only the new photos, gives only them looks, and
  * numbers their ads after the last. No call, no image: the plan on disk and the brief are written, nothing else.
  */
-export function growBatch({ brandDir, brief, add, outDir = null, scenesPath = null, briefPath = null, log = () => {} }) {
+/**
+ * What a finished batch can still take (no call, nothing written): the photos it has, how many more it may hold, and
+ * for each kind of photograph the approved scenes and how many of them this batch has not used. `why` says why it
+ * cannot be added to at all (no ads yet, a directed batch, a plan and a brief that disagree, full).
+ */
+export function growOptions({ brandDir, brief, outDir = null, scenesPath = null }) {
+  const out = resolve(outDir || join(brandDir, "outputs", brief.batch_id)), plannedPath = join(out, "visuals.json");
+  const none = (why) => ({ have: brief.generated ?? 0, max_more: 0, kinds: [], attempts: brief.attempts ?? 1, why });
+  if (!existsSync(plannedPath) || !existsSync(join(out, "batch.json"))) return none("this batch has no ads yet: run it first, then add photos to it");
+  if (brief.direction || brief.scenes) return none("a batch directed by words, a reference or its own scenes cannot be added to: make a second batch");
+  const old = JSON.parse(readFileSync(plannedPath, "utf-8")).visuals || [];
+  if (old.length !== (brief.generated ?? 0)) return none(`the plan on disk has ${old.length} photo(s) and the brief asks for ${brief.generated ?? 0}: run the batch first`);
+  let library = []; try { library = loadScenes(scenesPath || join(brandDir, "scenes.json")); } catch { library = []; }
+  const used = new Set(old.map((v) => v.scene_id).filter(Boolean)), audience = sceneAudience(brief.audience ?? null, brief.scene_audience);
+  const kinds = Object.keys(SCENE_FORMATS).map((format) => { const all = scenePool(library.filter((s) => formatOf(s) === format), audience, 1); return { format, approved: all.length, unused: all.filter((s) => !used.has(s.id)).length }; }).filter((k) => k.approved > 0);
+  const max_more = Math.max(0, MAX_PHOTOS - old.length);
+  return { have: old.length, max_more, kinds, attempts: brief.attempts ?? 1, why: !max_more ? `a batch makes ${MAX_PHOTOS} new photos at most and this one has ${old.length}: make the rest as a second batch` : !kinds.length ? "no approved scenes for this batch's audience: draft some on Draft Scenes and approve them" : null };
+}
+export function growBatch({ brandDir, brief, add, outDir = null, scenesPath = null, briefPath = null, dry = false, log = () => {} }) {
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
   const out = resolve(outDir || join(brandDir, "outputs", brief.batch_id)), plannedPath = join(out, "visuals.json");
   if (!existsSync(plannedPath) || !existsSync(join(out, "batch.json"))) throw new Error("this batch has no ads yet: run it first, then add photos to it");
@@ -459,10 +478,11 @@ export function growBatch({ brandDir, brief, add, outDir = null, scenesPath = nu
   const { format: _one, ...rest } = brief; // a brief names a format or a mix, never both: the grown batch says its photos per kind
   const next = { ...rest, generated: total, mix, max_calls: Math.max(brief.max_calls ?? 0, Math.min(MAX_CALLS_CAP, spent + n * (brief.attempts ?? 1))), keep_made: true };
   const errs = validateBrief(next, { brandDir, catalogue }); if (errs.length) throw new Error(`the batch cannot take these photos:\n- ${errs.join("\n- ")}`);
+  if (dry) return { brief: next, added: extra, spent, calls: next.max_calls - spent, total, dry: true };
   writeFileSync(plannedPath, JSON.stringify({ ...plan, visuals: [...old, ...extra], max_calls: next.max_calls }, null, 2) + "\n");
   if (briefPath) writeFileSync(briefPath, JSON.stringify(next, null, 2) + "\n");
   log(`· ${n} photo(s) added to the plan (${extra.map((v) => `${v.id} for ${shortLayout(v.treatment)}: ${v.scene_id}`).join("; ")}); at most ${next.max_calls - spent} more image call(s)`);
-  return { brief: next, added: extra, spent };
+  return { brief: next, added: extra, spent, calls: next.max_calls - spent, total };
 }
 /** The looks a batch has already made, from its batch.json: one per photo ad's candidate whose photos are all still in the batch. */
 export function madeLooks(old, photos) {
@@ -673,6 +693,8 @@ export function progressWriter(out, base) {
  * photo's tiled check), checkRef, compositor, gallery (builds gallery.html), log.
  */
 export async function runBatch({ brandDir, brief, outDir = null, dryRun = false, renderOnly = false, keepVideos = false, approveScenes: confirmScenes = false, scenesPath = null, deps = {}, log = console.log }) {
+  // Videos added as they are (footage-video.mjs, 2026-11-19): a run would plan nothing and write an empty batch over them.
+  if (brief.imported) throw new Error(FOOTAGE_NO_RUN);
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
   // The reference palettes, the gym's brand palettes, or both (creative_defaults.palettes).
   // The batch's look family (its own, else the gym's default) picks the catalogue; the feed ad's shape likewise.

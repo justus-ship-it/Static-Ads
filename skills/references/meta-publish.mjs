@@ -19,7 +19,7 @@
  * Nothing is ever created ACTIVE from here. A dry run prints the payloads and calls nothing.
  */
 
-import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, statSync } from "fs";
 import { createHash } from "crypto";
 import { join, resolve, basename } from "path";
 import { fileURLToPath } from "url";
@@ -449,7 +449,7 @@ export function keptAds(batchDir) {
   const excludedPhotos = new Set(Object.entries(review.photos || {}).filter(([, v]) => v === "exclude").map(([k]) => k));
   // A video with a line no take passed for (2026-11-15) is shown to the owner flagged and is never published until he has decided that line: an ad not looked at counts as kept, and this one must not.
   return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)) && !a.video?.flags?.length)
-    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null, ...(a.video?.style ? { video_style: a.video.style } : {}), ...(["active", "paper"].includes(a.video?.kind) ? { video_kind: a.video.kind } : {}), ...(a.video?.coach?.name ? { video_coach: a.video.coach.name } : {}) } : {}) }));
+    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null, ...(a.video?.style ? { video_style: a.video.style } : {}), ...(["active", "paper", "real"].includes(a.video?.kind) ? { video_kind: a.video.kind } : {}), ...(a.video?.coach?.name ? { video_coach: a.video.coach.name } : {}) } : {}) }));
 }
 
 /** POST a creative; a feature Meta refuses by name is dropped and the post retried; the opt-out as a whole refused → made without it, said so. */
@@ -485,9 +485,43 @@ const adsetKey = (payload) => sha16(JSON.stringify({ t: payload.targeting, b: pa
  * and a new ad, the old ones kept under `superseded` (still PAUSED on Meta, never deleted here).
  * `first` limits this run to the first N ads of the plan (the live proof), the rest another run.
  */
+/** Meta's limit on the ads in one ad set — paused ones count; archived and deleted ones do not. */
+export const ADSET_MAX_ADS = 50;
+/**
+ * What a create would do to each ad of the plan, worked out from the files alone — no Meta call, nothing written:
+ * `same` (on Meta as it is), `fresh` (not on Meta yet), `remade` (on Meta, but its files or words changed: a new
+ * creative and ad, the old ad left beside it). And the room in each ad set (2026-11-18: BFIT's ad set held exactly 50,
+ * so two remade video ads were refused after their upload): `have` — the ads the app knows it holds (the record's, the
+ * replaced ones still there, or Meta's own count when a run has read it) — `adds`, `after`, and when that passes the
+ * limit, how many old ads archiving the replaced ones would clear (`replaced`) and how many would still be over (`short`).
+ */
+const SHA_SEEN = new Map();
+export function remakePreview(plan, record, batchDir, { first = null } = {}) {
+  const rec = record || {}, ads = first ? plan.ads.slice(0, first) : plan.ads;
+  // A file's hash is kept while the file is as it was (the publish screen asks on every change of a setting).
+  const sha = (file) => { try { const p = join(batchDir, file), st = statSync(p), k = `${p}:${st.mtimeMs}:${st.size}`; if (!SHA_SEEN.has(k)) SHA_SEEN.set(k, sha16(readFileSync(p))); return SHA_SEEN.get(k); } catch { return null; } };
+  const out = { same: 0, fresh: [], remade: [], by_adset: {}, archive: 0, short: 0 };
+  for (const ad of ads) {
+    const had = rec.ads?.[ad.folder];
+    if (!had?.id) { out.fresh.push({ folder: ad.folder, adset: ad.adset }); continue; }
+    const square = rec.images?.[sha(ad.image.file)]?.hash || null, story = ad.story ? rec.images?.[sha(ad.story.file)]?.hash || null : null;
+    const vkey = ad.video ? sha(ad.video.file) : null, known = square && (!ad.story || story) && (!ad.video || rec.videos?.[vkey]?.id);
+    if (known && !had.archived && had.key === creativeKey(ad.creative, { square, story, ...(vkey ? { video: vkey } : {}) })) { out.same++; continue; }
+    out.remade.push({ folder: ad.folder, adset: ad.adset, old_id: had.id, why: known ? "its words, form or identity changed" : ad.video && !rec.videos?.[vkey]?.id ? "its video changed" : "its image changed" });
+  }
+  for (const set of plan.adsets) {
+    const c = set.callout, onRecord = Object.values(rec.ads || {}).filter((a) => a.adset === c && !a.archived).length + (rec.superseded || []).filter((s) => s.folder && s.adset === c && !s.archived).length;
+    const have = rec.adsets?.[c]?.id ? Math.max(onRecord, rec.adsets[c].on_meta?.ads || 0) : 0;
+    const fresh = out.fresh.filter((a) => a.adset === c).length, remade = out.remade.filter((a) => a.adset === c).length, after = have + fresh + remade;
+    const over = after > ADSET_MAX_ADS, short = over ? Math.max(0, after - remade - ADSET_MAX_ADS) : 0;
+    out.by_adset[c] = { have, adds: fresh + remade, after, over, replaced: over ? remade : 0, short };
+    out.archive += over ? remade : 0; out.short += short;
+  }
+  return out;
+}
 /** A video is asked about every few seconds until Meta has processed it, for this long at most. */
 export const VIDEO_POLL_MS = 4000, VIDEO_READY_MS = 6 * 60000;
-export async function createPlan(plan, { client, batchDir, record, log = console.log, first = null, wait = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export async function createPlan(plan, { client, batchDir, record, log = console.log, first = null, archiveReplaced = false, wait = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   if (!plan.ready) throw new Error(`the plan has problems: ${plan.problems.join("; ")}`);
   const rec = record, account = plan.account;
   const save = () => writeWhole(rec.path, JSON.stringify({ ...rec, path: undefined }, null, 2) + "\n");
@@ -575,10 +609,12 @@ export async function createPlan(plan, { client, batchDir, record, log = console
   const callouts = [...new Set(adsToMake.map((a) => a.adset))];
   const setFacts = (set) => ({ callout: set.callout, audience: set.audience, pin: set.pin?.label || set.pin?.place_name || null, place_key: set.pin?.place_key || null, radius_km: set.pin?.radius_km ?? null, age_min: set.age_min, age_max: set.age_max, gender: set.gender, preset: set.preset?.name || null, preset_id: set.preset?.id || null, level: plan.budget.level, daily: set.budget?.daily ?? plan.budget.daily, bid_strategy: plan.budget.bid_strategy });
   const adFacts = (ad) => ({ ...(ad.format ? { format: ad.format } : {}), ...(ad.video ? { video: true, seconds: ad.video.seconds ?? null, ...(ad.video.style ? { video_style: ad.video.style } : {}), ...(ad.video.kind ? { video_kind: ad.video.kind } : {}), ...(ad.video.coach ? { video_coach: ad.video.coach } : {}) } : {}), has_story: !!ad.story, form_id: plan.lead_form_id, instagram_user_id: plan.instagram_user_id, cta: plan.words.cta, headline: plan.words.headline, message: plan.words.message, description: plan.words.description, placeholders: plan.words.placeholders.length > 0, copies: ad.copies || [], headlines: ad.headlines || [], text_options: (ad.copies || []).length || 1, title_options: (ad.headlines || []).length || 1, name: ad.name });
+  const madeNow = new Set();
   for (const callout of callouts) {
     const set = plan.adsets.find((x) => x.callout === callout);
     const key = adsetKey(set.payload);
     let had = rec.adsets[callout];
+    if (!had?.id) madeNow.add(callout);
     try {
       if (had?.id) {
         const gone = await goneOnMeta(had.id);
@@ -586,7 +622,7 @@ export async function createPlan(plan, { client, batchDir, record, log = console
           const why = `the ad set was ${gone.toLowerCase()} on Meta`;
           log(`· ad set ${callout}: ${had.id} ${gone.toLowerCase()} on Meta — making a new one; its ads will be made again`);
           supersedeAds(callout, `its ad set was ${gone.toLowerCase()} on Meta`);
-          rec.superseded.push({ step: "adset", callout, ...had, why, at: new Date().toISOString() }); delete rec.adsets[callout]; run.superseded++; had = null; save();
+          rec.superseded.push({ step: "adset", callout, ...had, why, at: new Date().toISOString() }); delete rec.adsets[callout]; run.superseded++; had = null; madeNow.add(callout); save();
         }
       }
       if (had?.id) {
@@ -602,13 +638,46 @@ export async function createPlan(plan, { client, batchDir, record, log = console
       }
     } catch (e) { fail("adset", callout, e); }
   }
+  /*
+   * Room in each ad set, before anything is uploaded (2026-11-18). Meta allows ADSET_MAX_ADS ads in an ad set and counts
+   * the paused ones; a remade ad is a NEW ad beside the old one. So for every ad set this run adds to (one made in this
+   * run is empty), Meta is asked how many ads it holds — a read that fails leaves the record's own count — and when the
+   * new ads would not fit: with `archiveReplaced` (the owner's tick on the create confirmation) the old ads being
+   * replaced are archived first, only the paused ones, each noted on the record; without it, or when that would not
+   * clear enough, the run stops here in words. An archived ad can never be turned on again, so it is never done unasked.
+   */
+  const pre = remakePreview(plan, rec, batchDir, { first });
+  for (const callout of callouts) {
+    const fresh = pre.fresh.filter((a) => a.adset === callout), remade = pre.remade.filter((a) => a.adset === callout), adds = fresh.length + remade.length;
+    if (!adds || madeNow.has(callout)) continue;
+    const set = rec.adsets[callout];
+    let have = pre.by_adset[callout]?.have ?? 0, live = null;
+    try { live = (await client.adsetAds(set.id)).filter((a) => !/^(ARCHIVED|DELETED)$/i.test(String(a.status || "")) && !/^(ARCHIVED|DELETED)$/i.test(String(a.effective_status || ""))); have = live.length; set.on_meta = { ads: have, at: new Date().toISOString() }; save(); }
+    catch { /* the record's own count stands */ }
+    const over = have + adds - ADSET_MAX_ADS;
+    if (over <= 0) continue;
+    // The old ads this run replaces that may be archived: paused ones (one switched on is the owner's to pause first).
+    const paused = remade.filter((a) => !live || live.some((x) => String(x.id) === String(a.old_id) && String(x.status).toUpperCase() === "PAUSED"));
+    const n = (k, w = "ad") => `${k} ${w}${k === 1 ? "" : "s"}`;
+    const facts = `the ad set ${callout} holds ${n(have)} on Meta and this run adds ${adds} (${[fresh.length && `${fresh.length} new`, remade.length && `${remade.length} to replace an older version`].filter(Boolean).join(", ")}): Meta allows ${ADSET_MAX_ADS} in an ad set, paused ones included`;
+    try {
+      if (paused.length < over) throw new Error(`${facts}. ${paused.length ? `Archiving the ${n(paused.length, "old ad")} being replaced would still leave it ${over - paused.length} over` : "None of the new ads replaces an old one that could be archived"}: archive ${n(over - (archiveReplaced ? paused.length : 0))} of this ad set in Ads Manager, or exclude some ads on Pick Ads. Nothing was uploaded.`);
+      if (!archiveReplaced) throw new Error(`${facts}. Nothing was uploaded. Press Continue creating and tick "Archive the old ads these replace" (${n(paused.length, "old ad")}; an archived ad can never be turned on again), or archive ${n(over)} of this ad set in Ads Manager yourself.`);
+    } catch (e) { fail("room", callout, e); }
+    for (const a of paused) {
+      try { await client.post(a.old_id, { status: "ARCHIVED" }); } catch (e) { fail("archive", a.folder, e); }
+      Object.assign(rec.ads[a.folder], { archived: new Date().toISOString().slice(0, 10), archived_why: `archived to make room: the ad set held ${have} of Meta's ${ADSET_MAX_ADS} ads and this ad was made again` });
+      run.archived = (run.archived || 0) + 1; save();
+      log(`· ad ${a.folder}: the old ad ${a.old_id} archived to make room (the ad set held ${have} of ${ADSET_MAX_ADS})`);
+    }
+  }
   // Each ad: its images, its creative, the ad. A creative that changed means a new creative and ad.
   for (const ad of adsToMake) {
     // A video ad: its poster frame as the image, the video itself by content. (An image ad's hashes are as they always were, so no key of an ad already on Meta changes.)
     const up = ad.video ? await video(ad.video) : null;
     const hashes = { square: await image(ad.image), story: ad.story ? await image(ad.story) : null, ...(up ? { video: up.key } : {}) };
     const key = creativeKey(ad.creative, hashes), had = rec.ads[ad.folder];
-    if (had?.id && had.key === key) { had.facts = adFacts(ad); run.reused.ads++; save(); continue; }
+    if (had?.id && had.key === key && !had.archived) { had.facts = adFacts(ad); run.reused.ads++; save(); continue; }
     if (had?.id) { rec.superseded.push({ folder: ad.folder, ...had, why: "the creative changed (words, images, form or identity)", at: new Date().toISOString() }); delete rec.ads[ad.folder]; run.superseded++; save(); log(`· ad ${ad.folder}: ${had.id} no longer matches the plan — making a new creative and ad`); }
     const spec = structuredClone(ad.creative);
     if (up) { spec.object_story_spec.video_data.video_id = up.id; spec.object_story_spec.video_data.image_hash = hashes.square; }
@@ -716,7 +785,7 @@ export const adsManagerUrl = (account, campaignId) => `https://adsmanager.facebo
 // ── CLI ──────────────────────────────────────────────────────────────────────
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
-  const { values: v } = parseArgs({ options: { gym: { type: "string" }, "brand-dir": { type: "string" }, batch: { type: "string" }, ad: { type: "string" }, "test-one": { type: "boolean", default: false }, create: { type: "boolean", default: false }, first: { type: "string" }, "dry-run": { type: "boolean", default: false } } });
+  const { values: v } = parseArgs({ options: { gym: { type: "string" }, "brand-dir": { type: "string" }, batch: { type: "string" }, ad: { type: "string" }, "test-one": { type: "boolean", default: false }, create: { type: "boolean", default: false }, first: { type: "string" }, "archive-replaced": { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false } } });
   if (!v.gym || !v.batch || !(v["test-one"] ? v.ad : v.create)) { console.error("Usage: meta-publish.mjs --gym <slug> --batch <id> (--create [--first N] | --ad <folder> --test-one) [--dry-run] [--brand-dir <dir>]"); process.exit(1); }
   if (v.create) {
     try {
@@ -741,9 +810,10 @@ if (isMain) {
       const path = join(out, "publish.json");
       const record = existsSync(path) ? { ...JSON.parse(readFileSync(path, "utf-8")), path } : freshRecord(path, { batch_id: v.batch, account: plan.account });
       if (record.account !== plan.account) throw new Error(`this batch was published to ${record.account}; the profile now says ${plan.account}`);
-      const r = await createPlan(plan, { client, batchDir: out, record, first });
+      { const room = remakePreview(plan, record, out, { first }); for (const [c, x] of Object.entries(room.by_adset)) if (x.over) console.log(`room: the ad set ${c} holds ${x.have} ads as far as the record knows and this run adds ${x.adds}; Meta allows ${ADSET_MAX_ADS}${v["archive-replaced"] ? ` — the ${x.replaced} old ad(s) being replaced are archived first if it is still full` : " — without --archive-replaced the run stops before anything is uploaded"}`); }
+      const r = await createPlan(plan, { client, batchDir: out, record, first, archiveReplaced: v["archive-replaced"] });
       const m = r.run.made, u = r.run.reused;
-      console.log(`\ndone: ${r.ads} of ${r.of} ads on Meta (this run made ${m.ads} ad(s), ${m.creatives} creative(s), ${m.adsets} ad set(s), ${m.campaign} campaign, ${m.images} image(s); reused ${u.ads} ad(s), ${u.images} image(s)${r.run.superseded ? `; ${r.run.superseded} remade` : ""}) — all ${AD_STATUS}\n${r.url}\nrecord: ${path}`);
+      console.log(`\ndone: ${r.ads} of ${r.of} ads on Meta (this run made ${m.ads} ad(s), ${m.creatives} creative(s), ${m.adsets} ad set(s), ${m.campaign} campaign, ${m.images} image(s); reused ${u.ads} ad(s), ${u.images} image(s)${r.run.superseded ? `; ${r.run.superseded} remade` : ""}${r.run.archived ? `; ${r.run.archived} old ad(s) archived to make room` : ""}) — all ${AD_STATUS}\n${r.url}\nrecord: ${path}`);
       process.exit(0);
     } catch (e) { console.error(scrubTokens(e.message)); process.exit(1); }
   }
