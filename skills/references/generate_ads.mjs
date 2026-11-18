@@ -403,6 +403,10 @@ async function generateAllParallel(prompts, cdnUrlMap, allImageNames, outputDir,
 // HTML Gallery
 // ---------------------------------------------------------------------------
 
+const escHtml = (s) => String(s ?? "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
 function generateGallery(outputDir, results, brandName) {
   const totalImages = results.reduce((sum, r) => sum + r.images.length, 0);
   const timestamp = new Date().toISOString().replace("T", " ").slice(0, 16);
@@ -412,7 +416,7 @@ function generateGallery(outputDir, results, brandName) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${brandName} - Static Ad Gallery</title>
+    <title>${escHtml(brandName)} - Static Ad Gallery</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -438,7 +442,7 @@ function generateGallery(outputDir, results, brandName) {
     </style>
 </head>
 <body>
-    <h1>${brandName} Static Ad Gallery</h1>
+    <h1>${escHtml(brandName)} Static Ad Gallery</h1>
     <p class="subtitle">Generated ${timestamp} &middot; ${totalImages} images across ${results.length} templates (1:1 + 9:16)</p>
 `;
 
@@ -446,7 +450,7 @@ function generateGallery(outputDir, results, brandName) {
     const title = r.template_name.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
     html += `
     <div class="template-section">
-        <h2 class="template-header">#${String(r.template_number).padStart(2, "0")} ${title}
+        <h2 class="template-header">#${String(r.template_number).padStart(2, "0")} ${escHtml(title)}
             <span>(${r.images.length} total)</span></h2>
 `;
 
@@ -460,11 +464,12 @@ function generateGallery(outputDir, results, brandName) {
 `;
       for (const img of ratioImages) {
         const dims = img.width ? ` | ${img.width}x${img.height}` : "";
+        const relPath = escHtml(`${r.folder}/${ratioFolder}/${img.filename}`);
         html += `                <div class="image-card">
-                    <a href="${r.folder}/${ratioFolder}/${img.filename}" target="_blank">
-                        <img src="${r.folder}/${ratioFolder}/${img.filename}" alt="${r.template_name} ${ratio}">
+                    <a href="${relPath}" target="_blank">
+                        <img src="${relPath}" alt="${escHtml(r.template_name + " " + ratio)}">
                     </a>
-                    <div class="info">${img.filename}${dims}</div>
+                    <div class="info">${escHtml(img.filename + dims)}</div>
                 </div>
 `;
       }
