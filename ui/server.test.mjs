@@ -4390,3 +4390,21 @@ test("U65 a gym's real coaches through the panel (2026-11-17): who presents is t
     if (hadScripts != null) writeFileSync(scriptsFile, hadScripts); else rmSync(scriptsFile, { force: true });
   }
 });
+
+test("U66 Review Data → Videos · who presents and which kind (2026-11-18): the results answer carries the app's own video ads split by coach, kind and script style; the card is not shown for a gym with no video ad on Meta, and when there is one it says what can be said by rule and lists each split with its evidence", async () => {
+  const res = await (await call(`/api/client/${GYM}/results`)).json();
+  assert.deepEqual((({ ads, leads, by_coach, by_kind, by_style, said }) => [ads, leads, by_coach, by_kind, by_style, said])(res.videos), [0, 0, [], [], [], []], "the test gym has no video ad on Meta");
+  const { cdp, sessionId } = browser;
+  const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+  const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u66#/${GYM}/results` }, sessionId); await loaded;
+  const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev("typeof videosCard === 'function' && !!RS.data"))) await new Promise((x) => setTimeout(x, 120));
+  assert.equal(await ev("!!document.querySelector('#rsVideos')"), false, "no card without a video ad");
+  // The card, from an answer of the shape the server gives.
+  const V = { currency: "SGD", ads: 3, running: 2, spend: 850, leads: 52, cost_per_lead: 16.35, by_coach: [{ value: "Mei", ads: 2, running: 1, spend: 400, leads: 30, cost_per_lead: 13.33, ctr: 2, confidence: "solid" }, { value: "invented presenter", ads: 1, running: 1, spend: 450, leads: 22, cost_per_lead: 20.45, ctr: 1.5, confidence: "solid" }], by_kind: [{ value: "talking", ads: 2, running: 2, spend: 800, leads: 47, cost_per_lead: 17.02, ctr: 2, confidence: "solid" }, { value: "white paper", ads: 1, running: 0, spend: 50, leads: 0, cost_per_lead: null, ctr: null, confidence: "none" }], by_style: [],
+    said: [{ what: "who presents", kind: "finding", text: "Mei: SGD 13.33 a lead over 30 leads, 35% under invented presenter (SGD 20.45 over 22)." }] };
+  await ev(`(() => { const d = document.createElement('div'); d.id = 'u66box'; d.innerHTML = videosCard({ videos: ${JSON.stringify(V)}, wins: { currency: 'SGD' } }); document.body.appendChild(d); return true; })()`);
+  assert.deepEqual(await ev("[document.querySelector('#u66box #rsVideos h3').innerText, [...document.querySelectorAll('#u66box #rsVideosSaid li')].map(l => [l.dataset.kind, l.innerText]), [...document.querySelectorAll('#u66box #rsVidCoach tbody tr')].map(r => [...r.cells].map(c => c.innerText.trim()).join(' | ')), [...document.querySelectorAll('#u66box #rsVidKind tbody tr')].map(r => r.cells[0].innerText + ' · ' + r.cells[5].innerText + ' · ' + r.cells[7].innerText.trim()), !!document.querySelector('#u66box #rsVidStyle')]"),
+    ["VIDEOS · WHO PRESENTS AND WHICH KIND", [["finding", "Mei: SGD 13.33 a lead over 30 leads, 35% under invented presenter (SGD 20.45 over 22)."]], ["Mei | 2 | 1 | SGD 400 | 30 | SGD 13.33 | 2.00% | solid · 20+ leads", "Invented presenter | 1 | 1 | SGD 450 | 22 | SGD 20.45 | 1.50% | solid · 20+ leads"], ["Talking · SGD 17.02 · solid · 20+ leads", "White paper · — · no lead yet"], false]);
+  assert.match(await ev("document.querySelector('#u66box #rsVideos').innerText"), /Each video is one script filmed by one coach, so a coach's figure is also their scripts' figure/);
+  assert.equal(await ev("videosCard({ videos: { ads: 0 } })"), "");
+});

@@ -330,10 +330,19 @@ test("S6 a look the scene's pose cannot be composed for is skipped, not fatal; a
     const { fitLayouts } = await import("./check-visual.mjs");
     const fits9 = (own, la) => { const b = box9(own); return fitLayouts({ people_box: b, face_boxes: [[b[0], (b[1] + b[3]) / 2 - 40, b[0] + 70, (b[1] + b[3]) / 2 + 40]], people_count: 1 }, { ratio: RATIO, imageSize: [1080, 1920], catalogue: CAT })[la].ok; };
     for (const a of singleAds) { const v = vis.find((x) => x.id === a.photos[0]); const own = singleAds.filter((x) => x.photos[0] === a.photos[0]).map((x) => x.treatment), first = own.includes(v.treatment) ? v.treatment : own[0]; /* the layout its first 9:16 photo is composed for */ const bad = LAYOUTS.find((la) => !own.includes(la) && poseProblem(la, v.pose, CAT) && !fits9(first, la)); if (bad && !picked) picked = { ad: a, bad, pose: v.pose }; }
-    // KNOWN GAP (2026-11-17): since the feed shape's own layouts, every seeded plan gives each generated photo a side look first, and its
-    // 9:16 photo then fits every layout its pose refuses — so the case below (a refused look the first photo does not fit) does not arise
-    // from the fixture any more. It is skipped, and said, until the Stories step is reworked for the new feed looks; the band maths above still run.
-    if (!picked) { console.log("    S6: not exercised — no photo in this plan has a look its pose refuses that its 9:16 photo does not fit (see the note in the test)"); return; }
+    // Since the feed shape's own layouts (2026-11-17) no seeded plan gives the case by itself: every photo takes a side look first, and the
+    // 9:16 photo composed for a side look fits every layout a pose refuses. So the case is BUILT, as the test's first line describes it:
+    // one generated photo's ads are made bottom-stack ads of a compact scene (T1 holds a compact pose; T2 refuses it, and a 9:16 photo
+    // composed for T1 does not fit T2) — in the batch's record and its plan, where the Stories step reads them.
+    if (!picked) {
+      const T1 = "t1-bottom-stack", T2 = "t2-top-bottom-split", a = singleAds.find((x) => vis.find((v) => v.id === x.photos[0]).pose === "compact") || singleAds.at(-1), pid = a.photos[0];
+      assert.ok(!poseProblem(T1, "compact", CAT) && poseProblem(T2, "compact", CAT) && !fits9(T1, T2), "the fixture's premise: T1 holds a compact pose, T2 refuses it, and T1's 9:16 photo does not fit T2");
+      for (const x of batch.ads) if (x.photos.length === 1 && x.photos[0] === pid) x.treatment = T1;
+      const v = vis.find((x) => x.id === pid); v.treatment = T1; v.pose = "compact";
+      const vf = join(out, "visuals.json"), all = JSON.parse(readFileSync(vf, "utf-8")); all.visuals = vis; writeFileSync(vf, JSON.stringify(all));
+      const bf = join(out, "batch.json"), bj0 = JSON.parse(readFileSync(bf, "utf-8")); for (const x of bj0.ads) if (x.photos.length === 1 && x.photos[0] === pid) x.treatment = T1; writeFileSync(bf, JSON.stringify(bj0));
+      picked = { ad: a, bad: T2, pose: "compact" };
+    }
     const other = singleAds.find((a) => a.photos[0] !== picked.ad.photos[0]);
     assert.ok(other, "and another generated photo");
     const P = picked.ad.photos[0], Q = other.photos[0], bad = picked.bad;

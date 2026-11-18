@@ -45,7 +45,7 @@ import { callVision } from "./check-visual.mjs";
 import { launchBrowser, isWholeCountry } from "./render-composites.mjs";
 import { onAdProblems } from "./cards.mjs";
 import { COPY_MODEL, plainDashes } from "./draft-copy.mjs";
-import { themeOf, themeRule, readScripts, writeScripts, coachStore, presenterOf, presenterWords, realModels, closingLine, endsWithClosing, closingAlone, plainWords, hardWords, PLAIN_RULE, FIRST_PERSON, TAP, IDEAL_BODY, countryNamed, factsFor, painsFor, painSources, fillLine, wordCount, videoLibraryDir, clipStore, asideOf, ownerKeptClip, durationOf, hasFfmpeg, letteringOf, LIVE, USD_PER_SECOND, USD_PER_IMAGE } from "./presenter-video.mjs";
+import { themeOf, themeRule, readScripts, writeScripts, coachStore, stillFault, stillWhy, presenterOf, presenterWords, realModels, closingLine, endsWithClosing, closingAlone, plainWords, hardWords, PLAIN_RULE, FIRST_PERSON, TAP, IDEAL_BODY, countryNamed, factsFor, painsFor, painSources, fillLine, wordCount, videoLibraryDir, clipStore, asideOf, ownerKeptClip, durationOf, hasFfmpeg, letteringOf, LIVE, USD_PER_SECOND, USD_PER_IMAGE } from "./presenter-video.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 /** A sheet script is 6 to 9 sheets; a sheet is 2 to 8 words (the closing line and the sheet with the offer's name may be longer). Each sheet is one clip of 4 seconds. */
@@ -549,7 +549,7 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
       // A paper the first finder got wrong (its sides do not agree) is found again; its sheets and clips are made afresh under new names.
       else if (!p.problem && paperKey(p) && !p.key) { p = { ...(await findPaper(browser, pic)), key: "r2" }; writeFileSync(paperFile(pic), JSON.stringify(p, null, 2) + "\n"); log("  the paper in the picture on file had been found wrongly: it is found again, and its sheets are written and filmed afresh"); }
       // A coach's picture is held against a real one of them: a picture that is not the same person is not used, and another is made.
-      if (coach && !p.problem && models.same && p.same === undefined) { spent.checks++; p.same = await models.same(coach.refs[0], pic); if (p.same?.same_person === false) p.problem = `it does not look like ${coach.name}${(p.same.differences || []).length ? ` (${p.same.differences.slice(0, 3).join("; ")})` : ""}`; writeFileSync(paperFile(pic), JSON.stringify(p, null, 2) + "\n"); }
+      if (coach && !p.problem && models.same && p.same === undefined) { spent.checks++; p.same = await models.same(coach.refs[0], pic); if (p.same?.same_person === false) p.problem = `it does not look like ${coach.name}${(p.same.differences || []).length ? ` (${p.same.differences.slice(0, 3).join("; ")})` : ""}`; else if (stillFault(p.same) === "wallwords") p.problem = stillWhy(p.same, coach.name); writeFileSync(paperFile(pic), JSON.stringify(p, null, 2) + "\n"); }
       if (!p.problem) { blank = pic; paper = p; break; }
       why = p.problem; log(`  ${basename(pic)}: ${p.problem}`);
     }

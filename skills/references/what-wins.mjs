@@ -280,6 +280,37 @@ export function gymRowsSplit(gymDir) {
 }
 export const gymRowsRead = (gymDir) => gymRowsSplit(gymDir).rows;
 
+/**
+ * The videos this app made, by who presents and by kind (2026-11-18, the owner: "Yes do it" — each video ad has said
+ * who presents and which kind it is since the coaches were built, and no screen read it). By rule, no model, this
+ * gym's own ads only, a result is a lead-form lead: every video ad this app published (`video_kind` on its row), each
+ * split — `by_coach` (a coach by name, else "invented presenter"), `by_kind` (talking · with exercises · white paper),
+ * `by_style` (the style its script follows) — with ads, how many are running, spend, impressions, clicks, leads, cost
+ * per lead and the evidence word (early under 5 leads, enough from 5, solid from 20); the cheapest with enough
+ * evidence first, then the most leads. `said`: what can be said by rule — one value against another only where both
+ * have `VIDEO_MIN_LEADS` 20 leads and the gap is `VIDEO_GAP` 25% or more; else that it is too early, with what each
+ * still needs. Nothing here changes a batch: it is read by the owner.
+ */
+export const VIDEO_MIN_LEADS = 20, VIDEO_GAP = 0.25;
+export const INVENTED = "invented presenter";
+export function videoResults(rows, { currency = "SGD" } = {}) {
+  const mine = (rows || []).filter((r) => r.media === "video" && r.video_kind);
+  const sum = (rs) => { const spend = round2(rs.reduce((t, r) => t + (r.spend || 0), 0)), leads = rs.reduce((t, r) => t + (r.leads || 0), 0), impressions = rs.reduce((t, r) => t + (r.impressions || 0), 0), clicks = rs.reduce((t, r) => t + (r.clicks || 0), 0); return { ads: rs.length, running: rs.filter(isActive).length, spend, impressions, clicks, leads, cost_per_lead: leads ? round2(spend / leads) : null, ctr: impressions ? round2((clicks / impressions) * 100) : null, confidence: confidence(leads) }; };
+  const split = (key) => { const by = new Map(); for (const r of mine) { const v = key(r); if (v == null || v === "") continue; by.set(v, [...(by.get(v) || []), r]); }
+    return [...by.entries()].map(([value, rs]) => ({ value, ...sum(rs) })).sort((a, b) => (b.leads >= 5) - (a.leads >= 5) || (a.leads >= 5 && b.leads >= 5 ? a.cost_per_lead - b.cost_per_lead : 0) || b.leads - a.leads || b.spend - a.spend || String(a.value).localeCompare(String(b.value))); };
+  const by_coach = split((r) => r.video_coach || INVENTED), by_kind = split((r) => r.video_kind), by_style = split((r) => r.video_style);
+  const said = [], money = (x) => `${currency} ${x.toFixed(2)}`;
+  for (const [what, list] of [["who presents", by_coach], ["the kind of video", by_kind]]) {
+    if (list.length < 2) continue;
+    const solid = list.filter((x) => x.leads >= VIDEO_MIN_LEADS);
+    if (solid.length >= 2) { const best = solid[0], worst = solid.at(-1), gap = 1 - best.cost_per_lead / worst.cost_per_lead;
+      said.push(gap >= VIDEO_GAP ? { what, kind: "finding", text: `${cap(best.value)}: ${money(best.cost_per_lead)} a lead over ${best.leads} leads, ${Math.round(gap * 100)}% under ${worst.value} (${money(worst.cost_per_lead)} over ${worst.leads}).` } : { what, kind: "level", text: `No real difference by ${what} yet: ${solid.map((x) => `${x.value} ${money(x.cost_per_lead)} over ${x.leads} leads`).join(", ")}.` }); }
+    else said.push({ what, kind: "early", text: `Too early to compare ${what}: each needs ${VIDEO_MIN_LEADS} leads — ${list.map((x) => `${x.value} has ${x.leads}`).join(", ")}.` });
+  }
+  return { currency, ...sum(mine), by_coach, by_kind, by_style, said };
+}
+const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
+
 /** The campaigns a set of rows belongs to, for the filter: each with its ads, how many are running, its leads, spend and
  *  cost per lead — the running ones first, then the most leads. A row without a campaign is in none. */
 export function campaignList(rows) {

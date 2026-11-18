@@ -136,3 +136,35 @@ test("CK3 the samples read once, grouped by what the person wears, and each coac
     assert.match(coachWhy(readCoaches(dir).coaches[0]), /no starting picture yet/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("CK4 a starting picture is of the coach standing, the shirt's words readable (2026-11-18: BFIT's re-make first started a coach from a frame of them seated and leaning, the words creased, and every take failed the uniform check): a frame whose print reads in full is picked before one with the mouth closed; a seated sample's pictures are kept but used only when there is none of the coach standing", { skip: !hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "look4-"));
+  try {
+    const mk = (name, colour) => { const f = join(dir, name); execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `color=c=${colour}:s=1080x1920:r=12:d=5`, "-f", "lavfi", "-i", "sine=frequency=300:duration=5", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", f]); return f; };
+    addSample(dir, mk("standing.mp4", "gray")); addSample(dir, mk("seated.mp4", "navy")); addSample(dir, mk("creased.mp4", "white"));
+    const frame = (index, over = {}) => ({ index, people: 1, looks_at_lens: true, eyes_open: true, mouth_closed: false, sharp: true, hands_low: true, ready: true, print_readable: true, head_box: [370, 430, 470, 560], print_box: [520, 400, 600, 600], ...over });
+    const models = {
+      async hear() { return { transcript: "one two three", speakers: 1, pitch: "medium", pace: "measured", accent: "light", energy: "warm", voice: "A clear voice." }; },
+      async look(frames) { const key = basename(dirname(frames[0]));
+        return { top: "white T-shirt", bottom: "black trousers", glasses: true, seated: key === "video-02", spot: key === "video-02" ? "on a treatment bed" : "on the turf lane", shirt_words: "STRONGER THAN YESTERDAY", shirt_logo: "a hexagon", wall_words: [],
+          // standing: frame 1 has the mouth closed but the print hidden; frame 2 reads in full, mid-word — the readable one is the picture
+          frames: frames.map((_, i) => (key === "video-01" ? frame(i, i === 1 ? { mouth_closed: true, print_readable: false } : i === 2 ? {} : { ready: false }) : key === "video-03" ? frame(i, { print_readable: false }) : frame(i, { mouth_closed: i === 1 }))) }; },
+    };
+    await readSamples({ gymDir: dir, models });
+    assert.deepEqual(samples(dir).map((s) => s.read.seated), [false, true, false]);
+    const c = addCoach(dir, { name: "Faye" }); setSamples(dir, c.id, ["video-01.mp4", "video-02.mp4", "video-03.mp4"]); setConsent(dir, c.id, { face: true, voice: true, by: "signed form" });
+    buildStarts(dir);
+    const me = readCoaches(dir).coaches[0], of = (name) => me.starts.filter((s) => s.sample === name);
+    const at2 = samples(dir)[0].read.frames[2].at;
+    assert.ok(of("video-01.mp4").length >= 1 && of("video-01.mp4").every((s) => s.clear && !s.seated && !s.creased && s.at === at2), JSON.stringify(of("video-01.mp4")));
+    assert.ok(of("video-02.mp4").length >= 1 && of("video-02.mp4").every((s) => s.seated === true && s.clear === false), "a seated sample's pictures are kept, and are not clear");
+    assert.ok(of("video-03.mp4").length >= 1 && of("video-03.mp4").every((s) => s.creased === true && s.clear === false), "no frame of it reads in full: its pictures are not clear");
+    // The makers are given the standing, readable pictures only…
+    const v = coachForVideo(dir, me);
+    assert.ok(v.starts.length >= 1 && v.starts.every((p) => /video-01-/.test(p)), JSON.stringify(v.starts.map((p) => basename(p))));
+    // …and the others only when there is none of them.
+    for (const s of of("video-01.mp4")) switchStart(dir, c.id, s.file, { on: false, reason: "test" });
+    const left = coachForVideo(dir, readCoaches(dir).coaches[0]);
+    assert.ok(left.starts.length >= 2 && left.starts.every((p) => /video-0[23]-/.test(p)), JSON.stringify(left.starts.map((p) => basename(p))));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

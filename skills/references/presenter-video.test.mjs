@@ -1001,3 +1001,52 @@ test("PV16 a gym's real coach in place of the invented presenter (2026-11-17, th
     await assert.rejects(makePresenterVideos({ gymDir: g, outDir: out, script, areas: ["BISHAN"], offer: OFFER, profile, coach: { ...coach, starts: [] }, models: F.models }), /Mei has no starting picture: nothing is filmed/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+test("PV17 what BFIT's re-make taught (2026-11-18): whatever is written in the room is the room's own for a coach's clip — lane numbers on the floor, the uniform in a silent move clip — and only words laid over the picture fail it, while an invented presenter's clip keeps its notes; the move is asked for by what it looks like and once is enough; a re-made picture takes its room from the gym's own room photo as a third image, and one that shows words on a wall is made once more; a line Google refuses twice from the frame its move ended on is filmed standing from a real picture, and stays so", { skip: !hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+  const { d, g, profile, room } = gym({ presenter: null });
+  try {
+    const { judgeMove, moveQuestion, stillFault, stillWhy, MOVES } = await import("./presenter-video.mjs");
+    const { readdirSync } = await import("node:fs");
+    // ── the judges, pure ──
+    const seen = { spoken: GOOD[1], people: 1, faults: [], lettering: [{ text: "5", on: "other" }, { text: "6", on: "equipment" }, { text: "STRONGER THAN YESTERDAY", on: "clothing" }] };
+    const jc = judgeClip({ ...seen, coach: true }, GOOD[1], { profile }), ji = judgeClip(seen, GOOD[1], { profile });
+    assert.deepEqual([jc.passed, jc.marks, ji.passed, ji.kind, ji.marks], [true, [], false, "lettering", ["the maker's name on the equipment: 6"]], "a coach's clip: the room's own writing is no failure and no note; an invented presenter's keeps both rules");
+    assert.equal(judgeClip({ ...seen, coach: true, lettering: [{ text: "FOLLOW US", on: "overlay" }] }, GOOD[1], { profile }).kind, "lettering");
+    const mv = { m: MOVES.find((m) => m.id === "deadlift"), k: "kettlebell" }, hold = { m: MOVES.find((m) => m.id === "seated"), k: "bench" }, moved = { did_move: true, spoken: "", people: 1, faults: [], lettering: [{ text: "STRONGER", on: "clothing" }] };
+    assert.deepEqual([judgeMove({ ...moved, coach: true }, mv).passed, judgeMove(moved, mv).kind, judgeMove({ ...moved, coach: true, lettering: [{ text: "SALE", on: "overlay" }] }, mv).kind, judgeMove({ ...moved, coach: true, did_move: false }, mv).kind], [true, "lettering", "lettering", "move"]);
+    assert.match(moveQuestion(mv), /did_move: at any point in the clip, does the person do this movement at least ONCE — with a flat back the person pushes their hips back and lowers the kettlebell down past their knees, then stands up tall again\? Once is enough/); assert.equal(moveQuestion(hold), ""); assert.equal(moveQuestion(null), "");
+    const fine = { same_person: true, differences: [], shirt_changed: false, wall_changed: false, wall_lettering: [] };
+    assert.deepEqual([stillFault(fine), stillFault({ ...fine, wall_changed: true }), stillFault({ ...fine, wall_lettering: ["BE S NG", "BANEY"] }), stillFault({ ...fine, same_person: false }), stillWhy({ ...fine, wall_lettering: ["BE S NG", "BANEY"] }, "Mei")], [null, null, "wallwords", "likeness", "it shows words on a wall (BE S NG, BANEY), which the image model cannot spell"]);
+    // ── a run with exercises: the room photo, a picture made again, a refused line filmed standing ──
+    const script = addScript(g, { lines: GOOD, offer: OFFER }, { profile }), out = join(g, "outputs", "b1", "videos");
+    const sd = join(g, "brand-assets", "video-samples", "starts", "mei"); mkdirSync(sd, { recursive: true });
+    const starts = ["video-01-4.2-close.jpg", "video-02-6.2-close.jpg"].map((n, i) => { const f = join(sd, n); writeFileSync(f, Buffer.concat([PNG, Buffer.from([i])])); return f; });
+    const coach = { id: "coach-mei", key: "mei", name: "Mei", voice: "a clear voice", starts, refs: starts, wears: { top: "black T-shirt", bottom: "black shorts", glasses: false }, uniform: { words: "STRONGER THAN YESTERDAY", logo: "a hexagon" } };
+    const F = fakes({ lettering: () => [{ text: "STRONGER THAN YESTERDAY", on: "clothing" }, { text: "5", on: "other" }], moved: () => true }), sames = [], refused = [], logs = [];
+    let stillChecks = 0;
+    F.models.same = async (start, target) => { sames.push(plain(target)); return /still-\d/.test(target) && ++stillChecks === 1 ? { ...fine, wall_lettering: ["BE S NG"] } : fine; };
+    const film = F.models.clip;
+    // Google refuses the last line whenever it is asked for from the frame the move ended on.
+    F.models.clip = async (a) => { if (/\.last\.png$/.test(a.image) && /now is your time/.test(a.prompt)) { refused.push(plain(a.out)); throw new Error('video failed (400): {"error":{"message":"Request blocked due to prohibited content guidelines","code":"prohibited_content"}}'); } return film(a); };
+    const run = () => makePresenterVideos({ gymDir: g, outDir: out, script, areas: ["BISHAN"], offer: OFFER, profile, coach, room, kind: "active", caps: { seconds: 300, images: 6 }, takes: 2, models: F.models, log: (m) => logs.push(m) });
+    const R = await run(), v = R.videos[0], store = join(g, "video-clips", `${script.id}--mei`);
+    // The room: the coach's two real pictures, then the gym's own room photo, named as the third image.
+    assert.ok(F.calls.image.length >= 3 && F.calls.image.every((c) => c.refs.join() === [...starts, room].join() && /The room is the gym in the THIRD image — its walls, ceiling, lights, equipment and floor — matched for the room only/.test(c.prompt) && !/NO lettering on any wall is in view/.test(c.prompt)), F.calls.image[0]?.prompt);
+    // The first re-made picture showed words on a wall: made once more.
+    assert.ok(logs.some((l) => /still 1: it shows words on a wall \(BE S NG\), which the image model cannot spell — made once more/.test(l)), logs.join("\n"));
+    assert.equal(F.calls.image.filter((c) => plain(c.out) === "still-1.jpg").length, 2);
+    // The last line: refused twice from the move's last frame, then filmed standing from a real picture; the video is whole.
+    assert.deepEqual([refused.length, v.failed, v.flags, existsSync(join(store, "cut-3-standing.json")), logs.some((l) => /line 3: refused twice after the move — filmed standing instead, from a real picture of Mei/.test(l))], [2, undefined, undefined, true, true], logs.join("\n"));
+    const last = F.calls.clip.at(-1);
+    assert.ok(/^still-3-[0-9a-f]{6}\.jpg$/.test(last.image.split("/").pop()) && starts.some((s) => readFileSync(s).equals(readFileSync(last.image))) && /now is your time/.test(last.prompt), "the line is filmed from a real frame, copied as it is");
+    assert.ok(v.moves.length >= 1 && !v.moves.some((m) => m.line === 3), JSON.stringify(v.moves));
+    assert.ok(v.parts.every((p) => !p.flag) && !v.notes.some((n) => /^the maker|5$/.test(n)), JSON.stringify(v.notes));
+    // It stays so: nothing is left to film, and a second run films nothing and asks Google for nothing.
+    const need = videoNeeds({ gymDir: g, script, areas: ["BISHAN"], profile, coach, room, kind: "active" });
+    assert.deepEqual([need.seconds, need.images, need.flagged], [0, 0, 0]);
+    const clips = F.calls.clip.length, images = F.calls.image.length, asked = refused.length; logs.length = 0;
+    const again = await run();
+    assert.deepEqual([F.calls.clip.length - clips, F.calls.image.length - images, refused.length - asked, again.videos[0].failed, logs.some((l) => /line 3: filmed standing, from a real picture/.test(l))], [0, 0, 0, undefined, true], logs.join("\n"));
+    assert.ok(readdirSync(store).some((f) => /^line-3-move-/.test(f)), "the move's clip is kept on file, unused");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

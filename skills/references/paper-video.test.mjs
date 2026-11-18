@@ -351,3 +351,23 @@ test("PP5 a white-paper video of a gym's real coach (2026-11-17): the one pictur
     await assert.rejects(makePaperVideos({ gymDir: g, outDir: out, script, areas, offer: OFFER, profile, browser, coach: { ...coach, refs: [] }, models: f.models }), /Mei has no starting picture/);
   } finally { await browser.close(); rmSync(d, { recursive: true, force: true }); }
 });
+
+test("PP6 a coach's white-paper picture takes its room from the gym's own room photo, as a third image, and one that shows words on a wall is not used (2026-11-18: the image model carries a wall's slogan over from the coach's real pictures and cannot spell it); the room's own writing is no failure in a coach's sheet clip", { timeout: 600000 }, async (t) => {
+  if (!hasFfmpeg()) return t.skip("ffmpeg is not installed");
+  const { d, g, profile, room } = gym({ presenter: null }), browser = await launchBrowser();
+  try {
+    const script = addSheetScript(g, { sheets: GOOD, offer: OFFER }, { profile }), areas = ["BISHAN"], out = join(d, "out");
+    const sd = join(g, "brand-assets", "video-samples", "starts", "mei"); mkdirSync(sd, { recursive: true });
+    const starts = ["video-01-4.2-close.jpg", "video-02-6.2-close.jpg"].map((n, i) => { const f = join(sd, n); writeFileSync(f, Buffer.concat([PNG, Buffer.from([i])])); return f; });
+    const coach = { id: "coach-mei", key: "mei", name: "Mei", voice: "a clear voice", starts, refs: starts, wears: { top: "black T-shirt", bottom: "black shorts", glasses: false }, uniform: { words: "STRONGER THAN YESTERDAY", logo: "a hexagon" } };
+    const f = fakes({ areas, boxes: [BOX, BOX], lettering: () => [{ text: "5", on: "other" }, { text: "b", on: "clothing" }] }), logs = []; let n = 0;
+    f.models.same = async () => (++n === 1 ? { same_person: true, differences: [], shirt_changed: false, wall_changed: false, wall_lettering: ["BE S NG", "BANEY"] } : { same_person: true, differences: [], shirt_changed: false, wall_changed: false, wall_lettering: [] });
+    // With a room photo the plan names another picture than without one (the prompt differs): what is planned is what is made.
+    assert.equal(paperNeeds({ gymDir: g, script, areas, profile, coach, room }).images, 1);
+    const r = await makePaperVideos({ gymDir: g, outDir: out, script, areas, offer: OFFER, room, profile, browser, coach, caps: { seconds: 80, images: 2 }, models: f.models, log: (m) => logs.push(m) });
+    assert.deepEqual([f.calls.image.length, f.calls.image.every((c) => c.refs.join() === [...starts, room].join()), r.videos[0].failed, r.videos[0].flags], [2, true, undefined, undefined], logs.join("\n"));
+    assert.match(f.calls.image[0].prompt, /The room is the gym in the THIRD image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, the coach is alone in it, and no words, sign or logo is on any wall\./);
+    assert.ok(logs.some((l) => /it shows words on a wall \(BE S NG, BANEY\), which the image model cannot spell/.test(l)), logs.join("\n"));
+    assert.deepEqual((({ seconds, images }) => [seconds, images])(paperNeeds({ gymDir: g, script, areas, profile, coach, room })), [0, 0]);
+  } finally { await browser.close(); rmSync(d, { recursive: true, force: true }); }
+});

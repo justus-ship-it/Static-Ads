@@ -393,3 +393,22 @@ test("X7 the review on the day's numbers (2026-11-12): withDaily lays the day's 
   assert.equal(goalKind("QUALITY_LEAD"), null); assert.equal(goalKind("OFFSITE_CONVERSIONS"), "website"); assert.equal(goalKind("CONVERSATIONS"), "chat"); assert.equal(goalKind("REACH"), "objective"); assert.equal(goalKind(null), null);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("X8 videos by who presents and by kind (2026-11-18): this app's own video ads only, a result is a lead-form lead; each split has its ads, running ads, spend, leads, cost per lead and evidence; the cheapest with enough evidence comes first; one value is said to beat another only with 20 leads each and a quarter's gap, else it is too early and each one's leads are said", async () => {
+  const { videoResults, VIDEO_MIN_LEADS, VIDEO_GAP, INVENTED } = await import("./what-wins.mjs");
+  const r = (o) => ({ media: "video", status: "live", impressions: 1000, clicks: 20, spend: 0, leads: 0, ...o });
+  // Nothing of this app's: an image ad, and a video of the account's own (no kind on its row).
+  assert.deepEqual((({ ads, leads, by_coach, said }) => [ads, leads, by_coach, said])(videoResults([{ media: "image", spend: 9, leads: 9 }, r({ spend: 50, leads: 4 })])), [0, 0, [], []]);
+  const rows = [r({ video_kind: "talking", video_coach: "Mei", video_style: "Week by week", spend: 300, leads: 25 }), r({ video_kind: "with exercises", video_coach: "Mei", spend: 100, leads: 5, status: "paused" }),
+    r({ video_kind: "talking", video_coach: "Sam", video_style: "Week by week", spend: 500, leads: 22 }), r({ video_kind: "white paper", spend: 50, leads: 0 }), { media: "image", video_kind: "talking", spend: 999, leads: 99 }];
+  const v = videoResults(rows, { currency: "SGD" });
+  assert.deepEqual([v.ads, v.running, v.spend, v.leads, v.cost_per_lead, v.confidence], [4, 3, 950, 52, 18.27, "solid"]);
+  assert.deepEqual(v.by_coach.map((x) => [x.value, x.ads, x.running, x.spend, x.leads, x.cost_per_lead, x.confidence]), [["Mei", 2, 1, 400, 30, 13.33, "solid"], ["Sam", 1, 1, 500, 22, 22.73, "solid"], [INVENTED, 1, 1, 50, 0, null, "none"]]);
+  assert.deepEqual(v.by_kind.map((x) => [x.value, x.leads, x.cost_per_lead, x.confidence]), [["talking", 47, 17.02, "solid"], ["with exercises", 5, 20, "enough"], ["white paper", 0, null, "none"]]);
+  assert.deepEqual(v.by_style.map((x) => [x.value, x.ads]), [["Week by week", 2]]);
+  // A coach against a coach: both solid, a gap of a quarter or more. The kinds: only one has 20 leads, so it is too early, and said with each one's leads.
+  assert.deepEqual(v.said, [{ what: "who presents", kind: "finding", text: "Mei: SGD 13.33 a lead over 30 leads, 41% under Sam (SGD 22.73 over 22)." }, { what: "the kind of video", kind: "early", text: `Too early to compare the kind of video: each needs ${VIDEO_MIN_LEADS} leads — talking has 47, with exercises has 5, white paper has 0.` }]);
+  // Level: both solid and under a quarter apart.
+  const level = videoResults([r({ video_kind: "talking", video_coach: "Mei", spend: 400, leads: 25 }), r({ video_kind: "talking", video_coach: "Sam", spend: 460, leads: 25 })]);
+  assert.deepEqual([level.said.map((s) => s.kind), 1 - 16 / 18.4 < VIDEO_GAP, level.said[0].text], [["level"], true, "No real difference by who presents yet: Mei SGD 16.00 over 25 leads, Sam SGD 18.40 over 25 leads."]);
+});
