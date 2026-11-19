@@ -61,6 +61,7 @@ import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecomm
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { FOOTAGE_NO_RUN, setFootageWords } from "../skills/references/footage-video.mjs";
+import { listShoots, readShoot as readFootageShoot, addShoot, editShoot, dropFile, syncFiles as syncFootage, buildSheet, decideSheet, scriptLines, MEDIA as FOOTAGE_MEDIA, USD_PER_FILE as FOOTAGE_USD_PER_FILE, SHOOT_LIMITS } from "../skills/references/footage-editor.mjs";
 import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, MAX_PHOTOS, madeShape, batchMix, videoPlan, growOptions, growBatch } from "../skills/references/plan-offer-batch.mjs";
 import { ROOMS, libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
@@ -79,6 +80,7 @@ const STORIES_SCRIPT = join(REPO_ROOT, "skills", "references", "make-stories.mjs
 const REFRESH_SCRIPT = join(REPO_ROOT, "skills", "references", "refresh-scenes.mjs");
 const CLEAN_SCRIPT = join(REPO_ROOT, "skills", "references", "clean-photo.mjs");
 const COACH_SCRIPT = join(REPO_ROOT, "skills", "references", "coach-look.mjs");
+const FOOTAGE_SCRIPT = join(REPO_ROOT, "skills", "references", "footage-editor.mjs");
 /** A sample video of a coach may be large (a minute of phone video is about 120 MB). */
 const MAX_SAMPLE_BYTES = 600 * 1024 * 1024;
 const READ_SCRIPT = join(REPO_ROOT, "skills", "references", "read-website.mjs");
@@ -175,6 +177,8 @@ function coachesView(gym) {
 }
 const RUNNABLE = {
   // Reading a gym's coach samples: two small check calls a video (the sound, the frames), then the starting pictures. No image call.
+  // The raw-footage editor (2026-11-19): every file of a shoot not read yet is listened to and looked at (two small calls a file; the owner's click).
+  "footage-read": { label: "Listen to the shoot's files", argv: ({ gym, shoot }) => [FOOTAGE_SCRIPT, "--brand-dir", brandDir(gym), "--shoot", shoot, "--read"] },
   "coach-read": { label: "Read the coach videos", argv: ({ gym }) => [COACH_SCRIPT, "--brand-dir", brandDir(gym), "--read"] },
   checksync: { label: "Check skill/command sync", argv: () => ["skills/references/check-sync.mjs"] },
   // Offer-first batches (Step 6). Built from the gym and batch id only; the brief is the file on disk.
@@ -1242,7 +1246,7 @@ function startRun(kind, params, hooks = {}) {
   if (!spec) throw new Error(`unknown command "${kind}"`);
   const args = spec.argv(params);
   const id = `${kind}-${Date.now().toString(36)}`;
-  const run = { id, kind, label: spec.label, lines: [], done: false, code: null, clients: new Set(), gym: params.gym || null, batch: params.batch || null };
+  const run = { id, kind, label: spec.label, lines: [], done: false, code: null, clients: new Set(), gym: params.gym || null, batch: params.batch || null, shoot: params.shoot || null };
   runs.set(id, run);
 
   const push = (text, stream) => {
@@ -1288,6 +1292,12 @@ const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "
  * and swipe reviews. Everything else — .env, source, profiles, briefs — is refused. Returns the
  * absolute path, or null.
  */
+/** A shoot as the page shows it: its words, its files as they are on disk now, and the cutting sheet built fresh from the readings and the owner's choices. */
+function footageView(gym, id) {
+  const dir = brandDir(gym), shoot = syncFootage(dir, readFootageShoot(dir, id)), sheet = buildSheet(shoot);
+  return { id: shoot.id, title: shoot.title, created: shoot.created, script: shoot.script, folder: shoot.folder, missing_folder: !!shoot.missing_folder, sheet, frames: `/files/brands/${gym}/footage/${shoot.id}/frames/`,
+    usd: Math.round(sheet.unread * FOOTAGE_USD_PER_FILE * 100) / 100, reading: [...runs.values()].find((r) => !r.done && r.kind === "footage-read" && r.gym === gym && r.shoot === id)?.id || null };
+}
 function allowedFile(rel) {
   const parts = rel.split("/").filter(Boolean);
   if (parts.some((p) => p === ".." || p === "." || p.startsWith("."))) return null;
@@ -1297,6 +1307,7 @@ function allowedFile(rel) {
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "brand-assets" && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "logo")) && parts[3] !== "_trash") base = join(BRANDS, parts[1], "brand-assets");
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === REFERENCES_DIR && parts.length === 4 && REFERENCE_NAME.test(parts[3])) base = join(BRANDS, parts[1], REFERENCES_DIR);
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "onboarding" && ["website", "instagram"].includes(parts[3]) && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "website" && parts[4] === "logos"))) base = join(BRANDS, parts[1], "onboarding", parts[3]);
+  else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "footage" && parts.length === 6 && parts[4] === "frames" && IMAGE_EXT.has(ext)) base = join(BRANDS, parts[1], "footage"); // a shoot's frame sheets (never the footage itself)
   else if (parts[0] === "swipe" && parts.length >= 3 && (ext === ".html" || IMAGE_EXT.has(ext))) base = SWIPE;
   if (!base) return null;
   const abs = parts[0] === "brands" ? join(base, ...parts.slice(parts[2] === "onboarding" ? 4 : 3)) : join(SWIPE, ...parts.slice(1));
@@ -2049,6 +2060,35 @@ const server = createServer(async (req, res) => {
     //   POST /presents { presents: invented | coaches } · POST /uniform { words, logo } · POST /coach { name, note }
     //   PUT /coach/{id} { consent { face, voice, by } } | { on, reason } | { samples[] } | { voice } | { start, on, reason }
     // Reading the samples is the run `coach-read` (the owner's click).
+    // The raw-footage editor, stage 1 (2026-11-19; footage-editor.mjs): a shoot is a script and the files it was filmed as.
+    //   GET /footage — the gym's shoots; POST /footage { title, script, folder? } — a new one (the folder is read where it is)
+    //   GET /footage/{id} — the shoot with its cutting sheet; PUT /footage/{id} { title | script | folder } or the owner's
+    //   choice on the sheet { line, take | pictures | drop } | { order }; PUT /footage/{id}/file/{name} — a file dropped in (raw bytes).
+    // Listening to the files is the run `footage-read` (the owner's click). Nothing here cuts a video: that is stage 2.
+    const ftm = p.match(/^\/api\/client\/([^/]+)\/footage(?:\/([a-z0-9][a-z0-9-]{2,60})(?:\/file\/([^/]{1,160}))?)?$/);
+    if (ftm) {
+      const [, gym, id, fileName] = ftm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym), brief = (sh) => { const sheet = buildSheet(sh); return { id: sh.id, title: sh.title, created: sh.created, folder: sh.folder, files: sh.files.length, read: sh.files.filter((x) => x.read).length, lines: sheet.counts.lines, counts: sheet.counts, can_cut: sheet.can_cut }; };
+      try {
+        if (!id && req.method === "GET") return json(res, 200, { shoots: listShoots(dir).map(brief), ffmpeg: hasFfmpeg(), usd_per_file: FOOTAGE_USD_PER_FILE, media: FOOTAGE_MEDIA, limits: SHOOT_LIMITS });
+        if (!id && req.method === "POST") { const body = await readBody(req); const sh = addShoot(dir, { title: body.title, script: body.script, folder: typeof body.folder === "string" && body.folder.trim() ? body.folder.trim() : null }); return json(res, 200, footageView(gym, sh.id)); }
+        if (id && fileName && req.method === "PUT") {
+          let name; try { name = decodeURIComponent(fileName); } catch { return json(res, 400, { error: "bad file name" }); }
+          let buf; try { buf = await readRaw(req, MAX_SAMPLE_BYTES); } catch (e) { return json(res, e.status || 400, { error: e.status === 413 ? "this file is over 600 MB: put it in the shoot's folder instead (the folder is read where it is, with no limit)" : e.message }); }
+          try { dropFile(dir, id, name, buf); } catch (e) { return json(res, e.duplicate ? 409 : 400, { error: e.message }); }
+          return json(res, 200, footageView(gym, id));
+        }
+        if (id && !fileName && req.method === "GET") return json(res, 200, footageView(gym, id));
+        if (id && !fileName && req.method === "PUT") {
+          const body = await readBody(req);
+          if (body.title !== undefined || body.script !== undefined || body.folder !== undefined) editShoot(dir, id, { title: body.title, script: body.script, folder: body.folder === undefined ? undefined : typeof body.folder === "string" ? body.folder.trim() : null });
+          else decideSheet(dir, id, { line: body.line ?? null, take: body.take, pictures: body.pictures, drop: body.drop, order: body.order });
+          return json(res, 200, footageView(gym, id));
+        }
+      } catch (e) { return json(res, /^no such shoot/.test(e.message) ? 404 : 400, { error: e.message }); }
+      return json(res, 405, { error: "method not allowed" });
+    }
     const chm = p.match(/^\/api\/client\/([^/]+)\/coaches(?:\/(sample|presents|uniform|coach)(?:\/([\w.-]+))?)?$/);
     if (chm) {
       const [, gym, what, x1] = chm;
@@ -2545,6 +2585,16 @@ const server = createServer(async (req, res) => {
         const max = body.max ?? 100;
         if (!Number.isInteger(max) || max < 1 || max > MAX_READ_CALLS) return json(res, 400, { error: `how many pictures to read must be 1 to ${MAX_READ_CALLS}` });
         const run = startRun(kind, { max });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "footage-read") {
+        if (!okSlug(body.gym) || !existsSync(brandDir(body.gym))) return json(res, 400, { error: "bad gym" });
+        let view; try { view = footageView(body.gym, body.shoot); } catch (e) { return json(res, 404, { error: e.message }); }
+        if (view.reading) return json(res, 409, { error: "this shoot's files are being read now: wait for it to end, or stop it" });
+        if (!hasFfmpeg()) return json(res, 409, { error: "reading footage needs ffmpeg on this machine: run `brew install ffmpeg` once in Terminal" });
+        if (!view.sheet.unread) return json(res, 400, { error: view.sheet.files.length ? "every file of this shoot has been read already: nothing to do" : "this shoot has no files yet: give it the folder they are in, or drop them in" });
+        if (body.confirm?.unread !== view.sheet.unread) return json(res, 409, { error: "the files changed since you looked: look again and confirm what it says now", unread: view.sheet.unread });
+        const run = startRun(kind, { gym: body.gym, shoot: body.shoot });
         return json(res, 200, { id: run.id, label: run.label });
       }
       if (kind === "coach-read") {
