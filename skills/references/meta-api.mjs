@@ -56,9 +56,9 @@ export const appsecretProof = (token, secret) => createHmac("sha256", secret).up
 export const scrubTokens = (s) => String(s).replace(/EAA[A-Za-z0-9]{20,}/g, "[token]").replace(/access_token=[^&\s"']+/g, "access_token=[token]");
 
 export class MetaError extends Error {
-  constructor(message, { code = null, subcode = null, type = null, status = null, trace = null, path = null } = {}) {
+  constructor(message, { code = null, subcode = null, type = null, status = null, trace = null, path = null, transient = false } = {}) {
     super(scrubTokens(message));
-    this.name = "MetaError"; this.code = code; this.subcode = subcode; this.type = type; this.status = status; this.trace = trace; this.path = path;
+    this.name = "MetaError"; this.code = code; this.subcode = subcode; this.type = type; this.status = status; this.trace = trace; this.path = path; this.transient = transient === true;
   }
 }
 
@@ -118,7 +118,7 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
     try { body = await res.json(); } catch { throw new MetaError(`Meta answered ${res.status} with something that is not JSON`, { status: res.status, path }); }
     if (!res.ok || body?.error) {
       const e = body?.error || {};
-      throw new MetaError(explainError(e, path), { code: e.code ?? null, subcode: e.error_subcode ?? null, type: e.type ?? null, status: res.status, trace: e.fbtrace_id ?? null, path });
+      throw new MetaError(explainError(e, path), { code: e.code ?? null, subcode: e.error_subcode ?? null, type: e.type ?? null, status: res.status, trace: e.fbtrace_id ?? null, path, transient: e.is_transient === true });
     }
     return body;
   }
@@ -132,7 +132,7 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
     try { out = await res.json(); } catch { throw new MetaError(`Meta answered ${res.status} with something that is not JSON`, { status: res.status, path }); }
     if (!res.ok || out?.error) {
       const e = out?.error || {};
-      throw new MetaError(explainError(e, path) + (e.error_user_msg ? ` — ${scrubTokens(e.error_user_msg)}` : ""), { code: e.code ?? null, subcode: e.error_subcode ?? null, type: e.type ?? null, status: res.status, trace: e.fbtrace_id ?? null, path });
+      throw new MetaError(explainError(e, path) + (e.error_user_msg ? ` — ${scrubTokens(e.error_user_msg)}` : ""), { code: e.code ?? null, subcode: e.error_subcode ?? null, type: e.type ?? null, status: res.status, trace: e.fbtrace_id ?? null, path, transient: e.is_transient === true });
     }
     return out;
   }
@@ -151,7 +151,7 @@ export function graphClient({ config = metaConfig(), fetch: f = globalThis.fetch
     try { out = await res.json(); } catch { throw new MetaError(`Meta answered ${res.status} with something that is not JSON`, { status: res.status, path }); }
     if (!res.ok || out?.error) {
       const e = out?.error || {};
-      throw new MetaError(explainError(e, path) + (e.error_user_msg ? ` — ${scrubTokens(e.error_user_msg)}` : ""), { code: e.code ?? null, subcode: e.error_subcode ?? null, type: e.type ?? null, status: res.status, trace: e.fbtrace_id ?? null, path });
+      throw new MetaError(explainError(e, path) + (e.error_user_msg ? ` — ${scrubTokens(e.error_user_msg)}` : ""), { code: e.code ?? null, subcode: e.error_subcode ?? null, type: e.type ?? null, status: res.status, trace: e.fbtrace_id ?? null, path, transient: e.is_transient === true });
     }
     return out;
   }

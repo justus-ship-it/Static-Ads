@@ -26,14 +26,14 @@ import { createServer } from "http";
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, realpathSync, rmSync, renameSync, mkdtempSync, openSync, readSync, closeSync } from "fs";
 import { join, resolve, dirname, extname, basename, sep } from "path";
 import { tmpdir } from "os";
-import { readCoaches, addCoach, setConsent, switchCoach, setSamples, addSample as addCoachSample, samples as coachSamples, extractFrames, groupsOf, buildStarts, setVoice, switchStart, setUniform, coachWhy, paperWhy, SAMPLES_DIR as COACH_SAMPLES_DIR, VIDEO_EXT as COACH_VIDEO_EXT, STILL_EXT as COACH_STILL_EXT } from "../skills/references/coach-look.mjs";
+import { readCoaches, addCoach, setConsent, switchCoach, setSamples, addSample as addCoachSample, samples as coachSamples, extractFrames, groupsOf, buildStarts, setVoice, switchStart, setUniform, coachWhy, paperWhy, soundChecked, soundWhy, approveSound, filmSound, SOUND_LINES, SOUND_LANGUAGES, SAMPLES_DIR as COACH_SAMPLES_DIR, VIDEO_EXT as COACH_VIDEO_EXT, STILL_EXT as COACH_STILL_EXT } from "../skills/references/coach-look.mjs";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
   scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
-  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase, FEED_RATIOS, mixOf, presentsOf, PRESENTS } from "../skills/references/client-config.mjs";
+  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase, FEED_RATIOS, mixOf, presentsOf, PRESENTS, wordingSuggestions, addSayInstead, sayInstead, addPinTo } from "../skills/references/client-config.mjs";
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
@@ -54,13 +54,17 @@ import { portfolioNumbers } from "../skills/references/portfolio-numbers.mjs";
 import { buildSurvey, surveyStatus } from "../skills/references/library-survey.mjs";
 import { plainGemini } from "../skills/references/gemini-busy.mjs";
 import { scarcityOf, SHEETS, SHEET_WORDS, addSheetScript, decideSheetScript, draftSheetScripts, readySheetScripts, keptSheetScripts, readSheetScripts, sheetIssues, sheetCost, proposeSheetEdit } from "../skills/references/paper-video.mjs";
-import { movesFor, moveLabel, knownKit, KIT as VIDEO_KIT, MOVES as VIDEO_MOVES, MOVE_LEAD, USD_PER_IMAGE as VIDEO_USD_PER_IMAGE, factsFor as videoFactsFor, setAside, keepTake, clipStore, coachStore, readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, plainWords, setPlain, LONG_SYLLABLES, readStyle, nameStyle, suggestFacts, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
+import { filmedScripts, movesFor, moveLabel, knownKit, KIT as VIDEO_KIT, MOVES as VIDEO_MOVES, MOVE_LEAD, USD_PER_IMAGE as VIDEO_USD_PER_IMAGE, factsFor as videoFactsFor, setAside, keepTake, clipStore, coachStore, readyScripts, scriptIssues, filmedLines, proposeEdit, saidAs, setSaid, plainWords, setPlain, LONG_SYLLABLES, readStyle, nameStyle, suggestFacts, closingLine, setClosing, CLOSING_LINE, readPains, addPain, decidePain, suggestPains, PAIN_LIMITS, readScripts, addScript, decideScript, keptScripts, draftScripts, scriptCost, addSample, decideSample, readSamples, adoptSamples, VIDEO_LIBRARY_DIR, setFacts, FACT_LIMITS, presenterOf, presenterProblems, hasFfmpeg, videoCount, MAX_VIDEOS, USD_PER_SECOND, LINES as SCRIPT_LINES, LINE_WORDS as SCRIPT_LINE_WORDS, PRESENTER_GENDERS } from "../skills/references/presenter-video.mjs";
 import { videoResults, whatWins, whatWinsAcross, nextWave, mixSuggestion, gymRowsRead, isActive as adIsActive, SCOPES as WIN_SCOPES, TRACKS as WIN_TRACKS } from "../skills/references/what-wins.mjs";
 import { pullResults, batchRows, gymRows, resultsCsv, writeGymCsv, pullAccountHistory, readHistory, historyRows, allRows, adsetRows, campaignRows, importFromAccount, readCopyRefs, textRows, gymTextRows, takeMetaValue } from "../skills/references/meta-results.mjs";
-import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
+import { ownCopies, relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecommended, addCopy, decideCopy, liveRefs, addCopyRef, editCopyRef, referencesFor, MAX_OPTIONS, ANGLES, KINDS as COPY_KINDS, analyseCopy, ctaLabel, gymLanguage, languageOf as copyLanguageOf } from "../skills/references/draft-copy.mjs";
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { FOOTAGE_NO_RUN, setFootageWords } from "../skills/references/footage-video.mjs";
+import { MERGED, MERGED_NO_RUN, mergePlan, mergeBatches, mergedInto, planView as mergeView } from "../skills/references/merge-batches.mjs";
+import { correctName as correctTestimonialName, testimonialsView, testimonialAds, readTestimonials, draftTestimonialCopy, readReadings as readTestimonialReadings, USD_PER_VIDEO as TESTIMONIAL_USD, PER_VIDEO as TESTIMONIAL_COPIES } from "../skills/references/testimonial-video.mjs";
+/** Why a batch added or merged as it is cannot be run. */
+const noRunWhy = (brief) => (brief?.imported === MERGED ? MERGED_NO_RUN : FOOTAGE_NO_RUN);
 import { cutShoot, listCuts, hasWhisper } from "../skills/references/footage-cut.mjs";
 import { addFootageBatch } from "../skills/references/footage-video.mjs";
 import { listShoots, readShoot as readFootageShoot, addShoot, editShoot, dropFile, syncFiles as syncFootage, buildSheet, decideSheet, matchFootage, scriptLines, MEDIA as FOOTAGE_MEDIA, USD_PER_FILE as FOOTAGE_USD_PER_FILE, SHOOT_LIMITS } from "../skills/references/footage-editor.mjs";
@@ -170,10 +174,13 @@ function coachesView(gym) {
   const shown = new Map(), outs = join(dir, "outputs");
   for (const b of existsSync(outs) ? readdirSync(outs).filter((x) => !x.startsWith("_")) : []) {
     const batch = readJsonFile(join(outs, b, "batch.json")), pub = readJsonFile(join(outs, b, "publish.json"));
-    for (const a of batch?.ads || []) { const id = a.video?.coach?.id; if (!id) continue; const row = (shown.get(id) || shown.set(id, new Map()).get(id)).get(b) || { batch: b, ads: 0, on_meta: 0 }; row.ads++; if (pub?.ads?.[a.folder]?.id) row.on_meta++; shown.get(id).set(b, row); }
+    for (const a of batch?.ads || []) { const id = a.video?.coach?.id; if (!id) continue; const row = (shown.get(id) || shown.set(id, new Map()).get(id)).get(b) || { batch: b, ads: 0, on_meta: 0, spoken: 0 }; row.ads++; if (a.video?.kind !== "paper") row.spoken++; if (pub?.ads?.[a.folder]?.id) row.on_meta++; shown.get(id).set(b, row); }
   }
-  return { presents: presentsOf(prof), ffmpeg: hasFfmpeg(), uniform: d.uniform || null,
-    coaches: d.coaches.map((c) => ({ shown_in: [...(shown.get(c.id)?.values() || [])], id: c.id, name: c.name, note: c.note || null, status: c.status, off: c.off || null, consent: c.consent || null, voice: c.voice || null, wears: c.wears || null, samples: c.samples || [], why: coachWhy(c), paper_why: paperWhy(c), starts: (c.starts || []).map((s) => ({ ...s, url: url(s.file) })) })),
+  // The sound check (2026-11-22): in the gym's own language — whether the owner has heard this coach's voice as it is described now, and the test lines filmed.
+  const lang = gymLanguage(prof), voiceNow = (c) => createHash("sha256").update(String(c.voice?.description || "").replace(/\s+/g, " ").trim()).digest("hex").slice(0, 12);
+  const sound = (c) => ({ lang, language: SOUND_LANGUAGES[lang], line: SOUND_LINES[lang], checked: soundChecked(c, lang), on: c.voice?.checks?.[lang]?.on || null, why: c.voice?.description ? soundWhy(c, lang) : null, tests: (c.voice?.tests || []).filter((t) => t.lang === lang).map((t) => ({ ...t, url: url(t.file), current: t.voice === voiceNow(c) })).reverse() });
+  return { presents: presentsOf(prof), ffmpeg: hasFfmpeg(), uniform: d.uniform || null, language: lang, sound_usd: Math.round(6 * USD_PER_SECOND * 100) / 100,
+    coaches: d.coaches.map((c) => ({ sound: sound(c), shown_in: [...(shown.get(c.id)?.values() || [])], id: c.id, name: c.name, note: c.note || null, status: c.status, off: c.off || null, consent: c.consent || null, voice: c.voice || null, wears: c.wears || null, samples: c.samples || [], why: coachWhy(c), paper_why: paperWhy(c), starts: (c.starts || []).map((s) => ({ ...s, url: url(s.file) })) })),
     samples: list.map((s) => ({ name: s.name, kind: s.kind, original: s.original, seconds: s.seconds ?? null, coach: whose(s.name), thumb: thumb(s), read: s.read ? { top: s.read.top, glasses: s.read.glasses, spot: s.read.spot, words: s.read.heard?.words ?? 0, per_second: s.read.heard?.per_second ?? null, shirt_words: s.read.shirt_words } : null })),
     groups: groupsOf(dir), unread: list.filter((s) => s.kind === "video" && !s.read).length,
     reading: [...runs.values()].find((r) => !r.done && r.kind === "coach-read" && r.gym === gym)?.id || null };
@@ -758,6 +765,8 @@ function listBatches(gym) {
       made: batch?.made || null, ads: batch?.ads?.length || 0, image_calls: batch?.image_calls ?? null,
       // A finished batch may still have something to make (2026-11-17): a photo or video that failed last time, or videos a new run would film or cut again. Its card offers Run again… for these.
       left: (batch?.failed || []).length, videos: videoCount(brief.videos), imported: brief.imported || null,
+      // Merged batches (merge-batches.mjs): the batches this one was made from, or the merged batch this one went into (while that is still there).
+      merged_from: brief.imported === MERGED ? brief.merged_from || [] : null, merged_into: mergedInto(brandDir(gym), brief),
       gallery: existsSync(join(out, "gallery.html")) ? `/files/brands/${gym}/outputs/${id}/gallery.html` : null,
       // For the campaign cards: the first ad as a thumbnail, whether picks and Stories exist.
       thumb: batch?.ads?.[0] ? `/files/brands/${gym}/outputs/${id}/${batch.ads[0].file}` : null,
@@ -865,7 +874,20 @@ function checkBrief(gym, raw) {
     if (!withCoaches && !presenterOf(profile)) errors.push("say who presents the videos first: Ad defaults → Presenter (a woman or a man, or the gym's own coaches)");
     if (!hasFfmpeg()) errors.push("videos need ffmpeg on this machine: run `brew install ffmpeg` once in Terminal");
     if (!withCoaches && !(brief.reference || real[0])) errors.push("a video is filmed in the gym's own room: clean a premises photo on Photos & assets first");
-    try { const vp = videoPlan(brandDir(gym), brief); videos = { coaches: vp.coaches.map((c) => (c ? { id: c.id, name: c.name } : null)), count: vp.count, active: vp.active, paper: vp.paper, videos: vp.videos, seconds: vp.seconds, reused: vp.reused, allow: vp.allow, max_seconds: vp.max_seconds, usd: vp.usd, usd_max: vp.usd_max, images: vp.images, scripts: vp.scripts.map((x) => x.id) }; }
+    // A NEW batch films the scripts not filmed yet first, and keeps the ones it was given (2026-11-22): without this a gym's second batch for the same
+    // offer picked among every ready script and could reuse the first batch's clips, filming nothing new. A batch already on disk is left as it is.
+    if (brief.video_scripts == null && brief.paper_scripts == null && !(typeof brief.batch_id === "string" && brief.batch_id && existsSync(briefPath(gym, brief.batch_id)))) {
+      try { const first = videoPlan(brandDir(gym), brief, { fresh: filmedScripts(brandDir(gym)) }), spoken = first.scripts.filter((_, i) => first.kinds[i] !== "paper").map((x) => x.id), paper = first.scripts.filter((_, i) => first.kinds[i] === "paper").map((x) => x.id);
+        if (spoken.length) brief.video_scripts = spoken; if (paper.length) brief.paper_scripts = paper; } catch { /* said below, by the plan itself */ }
+    }
+    try { const vp = videoPlan(brandDir(gym), brief); videos = { coaches: vp.coaches.map((c) => (c ? { id: c.id, name: c.name } : null)), count: vp.count, active: vp.active, paper: vp.paper, videos: vp.videos, seconds: vp.seconds, reused: vp.reused, allow: vp.allow, max_seconds: vp.max_seconds, usd: vp.usd, usd_max: vp.usd_max, images: vp.images, scripts: vp.scripts.map((x) => x.id),
+        // Which script each video films, with who presents it (2026-11-22), and how many videos share a script with another: each video its own is the rule, a shared one is said.
+        each: vp.scripts.map((x, i) => ({ script: x.id, kind: vp.kinds[i], coach: vp.coaches[i]?.name || null, opens: String((x.lines || x.sheets || [])[0] || "").slice(0, 60) })),
+        shared: vp.scripts.length - new Set(vp.scripts.map((x) => x.id)).size };
+      // The sound check (2026-11-22): a coach who speaks in this batch has been heard by the owner in the gym's language, for the voice as it is described now.
+      const lang = gymLanguage(profile), all = readCoaches(brandDir(gym)).coaches, need = [...new Set(vp.coaches.map((c, i) => (c && vp.kinds[i] !== "paper" ? c.id : null)).filter(Boolean))].map((id) => all.find((c) => c.id === id)).filter((c) => c && !soundChecked(c, lang));
+      for (const c of need) errors.push(soundWhy(c, lang));
+      videos.sound_needed = need.map((c) => ({ id: c.id, name: c.name })); }
     catch (e) { if (typeof brief.offer === "string" && brief.offer.trim() && locs) errors.push(scrubTokens(e.message)); }
   }
   return { errors, brief, spread, summary: { photos, generated: g, real: real.length, looks, locations: locs, ads: photos * looks * locs + cardCount(cards) * locs + nv * locs, cards, videos, max_calls: brief?.max_calls ?? g, scenes_for: audienceFor, format, mix } };
@@ -937,7 +959,7 @@ function reviewState(gym, id) {
     const s = storyOf.get(a.folder) || (a.story_file && existsSync(join(out, a.story_file)) ? { file: a.story_file } : null);
     return {
       folder: a.folder, number: Number(a.folder.split("-")[0]), candidate: a.candidate, location: a.location, ratio: a.ratio || batch.ratio || "1x1", format: a.format || null, treatment: a.treatment, style: a.style, palette: a.palette,
-      ...(a.video_file && existsSync(join(out, a.video_file)) ? { video: fileUrl(gym, join(out, a.video_file)), video_seconds: a.video?.seconds ?? null, video_words: a.video?.words || [], video_script: a.video?.script_id || null, video_kind: ["active", "paper", "real"].includes(a.video?.kind) ? a.video.kind : "presenter", video_title: a.video?.title || null, video_coach: a.video?.coach?.name || null, video_parts: (a.video?.parts || []).map((p) => ({ line: p.line, label: p.label, text: p.text, at: p.at, seconds: p.seconds, takes: (p.takes || []).length, ...(p.move ? { move: p.move } : {}), ...(p.per_area ? { per_area: true } : {}), ...(p.listen ? { listen: p.listen } : {}), ...(p.kept ? { kept: p.kept } : {}), ...(p.again ? { again: true } : {}), ...(p.flag ? { flag: p.flag } : {}) })), video_flags: (a.video?.flags || []).length } : {}),
+      ...(a.video_file && existsSync(join(out, a.video_file)) ? { video: fileUrl(gym, join(out, a.video_file)), video_seconds: a.video?.seconds ?? null, video_words: a.video?.words || [], video_script: a.video?.script_id || null, video_decide: a.video?.decide || [], video_summary: a.video?.summary || null, video_small: a.video?.small === true, video_kind: ["active", "paper", "real", "testimonial"].includes(a.video?.kind) ? a.video.kind : "presenter", video_title: a.video?.title || null, video_coach: a.video?.coach?.name || null, video_parts: (a.video?.parts || []).map((p) => ({ line: p.line, label: p.label, text: p.text, at: p.at, seconds: p.seconds, takes: (p.takes || []).length, ...(p.move ? { move: p.move } : {}), ...(p.per_area ? { per_area: true } : {}), ...(p.listen ? { listen: p.listen } : {}), ...(p.kept ? { kept: p.kept } : {}), ...(p.again ? { again: true } : {}), ...(p.flag ? { flag: p.flag } : {}) })), video_flags: (a.video?.flags || []).length } : {}),
       photos: a.photos, url: fileUrl(gym, join(out, a.file)), story: s ? fileUrl(gym, join(out, s.file)) : null, story_failure: s ? null : storyFail.get(a.folder) || a.story_failure || null, card: a.card || null, notes: notes[a.folder] || null, own: d.ads[a.folder] || null, ...standing(a, d),
     };
   });
@@ -1315,6 +1337,7 @@ function allowedFile(rel) {
   let base = null;
   if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "outputs" && (ext === ".html" || ext === ".mp4" || IMAGE_EXT.has(ext))) base = join(BRANDS, parts[1], "outputs"); // .mp4: a batch's video ads (2026-11-12)
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "brand-assets" && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "logo")) && parts[3] !== "_trash") base = join(BRANDS, parts[1], "brand-assets");
+  else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "brand-assets" && parts[3] === "video-samples" && parts[4] === "sound-check" && parts.length === 6 && /^[\w-]+\.mp4$/.test(parts[5])) base = join(BRANDS, parts[1], "brand-assets"); // a coach's sound-check clips (2026-11-22): the test lines filmed for the owner's ear, never a raw sample
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === REFERENCES_DIR && parts.length === 4 && REFERENCE_NAME.test(parts[3])) base = join(BRANDS, parts[1], REFERENCES_DIR);
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "onboarding" && ["website", "instagram"].includes(parts[3]) && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "website" && parts[4] === "logos"))) base = join(BRANDS, parts[1], "onboarding", parts[3]);
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "footage" && parts.length === 6 && ((parts[4] === "frames" && IMAGE_EXT.has(ext)) || (parts[4] === "cuts" && /^cut-\d+\.(mp4|jpg)$/.test(parts[5])))) base = join(BRANDS, parts[1], "footage"); // a shoot's frame sheets and its finished cuts (never the raw footage)
@@ -1935,7 +1958,12 @@ const server = createServer(async (req, res) => {
         }
         const closing = closingLine(VIDEO_LIBRARY_DIR);
         if (what === "script" && req.method === "POST" && !x1) { addScript(dir, { lines: body.lines, offer: body.offer, source: "owner" }, { profile, closing }); return json(res, 200, view()); }
-        if (what === "script" && req.method === "PUT" && x1) { decideScript(dir, x1, { status: body.status, lines: body.lines, reason: body.reason }, { profile, closing }); return json(res, 200, view()); }
+        if (what === "script" && req.method === "PUT" && x1) {
+          // An edit that swaps a phrase for another is offered back as a rule for this gym (2026-11-22): the owner's click keeps it, nothing is saved by itself.
+          const was = Array.isArray(body.lines) ? readScripts(dir).scripts.find((x) => x.id === x1)?.lines || [] : [];
+          decideScript(dir, x1, { status: body.status, lines: body.lines, reason: body.reason }, { profile, closing });
+          return json(res, 200, { ...view(), suggest_rules: Array.isArray(body.lines) ? wordingSuggestions(was, body.lines, profile).map((r) => ({ ...r, spoken: false })) : [] });
+        }
         if (what === "sheets" && req.method === "POST" && !x1) { addSheetScript(dir, { sheets: body.sheets, offer: body.offer, source: "owner" }, { profile, closing }); return json(res, 200, view()); }
         if (what === "sheets" && req.method === "POST" && x1 === "draft") {
           const count = body.count ?? 3; if (!Number.isInteger(count) || count < 1 || count > 6) return json(res, 400, { error: "how many scripts to draft must be 1 to 6" });
@@ -1944,7 +1972,11 @@ const server = createServer(async (req, res) => {
           const d = await draftSheetScripts({ brandDir: dir, libraryDir: VIDEO_LIBRARY_DIR, offer: body.offer, audience: typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null, count, pain: typeof body.pain === "string" && body.pain.trim() ? body.pain : null });
           return json(res, 200, { ...view(), drafted: { paper: true, added: d.added.map((x) => x.id), dropped: d.dropped, sources: d.sources, theme: d.theme } });
         }
-        if (what === "sheets" && req.method === "PUT" && x1) { decideSheetScript(dir, x1, { status: body.status, sheets: body.sheets, reason: body.reason, scarcity_ok: body.scarcity_ok === true }, { profile, closing }); return json(res, 200, view()); }
+        if (what === "sheets" && req.method === "PUT" && x1) {
+          const was = Array.isArray(body.sheets) ? readSheetScripts(dir).find((x) => x.id === x1)?.sheets || [] : [];
+          decideSheetScript(dir, x1, { status: body.status, sheets: body.sheets, reason: body.reason, scarcity_ok: body.scarcity_ok === true }, { profile, closing });
+          return json(res, 200, { ...view(), suggest_rules: Array.isArray(body.sheets) ? wordingSuggestions(was, body.sheets, profile).map((r) => ({ ...r, spoken: false })) : [] });
+        }
         if (what === "closing" && req.method === "POST" && !x1) { setClosing(VIDEO_LIBRARY_DIR, body.text); return json(res, 200, view()); }
         if (what === "said" && req.method === "POST" && !x1) { setSaid(VIDEO_LIBRARY_DIR, body.word, body.say); return json(res, 200, view()); }
         // Plain words, for every gym (2026-11-15: third-grade reading and below): POST /plain { word, say } — never used, with what to say instead; { word, fine: true } — a long word that is fine; { word, remove: true } — off the list.
@@ -2065,6 +2097,47 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // /api/client/{gym}/wording — the gym's own "say this, not that" rules (2026-11-22; brand_lock.voice.say_instead).
+    // GET lists them; POST { avoid, say, spoken } adds one — the owner's click, from the Brand page or from an edit the
+    // page offered back as a rule. The whole list is edited on Brand & photography with the rest of the profile.
+    // /api/client/{gym}/pins — GET: the pins saved, and (?history=1) every pin the ad account's own ad sets target, dropped
+    // points included (read-only on Meta). POST { lat, lng | place_key, place_name, radius_km, label, callout, always }: one
+    // more pin, saved with the others (2026-11-22).
+    const pnm = p.match(/^\/api\/client\/([^/]+)\/pins$/);
+    if (pnm) {
+      const gym = pnm[1], pf = join(brandDir(gym), "gym-profile.json");
+      if (!okSlug(gym) || !existsSync(pf)) return json(res, 400, { error: "bad gym" });
+      const profile = readJsonFile(pf) || {}, saved = () => profile.targeting_defaults?.geo?.radius_pins || [];
+      if (req.method === "GET") {
+        if (!url.searchParams.get("history")) return json(res, 200, { pins: saved() });
+        const cfg = metaConfig({ gym });
+        if (!cfg.token || !profile.meta_assets?.ad_account_id) return json(res, 200, { pins: saved(), history: [], why: "the Meta link is not set up: type the point instead" });
+        try { return json(res, 200, { pins: saved(), history: await graphClient({ config: cfg }).historyPins(profile.meta_assets.ad_account_id) }); }
+        catch (e) { return json(res, 200, { pins: saved(), history: [], why: scrubTokens(e.message) }); }
+      }
+      if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
+      const b = await readBody(req), n = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v));
+      let index; try { index = addPinTo(profile, { label: b.label, lat: n(b.lat), lng: n(b.lng), place_key: b.place_key, place_name: b.place_name, radius_km: b.radius_km, location_types: b.location_types, callout: b.callout, always: b.always === true, source: b.source === "account-history" ? "account-history" : "owner" }); }
+      catch (e) { return json(res, 400, { error: e.message }); }
+      const { errors, warnings } = validateProfile(profile, { gymDir: brandDir(gym) }); if (errors.length) return json(res, 400, { error: errors[0] });
+      writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+      return json(res, 200, { index, pins: saved(), warnings: warnings.filter((w) => /pin/.test(w)) });
+    }
+
+    const wdm = p.match(/^\/api\/client\/([^/]+)\/wording$/);
+    if (wdm) {
+      const gym = wdm[1], pf = join(brandDir(gym), "gym-profile.json");
+      if (!okSlug(gym) || !existsSync(pf)) return json(res, 400, { error: "bad gym" });
+      const profile = readJsonFile(pf) || {};
+      if (req.method === "GET") return json(res, 200, { rules: sayInstead(profile) });
+      if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
+      const body = await readBody(req);
+      try { addSayInstead(profile, { avoid: body.avoid, say: body.say, spoken: body.spoken === true }); } catch (e) { return json(res, 400, { error: e.message }); }
+      const { errors } = validateProfile(profile, { gymDir: brandDir(gym) }); if (errors.length) return json(res, 400, { error: errors[0] });
+      writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+      return json(res, 200, { rules: sayInstead(profile) });
+    }
+
     // /api/client/{gym}/coaches — a gym's real coaches and their sample videos (2026-11-17; coach-look.mjs).
     //   GET → the view. PUT /sample/{name} (raw bytes: a video or a still; kept as it is, frames pulled; no call).
     //   POST /presents { presents: invented | coaches } · POST /uniform { words, logo } · POST /coach { name, note }
@@ -2126,9 +2199,9 @@ const server = createServer(async (req, res) => {
       } catch (e) { return json(res, /^no such shoot/.test(e.message) ? 404 : 400, { error: e.message }); }
       return json(res, 405, { error: "method not allowed" });
     }
-    const chm = p.match(/^\/api\/client\/([^/]+)\/coaches(?:\/(sample|presents|uniform|coach)(?:\/([\w.-]+))?)?$/);
+    const chm = p.match(/^\/api\/client\/([^/]+)\/coaches(?:\/(sample|presents|uniform|coach)(?:\/([\w.-]+)(?:\/(sound))?)?)?$/);
     if (chm) {
-      const [, gym, what, x1] = chm;
+      const [, gym, what, x1, x2] = chm;
       if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
       const dir = brandDir(gym);
       if (!what && req.method === "GET") return json(res, 200, coachesView(gym));
@@ -2152,8 +2225,19 @@ const server = createServer(async (req, res) => {
         }
         if (what === "uniform" && req.method === "POST") { setUniform(dir, { words: body.words, logo: body.logo }); return json(res, 200, coachesView(gym)); }
         if (what === "coach" && !x1 && req.method === "POST") { addCoach(dir, { name: body.name, note: body.note }); return json(res, 200, coachesView(gym)); }
+        // The sound check (2026-11-22): POST …/coach/{id}/sound films one short test line (the owner's click, about six
+        // seconds of video); PUT …/coach/{id} { sound: { ok } } is his yes on how the coach sounds, or its withdrawal.
+        if (what === "coach" && x1 && x2 === "sound" && req.method === "POST") {
+          if (!hasFfmpeg()) return json(res, 409, { error: "videos need ffmpeg on this machine: run `brew install ffmpeg` once in Terminal" });
+          const prof = readJsonFile(join(dir, "gym-profile.json")) || {};
+          if (body.confirm !== true) return json(res, 409, { error: "filming a test line is about six seconds of video: confirm it first" });
+          try { const r = await filmSound({ gymDir: dir, id: x1, lang: gymLanguage(prof), line: typeof body.line === "string" && body.line.trim() ? body.line : null, profile: prof }); return json(res, 200, { ...coachesView(gym), filmed: r }); }
+          catch (e) { return json(res, 400, { error: plainGemini(e) }); }
+        }
+        if (x2) return json(res, 404, { error: "not found" });
         if (what === "coach" && x1 && req.method === "PUT") {
-          if (body.consent && typeof body.consent === "object") setConsent(dir, x1, { face: body.consent.face, voice: body.consent.voice === true, by: body.consent.by, note: body.consent.note });
+          if (body.sound && typeof body.sound === "object") approveSound(dir, x1, gymLanguage(readJsonFile(join(dir, "gym-profile.json")) || {}), { ok: body.sound.ok !== false, note: body.sound.note });
+          else if (body.consent && typeof body.consent === "object") setConsent(dir, x1, { face: body.consent.face, voice: body.consent.voice === true, by: body.consent.by, note: body.consent.note });
           else if (typeof body.on === "boolean" && typeof body.start === "string") switchStart(dir, x1, body.start, { on: body.on, reason: body.reason });
           else if (typeof body.on === "boolean") switchCoach(dir, x1, { on: body.on, reason: body.reason });
           else if (Array.isArray(body.samples)) { setSamples(dir, x1, body.samples.map(String)); buildStarts(dir); }
@@ -2333,7 +2417,7 @@ const server = createServer(async (req, res) => {
         if (rid && req.method === "PUT") { const { note, retired } = await readBody(req); return view({ ref: editCopyRef(dir, decodeURIComponent(rid), { note, retired }) }); }
       } catch (e) { return json(res, 400, { error: e.message }); }
     }
-    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull|drift\/take|video\/take|grow|footage-words)$/);
+    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull|drift\/take|video\/take|grow|footage-words|testimonials|testimonials\/read|testimonials\/draft|testimonials\/name)$/);
     if (rv) {
       const [, gym, id, what] = rv;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
@@ -2375,11 +2459,41 @@ const server = createServer(async (req, res) => {
         const profile = readJsonFile(join(dir, "gym-profile.json")) || {};
         let plan;
         const library = targetingLibrary();
-        try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline"), library }); } catch (e) { return json(res, 400, { error: e.message }); }
+        try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline"), own: ownCopies(out), library }); } catch (e) { return json(res, 400, { error: e.message }); }
         const lead_form_name = formNameFor(dir, profile, plan.lead_form_id);
         const readiness = publishReadiness(plan, { formName: lead_form_name });
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, readiness, lead_form_name, settings, settings_version: settingsVersion(settingsPath), thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")), room: roomFor(plan, out) });
+        return json(res, 200, { plan, readiness, lead_form_name, settings, settings_version: settingsVersion(settingsPath), thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")), room: roomFor(plan, out),
+          // Testimonial videos and their own copy (2026-11-22): each video with what was read of it and its drafts; null for a batch with none.
+          testimonials: (() => { const all = testimonialAds(out); if (!all.length) return null; const unread = all.filter((a) => !readTestimonialReadings(out).videos[a.id]?.reading).length; return { videos: testimonialsView(out), unread, per_video: TESTIMONIAL_COPIES, usd_read: Math.round(unread * TESTIMONIAL_USD * 100) / 100 }; })() });
+      }
+      // Testimonial videos (2026-11-22; testimonial-video.mjs): GET — each video with what was read of it, what is for the
+      // owner to decide, and its own drafts. POST /read { confirm: { videos } } reads the ones not read yet (three small
+      // calls a video; the owner's click, only when what was confirmed is what is true now). POST /draft { only? } drafts
+      // five copies and five headlines for each read video that has fewer (text calls). Nothing is generated.
+      if (what === "testimonials" && req.method === "GET") {
+        const all = testimonialAds(out), unread = all.filter((a) => !readTestimonialReadings(out).videos[a.id]?.reading).length;
+        return json(res, 200, { videos: testimonialsView(out), unread, per_video: TESTIMONIAL_COPIES, usd_read: Math.round(unread * TESTIMONIAL_USD * 100) / 100 });
+      }
+      // POST /testimonials/name { id, name }: the member's name as the owner spells it, through the reading and every draft of that video.
+      if (what === "testimonials/name" && req.method === "POST") {
+        const body = await readBody(req);
+        try { const r = correctTestimonialName(out, String(body.id || ""), String(body.name ?? "")); return json(res, 200, { ok: true, ...r, videos: testimonialsView(out) }); } catch (e) { return json(res, 400, { error: e.message }); }
+      }
+      if ((what === "testimonials/read" || what === "testimonials/draft") && req.method === "POST") {
+        const body = await readBody(req), all = testimonialAds(out);
+        if (!all.length) return json(res, 409, { error: "this batch has no testimonial video" });
+        try {
+          if (what === "testimonials/read") {
+            const unread = all.filter((a) => !readTestimonialReadings(out).videos[a.id]?.reading).length;
+            if (Number(body.confirm?.videos) !== unread) return json(res, 409, { error: `${unread} video${unread === 1 ? " is" : "s are"} not read yet: confirm that number`, unread });
+            const r = await readTestimonials({ batchDir: out });
+            return json(res, 200, { ok: true, read: r.read.length, left: r.left, videos: testimonialsView(out) });
+          }
+          const only = Array.isArray(body.only) ? body.only.map(String).filter((x) => /^t-[0-9a-f]{6,}$/.test(x)) : null;
+          const r = await draftTestimonialCopy({ brandDir: dir, batchDir: out, only });
+          return json(res, 200, { ok: true, drafted: r.videos.reduce((t, v) => t + v.added, 0), dropped: r.videos.reduce((t, v) => t + v.dropped.length, 0), videos: testimonialsView(out) });
+        } catch (e) { return json(res, 400, { error: scrubTokens(plainGemini(e)) }); }
       }
       if (what === "drift/take" && req.method === "POST") {
         const { kind, callout } = await readBody(req);
@@ -2415,7 +2529,7 @@ const server = createServer(async (req, res) => {
       if (what === "grow" && (req.method === "GET" || req.method === "POST")) {
         const dir = brandDir(gym), brief = readJsonFile(briefPath(gym, id));
         if (!brief) return json(res, 404, { error: "no such batch" });
-        if (brief.imported) return json(res, 409, { error: FOOTAGE_NO_RUN });
+        if (brief.imported) return json(res, 409, { error: noRunWhy(brief) });
         const options = () => { const o = growOptions({ brandDir: dir, brief }); return { ...o, max_photos: MAX_PHOTOS, videos: Object.values(brief.videos || {}).some((n) => n > 0) }; };
         if (req.method === "GET") return json(res, 200, options());
         const body = await readBody(req), add = Object.fromEntries(Object.entries(body.add || {}).filter(([, n]) => n !== 0 && n != null));
@@ -2447,6 +2561,42 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // /api/client/{gym}/batches/merge · /batches/unmerge — two or more finished batches as one (2026-11-22; merge-batches.mjs).
+    // merge { sources, dry: true } says what it comes to with nothing written; { sources, confirm: { ads } } makes the new
+    // batch, only when what was confirmed is what is true now (409 otherwise) — the sources are left as they are, each
+    // marked as merged. unmerge { batch } sets a merged batch that is not on Facebook aside in outputs/_discarded (never
+    // deleted) and frees the batches it was made from.
+    const mgm = p.match(/^\/api\/client\/([^/]+)\/batches\/(merge|unmerge)$/);
+    if (mgm && req.method === "POST") {
+      const [, gym, what] = mgm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym), body = await readBody(req);
+      if (what === "merge") {
+        const sources = Array.isArray(body.sources) ? [...new Set(body.sources.map(String))].filter(okSlug) : [];
+        let plan; try { plan = mergePlan({ brandDir: dir, sources }); } catch (e) { return json(res, 400, { error: e.message }); }
+        const busy = sources.filter((id) => activeRun(gym, id) || orphanBatch(gym, id));
+        if (busy.length) plan.problems.push(`${busy.join(", ")} ${busy.length === 1 ? "is" : "are"} being made right now: wait for the run to end, or stop it`), plan.ready = false;
+        if (body.dry === true) return json(res, 200, mergeView(plan));
+        if (!plan.ready) return json(res, 409, { error: plan.problems[0], ...mergeView(plan) });
+        if (Number(body.confirm?.ads) !== plan.ads) return json(res, 409, { error: "what merging these batches comes to is not what was confirmed: read the numbers again and confirm", ...mergeView(plan) });
+        let made; try { made = mergeBatches({ brandDir: dir, sources, batchId: plan.batch_id }); } catch (e) { return json(res, 400, { error: e.message }); }
+        savePicks(gym, made.batch_id, {});                 // the picks file, written from the Keeps that came along
+        try { recordUse(dir, made.offer); } catch {}
+        const { dir: _d, ...said } = made;
+        return json(res, 200, { ok: true, ...said });
+      }
+      const id = String(body.batch || ""), bp = okSlug(id) ? briefPath(gym, id) : null, brief = bp ? readJsonFile(bp) : null, out = join(dir, "outputs", id);
+      if (!brief || brief.imported !== MERGED) return json(res, 404, { error: "that is not a merged batch" });
+      if (readJsonFile(join(out, "publish.json"))?.campaign?.id) return json(res, 409, { error: "this merged batch is on Facebook already: it is not undone from here" });
+      const kept = join("outputs", "_discarded", `${id}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "")}`);
+      mkdirSync(join(dir, "outputs", "_discarded"), { recursive: true });
+      if (existsSync(out)) { renameSync(out, join(dir, kept)); try { renameSync(bp, join(dir, kept, "brief.json")); } catch {} }
+      rmSync(join(dir, "batches", id), { recursive: true, force: true });
+      const freed = [];
+      for (const src of brief.merged_from || []) { const sp = okSlug(src) ? briefPath(gym, src) : null, sb = sp ? readJsonFile(sp) : null; if (sb?.merged_into === id) { delete sb.merged_into; writeFileSync(sp, JSON.stringify(sb, null, 2) + "\n"); freed.push(src); } }
+      return json(res, 200, { ok: true, kept, freed });
+    }
+
     // /api/client/{gym}/batch-setup · /batch/check · /batch · /batch/{id}
     const bm = p.match(/^\/api\/client\/([^/]+)\/(batch-setup|batch|batch\/check|batch\/([^/]+))$/);
     if (bm) {
@@ -2472,6 +2622,10 @@ const server = createServer(async (req, res) => {
         writeFileSync(path, JSON.stringify(brief, null, 2) + "\n");
         return json(res, 200, { ok: true, batch_id: brief.batch_id, summary });
       }
+      // Merging (2026-11-22; merge-batches.mjs): POST /batches/merge { sources, dry } says what merging comes to with nothing
+      // written; { sources, confirm: { ads } } makes the new batch — only when what was confirmed is what is true now. The
+      // sources are left as they are. POST /batches/unmerge { batch } sets a merged batch aside (never deleted) and frees its sources.
+      // (routed below, beside the batch routes)
       // A planned batch (a brief with no ads yet) can be discarded; one with ads never can, from here.
       if (id && req.method === "DELETE") {
         if (!okSlug(id) || !existsSync(briefPath(gym, id))) return json(res, 404, { error: "no such batch" });
@@ -2682,7 +2836,9 @@ const server = createServer(async (req, res) => {
         const brief = readJsonFile(briefPath(body.gym, body.batch));
         if (!brief) return json(res, 404, { error: `no brief for batch ${body.batch}` });
         // Videos added as they are (footage-video.mjs): nothing to plan, run, re-render or make Stories of. Publishing is as for any batch.
-        if (brief.imported && kind !== "batch-publish") return json(res, 409, { error: FOOTAGE_NO_RUN });
+        if (brief.imported && kind !== "batch-publish") return json(res, 409, { error: noRunWhy(brief) });
+        // A batch that went into a merged one is published as part of it, never a second time by itself.
+        if (kind === "batch-publish" && mergedInto(brandDir(body.gym), brief)) return json(res, 409, { error: `this batch was merged into ${mergedInto(brandDir(body.gym), brief)}: publish that one. To publish this one by itself, undo the merge first` });
         // A directed batch: the scenes its plan drafted are approved by this confirmation — only when
         // the ids confirmed are exactly the drafts on disk now, so what runs is what was read.
         delete body.approveScenes;
@@ -2715,7 +2871,7 @@ const server = createServer(async (req, res) => {
           const cfg = metaConfig({ gym: body.gym });
           if (!cfg.token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
           let plan;
-          try { plan = buildPlan({ library: targetingLibrary(), profile: readJsonFile(join(brandDir(body.gym), "gym-profile.json")) || {}, batch: readJsonFile(join(out, "batch.json")), kept: keptAds(out), presets: readPresets(brandDir(body.gym)), settings: readJsonFile(join(out, "publish-settings.json")) || {}, copies: keptCopies(out), headlines: keptCopies(out, "headline") }); }
+          try { plan = buildPlan({ library: targetingLibrary(), profile: readJsonFile(join(brandDir(body.gym), "gym-profile.json")) || {}, batch: readJsonFile(join(out, "batch.json")), kept: keptAds(out), presets: readPresets(brandDir(body.gym)), settings: readJsonFile(join(out, "publish-settings.json")) || {}, copies: keptCopies(out), headlines: keptCopies(out, "headline"), own: ownCopies(out) }); }
           catch (e) { return json(res, 400, { error: e.message }); }
           if (!plan.ready) return json(res, 409, { error: `the plan has problems: ${plan.problems.join("; ")}` });
           const agreed = c.ads === plan.counts.ads && c.adsets === plan.counts.adsets && c.per_day === plan.budget.per_day_total;

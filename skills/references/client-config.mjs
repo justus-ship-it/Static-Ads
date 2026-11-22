@@ -309,6 +309,95 @@ export const IMAGE_MODELS = Object.freeze({ pro: "gemini-3-pro-image-preview", f
  * Who presents a gym's videos (2026-11-17): the invented presenter (as every gym had) or the gym's own real coaches
  * (coach-look.mjs: named by the owner, consent on file, pictures cut from the gym's sample videos).
  */
+/**
+ * A gym's own wording (2026-11-22, F45 Xinyi: the owner corrected the same phrases on twelve videos, and the
+ * corrections were kept nowhere a drafter reads). `brand_lock.voice.say_instead`: lines "avoid => say" — what this gym
+ * never says and what it says in its place ("一對一諮詢 => 獨一無二的教練諮詢"); a line ending "[spoken]" holds for
+ * words said aloud only (a video script, never a sheet or written copy). Told to every drafter, enforced by every
+ * check: a script, a sheet or a copy that says an avoided phrase needs an edit. `brand_lock.voice.name_in_ads`: how
+ * the gym is named in what an ad says ("F45信義"), where it is not the profile's display name.
+ */
+const SAY_LINE = /^(.+?)\s*(?:=>|->|→)\s*(.+?)(\s*\[spoken\])?$/i;
+export const SAY_INSTEAD_MAX = 60;
+export function parseSayLine(line) {
+  const m = String(line ?? "").trim().match(SAY_LINE);
+  return m ? { avoid: m[1].trim(), say: m[2].trim(), spoken: !!m[3] } : null;
+}
+export const sayLine = (r) => `${r.avoid} => ${r.say}${r.spoken ? " [spoken]" : ""}`;
+export function sayInsteadProblems(list) {
+  if (list == null) return [];
+  if (!Array.isArray(list)) return ["say_instead is a list of lines, each \"what is never said => what is said instead\""];
+  const errs = [], seen = new Set();
+  if (list.length > SAY_INSTEAD_MAX) errs.push(`say_instead holds at most ${SAY_INSTEAD_MAX} lines`);
+  list.forEach((l, i) => {
+    const r = parseSayLine(l);
+    if (typeof l !== "string" || !r) return errs.push(`say_instead line ${i + 1} ("${String(l).slice(0, 40)}") is not "what is never said => what is said instead"`);
+    if (r.avoid.length < 2 || r.avoid.length > 60 || r.say.length < 1 || r.say.length > 80) errs.push(`say_instead line ${i + 1}: the phrase is 2 to 60 characters and what is said instead 1 to 80`);
+    else if (r.say.toLowerCase().includes(r.avoid.toLowerCase())) errs.push(`say_instead line ${i + 1}: what is said instead ("${r.say}") still holds the phrase that is never said ("${r.avoid}")`);
+    const k = r.avoid.toLowerCase(); if (seen.has(k)) errs.push(`say_instead line ${i + 1}: "${r.avoid}" is listed twice`); seen.add(k);
+  });
+  return errs;
+}
+/** The gym's rules as { avoid, say, spoken }; `spoken: false` leaves out the ones that hold for speech only. */
+export const sayInstead = (profile, { spoken = true } = {}) => (profile?.brand_lock?.voice?.say_instead || []).map(parseSayLine).filter(Boolean).filter((r) => spoken || !r.spoken);
+const hasPhrase = (text, phrase) => (/[\u3400-\u9fff]/.test(phrase) ? String(text).includes(phrase) : new RegExp(`(?<![A-Za-z0-9])${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+")}(?![A-Za-z0-9])`, "i").test(String(text)));
+/** The avoided phrases a text says: [{ avoid, say }]. `spoken`: the text is said aloud (a video script). */
+export const wordingHits = (text, profile, { spoken = false } = {}) => sayInstead(profile, { spoken }).filter((r) => hasPhrase(text, r.avoid));
+export const wordingWhy = (r) => `says "${r.avoid}": at this gym it is "${r.say}"`;
+/** The rules as a drafter is told them; an empty string when the gym has none. */
+export function wordingRule(profile, { spoken = false } = {}) {
+  const rules = sayInstead(profile, { spoken });
+  return rules.length ? `THIS GYM'S OWN WORDING, the owner's rulings — never write the phrase on the left; where its meaning is wanted, write the one on the right, exactly:\n${rules.map((r) => `- never "${r.avoid}" → "${r.say}"`).join("\n")}` : "";
+}
+/**
+ * What an edit changed, as rules the owner may want kept ("when you edit a draft, the app offers to make that edit a
+ * rule"): for each line that changed, the words taken out and the words put in their place — [{ avoid, say }]. Only a
+ * short swap is offered (a phrase for a phrase), never a rewritten line, and never one the gym already has.
+ */
+const TOKENS = /[A-Za-z0-9']+|[\u3400-\u9fff\uf900-\ufaff]|[^\sA-Za-z0-9\u3400-\u9fff\uf900-\ufaff]/g;
+const joinTokens = (ts) => ts.reduce((out, t, i) => out + (i && /[A-Za-z0-9']$/.test(ts[i - 1]) && /^[A-Za-z0-9']/.test(t) ? " " : "") + t, "");
+export function wordingSuggestions(before = [], after = [], profile = {}) {
+  const have = new Set(sayInstead(profile).map((r) => r.avoid.toLowerCase())), out = [], seen = new Set();
+  for (let i = 0; i < Math.min(before.length, after.length); i++) {
+    const a = String(before[i] ?? "").match(TOKENS) || [], b = String(after[i] ?? "").match(TOKENS) || [];
+    if (a.join("\u0001") === b.join("\u0001")) continue;
+    let p = 0; while (p < a.length && p < b.length && a[p] === b[p]) p++;
+    let q = 0; while (q < a.length - p && q < b.length - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q++;
+    const strip = (t) => t.replace(/^[\s，。！？、；：,.!?;:～~…「」]+|[\s，。！？、；：,.!?;:～~…「」]+$/g, "");
+    const avoid = strip(joinTokens(a.slice(p, a.length - q))), say = strip(joinTokens(b.slice(p, b.length - q)));
+    const size = (t) => (/[\u3400-\u9fff]/.test(t) ? t.length : t.split(/\s+/).length * 4);
+    // A line written afresh (nothing kept before or after the change) is a rewrite, not a swap of a phrase.
+    const keptWords = [...a.slice(0, p), ...a.slice(a.length - q)].filter((t) => /[A-Za-z0-9\u3400-\u9fff\uf900-\ufaff]/.test(t)).length;   // punctuation alone kept is nothing kept
+    if (keptWords === 0 || avoid.length < 2 || !say || size(avoid) > 24 || size(say) > 40 || say.toLowerCase().includes(avoid.toLowerCase())) continue;
+    const k = avoid.toLowerCase(); if (have.has(k) || seen.has(k)) continue; seen.add(k);
+    out.push({ avoid, say });
+  }
+  return out.slice(0, 3);
+}
+/** Add a rule to a profile (in place). Throws in words when the line is not a rule, or the list would break one. */
+export function addSayInstead(profile, { avoid, say, spoken = false }) {
+  const line = sayLine({ avoid: String(avoid ?? "").trim(), say: String(say ?? "").trim(), spoken: spoken === true });
+  const list = [...(profile?.brand_lock?.voice?.say_instead || []), line], errs = sayInsteadProblems(list);
+  if (errs.length) throw new Error(errs[errs.length - 1].replace(/^say_instead line \d+:? ?/, "this rule: "));
+  ((profile.brand_lock ||= {}).voice ||= {}).say_instead = list;
+  return line;
+}
+/** How the gym is named in what an ad says. */
+export const nameInAds = (profile) => (typeof profile?.brand_lock?.voice?.name_in_ads === "string" && profile.brand_lock.voice.name_in_ads.trim()) || profile?.display_name || "the gym";
+/**
+ * The videos a gym's batch opens with (2026-11-22): `creative_defaults.videos { presenter, active, paper }` — whole
+ * numbers, as a brief's (`active` is beside `presenter`, all three at most 20 together). Generate Creatives pre-fills them.
+ */
+export const DEFAULT_VIDEOS_MAX = 20;
+export function defaultVideosProblems(v) {
+  if (v == null) return [];
+  if (typeof v !== "object" || Array.isArray(v)) return ["videos must say how many of each kind: presenter, active, paper"];
+  const errs = [];
+  for (const k of Object.keys(v)) if (!["presenter", "active", "paper"].includes(k)) errs.push(`videos.${k} is not a kind of video (presenter, active, paper)`);
+  for (const k of ["presenter", "active", "paper"]) if (v[k] != null && !(Number.isInteger(v[k]) && v[k] >= 0 && v[k] <= DEFAULT_VIDEOS_MAX)) errs.push(`videos.${k} must be a whole number from 0 to ${DEFAULT_VIDEOS_MAX}`);
+  if (!errs.length && (v.presenter || 0) + (v.active || 0) + (v.paper || 0) > DEFAULT_VIDEOS_MAX) errs.push(`videos: a batch makes at most ${DEFAULT_VIDEOS_MAX} in all`);
+  return errs;
+}
 export const PRESENTS = ["invented", "coaches"];
 export const presentsOf = (profile) => (profile?.creative_defaults?.presents === "coaches" ? "coaches" : "invented");
 export const PRESENTER_GENDERS = ["woman", "man"];
@@ -465,6 +554,30 @@ export function withPoint(profile, pin) {
   const loc = (profile?.locations || []).find((l) => String(l?.postal_code || "") === String(pin.postal_code) && Number.isFinite(l.lat) && Number.isFinite(l.lng));
   return loc ? { ...pin, lat: loc.lat, lng: loc.lng, point_from: "the gym's location at this postal code" } : pin;
 }
+/** A typed point → { lat, lng } or null: "1.3522,103.8496", "(1.3522, 103.8496)", "1.3522 103.8496". */
+export function parsePoint(text) {
+  const m = String(text ?? "").trim().replace(/^[([]\s*|\s*[)\]]$/g, "").match(/^(-?\d{1,3}(?:\.\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)$/);
+  if (!m || !/\./.test(m[0])) return null;
+  const lat = Number(m[1]), lng = Number(m[2]);
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+}
+/**
+ * A pin saved with the gym's others (2026-11-22, Sculpt Society: the point its Bishan ad set was moved to in Ads Manager
+ * was on no list — the Publish screen offered only the profile's own pins). Always added at the END (a campaign's
+ * settings name a pin by its place in the list); the same Meta place, or the same point at the same radius, is not
+ * added twice. `callout` with `always`: this pin serves that callout from now on (it leaves the pin that had it).
+ * Changes the profile in place; throws in words. Returns the pin's index.
+ */
+export function addPinTo(profile, { label, lat, lng, place_key = "", place_name = "", radius_km, location_types, callout = null, always = false, source = "owner" }) {
+  const geo = ((profile.targeting_defaults ||= {}).geo ||= {}), pins = (geo.radius_pins ||= []), key = String(place_key || ""), R = Number(radius_km);
+  if (key ? !/^\d{5,20}$/.test(key) : !(Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) throw new Error("a pin is a Meta place, or a point: its latitude and longitude, like 1.3522, 103.8496");
+  if (!(R >= RADIUS_KM.min && R <= RADIUS_KM.max)) throw new Error(`the radius is ${RADIUS_KM.min} to ${RADIUS_KM.max} km`);
+  const near = (a, b) => Number.isFinite(a) && Math.abs(a - b) < 0.00005;
+  let i = pins.findIndex((p) => (key ? String(p.place_key || "") === key && p.radius_km === R : !p.place_key && near(p.lat, lat) && near(p.lng, lng) && p.radius_km === R));
+  if (i < 0) { pins.push({ label: String(label || place_name || callout || "").trim().slice(0, 40) || `${lat.toFixed(4)}, ${lng.toFixed(4)}`, postal_code: "", lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, radius_km: R, location_types: Array.isArray(location_types) && location_types.length ? location_types : ["home", "recent"], place_key: key, place_name: String(place_name || ""), callouts: [], source }); i = pins.length - 1; }
+  if (always && callout) { const want = String(callout).trim().toUpperCase(); for (const p of pins) p.callouts = (p.callouts || []).filter((c) => String(c).trim().toUpperCase() !== want); pins[i].callouts.push(want); }
+  return i;
+}
 /** Is this pin enough to target with: a Meta place, or a point on the map. */
 export const pinUsable = (pin) => !!pin && (/^\d{5,20}$/.test(String(pin.place_key || "")) || (Number.isFinite(pin.lat) && Number.isFinite(pin.lng)));
 export const META_ID = { ad_account_id: /^(act_)?\d{5,20}$/, page_id: /^\d{5,20}$/, instagram_user_id: /^\d{5,20}$/, instagram_actor_id: /^\d{5,20}$/, pixel_id: /^\d{5,20}$/, business_id: /^\d{5,20}$/, lead_form_id: /^\d{5,20}$/, taiwan_beneficiary_id: /^\d{5,20}$/, taiwan_payer_id: /^\d{5,20}$/, singapore_beneficiary_id: /^\d{5,20}$/, singapore_payer_id: /^\d{5,20}$/ };
@@ -507,6 +620,8 @@ export function validateProfile(profile, { gymDir = null } = {}) {
     if (social.instagram && !/^[a-z0-9._]{1,30}$/.test(String(social.instagram))) errors.push(`Instagram "${social.instagram}" is not a handle (letters, digits, dots and underscores, no @)`);
     if (social.facebook && !/^https:\/\/(www\.)?facebook\.com\/\S+$/.test(String(social.facebook))) errors.push(`Facebook "${social.facebook}" is not a Facebook Page address`);
   }
+  for (const e of sayInsteadProblems(profile.brand_lock?.voice?.say_instead)) errors.push(`brand_lock.voice.${e}`);
+  { const n = profile.brand_lock?.voice?.name_in_ads; if (n != null && n !== "" && (typeof n !== "string" || n.length > 60 || /[\r\n]/.test(n))) errors.push("brand_lock.voice.name_in_ads is the gym's name as an ad says it: one line, up to 60 characters"); }
   for (const [k, v] of Object.entries(profile.brand_lock?.colors || {})) {
     if (isObj(v) && v.hex && !/^#[0-9A-Fa-f]{6}$/.test(v.hex)) errors.push(`colour ${k}: "${v.hex}" is not a 6-digit hex like #0A0A0A`);
   }
@@ -550,6 +665,7 @@ export function validateProfile(profile, { gymDir = null } = {}) {
       if (cd.look != null && !LOOKS.includes(cd.look)) errors.push(`creative_defaults.look must be one of ${LOOKS.join(", ")}`);
       for (const e of presenterProblems(cd.presenter)) errors.push(`creative_defaults.${e}`);
       for (const e of captionAccentProblems(cd.caption_accent)) errors.push(`creative_defaults.${e}`);
+      for (const e of defaultVideosProblems(cd.videos)) errors.push(`creative_defaults.${e}`);
       if (cd.presents != null && !PRESENTS.includes(cd.presents)) errors.push(`creative_defaults.presents must be ${PRESENTS.join(" or ")}`);
       if (cd.format != null && !SCENE_FORMATS[cd.format]) errors.push(`creative_defaults.format must be one of ${Object.keys(SCENE_FORMATS).join(", ")}`);
       if (cd.mix != null) for (const e of mixProblems(cd.mix)) errors.push(`creative_defaults.${e.replace(/^the mix's/, "mix:")}`);

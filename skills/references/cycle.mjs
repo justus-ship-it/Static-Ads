@@ -64,7 +64,7 @@ export function cycleFrom({ review, batches = [], now = new Date(), survey = nul
   const fresh = (b) => b.made && daysBetween(b.made, today) <= OPEN_DAYS;
   // A stopped or unfinished run nudges only while it is the gym's newest batch (the list is newest first).
   const going = batches.find((b) => b.running), broken = batches[0] && (batches[0].stopped || batches[0].failed) && !batches[0].running ? batches[0] : null;
-  const open = batches.filter((b) => b.made && !b.published && fresh(b) && (b.ads || 0) > 0); // made, not on Meta, recent
+  const open = batches.filter((b) => b.made && !b.published && !b.merged_into && fresh(b) && (b.ads || 0) > 0); // made, not on Meta, recent
   const toPick = open.find((b) => (b.review?.unreviewed || 0) > 0), ready = open.find((b) => !(b.review?.unreviewed > 0) && (b.review?.kept ?? b.ads) > 0);
   const partly = batches.find((b) => b.published && !b.published.done);
   const published = batches.filter((b) => b.published).sort((a, b) => String(b.published.at || b.made || "").localeCompare(String(a.published.at || a.made || "")));

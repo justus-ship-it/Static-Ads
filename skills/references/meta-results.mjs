@@ -204,17 +204,19 @@ export function batchRows(gymDir, batchId) {
     const a = byFolder[folder]; if (!a) return;
     const set = rec.adsets?.[entry.adset] || {}, sf = set.facts || {}, af = entry.facts || {};
     const r = res?.ads?.[entry.id], s = res?.adsets?.[set.id];
-    const scenes = a.photos.map((id) => visuals[id]?.scene_id || (photoOf[id]?.kind === "real" ? "real photo" : null)).filter(Boolean);
-    const tags = a.photos.map((id) => visuals[id]?.tags).filter(Boolean);
+    // An ad that came in by a merge (merge-batches.mjs) stands by itself: its photos' scenes, tags and room are on its own record.
+    const mv = a.merged?.visuals || null, photoIds = mv ? a.merged.photos || [] : a.photos;
+    const scenes = mv ? mv.map((v) => v.scene_id).filter(Boolean) : a.photos.map((id) => visuals[id]?.scene_id || (photoOf[id]?.kind === "real" ? "real photo" : null)).filter(Boolean);
+    const tags = mv ? mv.map((v) => v.tags).filter(Boolean) : a.photos.map((id) => visuals[id]?.tags).filter(Boolean);
     rows.push({
       source: "app", gym: gymDir.split("/").pop(), batch: batchId, folder, ad_id: entry.id, creative_id: entry.creative_id, adset_id: set.id || null, adset_name: set.name || null, campaign_id: rec.campaign.id, campaign: res?.campaign?.name || rec.campaign.name || batchId, campaign_status: res?.campaign?.words || null, published: entry.at || null, superseded,
       offer: a.words?.offer || null, location: a.words?.location || null, audience: a.words?.audience || null, callout: entry.adset || null,
-      photos: a.photos.join("+"), scenes: scenes.join("+") || null, exercise: tags.map((t) => t.exercise).filter(Boolean).join("+") || null, age_tag: tags.map((t) => t.age).filter(Boolean).join("+") || null, setting: tags.map((t) => t.setting).filter(Boolean).join("+") || null, equipment: tags.map((t) => t.equipment).filter(Boolean).join("+") || null,
+      photos: photoIds.join("+"), scenes: scenes.join("+") || null, ...(a.merged ? { merged_from: a.merged.batch } : {}), exercise: tags.map((t) => t.exercise).filter(Boolean).join("+") || null, age_tag: tags.map((t) => t.age).filter(Boolean).join("+") || null, setting: tags.map((t) => t.setting).filter(Boolean).join("+") || null, equipment: tags.map((t) => t.equipment).filter(Boolean).join("+") || null,
       format: a.format || af.format || null, // the kind of photograph, from the batch's own record (never guessed from the picture)
       // By record (2026-11-11): the room each photo was matched to, and how much of the picture the words cover, as the batch measured it.
-      room: a.photos.map((id) => visuals[id]?.room).filter(Boolean).join("+") || null, text_cover: typeof a.text_cover === "number" ? a.text_cover : null,
+      room: (mv ? mv.map((v) => v.room) : a.photos.map((id) => visuals[id]?.room)).filter(Boolean).join("+") || null, text_cover: typeof a.text_cover === "number" ? a.text_cover : null,
       layout: a.treatment, style: a.style, palette: a.palette, has_story: !!entry.hashes?.story,
-      ...(a.video_file ? { media: "video", video_style: a.video?.style || null, video_pain: a.video?.pain || null, video_kind: a.video?.kind === "paper" ? "white paper" : a.video?.kind === "active" ? "with exercises" : a.video?.kind === "real" ? "real footage" : "talking", video_coach: a.video?.coach?.name || null } : {}), // a video this app made is read on the video track, by record — with the style its script follows (2026-11-14), so results can be read per style
+      ...(a.video_file ? { media: "video", video_style: a.video?.style || null, video_pain: a.video?.pain || null, video_kind: a.video?.kind === "paper" ? "white paper" : a.video?.kind === "active" ? "with exercises" : a.video?.kind === "real" ? "real footage" : a.video?.kind === "testimonial" ? "testimonial" : "talking", video_coach: a.video?.coach?.name || null } : {}), // a video this app made is read on the video track, by record — with the style its script follows (2026-11-14), so results can be read per style
       pin: sf.pin || null, radius_km: sf.radius_km ?? null, age_min: sf.age_min ?? null, age_max: sf.age_max ?? null, gender: sf.gender || null, preset: sf.preset || null, preset_id: sf.preset_id || null, daily_budget: sf.daily ?? null, budget_level: sf.level || null,
       form_id: af.form_id || null, cta: af.cta || null, headline: af.headline || null, primary_text: af.message || null, placeholder_words: af.placeholders ?? null,
       status: r?.words || (superseded ? "superseded" : "not pulled yet"), adset_status: s?.words || null,

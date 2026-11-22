@@ -97,10 +97,10 @@ import { execFileSync, spawnSync } from "child_process";
 import { loadGeminiKey, generateImage } from "./generate_ads_gemini.mjs";
 import { whenGeminiFree, isRefusal } from "./gemini-busy.mjs";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
-import { imageModelFor, countryRules, profileCountry, titleCase, PRESENTER_GENDERS, presenterProblems, captionAccentOf } from "./client-config.mjs";
+import { imageModelFor, countryRules, profileCountry, titleCase, PRESENTER_GENDERS, presenterProblems, captionAccentOf, wordingHits, wordingWhy, wordingRule, nameInAds, sayInstead } from "./client-config.mjs";
 import { launchBrowser, isWholeCountry, hasCJK } from "./render-composites.mjs";
 import { onAdProblems } from "./cards.mjs";
-import { COPY_MODEL, plainDashes } from "./draft-copy.mjs";
+import { COPY_MODEL, plainDashes, gymLanguage } from "./draft-copy.mjs";
 
 export { PRESENTER_GENDERS, presenterProblems };
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -134,6 +134,15 @@ export const FIRST_PERSON = /\b(i|i'm|im|i've|i'll|i'd|my|mine|me|myself)\b/i;
  */
 export const CHARS_PER_SECOND = 4.2, LINE_CHARS = [4, 40], JOINED_CHARS = 60;
 export const FIRST_PERSON_ZH = /我(?!們|们)/;
+/**
+ * Words the video model says wrongly in Chinese, never written into a spoken script (2026-11-22; the owner on Xinyi's
+ * videos, 2026-11-21: 班 in 上班 came in the fourth tone whatever the prompt said and however it was spelt — "use other
+ * words"). A wrong tone cannot be fixed by the prompt, so the word is not used: a script that says one needs an edit,
+ * and the drafter is told. Speech only: a white-paper sheet and written copy may carry them.
+ */
+export const SPOKEN_AVOID_ZH = [{ word: "上班", say: "工作" }, { word: "下班", say: "忙完工作" }];
+/** A drafted Chinese line by the length a first take carries (the owner's approved Xinyi scripts: 10 to 28 characters a line, the last 25 to 35). */
+export const DRAFT_CHARS = { line: 28, last: 36 };
 // The Chinese closing line (2026-11-21): 「點擊下方連結，我們會跟你聯絡！」 was refused by Google's video model on every
 // one of 13 scripts (each 3 times, on two pictures), even after a bridge sentence; 「想了解更多，就留下資料…」 was
 // refused too (a call to click a link or leave details is what it blocks); 「現在就報名…」 was filmed and said as written.
@@ -320,9 +329,15 @@ export const closingAlone = (line, closing = CLOSING_LINE) => endsWithClosing(li
  * words 「點進連結」 are shown where the captions were, for `LINK_HOLD` seconds. The script's own words are unchanged.
  */
 export const LINK_ZH = /快?點進連結吧?[～~]?[，,、]?/, LINK_TEXT_ZH = "點進連結", LINK_HOLD = 1.5, LINK_EXTRA = 2;
+/**
+ * Is the link shown, not said? The script's own word when it has one (`link_on_screen` true or false); else — since
+ * 2026-11-22 — every Chinese script whose last line asks for a click on the link: Google's video model refused that
+ * phrase on 13 scripts running, so it is never asked to say it unless the owner says so for that script.
+ */
+export const linkOnScreen = (script) => (typeof script?.link_on_screen === "boolean" ? script.link_on_screen : isZh(script?.lines || []) && LINK_ZH.test(norm((script?.lines || []).slice(-1)[0] || "")));
 export function spokenLines(script, closing = closingLine()) {
   const said = filmedLines(script.lines, closing);
-  if (!script.link_on_screen) return said;
+  if (!linkOnScreen(script)) return said;
   const n = said.length - 1; return said.map((l, i) => (i === n ? l.replace(LINK_ZH, "") : l));
 }
 export const JOINED_WORDS = 36;
@@ -368,6 +383,9 @@ export function scriptProblems(lines, { offer = null, profile = {}, closing = cl
     const country = countryNamed(l, { profile, offer }); if (country) errs.push(`line ${i + 1} names the whole country ("${country}"): the place is only ever {AREA}, the area around the gym`);
     if (/[\n\r]/.test(String(lines[i]))) errs.push(`line ${i + 1} is two lines: one line is one cut`);
     for (const h of hardWordsIn(l, plain, asIs)) errs.push(plainWhy(i, h));
+    // The gym's own wording (what it never says, and what it says in its place), and the words the video model says wrongly.
+    for (const r of wordingHits(l, profile, { spoken: true })) errs.push(`line ${i + 1} ${wordingWhy(r)}`);
+    if (zh) for (const a of SPOKEN_AVOID_ZH) if (l.includes(a.word)) errs.push(`line ${i + 1} says "${a.word}": the video model says it in the wrong tone — say "${a.say}"`);
   });
   if (!endsWithClosing(ls[last], closing)) errs.push(`the last line ends with the closing line, word for word: "${closing}"`);
   else if (!isBridge(bridgeOf(ls, closing))) errs.push(BRIDGE_WHY);
@@ -375,9 +393,10 @@ export function scriptProblems(lines, { offer = null, profile = {}, closing = cl
   if (!zh && endsWithClosing(ls[last], closing) && closingAlone(ls[last], closing) && wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio")) > JOINED_WORDS) errs.push(`line ${last} and the closing line are filmed as one cut (the closing line cannot be a clip of its own) and together they are ${wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio"))} words: at most ${JOINED_WORDS}, so shorten line ${last}`);
   const all = ls.join(" ");
   if (offer && !all.toLowerCase().includes(norm(offer).toLowerCase())) errs.push(`the script must name the offer in its exact words: "${norm(offer)}"`);
-  for (const e of onAdProblems(fillLine(all, "Bishan"), profile)) if (!errs.includes(e)) errs.push(e);
+  for (const e of onAdProblems(fillLine(all, "Bishan"), profile)) if (!errs.includes(e) && !WORDING_WHY.test(e)) errs.push(e);
   return errs;
 }
+const WORDING_WHY = /^says ".*": at this gym it is "/;          // said above with its line
 const objOf = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : {});
 // `sheets`: the white-paper videos' scripts (paper-video.mjs) — their own list, kept through every write of this file.
 export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [], sheets: Array.isArray(j?.sheets) ? j.sheets : [], samples: Array.isArray(j?.samples) ? j.samples : [], facts: objOf(j?.facts), pains: objOf(j?.pains) }; };
@@ -409,11 +428,15 @@ export function decideScript(gymDir, id, { status, lines, reason } = {}, { profi
 /** How a line must read: it is heard once, said by a person. Told to the drafter and the editor, and scored by `readAloud`. */
 export const READ_RULE = `READ IT ALOUD: every line is something a person would really say to a friend, in correct, natural spoken English. No clumsy or stitched-together phrase, no word (or a close form of it: "energised … energy", "everyday … every day") used twice in one line, nothing that reads like writing rather than speech.`;
 const READ_SCHEMA = { type: "OBJECT", properties: { lines: { type: "ARRAY", items: { type: "OBJECT", properties: { id: { type: "STRING" }, score: { type: "INTEGER" }, why: { type: "STRING" } }, required: ["id", "score", "why"] } } }, required: ["lines"] };
-export function buildReadPrompt({ scripts, offer, profile = {}, closing = CLOSING_LINE }) {
+export function buildReadPrompt({ scripts, offer, profile = {}, closing = CLOSING_LINE, fixed = [], models = [] }) {
   const gym = profile.display_name || "the gym";
+  // The owner's own wording is not the check's to mark down (2026-11-22: it scored his required phrase 「我們會先初步了解你的目標」 under 8 as "redundant", and a draft was dropped for it): the phrases his rules put in, and the facts as he typed them.
+  const own = [...new Set([...sayInstead(profile).map((r) => r.say), ...(fixed || [])].map(norm).filter(Boolean))];
   return { schema: READ_SCHEMA, prompt: [
     `Each numbered line below is spoken aloud to the camera by one person in a short video advert for ${gym}. Read each line aloud in your head and score it 1 to 10 for how natural it is as something a person would SAY: 10 = a native speaker would say exactly this; 8 = fine; under 8 when the grammar is wrong, a phrase is clumsy or stitched together ("plenty of energy that lasts left for your own evenings", "we are here to help you every step"), a word or a close form of it is used twice in the line ("energised … energy"), it reads like writing rather than speech, or it is a mouthful that would be hard to say cleanly in one breath.`,
-    `Do NOT judge what the line claims, how long it is in words, or these fixed parts, which stay as they are: the programme's name "${offer}", the gym's name "${gym}", the placeholder {AREA} (a place name goes there), and the sentence "${closing}".`,
+    ...(isZh(scripts.flat()) ? [`The lines are in Taiwanese Mandarin: judge them as Mandarin SPOKEN in Taipei. Under 8 as well for a written or formal word where a spoken one is natural (書面語), a mainland-Chinese wording, a phrase that reads as translated from English, or a simplified character.`] : []),
+    `Do NOT judge what the line claims, how long it is in words, or these fixed parts, which stay as they are: the programme's name "${offer}", the gym's name "${gym}", the placeholder {AREA} (a place name goes there), and the sentence "${closing}".${own.length ? ` These phrases are the owner's own wording for this gym and stay as they are too — never mark a line down for one of them: ${own.map((x) => `"${x}"`).join("; ")}.` : ""}`,
+    ...(models.length ? [`THE STANDARD of what is natural for this gym — scripts the owner has approved and filmed. A line that reads as naturally as these is 8 or more; judge against them, not against a stricter ideal:\n${models.map((m) => m.join("\n")).join("\n")}`] : []),
     `THE LINES:\n${scripts.flatMap((ls, s) => ls.map((l, i) => `${s + 1}.${i + 1} ${l}`)).join("\n")}`,
     `Answer with every line: its id as written ("1.2"), its score, and why — for a line under 8 the fault in a few words, quoting the clumsy part; an empty string otherwise.`,
   ].join("\n\n") };
@@ -424,9 +447,9 @@ export function buildReadPrompt({ scripts, offer, profile = {}, closing = CLOSIN
  * each line of each script for how it is SAID; a line under `READ_MIN` is a fault, in words. Returns, for each script,
  * its faults: [{ line (1-based), score, why }]. An answer that cannot be read judges nothing (`unread`), and says so.
  */
-export async function readAloud(scripts, { offer, profile = {}, closing = CLOSING_LINE, ask = callVision, model = COPY_MODEL } = {}) {
+export async function readAloud(scripts, { offer, profile = {}, closing = CLOSING_LINE, ask = callVision, model = COPY_MODEL, fixed = [], models = [] } = {}) {
   if (!scripts.length) return { faults: [], unread: false };
-  const { prompt, schema } = buildReadPrompt({ scripts, offer, profile, closing }), answer = await ask(null, prompt, schema, { model });
+  const { prompt, schema } = buildReadPrompt({ scripts, offer, profile, closing, fixed, models }), answer = await ask(null, prompt, schema, { model });
   const rows = Array.isArray(answer?.lines) ? answer.lines.filter((r) => /^\d+\.\d+$/.test(String(r?.id)) && Number.isFinite(Number(r.score))) : [];
   const faults = scripts.map(() => []);
   for (const r of rows) { const [s, i] = String(r.id).split(".").map(Number); if (faults[s - 1] && scripts[s - 1][i - 1] != null && Number(r.score) < READ_MIN) faults[s - 1].push({ line: i, score: Number(r.score), why: norm(r.why) || "it does not read as something a person would say" }); }
@@ -436,6 +459,7 @@ const readProblem = (f) => `line ${f.line} does not read as something a person w
 /** A drafted script's lines by the lengths a first take can carry: empty when they fit. */
 export const lastWords = (closing = CLOSING_LINE, words = DRAFT_WORDS) => words.last + Math.max(0, wordCount(closing) - wordCount(CLOSING_LINE));
 export function draftLengths(lines, closing = CLOSING_LINE, words = DRAFT_WORDS) {
+  if (isZh(lines)) { const ls = (lines || []).map(norm), n = ls.length - 1; return ls.map((l, i) => { const c = units(fillLine(l, "信義區")), most = i === n ? DRAFT_CHARS.last : DRAFT_CHARS.line; return c > most ? `line ${i + 1} is ${c} characters: a drafted line is at most ${most}, so that it is said cleanly in one take — say it shorter, or split it in two lines` : null; }).filter(Boolean); }
   const cuts = filmedLines(lines, closing), last = cuts.length - 1;
   return cuts.map((l, i) => { const n = wordCount(fillLine(l, "Ang Mo Kio")), most = i === last ? lastWords(closing, words) : words.line; return n > most ? `line ${i + 1} is ${n} words: a drafted line is at most ${most}, so that it is said cleanly in one take — say it shorter, or split it in two lines` : null; }).filter(Boolean);
 }
@@ -443,6 +467,17 @@ const LONG_LINE = /a drafted line is at most/;
 const EDIT_SCHEMA = { type: "OBJECT", properties: { lines: { type: "ARRAY", items: { type: "STRING" } }, note: { type: "STRING" } }, required: ["lines", "note"] };
 export function buildEditPrompt({ profile = {}, script, problems, closing = CLOSING_LINE }) {
   const gym = profile.display_name || "the gym";
+  if (isZh(script.lines)) {
+    const end = closingFor(script.lines, closing), house = wordingRule(profile, { spoken: true });
+    return { schema: EDIT_SCHEMA, prompt: [
+      `This is a short script, in Taiwanese Mandarin, for a talking-to-camera video advert for ${gym}'s programme 「${script.offer}」, one line for each cut. It breaks the rules below. Propose the SMALLEST edit that mends it, for the owner to approve.`,
+      `THE SCRIPT:\n${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`,
+      `WHAT IS WRONG:\n${problems.map((x) => `- ${x}`).join("\n")}`,
+      `THE RULES. Keep every line that breaks no rule exactly as it is, character for character and in its place; change only what a rule requires, and keep the owner's voice. ${ZH_LANGUAGE} The last line is two beats: a clause that turns to the viewer and names what they want, beginning 如果你… (what they will feel or be able to do, never an ideal body, never a promised result), then exactly these characters, the only call to action: 「${end}」. The offer is named in its exact characters: 「${script.offer}」. The speaker speaks for the gym: 我們 is fine; never 我 alone, never a personal story. Each line is one breath, at most ${DRAFT_CHARS.line} characters (the last line ${DRAFT_CHARS.last}); a script is ${LINES[0]} to ${LINES[1]} lines. Where a word or phrase is named above as not used, REWRITE THE WHOLE SENTENCE so that it reads as something a person would say out loud — never swap the word and leave the rest standing. ${ZH_AVOID}`,
+      house,
+      `Answer with every line of the script after the edit, in order, and a note of one sentence (in English) saying what you changed.`,
+    ].filter(Boolean).join("\n\n") };
+  }
   return { schema: EDIT_SCHEMA, prompt: [
     `This is a short script for a talking-to-camera video advert for ${gym}'s programme "${script.offer}", one line for each cut. It breaks the rules below. Propose the SMALLEST edit that mends it, for the owner to approve.`,
     `THE SCRIPT:\n${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`,
@@ -464,7 +499,7 @@ export async function proposeEdit({ brandDir, id, libraryDir = videoLibraryDir()
   const profile = readJson(join(brandDir, "gym-profile.json")) || {}, script = readScripts(brandDir).scripts.find((x) => x.id === id), closing = closingLine(libraryDir);
   if (!script) throw new Error(`no such script: ${id}`);
   const allow = factsFor(brandDir, script.offer), plain = plainWords(libraryDir), rules = (ls) => scriptProblems(ls, { offer: script.offer, profile, closing, plain, allow });
-  const heard = async (ls) => (await readAloud([ls], { offer: script.offer, profile, closing, ask, model })).faults[0].map(readProblem);
+  const heard = async (ls) => (await readAloud([ls], { offer: script.offer, profile, closing, ask, model, fixed: allow })).faults[0].map(readProblem);
   let calls = 0, problems = rules(script.lines);
   // A script that breaks no rule may still not read as speech (a word swapped into a sentence that no longer holds): read it aloud, and propose for what that finds.
   if (!problems.length) { problems = await heard(script.lines); calls++; if (!problems.length) throw new Error("this script breaks no rule and reads well aloud: nothing to propose"); }
@@ -804,12 +839,14 @@ export async function suggestFacts({ brandDir, offer, libraryDir = videoLibraryD
  * tighter"), never a judgement of the viewer's body or health: Meta refuses adverts that assert a personal attribute
  * or set out to make someone feel bad about themselves, and `BODY_JUDGEMENT` holds the plainest of those words out.
  */
-export const PAIN_LIMITS = { kept: 8, chars: [8, 120] };
+export const PAIN_LIMITS = { kept: 8, chars: [8, 120], zh_min: 4 };
 const BODY_JUDGEMENT = /\b(overweight|obese|obesity|fat|fatter|flabby|chubby|ugly|disgusting|ashamed|embarrass(?:ed|ing)|hate (?:your|their)|depress(?:ed|ion)|lazy)\b/i;
 const painKey = (t) => String(t).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
 export function painProblems(text, profile = {}) {
   const t = norm(text), errs = [];
-  if (t.length < PAIN_LIMITS.chars[0] || t.length > PAIN_LIMITS.chars[1]) errs.push(`a pain point is one short phrase, ${PAIN_LIMITS.chars[0]} to ${PAIN_LIMITS.chars[1]} characters (this is ${t.length})`);
+  // A Chinese phrase says in four characters what English says in eight letters ("沒時間運動"): its floor is `PAIN_LIMITS.zh_min`.
+  const least = isZh(t) ? PAIN_LIMITS.zh_min : PAIN_LIMITS.chars[0];
+  if (t.length < least || t.length > PAIN_LIMITS.chars[1]) errs.push(`a pain point is one short phrase, ${least} to ${PAIN_LIMITS.chars[1]} characters (this is ${t.length})`);
   const j = t.match(BODY_JUDGEMENT); if (j) errs.push(`"${j[0]}" judges the person: say it as something that happens to them ("work clothes fitting tighter"), which is also what Meta allows`);
   if (/[{}]/.test(t)) errs.push("no braces in a pain point");
   for (const e of onAdProblems(t, profile)) errs.push(e);
@@ -927,7 +964,17 @@ export function noScriptWhy(gymDir, offer, { libraryDir = videoLibraryDir(), pro
   return { state: "none", text: "nothing is written for this offer yet: press Draft scripts… there, or write your own" };
 }
 /** The scripts a batch makes: that many of the ones kept for its offer, in an order the seed fixes (a re-run picks the same). Too few is refused by name. */
-export function pickScripts(gymDir, { count, offer, seed = "batch", libraryDir = videoLibraryDir(), reuse = 1, pin = null } = {}) {
+/** The scripts of a gym that have been filmed already: the ids with a folder of clips (their own, or a coach's). */
+export function filmedScripts(gymDir) {
+  const dir = join(gymDir, CLIPS_DIR);
+  try { return new Set(readdirSync(dir).filter((x) => /^[vp]-[0-9a-f]+/.test(x) && statSync(join(dir, x)).isDirectory()).map((x) => x.split("--")[0])); } catch { return new Set(); }
+}
+/**
+ * `fresh` (2026-11-22): the ids already filmed — a NEW batch takes the scripts not filmed yet first (the seed's order
+ * within each), so that new scripts become new videos; without it a gym's second batch for the same offer picked
+ * among every ready script and could film nothing new. A batch keeps what it was given (`pin`).
+ */
+export function pickScripts(gymDir, { count, offer, seed = "batch", libraryDir = videoLibraryDir(), reuse = 1, pin = null, fresh = null } = {}) {
   const profile = readJson(join(gymDir, "gym-profile.json")) || {}, all = keptScripts(gymDir, offer), kept0 = readyScripts(gymDir, offer, { profile, closing: closingLine(libraryDir) });
   // `pin`: the script each video films, in order (the brief's `video_scripts`); each must be kept and ready for this offer.
   if (pin) {
@@ -939,7 +986,7 @@ export function pickScripts(gymDir, { count, offer, seed = "batch", libraryDir =
   const kept = reuse > 1 && kept0.length && kept0.length < count ? Array.from({ length: Math.min(count, kept0.length * reuse) }, (_, i) => kept0[i % kept0.length]) : kept0;
   if (kept.length < count && all.length > kept.length) throw new Error(`${count} presenter video${count === 1 ? "" : "s"} asked for, but ${kept.length ? `only ${kept.length} script${kept.length === 1 ? " is" : "s are"}` : "no script is"} ready for "${norm(offer)}": ${noScriptWhy(gymDir, offer, { libraryDir, profile }).text} (Draft Scenes → Video scripts)`);
   if (kept.length < count) throw new Error(`${count} presenter video${count === 1 ? "" : "s"} asked for, but ${kept.length ? `only ${kept.length} script${kept.length === 1 ? " is" : "s are"}` : "no script is"} kept for "${norm(offer)}": keep ${count - kept.length} more on Draft Scenes → Video scripts${kept.length ? "" : ` (${noScriptWhy(gymDir, offer, { libraryDir }).text})`}`);
-  const order = kept0.map((s2) => ({ s: s2, k: sha(`${seed}|${s2.id}`) })).sort((a, b) => a.k.localeCompare(b.k)).map((x) => x.s);
+  const order = kept0.map((s2) => ({ s: s2, k: sha(`${seed}|${s2.id}`) })).sort((a, b) => (fresh ? Number(fresh.has(a.s.id)) - Number(fresh.has(b.s.id)) : 0) || a.k.localeCompare(b.k)).map((x) => x.s);
   return Array.from({ length: Math.min(count, kept.length) }, (_, i) => order[i % order.length]);
 }
 /** A script with what making it would take: its lines, each clip's length, and the seconds and image calls for a set of locations. */
@@ -975,7 +1022,43 @@ export function themeOf(pain, profile = {}) {
   return theme;
 }
 export const themeRule = (theme, what = "script") => `THE PAIN POINT OF THIS ROUND, in the owner's own words: "${theme}". It drives every ${what} from start to finish: it opens on it — as one moment of the person's day where it shows, in small words they would use themselves — everything in the middle speaks to it (what changes about it, what the person gets), and the ending names what they want instead of it. Nothing in a ${what} is about any other worry. Each ${what} takes a DIFFERENT moment or side of this same pain point, so that no two are alike. Say it as something that happens to the person, never a judgement or a label of them, and never promise a result or a number.`;
-export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [], styles = [], pains = [], ads = [], library = [], closing = CLOSING_LINE, theme = null }) {
+/** How a Chinese script is written, told to the drafter and the editor. */
+const ZH_LANGUAGE = "LANGUAGE: Traditional Chinese as SPOKEN in Taiwan (zh-TW) — the everyday words a person in Taipei says out loud to a friend. Never written or formal Chinese (書面語), never mainland wording, never a simplified character, no English word except the gym's own name. Full-width punctuation ，。？！ and digits for numbers (10位, 45分鐘). Short sentences; every line is something a person would really say.";
+const ZH_AVOID = `Never use these words — the video model says them in the wrong tone: ${SPOKEN_AVOID_ZH.map((a) => `${a.word} (say ${a.say})`).join(", ")}.`;
+/**
+ * The drafter's request for a gym whose ads are in Chinese (2026-11-22). Until now every Chinese script was written by
+ * hand: F45 Xinyi's 12 spoken scripts. The same rules as the English drafter's, said for Chinese — lines measured in
+ * characters, 我們 for the gym, the Chinese closing sentence (the link itself is shown on screen: `linkOnScreen`), the
+ * words the video model says wrongly left out, the gym's own wording — and `models`: the scripts the owner has
+ * already approved for this gym, as the standard for how a script sounds here (never a sentence copied).
+ */
+export function buildScriptPromptZh({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], styles = [], pains = [], ads = [], library = [], closing = CLOSING_LINE, theme = null, models = [] }) {
+  const gym = nameInAds(profile), never = (profile.brand_lock?.voice?.never || []).filter(Boolean), end = closingFor(["中"], closing), lettered = letteredStyles(styles), house = wordingRule(profile, { spoken: true });
+  const lines = [
+    `You write short scripts for a talking-to-camera video advert for ${gym}'s programme 「${offer}」. ${audience ? `The advert is for: ${audience}.` : "The advert is for adults near the gym who are not training yet."} A coach stands in the gym, talks to a phone camera the way a friend would, and the video cuts to a new spot for each line.`,
+    ZH_LANGUAGE,
+    `A script is 4 to ${LINES[1]} lines, one for each cut: as many as there is something true and worth saying, and no more — shorter is better. Each line is ONE breath: 10 to ${DRAFT_CHARS.line} characters and never more (a longer line is not said cleanly in one take: split it in two lines); the last line may run to ${DRAFT_CHARS.last}.`,
+    `Within its first two lines a script speaks to ONE pain point — what this person is living with and wants gone, said as a moment of their day they will recognise at once. It names the programme once, in these exact characters: 「${offer}」 (as 「${gym}的${offer}」 or 「我們的${offer}」). Where it says where people live or work, the place is written {AREA} in Latin capitals and braces, exactly so (it is filled in for each location: 「如果你在{AREA}工作，或是住在{AREA}，」); it never names the country and never speaks to a whole city or island.${lettered.length ? " Each script follows ONE style — the one it is given under STYLES below: its kind of opening, its parts in their order and its rhythm; a part that needs a fact you were NOT given is left out, never invented." : ""}`,
+    `THE ENDING is the last line, two beats. First a clause that turns to the viewer and names what they want, tied to the pain the script opened on, beginning 如果你… — what they will FEEL or be able to DO (「如果你想更有精神，」 「如果你想穿上喜歡的衣服，更有自信，」 「如果你想忙完工作後還有力氣做喜歡的事，」), never an ideal body and never a promised result. Then exactly these characters, the ONLY call to action in the script: 「${end}」 The shape: 「如果你想給自己一個好的開始，${end}」 Never another instruction, never a button's name.`,
+    `Speak about BENEFITS: what changes for the person. Say nothing about how the gym or the programme works except these facts, in the owner's words${facts.length ? `: ${facts.map((x) => `「${x}」`).join("、")}. Say each one the way a person says it out loud — the fact itself unchanged (the same number, place and thing), never its label or its brackets (「地點：信義路和基隆路口」 is said 「我們就在信義路和基隆路口」; 「名額10位」 is said 「我們在找10位」 or 「這次只找10位」) — and nothing else about how the programme works; a fact may be left out, never changed` : " — and none was given, so a script states no fact about how training is organised (no class size, session length, timetable, equipment, assessment or number of places)"}. A benefit is what the programme is built to help with, never a promised result.`,
+    `The speaker speaks for the gym, as nobody in particular: 我們 means ${gym} and its coaches. Never 我 alone (no 我的, no 我自己), never a named coach, a member or the owner, never a personal story.`,
+    ZH_AVOID,
+    house,
+    `NEVER: a price or any money; 免費 or a trial (試用, 體驗課); before and after (前後對比); a guarantee (保證); a result promised; a number of kilos, centimetres or percent; a medical claim; a date; an ideal body (完美身材, 理想體態); a dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
+    `Write ${count} script${count === 1 ? "" : "s"}, ${theme ? "each on a different moment or side of the one pain point above" : "each opening on a different pain point"}, each built differently from the others (a question, a call-out to people nearby, a reassurance, a "this time is different"), and say for each the pain point it opens on (pain: a short phrase in Chinese, as it would stand in a list — 「忙完工作累到不想動」)${lettered.length ? " and the style it follows (style: its letter)" : ""}.`,
+    `PAIN POINTS. A pain point is something that HAPPENS to this person — clothes fitting tighter, out of breath on the stairs, too tired to move after work, starting to exercise and stopping after two weeks — said the way they would say it to a friend. Never a judgement or a label of their body, weight, looks or health, nothing that shames, no medical condition; and never softened into something vague.${theme ? ` ${themeRule(theme)} For "pain", answer with exactly these words: "${theme}".` : pains.length
+      ? ` The owner's own list comes first — open on these, close to his words, one for each script${pains.length < count ? "; for the scripts beyond the list, work out further ones yourself the same way" : ""}:\n${pains.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
+      : ` Work them out yourself before you write: who this advert is for, and what they are living with${ads.length || library.length ? ", drawing on the adverts below" : ""}.`}`,
+  ].filter(Boolean);
+  if (models.length) lines.push(`THE STANDARD — scripts the owner has already approved for this gym, after correcting them line by line. Write to this standard: how they sound, how long their lines are, how they open and how they end. Never copy a sentence, and never open two scripts the same way as one of these:\n${models.map((m, i) => `--- APPROVED ${i + 1}\n${m.join("\n")}`).join("\n")}`);
+  if (ads.length) lines.push(`This gym's own adverts that earned the most leads. Find the pain each one speaks to and say it plainly in your own words; never copy a sentence, a price or an offer from them:\n${ads.map((a, i) => `--- ADVERT ${i + 1} (${a.leads} leads)\n${a.text}`).join("\n")}`);
+  if (library.length) lines.push(`Pain-led adverts that have worked for other gyms. The same: the pain they speak to, in your own words:\n${library.map((x, i) => `--- LIBRARY ${i + 1}\n${x}`).join("\n")}`);
+  if (lettered.length) lines.push(`STYLES — scripts that have worked, each one a way of building an advert (they are in English: take HOW each is built, never its sentences, facts, names, places, numbers, promises or its call to action; write in Chinese as told above).\n${lettered.map((r) => `SCRIPT${r.scripts.length === 1 ? "" : "S"} ${r.scripts.join(" and ")} follow${r.scripts.length === 1 ? "s" : ""} STYLE ${r.letter}.`).join(" ")}\n${lettered.map((r) => `--- STYLE ${r.letter} — "${r.style.name}"${r.style.beats?.length ? `\nIts parts, in order: ${r.style.beats.map((b, i) => `${i + 1}) ${b}`).join("; ")}` : `\n${r.style.text}`}`).join("\n")}`);
+  if (existing.length) lines.push(`Already written — do not repeat or closely rephrase:\n${existing.map((e) => `- ${e}`).join("\n")}`);
+  return { prompt: lines.join("\n\n"), schema: draftSchema(lettered.map((r) => r.letter)) };
+}
+export function buildScriptPrompt({ profile = {}, offer, audience = null, count = 3, existing = [], facts = [], samples = [], styles = [], pains = [], ads = [], library = [], closing = CLOSING_LINE, theme = null, models = [] }) {
+  if (gymLanguage(profile) === "zh") return buildScriptPromptZh({ profile, offer, audience, count, existing, facts, styles, pains, ads, library, closing, theme, models });
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean);
   // "Aether Athletics' 6 Week…", never "Athletics's": the possessive as it is said and as the captions show it.
   const gyms = /s$/i.test(gym) ? `${gym}'` : `${gym}'s`;
@@ -1000,6 +1083,7 @@ export function buildScriptPrompt({ profile = {}, offer, audience = null, count 
     `${PLAIN_RULE} The only longer words allowed are the programme's name, the gym's name${facts.length ? ", the facts given above" : ""} and the closing sentence, said as they are.${long ? " A style's or a sample's own big words are NOT carried over: take how it is built and say it in small words." : ""}`,
     `The place is only ever {AREA}, the area around the gym: the script never names the country, and never speaks to a whole city or island.`,
     `NEVER: a price or any money; free or a free trial; before and after; a guarantee; a result promised; a number of kilos, pounds or percent; a medical claim; a date; an exclamation mark (the closing sentence keeps its own); an em dash${never.length ? `; any of: ${never.join(", ")}` : ""}.`,
+    ...(wordingRule(profile, { spoken: true }) ? [wordingRule(profile, { spoken: true })] : []),
     `Write ${count} script${count === 1 ? "" : "s"}, ${theme ? "each on a different moment or side of the one pain point above" : "each opening on a different pain point"}, and say for each the pain point it opens on (pain: a short phrase, as it would stand in a list — "work clothes fitting tighter lately")${lettered.length ? " and the style it follows (style: its letter)" : ""}.`,
     `PAIN POINTS. A pain point is something that HAPPENS to this person — work clothes fitting tighter, out of breath on the stairs, tired every day after lunch, starting to exercise and stopping after two weeks — said the way they would say it to a friend, in small words. Never a judgement or a label of their body, weight, looks or health, nothing that shames, no medical condition; and never softened into something vague: "getting back into shape", "putting off fitness", "starting a fitness journey" are NOT pain points.${theme ? ` ${themeRule(theme)} For "pain", answer with exactly these words: "${theme}".` : pains.length
       ? ` The owner's own list comes first — open on these, close to his words, one for each script${pains.length < count ? "; for the scripts beyond the list, work out further ones yourself the same way" : ""}:\n${pains.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
@@ -1031,7 +1115,9 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
   const all = liveStyles(libraryDir), mine = readScripts(brandDir).scripts, used = {}; for (const x of mine) if (x.status !== "retired" && x.style?.id) used[x.style.id] = (used[x.style.id] || 0) + 1;
   const one = style ? all.find((x) => x.id === style) : null; if (style && !one) throw new Error("no such style: pick one of the sample scripts on file");
   const assigned = one ? Array.from({ length: count }, () => one) : pickStyles(all, count, { used }), lettered = letteredStyles(assigned);
-  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: mine.map((x) => x.lines.join(" / ")), styles: assigned, facts: factsFor(brandDir, offer), pains, ...src, closing, theme });
+  // The standard for a Chinese gym: the scripts he has already approved here (the newest six that still pass today's rules).
+  const zhGym = gymLanguage(profile) === "zh", models = zhGym ? mine.filter((x) => x.status === "kept" && isZh(x.lines) && !scriptIssues(x, { profile, closing, gymDir: brandDir }).length).slice(-6).map((x) => x.lines) : [];
+  const { prompt, schema } = buildScriptPrompt({ profile, offer: offer.trim(), audience, count, existing: mine.map((x) => x.lines.join(" / ")), styles: assigned, facts: factsFor(brandDir, offer), pains, ...src, closing, theme, models });
   const answer = await ask(null, prompt, schema, { model }), added = [], dropped = [], allow = factsFor(brandDir, offer);
   let calls = 1, mended = 0; const plain = plainWords(libraryDir), ready = [];
   const rules = (ls) => [...scriptProblems(ls, { offer: offer.trim(), profile, closing, plain, allow }), ...draftLengths(ls, closing, words)];
@@ -1044,8 +1130,9 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
       if (!pain) throw new Error("it does not say which pain point it opens on");
       const bad = painProblems(pain, profile); if (bad.length) throw new Error(`the pain point it opens on ("${pain}"): ${bad[0]}`);
       let ls = (d.lines || []).map((l) => plainDashes(norm(l))), again = false, errs = rules(ls);
-      // Big words or a line too long only: the drafter says it again (one text call for that draft); anything else it breaks drops it as before.
-      if (errs.length && errs.every((x) => PLAIN_PROBLEM.test(x) || LONG_LINE.test(x))) { const next = await sayAgain(ls, errs); if (next.length) { ls = next; again = true; errs = rules(ls); } }
+      // A draft that breaks a rule is said again once (one text call for that draft: the smallest edit that mends it), then dropped with the reason if it still does.
+      // (2026-11-22: it was only for big words or a long line, and a sound Chinese draft was lost over one 保證.)
+      if (errs.length) { const next = await sayAgain(ls, errs); if (next.length) { ls = next; again = true; errs = rules(ls); } }
       if (errs.length) throw new Error(errs.join("; "));
       ready.push({ ls, pain, st, again, text: (d.lines || []).join(" / ") });
     } catch (e) { dropped.push({ text: (d.lines || []).join(" / "), reason: e.message }); log(`  dropped: ${e.message}`); }
@@ -1054,14 +1141,15 @@ export async function draftScripts({ brandDir, offer, audience = null, count = 3
   // speech is said again once, read once more, and dropped with the reason if it still does not.
   let reads = 0, unread = false;
   if (ready.length) {
-    const first = await readAloud(ready.map((r) => r.ls), { offer: offer.trim(), profile, closing, ask, model }); reads++; unread = first.unread;
+    const heardAs = { offer: offer.trim(), profile, closing, ask, model, fixed: allow, models };
+    const first = await readAloud(ready.map((r) => r.ls), heardAs); reads++; unread = first.unread;
     const redo = [];
     for (const [i, r] of ready.entries()) if (first.faults[i].length) {
       const next = await sayAgain(r.ls, first.faults[i].map(readProblem)), errs = next.length ? rules(next) : ["the drafter gave no lines"];
       if (errs.length) { r.drop = `${readProblem(first.faults[i][0])}; said again, it broke a rule: ${errs[0]}`; continue; }
       r.ls = next; r.again = true; redo.push(r);
     }
-    if (redo.length) { const second = await readAloud(redo.map((r) => r.ls), { offer: offer.trim(), profile, closing, ask, model }); reads++; for (const [i, r] of redo.entries()) if (second.faults[i].length) r.drop = `${readProblem(second.faults[i][0])}, after one rewrite`; }
+    if (redo.length) { const second = await readAloud(redo.map((r) => r.ls), heardAs); reads++; for (const [i, r] of redo.entries()) if (second.faults[i].length) r.drop = `${readProblem(second.faults[i][0])}, after one rewrite`; }
     if (unread) log("  the read-aloud check gave no answer: the drafts were not scored for how they are said");
   }
   for (const r of ready) {
@@ -1822,13 +1910,16 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       else log(`  ${label(i)}: the move could not be filmed on its own: the cut is filmed the old way, the move and the line in one clip`);
       moveMade.set(i, r); return r;
     };
-    const clipFor = async (i, area) => {
-      const perArea = /\{AREA\}/.test(said[i]), key = `${i}|${perArea ? area : ""}`; if (made.has(key)) return made.get(key);
+    // `early`: the closing cut asked for ahead of the others, only to learn whether Google refuses it — its failed takes
+    // are made again, its one optional retake for a small note is not (that waits for its turn, when the cap is known
+    // to cover every other line first). An early answer is not kept: the line is judged again, from disk, in its turn.
+    const clipFor = async (i, area, early = false) => {
+      const perArea = /\{AREA\}/.test(said[i]), key = `${i}|${perArea ? area : ""}`; if (!early && made.has(key)) return made.get(key);
       const mv = moves[i], line = fillLine(said[i], area);
       const say = saidIn(line, saidList), nameFor = (pic) => clipName(i, line, pic, area, perArea, saidNote(say));
       // A move cut is two clips — the move in silence, then the line from the move's last frame — unless a one-clip take of it already passed (that take stands: nothing on file is filmed again).
       const isMove = mv?.m.kind === "move", oneClip = isMove && [stills[i], altOf(stills[i])].some((pic) => takesOn(nameFor(pic)).some((f) => passedCheck(readJson(join(store, f.replace(/\.mp4$/, ".check.json"))), line, profile, say, mv) || !!ownerKeptClip(store, join(store, f))));
-      const split = isMove && !oneClip ? await moveFor(i) : null, two = !!split?.file, pic0 = two ? split.frame : stills[i], mvJ = two ? null : mv, seconds = (two ? clipSeconds(line) : cutSeconds(line, mv)) + (script.link_on_screen && i === said.length - 1 ? LINK_EXTRA : 0);
+      const split = isMove && !oneClip ? await moveFor(i) : null, two = !!split?.file, pic0 = two ? split.frame : stills[i], mvJ = two ? null : mv, seconds = (two ? clipSeconds(line) : cutSeconds(line, mv)) + (linkOnScreen(script) && i === said.length - 1 ? LINK_EXTRA : 0);
       // Takes the owner set aside (Film this line again) are counted and never used: each makes room for a fresh one.
       const mine = (f) => [pic0, altOf(pic0)].some((pic) => f === `${nameFor(pic)}.mp4` || f.startsWith(`${nameFor(pic)}-take`));
       const limit = takes + [...aside].filter(mine).length;
@@ -1856,7 +1947,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         const ok = judged.filter((t) => t.passed);
         if (ok.some((t) => !t.faults.length || t.kept)) break;
         // A move cut is long (the move, then the line): it is never filmed again for a small note (2026-11-16: 14 s to mend "slight facial distortion", and the retake failed).
-        if (ok.length) { if (noteRetake || mv?.m.kind === "move") break; noteRetake = true; }
+        if (ok.length) { if (noteRetake || early || mv?.m.kind === "move") break; noteRetake = true; }
         take++; const name = nameFor(still), file = join(store, `${name}${take > 1 ? `-take${take}` : ""}.mp4`), checkFile = file.replace(/\.mp4$/, ".check.json");
         if (aside.has(basename(file))) continue;
         if (!(existsSync(file) && statSync(file).size > 1000)) {
@@ -1913,11 +2004,21 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       // not done flags the cut for the owner, unless he has kept the line's take on his word.
       if (two) { r.moveClip = split; r.seconds = MOVE_SECONDS + seconds; r.all = [...split.all, ...r.all]; r.judged = [...split.judged, ...r.judged];
         if (!split.passed && r.passed && !r.kept) { r.passed = false; r.flagged = true; r.kind = split.kind; r.why = split.why; } }
-      made.set(key, r); return r;
+      if (!early) made.set(key, r); return r;
     };
     const videos = [];
     for (const area of areas) {
-      const lines = []; for (const [i] of said.entries()) lines.push(await clipFor(i, area));
+      // The closing cut is filmed FIRST (2026-11-22): it is the cut Google's video model refuses (13 of Xinyi's closings,
+      // one after another, each after the rest of its video had been filmed). Refused outright, the rest of this video
+      // is not filmed now — nothing is spent on a video that cannot be finished until its closing words change.
+      const lastCut = said.length - 1, lines = new Array(said.length).fill(null);
+      const first = said.length > 1 ? await clipFor(lastCut, area, true) : null;
+      if (first && !first.file && first.refused) {
+        lines[lastCut] = first;
+        const unfilmed = said.slice(0, lastCut).filter((x, i) => !made.has(`${i}|${/\{AREA\}/.test(x) ? area : ""}`)).length;
+        videos.push({ area, script_id: script.id, ...who, lines: [lines[lastCut]], refused: true, closing_refused: true, failed: `${label(lastCut)}: ${lines[lastCut].why}. ${unfilmed ? `The other ${unfilmed === 1 ? "cut was" : `${unfilmed} cuts were`} not filmed, so nothing was spent on ${unfilmed === 1 ? "it" : "them"}` : "Nothing else is lost"}: change the closing words (in Chinese, a link to click is shown on screen, not said), then Run again` }); continue;
+      }
+      for (let i = 0; i <= lastCut; i++) lines[i] = await clipFor(i, area);
       // A line with no take at all (refused by Google, or the cap) leaves nothing to cut: said as what it is, with what to do.
       const none = lines.findIndex((l) => !l.file);
       if (none >= 0) {
@@ -1931,14 +2032,14 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         // A move filmed as its own clip plays first, whole; the line's clip follows from the frame the move ended on.
         const startAt = at; if (l.moveClip) { const md = Math.round(durationOf(l.moveClip.file) * 100) / 100; seq.push({ file: l.moveClip.file, from: 0, to: md }); at += md; }
         // Where he speaks, measured from the sound; the clip is kept from a breath before to a breath after, and the captions follow the voice inside it.
-        const sp = speechOf(l.file), from = Math.max(0, sp.start - (l.move?.m.kind === "move" && !l.moveClip ? MOVE_KEEP : LEAD)), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? (script.link_on_screen ? LINK_HOLD : Math.max(END_HOLD, isZh(l.line || "") ? TAIL_ZH : 0)) : isZh(l.line || "") ? TAIL_ZH : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); seq.push(cuts[i]); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
+        const sp = speechOf(l.file), from = Math.max(0, sp.start - (l.move?.m.kind === "move" && !l.moveClip ? MOVE_KEEP : LEAD)), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? (linkOnScreen(script) ? LINK_HOLD : Math.max(END_HOLD, isZh(l.line || "") ? TAIL_ZH : 0)) : isZh(l.line || "") ? TAIL_ZH : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); seq.push(cuts[i]); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
         // One picture of the block for each of its words, that word lit while it is said.
         for (const [k, c] of captions(l.line, sp.spans.map(([a, b]) => [at + a - from, at + b - from])).entries()) for (const w of captionWords(c)) {
           if (!(w.to > w.from)) continue;
           const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}-${w.i}.png`), capHtml(c.text, w.i), captionAccentOf(profile) || CAPTION_ACCENT, !!coach); overlays.push({ png: o.png, from: w.from, to: w.to }); if (w.i === 0) blocks.push(...o.blocks);
         }
         // The link shown once the voice ends (fallback A, `link_on_screen`), in the captions' place.
-        if (script.link_on_screen && i === lines.length - 1) { const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-link.png`), `<div class="cap zh"><b>${esc(LINK_TEXT_ZH)}</b></div>`, captionAccentOf(profile) || CAPTION_ACCENT, !!coach); overlays.push({ png: o.png, from: Math.round((at + sp.end - cuts[i].from + 0.1) * 100) / 100, to: Math.round((at + cuts[i].to - cuts[i].from) * 100) / 100 }); blocks.push(...o.blocks); }
+        if (linkOnScreen(script) && i === lines.length - 1) { const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-link.png`), `<div class="cap zh"><b>${esc(LINK_TEXT_ZH)}</b></div>`, captionAccentOf(profile) || CAPTION_ACCENT, !!coach); overlays.push({ png: o.png, from: Math.round((at + sp.end - cuts[i].from + 0.1) * 100) / 100, to: Math.round((at + cuts[i].to - cuts[i].from) * 100) / 100 }); blocks.push(...o.blocks); }
         starts.push(Math.round(startAt * 100) / 100); at += cuts[i].to - cuts[i].from;
       }
       const outside = blocks.filter((b) => !inLive(b));

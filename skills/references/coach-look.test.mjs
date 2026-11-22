@@ -168,3 +168,49 @@ test("CK4 a starting picture is of the coach standing, the shirt's words readabl
     assert.ok(left.starts.length >= 2 && left.starts.every((p) => /video-0[23]-/.test(p)), JSON.stringify(left.starts.map((p) => basename(p))));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("CK5 hands free, and heard before a batch (2026-11-22, F45 Xinyi): a picture cut from a frame where the coach holds something says so and is never given to the makers while there is one with the hands free (talking videos were started from white-paper samples, the sheets still in hand); the sound check — one test line filmed for the owner's ear, his yes kept for the language and for the voice as it is described, asked again when the description changes", { skip: !hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+  const { soundChecked, soundWhy, approveSound, filmSound, SOUND_LINES } = await import("./coach-look.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "look5-"));
+  try {
+    writeFileSync(join(dir, "gym-profile.json"), JSON.stringify({ display_name: "Test Gym", locale: { country: "TW", languages: ["zh-TW"] } }));
+    const mk = (name, colour) => { const f = join(dir, name); execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `color=c=${colour}:s=1080x1920:r=12:d=5`, "-f", "lavfi", "-i", "sine=frequency=300:duration=5", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", f]); return f; };
+    addSample(dir, mk("talking.mp4", "gray")); addSample(dir, mk("paper.mp4", "navy"));
+    const frame = (index, over = {}) => ({ index, people: 1, looks_at_lens: true, eyes_open: true, mouth_closed: true, sharp: true, hands_low: true, holds: "", ready: true, print_readable: true, head_box: [370, 430, 470, 560], print_box: [520, 400, 600, 600], ...over });
+    const models = {
+      async hear() { return { transcript: "一 二 三", speakers: 1, pitch: "medium", pace: "measured", accent: "native Taiwanese Mandarin", energy: "warm", voice: "A clear, warm voice." }; },
+      async look(frames) { const key = basename(dirname(frames[0])); return { top: "black T-shirt", bottom: "black trousers", glasses: false, seated: false, spot: "on the turf", shirt_words: "", shirt_logo: "", wall_words: [], frames: frames.map((_, i) => frame(i, key === "video-02" ? { holds: "sheets of paper" } : {})) }; },
+    };
+    await readSamples({ gymDir: dir, models });
+    const c = addCoach(dir, { name: "Mei" }); setSamples(dir, c.id, ["video-01.mp4", "video-02.mp4"]); setConsent(dir, c.id, { face: true, voice: true, by: "signed form" });
+    buildStarts(dir);
+    let me = readCoaches(dir).coaches[0];
+    const held = me.starts.filter((s) => s.sample === "video-02.mp4"), free = me.starts.filter((s) => s.sample === "video-01.mp4");
+    assert.ok(held.length >= 1 && held.every((s) => s.holding === "sheets of paper" && s.clear === false) && free.length >= 1 && free.every((s) => !s.holding && s.clear), JSON.stringify(me.starts));
+    assert.ok(coachForVideo(dir, me).starts.every((p) => /video-01-/.test(p)), "the makers get the hands-free pictures only");
+    for (const s of free) switchStart(dir, c.id, s.file, { on: false, reason: "test" });
+    assert.ok(coachForVideo(dir, readCoaches(dir).coaches[0]).starts.every((p) => /video-02-/.test(p)), "…and one that holds something only when there is no other");
+    for (const s of free) switchStart(dir, c.id, s.file, { on: true });
+    // The sound check: not heard yet; one line filmed; his yes; a new description asks again.
+    me = readCoaches(dir).coaches[0];
+    assert.equal(soundChecked(me, "zh"), false);
+    assert.equal(soundWhy(me, "zh"), "Mei has had no sound check in Chinese: film one test line and listen (Ad defaults → Presenter · videos; about six seconds of video)");
+    const asked = [];
+    const film = { async clip(a) { asked.push(a); writeFileSync(a.out, Buffer.from("fake mp4")); } };
+    const t = await filmSound({ gymDir: dir, id: c.id, lang: "zh", models: film });
+    assert.deepEqual([t.line, t.seconds, existsSync(join(dir, "brand-assets", "video-samples", t.file)), /^sound-check\/mei-zh-1\.mp4$/.test(t.file), asked.length], [SOUND_LINES.zh, 6, true, true, 1]);
+    assert.ok(asked[0].prompt.includes(SOUND_LINES.zh) && /video-01-/.test(asked[0].image) && /a native speaker from Taipei/.test(asked[0].prompt), asked[0].prompt.slice(0, 400));
+    assert.equal(readCoaches(dir).coaches[0].voice.tests.length, 1);
+    await assert.rejects(filmSound({ gymDir: dir, id: c.id, lang: "zh", line: "這一句話實在是太長了，長到沒有辦法在六秒鐘以內好好地說完，所以應該要被拒絕才對喔真的。", models: film }), /one short sentence/);
+    await assert.rejects(filmSound({ gymDir: dir, id: c.id, lang: "fr", models: film }), /Chinese \(zh\) or English \(en\)/);
+    approveSound(dir, c.id, "zh", { note: "sounds like her" });
+    me = readCoaches(dir).coaches[0];
+    assert.deepEqual([soundChecked(me, "zh"), soundChecked(me, "en"), soundWhy(me, "zh"), me.voice.checks.zh.by, me.voice.checks.zh.note], [true, false, null, "owner", "sounds like her"]);
+    setVoice(dir, c.id, "a lower, slower voice, native Taiwanese Mandarin, calm and steady");
+    me = readCoaches(dir).coaches[0];
+    assert.deepEqual([soundChecked(me, "zh"), me.voice.tests.length], [false, 1], "the test clips stay; the yes was for the earlier words");
+    assert.match(soundWhy(me, "zh"), /since the voice's description changed/);
+    approveSound(dir, c.id, "zh"); approveSound(dir, c.id, "zh", { ok: false });
+    assert.equal(soundChecked(readCoaches(dir).coaches[0], "zh"), false, "taken back");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

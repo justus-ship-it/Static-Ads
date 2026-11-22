@@ -1184,7 +1184,7 @@ test("B17 presenter videos with exercises in a batch (2026-11-15): a brief asks 
     const batch = JSON.parse(readFileSync(join(r.out, "batch.json"), "utf-8")), ad = batch.ads[0], picks = movesFor(script, { kit: KIT }).map(moveLabel);
     assert.ok(logs.some((m) => /· v01: presenter video with exercises from script /.test(m)), logs.join("\n"));
     // A move cut is two clips (2026-11-16): the move alone in silence, then the line from its last frame.
-    assert.deepEqual([made.image, made.clip, MOVE_LEAD], [4, [[4, true], [S(0), false], [S(1), false], [4, true], [S(2), false]], 4]);
+    assert.deepEqual([made.image, made.clip, MOVE_LEAD], [4, [[4, true], [S(2), false], [4, true], [S(0), false], [S(1), false]], 4]);   // the closing cut first (2026-11-22): its move, its line; then the others
     assert.deepEqual([batch.ads.length, batch.videos, /-exercise-video$/.test(ad.folder), ad.treatment, ad.format, ad.video.kind, ad.video.moves, ad.video.parts.map((p) => p.move)], [1, { presenter: 0, active: 1 }, true, "video-presenter-active", "presenter-video", "active", picks.map((move, i) => ({ line: i + 1, move })), picks]);
     assert.equal(keptAds(r.out)[0].video_kind, "active", "the kind goes on to the publish plan");
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -1362,4 +1362,34 @@ test("B20 a batch presented by the gym's real coaches (2026-11-17): the videos a
     setConsent(dir, "coach-xena", { face: false, voice: false, by: "message: please stop" });
     assert.throws(() => videoPlan(dir, { ...brief, batch_id: "nobody" }), /no coach can be filmed yet — Faye has not consented to videos in their likeness; Xena has not consented to videos in their likeness/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("B21 the filming stops early when Google keeps refusing (2026-11-22: F45 Xinyi's first run went through 13 videos, each one's closing refused in turn): each video's closing cut is asked for first, so a refused video costs nothing; three videos in a row refused outright and the videos left are not filmed, each named with why and what to change; the batch ends in words", { skip: !(await import("./presenter-video.mjs")).hasFfmpeg() && "ffmpeg is not installed" }, async () => {
+  const dir = brandSetup();
+  try {
+    await realPhotos(dir);
+    process.env.VIDEO_LIBRARY_DIR = join(dir, "video-library");
+    const { addScript } = await import("./presenter-video.mjs");
+    const { REFUSALS_STOP } = await import("./plan-offer-batch.mjs");
+    const profile = { ...JSON.parse(readFileSync(join(dir, "gym-profile.json"), "utf-8")), creative_defaults: { presenter: { gender: "woman", age: 34 } } };
+    writeFileSync(join(dir, "gym-profile.json"), JSON.stringify(profile));
+    const brief = { ...BRIEF, batch_id: "refused-run", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN"], videos: { presenter: 5 } };
+    const OPEN = ["If your work clothes have been fitting tighter lately, keep watching.", "If the stairs leave you out of breath these days, this is for you.", "If you start to exercise and stop after two weeks, you are not alone.", "If you feel tired every day after lunch, this one is for you.", "If you want to keep up with your children at the weekend, listen to this."];
+    for (const o of OPEN) addScript(dir, { lines: [`People in {AREA}, hello. ${o}`, "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"], offer: brief.offer }, { profile });
+    assert.equal(REFUSALS_STOP, 3);
+    const asked = [], logs = [];
+    const videoModels = {
+      async image({ out }) { writeFileSync(out, readFileSync(join(dir, "brand-assets", "real", "r1.png"))); },
+      async clip({ out, prompt }) { asked.push(/Click the link below/.test(prompt) ? "closing" : "other"); throw new Error('video failed (400): {"error":{"message":"Request blocked due to prohibited content guidelines.","code":"prohibited_content"}}'); },
+      async watch() { throw new Error("nothing is watched: nothing was filmed"); },
+    };
+    await assert.rejects(runBatch({ brandDir: dir, brief, deps: { ...fakes([]), browser, videoModels }, log: (m) => logs.push(m) }), /no ad was made/);
+    // Only closing cuts were asked for — three videos' worth — and never another line.
+    assert.ok(asked.length > 0 && asked.every((x) => x === "closing"), JSON.stringify(asked));
+    assert.ok(logs.some((l) => /■ the filming stopped: 3 videos in a row were refused by Google's video model\. The 2 left are not filmed\./.test(l)), logs.join("\n"));
+    assert.equal(logs.filter((l) => /^⚑ v0[45] BISHAN: not filmed: Google's video model refused 3 videos in a row under its content rules, so the filming stopped before this one and nothing was spent on it\./.test(l)).length, 2, logs.join("\n"));
+    assert.equal(logs.filter((l) => /^⚑ v0[123] BISHAN: line 3: refused by Google's video model .*The other 2 cuts were not filmed/.test(l)).length, 3, logs.join("\n"));
+    const spend = JSON.parse(readFileSync(join(dir, "outputs", "refused-run", "video-spend.json"), "utf-8"));
+    assert.equal(spend.seconds, 0, "a refused request films nothing");
+  } finally { delete process.env.VIDEO_LIBRARY_DIR; rmSync(dir, { recursive: true, force: true }); }
 });

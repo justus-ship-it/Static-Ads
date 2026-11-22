@@ -182,10 +182,10 @@ const BOX = { type: "ARRAY", items: { type: "INTEGER" } };
 const HEAR_SCHEMA = { type: "OBJECT", properties: { transcript: { type: "STRING" }, speakers: { type: "INTEGER" }, pitch: { type: "STRING" }, pace: { type: "STRING" }, accent: { type: "STRING" }, energy: { type: "STRING" }, voice: { type: "STRING" } }, required: ["transcript", "speakers", "pitch", "pace", "accent", "energy", "voice"] };
 const HEAR_Q = "This is the sound track of a short video a fitness coach recorded on a phone. transcript: every word spoken, exactly as said, in order, keeping repeats, fillers and false starts. speakers: how many different people speak. pitch: the main speaker's pitch: low, medium-low, medium, medium-high or high. pace: slow, measured, conversational, quick or very quick. accent: the accent in plain words as heard, and how strong it is: light, moderate or strong. energy: calm, warm, upbeat, intense or flat, with a few words on how they come across. voice: one sentence describing the sound of the voice (its depth, timbre, breathiness, nasality) so that a voice actor could imitate it; do not name or guess who the person is.";
 const LOOK_SCHEMA = { type: "OBJECT", properties: {
-  frames: { type: "ARRAY", items: { type: "OBJECT", properties: { index: { type: "INTEGER" }, people: { type: "INTEGER" }, looks_at_lens: { type: "BOOLEAN" }, eyes_open: { type: "BOOLEAN" }, mouth_closed: { type: "BOOLEAN" }, sharp: { type: "BOOLEAN" }, hands_low: { type: "BOOLEAN" }, ready: { type: "BOOLEAN" }, print_readable: { type: "BOOLEAN" }, head_box: BOX, print_box: BOX }, required: ["index", "people", "looks_at_lens", "eyes_open", "mouth_closed", "sharp", "ready", "print_readable", "head_box"] } },
+  frames: { type: "ARRAY", items: { type: "OBJECT", properties: { index: { type: "INTEGER" }, people: { type: "INTEGER" }, looks_at_lens: { type: "BOOLEAN" }, eyes_open: { type: "BOOLEAN" }, mouth_closed: { type: "BOOLEAN" }, sharp: { type: "BOOLEAN" }, hands_low: { type: "BOOLEAN" }, holds: { type: "STRING" }, ready: { type: "BOOLEAN" }, print_readable: { type: "BOOLEAN" }, head_box: BOX, print_box: BOX }, required: ["index", "people", "looks_at_lens", "eyes_open", "mouth_closed", "sharp", "ready", "print_readable", "head_box"] } },
   top: { type: "STRING" }, bottom: { type: "STRING" }, glasses: { type: "BOOLEAN" }, seated: { type: "BOOLEAN" }, spot: { type: "STRING" }, shirt_words: { type: "STRING" }, shirt_logo: { type: "STRING" }, wall_words: { type: "ARRAY", items: { type: "STRING" } } },
   required: ["frames", "top", "glasses", "seated", "spot", "shirt_words"] };
-const LOOK_Q = (n) => `These ${n} images are frames of one phone video of a person talking to the camera in a gym, in order (index 0 to ${n - 1}). Do not name or guess who the person is. For EACH frame — people: how many people are visible; looks_at_lens: the person looks straight into the camera; eyes_open: both eyes are open; mouth_closed: the lips are together (not mid-word); sharp: the face is in focus with no motion blur; hands_low: the hands are at or below the waist, or out of the picture; ready: the person is settled and facing the camera, as someone is just before or while speaking to it — NOT touching their face, hair or clothes, not laughing, not looking down or aside, not turning or moving into place, nothing in front of their face or chest; print_readable: everything printed on the front of their top can be read in full in this frame — the cloth flat, not creased or folded over the words (as it is when someone sits leaning forward), not covered by a hand or an arm, not cut off by the edge of the picture (true when nothing is printed on it); head_box: the box around the head, from the top of the hair to the chin, as [ymin, xmin, ymax, xmax] on a 0-1000 scale; print_box: the box around everything printed on the front of the top they wear (logos and words together), same scale, or an empty list when nothing is printed or it cannot be seen. For the video as a whole — top: the top they wear, as colour and kind (for example "black T-shirt"); bottom: what they wear below it, or "" if never seen; glasses: they wear glasses; seated: they are sitting down for most of the video (on a bench, a bed, a box, the floor) rather than standing; spot: where in the gym this is filmed, as a few plain words a person who knows the gym would recognise (for example "on the turf lane, the grey wall with the logo behind"); shirt_words: the words printed on the front of the top, exactly as they read, letter for letter, or "" if none; shirt_logo: any logo on the top described in a few words, or ""; wall_words: every piece of lettering on the walls, mirrors or signs behind, each exactly as it reads where it can be read in full.`;
+const LOOK_Q = (n) => `These ${n} images are frames of one phone video of a person talking to the camera in a gym, in order (index 0 to ${n - 1}). Do not name or guess who the person is. For EACH frame — people: how many people are visible; looks_at_lens: the person looks straight into the camera; eyes_open: both eyes are open; mouth_closed: the lips are together (not mid-word); sharp: the face is in focus with no motion blur; hands_low: the hands are at or below the waist, or out of the picture; holds: what the person holds in their hands in this frame, in a word or two ("sheets of paper", "phone", "dumbbell"), or an empty string when their hands hold nothing; ready: the person is settled and facing the camera, as someone is just before or while speaking to it — NOT touching their face, hair or clothes, not laughing, not looking down or aside, not turning or moving into place, nothing in front of their face or chest; print_readable: everything printed on the front of their top can be read in full in this frame — the cloth flat, not creased or folded over the words (as it is when someone sits leaning forward), not covered by a hand or an arm, not cut off by the edge of the picture (true when nothing is printed on it); head_box: the box around the head, from the top of the hair to the chin, as [ymin, xmin, ymax, xmax] on a 0-1000 scale; print_box: the box around everything printed on the front of the top they wear (logos and words together), same scale, or an empty list when nothing is printed or it cannot be seen. For the video as a whole — top: the top they wear, as colour and kind (for example "black T-shirt"); bottom: what they wear below it, or "" if never seen; glasses: they wear glasses; seated: they are sitting down for most of the video (on a bench, a bed, a box, the floor) rather than standing; spot: where in the gym this is filmed, as a few plain words a person who knows the gym would recognise (for example "on the turf lane, the grey wall with the logo behind"); shirt_words: the words printed on the front of the top, exactly as they read, letter for letter, or "" if none; shirt_logo: any logo on the top described in a few words, or ""; wall_words: every piece of lettering on the walls, mirrors or signs behind, each exactly as it reads where it can be read in full.`;
 /** The two real calls; the tests pass their own. */
 export function lookModels() {
   return {
@@ -297,7 +297,9 @@ export function buildStarts(gymDir) {
       const edge = (x) => Number(x.index === 0 || x.index === s.read.frames.length - 1);
       // (2026-11-17: BFIT's first re-make started a coach from a frame of him seated and leaning, the shirt's words creased: every take failed the uniform check. A frame whose print reads in full comes before anything else, and only such a picture is "clear".)
       const flat = (x) => Number(x.print_readable !== false);
-      const good = s.read.frames.filter(goodFrame).sort((a, b) => flat(b) - flat(a) || Number(!!b.mouth_closed) - Number(!!a.mouth_closed) || Number(!!b.hands_low) - Number(!!a.hands_low) || edge(a) - edge(b) || a.at - b.at), best = good[0];
+      // (2026-11-22: F45 Xinyi's coaches were started from frames of their white-paper samples, the sheets still in their hands, in talking videos: nine cuts filmed with paper in shot.) A frame with nothing in the hands comes before anything else, and a picture cut from one that holds something says so (`holding`).
+      const empty = (x) => Number(!norm(x.holds));
+      const good = s.read.frames.filter(goodFrame).sort((a, b) => empty(b) - empty(a) || flat(b) - flat(a) || Number(!!b.mouth_closed) - Number(!!a.mouth_closed) || Number(!!b.hands_low) - Number(!!a.hands_low) || edge(a) - edge(b) || a.at - b.at), best = good[0];
       if (!best) continue;
       const src = join(dir, "frames", basename(s.name, extname(s.name)), `at-${best.at.toFixed(2).padStart(7, "0")}.jpg`);
       if (!existsSync(src)) continue;
@@ -311,7 +313,7 @@ export function buildStarts(gymDir) {
           if (r.status !== 0) continue;
         }
         // A picture of someone sitting is used only when there is none of them standing: seated and leaning, the shirt's words crease, and the reader does not see that (it called BFIT's creased print readable in every frame).
-        starts.push({ file, sample: s.name, at: best.at, framing: fr.id, spot: s.read.spot, w: crop.w, clear: crop.clear && best.print_readable !== false && !s.read.seated, ...(best.print_readable === false ? { creased: true } : {}), ...(s.read.seated ? { seated: true } : {}), ...(was.get(file)?.off ? { off: was.get(file).off } : {}) });
+        starts.push({ file, sample: s.name, at: best.at, framing: fr.id, spot: s.read.spot, w: crop.w, clear: crop.clear && best.print_readable !== false && !s.read.seated && !norm(best.holds), ...(norm(best.holds) ? { holding: norm(best.holds).slice(0, 40) } : {}), ...(best.print_readable === false ? { creased: true } : {}), ...(s.read.seated ? { seated: true } : {}), ...(was.get(file)?.off ? { off: was.get(file).off } : {}) });
       }
       if (good[1]) refs.push({ sample: s.name, at: good[1].at });
     }
@@ -341,7 +343,8 @@ export function setVoice(gymDir, id, text) {
   if (!c) throw new Error(`this gym has no coach ${id}`);
   const t = norm(text);
   if (t && (t.length < 12 || t.length > 400)) throw new Error("describe the voice in 12 to 400 characters: its depth, accent and manner");
-  if (t) c.voice = { description: t, by: "owner", on: today() }; else { c.voice = null; }
+  // A new description is a new voice: an earlier sound check no longer stands (it is kept by the description it heard); the test clips stay on file.
+  if (t) c.voice = { description: t, by: "owner", on: today(), ...(c.voice?.checks ? { checks: c.voice.checks } : {}), ...(c.voice?.tests ? { tests: c.voice.tests } : {}) }; else { c.voice = null; }
   write(gymDir, d); if (!t) buildStarts(gymDir);
   return readCoaches(gymDir).coaches.find((x) => x.id === id);
 }
@@ -375,6 +378,49 @@ export function coachWhy(coach) {
   if (!liveStarts(coach).length) return `${coach.name} has no starting picture yet: add sample videos of them, say who they show and read the samples (Photos & assets → Coach videos)`;
   return null;
 }
+/**
+ * The sound check (2026-11-22). A coach's voice is only ever a description the video model is given, and how it comes
+ * out is known only by ear: F45 Xinyi's twenty videos were filmed before the owner heard that "a light accent" had
+ * given the coaches an American one. So, before a coach fronts spoken videos in a language: ONE short line is filmed
+ * (`filmSound`: about six seconds), the owner listens, and his yes is kept on the coach for that language
+ * (`approveSound`) — for the voice description as it stood: change the words and the check is asked again. A batch
+ * with spoken videos says which coaches still need one (`soundWhy`).
+ */
+export const SOUND_LINES = { zh: "嗨，歡迎來到我們這裡，一起讓每天都更有精神。", en: "Hi, welcome in. Here we help people feel stronger, every single day." };
+export const SOUND_LANGUAGES = { zh: "Chinese", en: "English" };
+const voiceKey = (coach) => createHash("sha256").update(norm(coach?.voice?.description || "")).digest("hex").slice(0, 12);
+export const soundChecked = (coach, lang) => { const c = coach?.voice?.checks?.[lang]; return !!c && c.ok === true && c.voice === voiceKey(coach); };
+export const soundWhy = (coach, lang) => (soundChecked(coach, lang) ? null : `${coach.name} has had no sound check in ${SOUND_LANGUAGES[lang] || lang}${coach?.voice?.checks?.[lang]?.ok ? " since the voice's description changed" : ""}: film one test line and listen (Ad defaults → Presenter · videos; about six seconds of video)`);
+/** The owner's yes (or its withdrawal) on how a coach sounds in a language, for the voice as it is described now. */
+export function approveSound(gymDir, id, lang, { ok = true, by = "owner", note = null } = {}) {
+  if (!SOUND_LANGUAGES[lang]) throw new Error("the sound check is for Chinese (zh) or English (en)");
+  const d = readCoaches(gymDir), c = d.coaches.find((x) => x.id === id);
+  if (!c) throw new Error(`this gym has no coach ${id}`);
+  if (!norm(c.voice?.description)) throw new Error(`${c.name}'s voice is not described yet: add a sample of them talking, or describe it, before the sound check`);
+  c.voice.checks = { ...(c.voice.checks || {}) };
+  if (ok) c.voice.checks[lang] = { ok: true, on: today(), by, voice: voiceKey(c), ...(norm(note) ? { note: norm(note) } : {}) }; else delete c.voice.checks[lang];
+  write(gymDir, d); return c;
+}
+/**
+ * Film one test line of a coach, for the owner's ear: from the coach's first starting picture, with the voice as it is
+ * described now. The clip is kept in the samples folder (`sound-check/`) and listed on the coach (`voice.tests`).
+ * `models.clip` is the video call (presenter-video's; a test passes its own). Returns { file, line, seconds }.
+ */
+export async function filmSound({ gymDir, id, lang, line = null, profile = readJson(join(gymDir, "gym-profile.json")) || {}, models = null }) {
+  if (!SOUND_LANGUAGES[lang]) throw new Error("the sound check is for Chinese (zh) or English (en)");
+  const coach = readCoaches(gymDir).coaches.find((x) => x.id === id);
+  if (!coach) throw new Error(`this gym has no coach ${id}`);
+  if (!norm(coach.voice?.description)) throw new Error(`${coach.name}'s voice is not described yet: add a sample of them talking, or describe it, before the sound check`);
+  const PV = await import("./presenter-video.mjs"), cv = coachForVideo(gymDir, coach), words = norm(line) || SOUND_LINES[lang];
+  if (PV.units(words) < 4 || PV.clipSeconds(words) > 8) throw new Error("the test line is one short sentence: about six seconds when said");
+  const seconds = PV.clipSeconds(words), said = PV.saidIn(words, PV.saidAs()), dir = join(gymDir, SAMPLES_DIR, "sound-check"); mkdirSync(dir, { recursive: true });
+  const n = (coach.voice.tests || []).length + 1, name = `${cv.key}-${lang}-${n}.mp4`, out = join(dir, name);
+  await (models || PV.realModels(profile)).clip({ out, image: cv.starts[0], prompt: PV.coachClipPrompt({ coach: cv, profile, line: words, seconds, said }), seconds });
+  const d = readCoaches(gymDir), c = d.coaches.find((x) => x.id === id);
+  c.voice.tests = [...(c.voice.tests || []), { file: join("sound-check", name), lang, line: words, seconds, on: today(), voice: voiceKey(c) }];
+  write(gymDir, d);
+  return { file: join("sound-check", name), line: words, seconds };
+}
 export const readyCoaches = (gymDir) => readCoaches(gymDir).coaches.filter((c) => !coachWhy(c));
 /**
  * Why this coach cannot front a white-paper video, or null (2026-11-17, tested on BFIT: about US$0.60). The words are
@@ -407,7 +453,7 @@ export function pickCoaches(gymDir, count, { only = null, seed = "", paper = fal
  */
 export function coachForVideo(gymDir, coach) {
   const why = coachWhy(coach); if (why) throw new Error(why);
-  const dir = join(gymDir, SAMPLES_DIR), live = liveStarts(coach), clear = live.filter((s) => s.clear), pool = clear.length ? clear : live;
+  const dir = join(gymDir, SAMPLES_DIR), live0 = liveStarts(coach), free = live0.filter((s) => !s.holding), live = free.length ? free : live0, clear = live.filter((s) => s.clear), pool = clear.length ? clear : live;
   // One from each sample in turn, then the second framings: neighbours differ in place where the samples allow it.
   const bySample = new Map(); for (const s of pool) bySample.set(s.sample, [...(bySample.get(s.sample) || []), s]);
   const order = []; for (let k = 0; order.length < pool.length; k++) for (const xs of bySample.values()) if (xs[k]) order.push(xs[k]);

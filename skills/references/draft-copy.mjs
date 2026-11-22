@@ -19,7 +19,7 @@ import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { createHash } from "crypto";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
-import { countryRules } from "./client-config.mjs";
+import { countryRules, sayInstead, wordingWhy, wordingRule, nameInAds } from "./client-config.mjs";
 import { readCopyRefs } from "./meta-results.mjs";
 
 export const COPY_MODEL = process.env.COPY_MODEL || CHECK_MODEL;
@@ -124,7 +124,8 @@ export const ALWAYS_NEVER = ["free trial", "trial", "before and after", "before 
 /** What copy may not say for this gym and this offer: the voice's never-list, the offer's must-not-say, the standing rules. */
 export function copyRules(profile, offerDoc = null) {
   const never = [...new Set([...ALWAYS_NEVER, ...(profile?.brand_lock?.voice?.never || []), ...(offerDoc?.messaging?.must_not_say || [])].map((s) => String(s).trim().toLowerCase()).filter(Boolean))];
-  return { never, adjectives: profile?.brand_lock?.voice?.adjectives || [], must_say: offerDoc?.messaging?.must_say || [] };
+  // The gym's own wording (2026-11-22): what it never says and what it says in its place (the written rules; a rule for speech only is a video script's).
+  return { never, adjectives: profile?.brand_lock?.voice?.adjectives || [], must_say: offerDoc?.messaging?.must_say || [], say_instead: sayInstead(profile, { spoken: false }) };
 }
 const PRICE = /(\$|S\$|SGD|USD|NT\$|NTD|TWD|新台幣)\s?\d|\b\d+(\.\d+)?\s?(dollars|bucks)\b|\bper (week|month|session)\b|\d+(,\d{3})*(\.\d+)?\s?(元|塊)(?![a-z])/i;
 /** A weight-loss number, in English or Chinese: lose 5 kg; 瘦5公斤, 減掉3公斤, 瘦了2吋, 體脂降5%, 5%體脂. */
@@ -142,6 +143,7 @@ export function copyProblems(d, { offer, rules, kind = null }) {
   const low = all.toLowerCase();
   for (const n of rules.never) { const re = new RegExp(`(^|[^a-z])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`, "i"); if (re.test(low)) e.push(`says "${n}"`); }
   if (WEIGHT.test(all)) e.push("a weight-loss number");
+  for (const r of rules.say_instead || []) if (/[\u3400-\u9fff]/.test(r.avoid) ? all.includes(r.avoid) : new RegExp(`(?<![A-Za-z0-9])${r.avoid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+")}(?![A-Za-z0-9])`, "i").test(all)) e.push(wordingWhy(r));
   for (const ph of new Set([...all.matchAll(/\{([A-Z_]+)\}/g)].map((m) => m[1]))) if (!DRAFT_PLACEHOLDERS.includes(ph)) e.push(`unknown placeholder {${ph}} (a draft may carry {AREA} and {BUTTON} only)`);
   return e;
 }
@@ -234,7 +236,7 @@ export function provenLine(skeletons, won = {}) {
   return hit.length ? `PROVEN AT THIS GYM: ${hit.map((x) => `skeleton ${x.n} (${x.w.leads} lead${x.w.leads === 1 ? "" : "s"})`).join(", ")} earned its own leads on Meta. Write at least ${PROVEN_SHARE} of the drafts from ${hit.length === 1 ? "this one" : "these"}; the rest from the others, so new skeletons keep being tried.` : null;
 }
 export function buildDraftPrompt({ profile, kind = "copy", offer, audience, locations, rules, skeletons, count, avoid = [], button = "Sign up", won = null }) {
-  const gym = profile.display_name || "the gym", what = kind === "headline" ? "headlines" : "primary texts", zh = gymLanguage(profile) === "zh";
+  const gym = nameInAds(profile), what = kind === "headline" ? "headlines" : "primary texts", zh = gymLanguage(profile) === "zh", house = wordingRule(profile);
   const lines = [
     `You write Meta lead ads for ${gym}, a gym in ${countryRules(profile?.locale?.country).name || "its city"}. Write ${count} different ${what} for one campaign.`,
     `THE OFFER: "${offer}". ${kind === "headline" ? "Where a headline names the offer, name it exactly like that; a headline may instead carry the promise." : "Name it exactly like that in every primary text."} Never invent what it includes, its price, its length beyond the name, or any guarantee. Where the gym is named, name it "${gym}".`,
@@ -248,6 +250,7 @@ export function buildDraftPrompt({ profile, kind = "copy", offer, audience, loca
     `VOICE: ${rules.adjectives.length ? rules.adjectives.join(", ") : "direct, warm, confident"}. ${countryRules(profile?.locale?.country).tone || "Plain English."} Short lines. No hype.`,
     `NEVER write any of these words or ideas: ${rules.never.join("; ")}. No prices. No before-and-after claims. No weight-loss numbers. No em dashes or en dashes; use a plain hyphen. No emoji in headlines. No other placeholder than {AREA} and {BUTTON}.`,
     rules.must_say.length ? `ALWAYS work in: ${rules.must_say.join("; ")}.` : "",
+    house,
     provenLine(skeletons, won) || "",
     avoid.length ? `ALREADY WRITTEN (do not repeat these): ${avoid.map((a) => (kindOf(a) === "headline" ? a.headline : a.message.split("\n")[0].slice(0, 80))).join(" | ")}` : "",
     kind === "headline"
@@ -261,7 +264,14 @@ const asDraft = (d) => ({ ...d, kind: kindOf(d), message: buttonPlaceholder(d.me
 export const readCopy = (batchDir) => { const j = readJson(join(batchDir, COPY_FILE)); return { drafted: null, drafts: [], ...(j || {}), drafts: (Array.isArray(j?.drafts) ? j.drafts : []).map(asDraft) }; };
 const writeCopy = (batchDir, data) => writeWhole(join(batchDir, COPY_FILE), JSON.stringify(data, null, 2) + "\n");
 /** The kept drafts of a kind, in the order they were kept (the owner's order of choice). */
-export const keptCopies = (batchDir, kind = "copy") => readCopy(batchDir).drafts.filter((d) => d.status === "keep" && kindOf(d) === kind).sort((a, b) => (a.kept_at || "").localeCompare(b.kept_at || ""));
+// A draft marked `for` (2026-11-22, testimonial-video.mjs) is ONE ad's own copy — written for that video — and is never among the batch's shared copies.
+export const keptCopies = (batchDir, kind = "copy") => readCopy(batchDir).drafts.filter((d) => d.status === "keep" && kindOf(d) === kind && !d.for).sort((a, b) => (a.kept_at || "").localeCompare(b.kept_at || ""));
+/** Each video's own kept copies and headlines, by the video's id: { [id]: { copies[], headlines[] } }, in the order kept. */
+export function ownCopies(batchDir) {
+  const out = {};
+  for (const d of readCopy(batchDir).drafts.filter((x) => x.for && x.status === "keep").sort((a, b) => (a.kept_at || "").localeCompare(b.kept_at || ""))) { const o = (out[d.for] ||= { copies: [], headlines: [] }); o[kindOf(d) === "headline" ? "headlines" : "copies"].push(d); }
+  return out;
+}
 /**
  * Draft `count` copies or headlines for a batch from the library's skeletons and append them to its copy.json as
  * drafts. One text call (a second for a shortfall); drafts that break a rule are dropped with the reason, duplicates
@@ -283,7 +293,7 @@ export async function draftCopy({ brandDir, batchDir, kind = "copy", offer, audi
   let calls = 0;
   for (let round = 0; round < 2 && added.length < count; round++) {
     const want = count - added.length;
-    const { prompt, schema } = buildDraftPrompt({ profile, kind, offer, audience, locations, rules, skeletons: skel, count: want, avoid: [...data.drafts.filter((d) => kindOf(d) === kind), ...added], button, won });
+    const { prompt, schema } = buildDraftPrompt({ profile, kind, offer, audience, locations, rules, skeletons: skel, count: want, avoid: [...data.drafts.filter((d) => kindOf(d) === kind && !d.for), ...added], button, won });
     const answer = await ask(null, prompt, schema, { model }); calls++;
     for (const raw of answer?.drafts || []) {
       const norm = (t, max) => clean(areaPlaceholder(buttonPlaceholder(plainDashes(t)), locations), max);
@@ -363,7 +373,7 @@ export function recommend(drafts, ratings, n = 5) {
 }
 /** Judge every open draft of a kind (drafts and kept ones, not excluded) and mark the recommended five; written on the drafts. */
 export async function judgeAndRecommend({ batchDir, kind = "copy", offer, audience = null, n = 5, ask = callVision, model = COPY_MODEL }) {
-  const data = readCopy(batchDir), open = data.drafts.filter((d) => kindOf(d) === kind && d.status !== "exclude");
+  const data = readCopy(batchDir), open = data.drafts.filter((d) => kindOf(d) === kind && d.status !== "exclude" && !d.for);
   if (!open.length) return [];
   const ratings = await judgeDrafts({ drafts: open, kind, offer, audience, ask, model });
   const picks = recommend(open, ratings, n);
@@ -377,7 +387,7 @@ export async function judgeAndRecommend({ batchDir, kind = "copy", offer, audien
 }
 /** Keep the recommended drafts of a kind in their rank order (the owner's one click). */
 export function keepRecommended(batchDir, kind = "copy") {
-  const data = readCopy(batchDir), recs = data.drafts.filter((d) => kindOf(d) === kind && d.recommended).sort((a, b) => a.recommended.rank - b.recommended.rank);
+  const data = readCopy(batchDir), recs = data.drafts.filter((d) => kindOf(d) === kind && d.recommended && !d.for).sort((a, b) => a.recommended.rank - b.recommended.rank);
   if (!recs.length) throw new Error(`nothing recommended among the ${kind === "headline" ? "headlines" : "copies"} yet: draft first`);
   const t0 = Date.now(); recs.forEach((d, i) => { d.status = "keep"; d.kept_at = d.kept_at || new Date(t0 + i).toISOString(); });
   writeCopy(batchDir, data); return recs;
@@ -413,7 +423,9 @@ export function decideCopy(batchDir, id, { status, message, headline, descriptio
   }
   if (status != null) {
     if (!["draft", "keep", "exclude"].includes(status)) throw new Error("a decision is keep, exclude or draft");
-    if (status === "keep" && data.drafts.filter((x) => x.status === "keep" && kindOf(x) === kindOf(d) && x.id !== id).length >= 20) throw new Error("no more than 20 kept for one campaign");
+    // The limit is per list: the campaign's shared copies, or one video's own (Meta takes five text options an ad).
+    if (status === "keep" && !d.for && data.drafts.filter((x) => x.status === "keep" && !x.for && kindOf(x) === kindOf(d) && x.id !== id).length >= 20) throw new Error("no more than 20 kept for one campaign");
+    if (status === "keep" && d.for && data.drafts.filter((x) => x.status === "keep" && x.for === d.for && kindOf(x) === kindOf(d) && x.id !== id).length >= MAX_OPTIONS) throw new Error(`no more than ${MAX_OPTIONS} kept for one video: Facebook takes ${MAX_OPTIONS} text options an ad`);
     d.status = status; d.kept_at = status === "keep" ? d.kept_at || new Date().toISOString() : null;
   }
   writeCopy(batchDir, data); return d;

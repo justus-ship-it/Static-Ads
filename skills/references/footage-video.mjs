@@ -26,12 +26,15 @@ import { existsSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, statS
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { validateInputs } from "./render-composites.mjs";
 
 export const FOOTAGE = "real-footage";                // brief.imported / batch.imported
 export const FOOTAGE_KIND = "real";                   // ad.video.kind
-export const FOOTAGE_LIMITS = { videos: 12, seconds: [3, 240], long_side: 1080 };
+export const FOOTAGE_LIMITS = { videos: 12, seconds: [3, 240], long_side: 1080, testimonial_long_side: 720 };
+/** The kinds of finished video that are added as they are: the gym's own cut ("real"), or a member's testimonial (testimonial-video.mjs). */
+export const FOOTAGE_KINDS = ["real", "testimonial"];
 
 const slug = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "area";
 const okId = (id) => /^[a-z0-9][a-z0-9-]{2,79}$/.test(String(id || ""));
@@ -46,8 +49,11 @@ export function probeVideo(file) {
 }
 
 /** What stops a list of videos from being added, in words. `facts` are each file's probe, in order (null: no file). */
-export function footageProblems({ batchId, offer, locations, audience = null, videos, facts = [] }) {
+export function footageProblems({ batchId, offer, locations, audience = null, videos, facts = [], kind = FOOTAGE_KIND }) {
   const errs = [];
+  if (!FOOTAGE_KINDS.includes(kind)) errs.push(`a video added as it is is one of: ${FOOTAGE_KINDS.join(", ")}`);
+  // A testimonial is often all there is of it — a download of the gym's own post, at 720 wide — so it is taken at that size; a cut made here is 1080.
+  const least = kind === "testimonial" ? FOOTAGE_LIMITS.testimonial_long_side : FOOTAGE_LIMITS.long_side;
   if (!okId(batchId)) errs.push("the batch needs an id of small letters, digits and hyphens");
   if (!Array.isArray(locations) || !locations.length) errs.push("name at least one location: the area around the gym, never the whole country");
   for (const location of locations || []) for (const e of validateInputs({ location, audience, offer })) if (!errs.includes(e)) errs.push(e);
@@ -59,7 +65,7 @@ export function footageProblems({ batchId, offer, locations, audience = null, vi
     if (!f.video) return errs.push(`${n}: the file has no picture`);
     if (!f.sound) errs.push(`${n}: the file has no sound track`);
     if (f.h * 9 !== f.w * 16) errs.push(`${n}: it is ${f.w}×${f.h}; a video ad here is 9:16 (1080×1920)`);
-    else if (f.h < FOOTAGE_LIMITS.long_side) errs.push(`${n}: it is ${f.w}×${f.h}, smaller than 1080×1920`);
+    else if (f.w < least) errs.push(`${n}: it is ${f.w}×${f.h}, smaller than ${least}×${Math.round(least * 16 / 9)}`);
     if (f.seconds < FOOTAGE_LIMITS.seconds[0] || f.seconds > FOOTAGE_LIMITS.seconds[1]) errs.push(`${n}: it runs ${f.seconds} s; between ${FOOTAGE_LIMITS.seconds[0]} and ${FOOTAGE_LIMITS.seconds[1]} s is taken`);
     if (v.words != null && (!Array.isArray(v.words) || v.words.some((w) => typeof w !== "string"))) errs.push(`${n}: its words are a list of lines`);
   });
@@ -70,29 +76,32 @@ export function footageProblems({ batchId, offer, locations, audience = null, vi
  * Add finished videos to a gym as a new batch of ads. Nothing that exists is touched: an id with a brief or outputs
  * on disk is refused. Returns { batch_id, ads, dir }.
  */
-export function addFootageBatch({ brandDir, batchId, offer, locations, audience = null, videos, now = new Date(), log = () => {} }) {
+export function addFootageBatch({ brandDir, batchId, offer, locations, audience = null, videos, kind = FOOTAGE_KIND, consent = null, now = new Date(), log = () => {} }) {
   const dir = resolve(brandDir), briefDir = join(dir, "batches", String(batchId)), out = join(dir, "outputs", String(batchId));
   if (!existsSync(join(dir, "gym-profile.json"))) throw new Error(`no gym at ${dir}`);
   const facts = (videos || []).map((v) => (v?.file && existsSync(v.file) ? probeVideo(v.file) : null));
-  const errs = footageProblems({ batchId, offer, locations, audience, videos, facts });
+  const errs = footageProblems({ batchId, offer, locations, audience, videos, facts, kind });
+  // A testimonial shows a real member: the owner's word that they agreed to appear in an advert is recorded on the video.
+  if (kind === "testimonial" && !(consent && typeof consent.by === "string" && consent.by.trim().length >= 3)) errs.push("a testimonial shows a real person: say who confirmed that each person agreed to appear in an advert, and how");
+  const what = kind === "testimonial" ? "testimonial" : "real", idOf = (file) => `t-${createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 10)}`;
   if (errs.length) throw new Error(`these videos cannot be added:\n- ${errs.join("\n- ")}`);
   if (existsSync(briefDir) || existsSync(out)) throw new Error(`a batch called ${batchId} is already there: nothing is written over it`);
   mkdirSync(briefDir, { recursive: true }); mkdirSync(out, { recursive: true });
   const ads = []; let no = 101;
   videos.forEach((v, i) => locations.forEach((location, li) => {
-    const id = `v${String(i + 1).padStart(2, "0")}`, name = `${id}-${slug(location)}`, folder = `${no++}-${name}-real-video`, base = `${folder}/9x16/${name}_9x16_v1`;
+    const id = `v${String(i + 1).padStart(2, "0")}`, name = `${id}-${slug(location)}`, folder = `${no++}-${name}-${what}-video`, base = `${folder}/9x16/${name}_9x16_v1`;
     mkdirSync(join(out, folder, "9x16"), { recursive: true });
     copyFileSync(v.file, join(out, `${base}.mp4`));
     const at = Math.min(Math.max(0, Number(v.poster_at) || 1), Math.max(0, facts[i].seconds - 0.2));
     execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-ss", String(at), "-i", v.file, "-frames:v", "1", "-q:v", "2", join(out, `${base}.jpg`)]);
-    ads.push({ folder, file: `${base}.jpg`, video_file: `${base}.mp4`, candidate: id, location, location_index: li, photos: [], photo_files: [], treatment: "video-real", style: "video", palette: null, ratio: "9x16", format: "presenter-video",
-      video: { kind: FOOTAGE_KIND, script_id: null, style: null, pain: null, title: v.title || null, seconds: facts[i].seconds, words: v.words || [], notes: [], source: v.source || null },
+    ads.push({ folder, file: `${base}.jpg`, video_file: `${base}.mp4`, candidate: id, location, location_index: li, photos: [], photo_files: [], treatment: `video-${what}`, style: "video", palette: null, ratio: "9x16", format: "presenter-video",
+      video: { kind, ...(kind === "testimonial" ? { id: idOf(v.file), consent: { by: consent.by.trim(), on: now.toISOString().slice(0, 10) }, small: facts[i].w < FOOTAGE_LIMITS.long_side } : {}), script_id: null, style: null, pain: null, title: v.title || null, seconds: facts[i].seconds, words: v.words || [], notes: [], source: v.source || null },
       crop: [], words: { location, audience, offer, free: false }, replaced: null });
     log(`${folder} · ${facts[i].seconds} s`);
   }));
   const made = now.toISOString(), seconds = Math.round(facts.reduce((t, f) => t + f.seconds, 0));
   writeFileSync(join(briefDir, "brief.json"), JSON.stringify({ batch_id: batchId, offer, locations, audience, free: false, generated: 0, real: [], imported: FOOTAGE }, null, 2) + "\n");
-  writeFileSync(join(out, "batch.json"), JSON.stringify({ batch_id: batchId, made, imported: FOOTAGE, ratio: "4x5", image_calls: 0, image_calls_this_run: 0, photos: [], videos: { real: videos.length }, video_seconds: seconds, failed: [], ads }, null, 2) + "\n");
+  writeFileSync(join(out, "batch.json"), JSON.stringify({ batch_id: batchId, made, imported: FOOTAGE, ratio: "4x5", image_calls: 0, image_calls_this_run: 0, photos: [], videos: { [what]: videos.length }, video_seconds: seconds, failed: [], ads }, null, 2) + "\n");
   writeFileSync(join(out, "progress.json"), JSON.stringify({ batch_id: batchId, run: "import", started: made, stage: "done", calls: 0, ads: ads.length, failed: 0, error: null, photos: {}, updated: made, image_calls: 0 }, null, 2) + "\n");
   return { batch_id: batchId, ads: ads.length, dir: out };
 }

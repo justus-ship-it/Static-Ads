@@ -111,8 +111,8 @@ test("PV2 scripts drafted for the owner: one text call that is told the shape, t
     const ask = async (img, p, s, o) => { asked.push({ img, p, model: o.model }); return { scripts: [{ pain: PAIN, lines: GOOD }, { pain: PAIN, lines: [GOOD[0], "I built the 12 Week Full Body Transformation for exactly that, with a coach beside you.", GOOD[2]] }, { pain: PAIN, lines: [GOOD[0], "The programme is built for exactly that, with a coach beside you and a plan for the week.", GOOD[2]] }, { pain: PAIN, lines: GOOD }] }; };
     addPain(g, OFFER, PAIN, { profile });
     const r = await draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, audience: "LADIES WANTED", count: 4, ask, words: LOOSE });
-    assert.deepEqual([asked.length, asked[0].img, r.calls, r.reads, r.unread, r.added.length, r.added[0].status, r.added[0].source, r.added[0].pain], [2, null, 1, 1, true, 1, "draft", "drafted", PAIN], "one drafting call, and one call that reads the drafts aloud");
-    assert.match(asked[1].p, /^Each numbered line below is spoken aloud to the camera by one person in a short video advert for Test Gym./);
+    assert.deepEqual([asked.length, asked[0].img, r.calls, r.reads, r.unread, r.added.length, r.added[0].status, r.added[0].source, r.added[0].pain], [4, null, 3, 1, true, 1, "draft", "drafted", PAIN], "one drafting call, one more for each of the two drafts that broke a rule (said again once, 2026-11-22), and one call that reads the drafts aloud");
+    assert.match(asked.at(-1).p, /^Each numbered line below is spoken aloud to the camera by one person in a short video advert for Test Gym./);
     assert.deepEqual(r.dropped.map((x) => x.reason.slice(0, 36)), ['line 2 speaks as one person ("I"): t', "the script must name the offer in it", "this script is already here"]);
     assert.deepEqual(keptScripts(g, OFFER), [], "a draft is not made into a video until the owner keeps it");
     await assert.rejects(draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: "", ask }), /exact words are needed/); await assert.rejects(draftScripts({ brandDir: g, libraryDir: join(d, "lib"), offer: OFFER, count: 9, ask }), /count must be 1 to 6/);
@@ -133,9 +133,10 @@ test("PV3 one script, a video for each location: a still for each line (the firs
     assert.match(F.calls.image[0].prompt, /^A real photograph taken on a phone held upright, 9:16\. He is a Singaporean man of about 36, .* standing beside the dumbbell rack\./); assert.match(F.calls.image[1].prompt, /The person is the SAME person as in the first image/);
     assert.ok(F.calls.image.every((c) => /There is no text of any kind anywhere in the picture/.test(c.prompt) && /nobody in that image appears/.test(c.prompt)));
     // Clips: line 1 once a location; line 2 twice (other words, made again); line 3 twice (a noted fault, made once more); the shared lines are never made again for the second location.
-    assert.deepEqual(F.calls.clip.map((c) => [plain(c.out), c.seconds, plain(c.image)]), [["line-1-bishan.mp4", S1, "still-1.jpg"], ["line-2.mp4", S2, "still-2.jpg"], ["line-2-take2.mp4", S2, "still-2.jpg"], ["line-3.mp4", S3, "still-3.jpg"], ["line-3-take2.mp4", S3, "still-3.jpg"], ["line-1-ang-mo-kio.mp4", S1B, "still-1.jpg"]]);
+    // The closing cut is asked for FIRST (2026-11-22: it is the cut Google refuses) — its first take only; its one retake for a small note waits for its turn, after the other lines.
+    assert.deepEqual(F.calls.clip.map((c) => [plain(c.out), c.seconds, plain(c.image)]), [["line-3.mp4", S3, "still-3.jpg"], ["line-1-bishan.mp4", S1, "still-1.jpg"], ["line-2.mp4", S2, "still-2.jpg"], ["line-2-take2.mp4", S2, "still-2.jpg"], ["line-3-take2.mp4", S3, "still-3.jpg"], ["line-1-ang-mo-kio.mp4", S1B, "still-1.jpg"]]);
     assert.match(F.calls.image[1].prompt, /a different part of the room from the first image.*a step closer, framed from the chest up/); assert.match(F.calls.image[2].prompt, /a few steps back, framed from the thighs up/);
-    assert.match(F.calls.clip[0].prompt, /says, in a warm, natural Singaporean English voice, at an easy conversational pace: "People in Bishan, this one is for you\./); assert.match(F.calls.clip[5].prompt, /"People in Ang Mo Kio, this one is for you\./);
+    assert.match(F.calls.clip.find((c) => /line-1-bishan/.test(c.out)).prompt, /says, in a warm, natural Singaporean English voice, at an easy conversational pace: "People in Bishan, this one is for you\./); assert.match(F.calls.clip[5].prompt, /"People in Ang Mo Kio, this one is for you\./);
     assert.ok(F.calls.clip.every((c) => /Exactly one person is in the room for the whole clip/.test(c.prompt) && /His mouth forms exactly these words/.test(c.prompt)));
     assert.deepEqual(R.spent, { seconds: S1 + S2 + S2 + S3 + S3 + S1B, images: 3, checks: 6 });
     assert.ok(log.some((l) => /line-3\.mp4: said as written, one person, no lettering · noted: warped fingers; a stiff hand — made once more/.test(l)), log.join("\n"));
@@ -228,7 +229,7 @@ test("PV4 what is refused, and why: nothing is made until the gym says who prese
     // Lettering the check cannot place fails the take; it may be in the picture itself, so the second take is filmed from a fresh picture of the presenter.
     const C = fakes({ text: (line) => (/built for exactly/.test(line) ? ["GYM"] : []) });
     r = await makePresenterVideos({ ...base, outDir: join(g, "o3"), store: join(g, "o3", "clips"), models: C.models });
-    assert.deepEqual([r.videos[0].failed, r.videos[0].flags.map((f) => [f.line, f.why, f.kind]), C.calls.image.length, C.calls.clip.map((c) => /-b\.jpg$/.test(c.image))], [undefined, [[2, "words appear in the picture: GYM", "lettering"]], 4, [false, false, true, false]]);
+    assert.deepEqual([r.videos[0].failed, r.videos[0].flags.map((f) => [f.line, f.why, f.kind]), C.calls.image.length, C.calls.clip.map((c) => /-b\.jpg$/.test(c.image))], [undefined, [[2, "words appear in the picture: GYM", "lettering"]], 4, [false, false, false, true]]);
     // A maker's name on a machine, a machine's display: the room's own — a note, never a failure and never a retake.
     const Ce = fakes({ lettering: (line) => (/built for exactly/.test(line) ? [{ text: "Life Fitness", on: "equipment" }, { text: "12:40", on: "screen" }] : []) }), logE = [];
     r = await makePresenterVideos({ ...base, outDir: join(g, "o3e"), store: join(g, "o3e", "clips"), models: Ce.models, log: (m) => logE.push(m) });
@@ -254,7 +255,8 @@ test("PV4 what is refused, and why: nothing is made until the gym says who prese
     // The cap: 20 seconds covers lines 1 and 2; line 3's clip is never asked for.
     const D = fakes();
     r = await makePresenterVideos({ ...base, outDir: join(g, "o4"), store: join(g, "o4", "clips"), caps: { seconds: 20, images: 5 }, models: D.models });
-    assert.deepEqual([r.videos[0].failed, D.calls.clip.length, r.spent.seconds], ["line 3: the cap of 20 seconds of video was reached", 2, S1 + S2]);
+    // (The closing cut is filmed first, so it is line 1 that the cap stops: one clip made, and the video is not finished either way.)
+    assert.deepEqual([r.videos[0].failed, D.calls.clip.length, r.spent.seconds], ["line 1: the cap of 20 seconds of video was reached", 1, S3]);
     const E = fakes();
     r = await makePresenterVideos({ ...base, outDir: join(g, "o5"), store: join(g, "o5", "clips"), caps: { seconds: 80, images: 2 }, models: E.models });
     assert.deepEqual([r.videos[0].failed, E.calls.image.length, E.calls.clip.length], ["the cap of 2 image calls was reached before the presenter's stills were made", 2, 0]);
@@ -450,8 +452,8 @@ test("PV8 Google may refuse a clip (2026-11-14: Aether Athletics' closing line, 
     assert.deepEqual([cost.clips.length, cost.images, cost.clips[2].line, cost.clips[2].seconds], [3, 3, `${ALONE[2]} ${C}`, clipSeconds(`${ALONE[2]} ${C}`)]);
     const script = addScript(g, { lines: ALONE, offer: OFFER }, { profile, closing: C }), log = [];
     const F = fakes(), R = await makePresenterVideos({ gymDir: g, outDir: join(g, "o1"), store: join(g, "o1", "clips"), script, areas: ["BISHAN"], offer: OFFER, room, profile, closing: C, caps: { seconds: 80, images: 5 }, takes: 1, models: F.models, log: (m) => log.push(m) });
-    assert.deepEqual([R.videos[0].failed, F.calls.image.length, F.calls.clip.map((c) => plain(c.out)), R.videos[0].words[2], R.spent.images], [undefined, 3, ["line-1-bishan.mp4", "line-2.mp4", "line-3.mp4"], `${ALONE[2]} ${C}`, 3]);
-    assert.ok(F.calls.clip[2].prompt.includes(`"${ALONE[2]} ${C}"`) && log.includes("the closing line is filmed with line 3 as one cut: Google's video model refuses it as a clip of its own"), log.join("\n"));
+    assert.deepEqual([R.videos[0].failed, F.calls.image.length, F.calls.clip.map((c) => plain(c.out)), R.videos[0].words[2], R.spent.images], [undefined, 3, ["line-3.mp4", "line-1-bishan.mp4", "line-2.mp4"], `${ALONE[2]} ${C}`, 3]);
+    assert.ok(F.calls.clip[0].prompt.includes(`"${ALONE[2]} ${C}"`) && log.includes("the closing line is filmed with line 3 as one cut: Google's video model refuses it as a clip of its own"), log.join("\n"));
     // A refusal: what counts as one, and what it is in plain words.
     assert.deepEqual([isRefusal(REFUSED()), isRefusal(new Error("Blocked by safety filter: PROHIBITED_CONTENT")), isRefusal(Object.assign(new Error("no video came back for x.mp4"), { refused: true })), isRefusal(new Error("vision check failed (503): overloaded")), isBusy(REFUSED())], [true, true, true, false, false]);
     assert.deepEqual([explainGemini(REFUSED()).kind, explainGemini(new Error("GEMINI_KEY not found (.env or environment)")).kind, explainGemini(new Error('Gemini API error (429): {"error":{"status":"RESOURCE_EXHAUSTED"}}')).kind, explainGemini(new Error("vision check failed (403): PERMISSION_DENIED")).kind, explainGemini(new Error("Gemini API error (404): models/x is not found for API version v1beta")).kind, explainGemini(new Error("vision check failed (503): The model is overloaded")).kind, explainGemini(new Error("fetch failed")).kind, explainGemini(Object.assign(new Error("x"), { name: "TimeoutError" })).kind, explainGemini(new Error("no approved scenes yet"))], ["refused", "key", "quota", "access", "model", "busy", "network", "timeout", null]);
@@ -467,7 +469,7 @@ test("PV8 Google may refuse a clip (2026-11-14: Aether Athletics' closing line, 
     // Refused twice on its picture: a fresh picture of the presenter is made for that line, and it is filmed on that one; a later run goes straight to it.
     const B = fakes(), clipB = B.models.clip; B.models.clip = async (x) => { if (/built for exactly that/.test(x.prompt) && !/-b\.jpg$/.test(x.image)) throw REFUSED(); return clipB(x); };
     const logB = [], rb = await makePresenterVideos({ ...base, outDir: join(g, "o3"), store: join(g, "o3", "clips"), models: B.models, log: (m) => logB.push(m) });
-    assert.deepEqual([rb.videos[0].failed, B.calls.image.length, plain(B.calls.image[3].out), B.calls.image[3].refs.map(plain), B.calls.clip.map((c) => plain(c.image)), rb.spent.images, rb.spent.seconds], [undefined, 4, "still-2-b.jpg", ["still-1.jpg", "room.png"], ["still-1.jpg", "still-2-b.jpg", "still-3.jpg"], 4, S(s2.lines[0], "BISHAN") + S2 + S3]);
+    assert.deepEqual([rb.videos[0].failed, B.calls.image.length, plain(B.calls.image[3].out), B.calls.image[3].refs.map(plain), B.calls.clip.map((c) => plain(c.image)), rb.spent.images, rb.spent.seconds], [undefined, 4, "still-2-b.jpg", ["still-1.jpg", "room.png"], ["still-3.jpg", "still-1.jpg", "still-2-b.jpg"], 4, S(s2.lines[0], "BISHAN") + S2 + S3]);
     assert.ok(logB.includes("  a fresh picture of the presenter for line 2"), logB.join("\n"));
     const B2 = fakes(), clipB2 = B2.models.clip; let asked = 0; B2.models.clip = async (x) => { asked++; return clipB2(x); };
     const rb2 = await makePresenterVideos({ ...base, outDir: join(g, "o3"), store: join(g, "o3", "clips"), models: B2.models });
@@ -580,8 +582,9 @@ test("PV10 how a word is said, and an ending in two beats (2026-11-14, the owner
     const script = addScript(g, { lines: GOOD, offer: OFFER }, { profile, closing: C }), store = join(g, "clips");
     const base = { gymDir: g, outDir: join(g, "o1"), store, script, areas: ["BOAT QUAY"], offer: OFFER, room, profile, closing: C, caps: { seconds: 120, images: 5 } };
     const A = fakes(), ra = await makePresenterVideos({ ...base, takes: 1, saidList: [], models: A.models });
-    assert.deepEqual([ra.videos[0].failed, A.calls.clip.length, /is pronounced/.test(A.calls.clip[0].prompt)], [undefined, 3, false]);
-    assert.match(A.calls.clip[0].prompt, /"People in Boat Quay, this one is for you\./, "with no list the line is read as written");
+    const A1 = A.calls.clip.find((c) => /line-1/.test(c.out));
+    assert.deepEqual([ra.videos[0].failed, A.calls.clip.length, /is pronounced/.test(A1.prompt)], [undefined, 3, false]);
+    assert.match(A1.prompt, /"People in Boat Quay, this one is for you\./, "with no list the line is read as written");
     assert.deepEqual([videoNeeds({ gymDir: g, script, areas: ["BOAT QUAY"], room, profile, closing: C, store, saidList: [] }).seconds, videoNeeds({ gymDir: g, script, areas: ["BOAT QUAY"], room, profile, closing: C, store, saidList: LIST }).clips.map((c) => c.on_file)], [0, [false, true, true]], "known before the run: the one line with the word");
     // The fake hears what the presenter was given ("Boat Key"): the check takes it for the word as written, one take is enough, and the line names the word for the owner's ear.
     const B = fakes(), rb = await makePresenterVideos({ ...base, takes: 2, saidList: LIST, models: B.models });
@@ -722,7 +725,7 @@ test("PV12 plain words (2026-11-15, the owner: \"the vocabulary in the video …
       if (/Propose the SMALLEST edit/.test(p)) return /bring back your vitality\. A coach/.test(p) && /fitter/.test(p) ? { lines: SECOND, note: "small words" } : { lines: p.match(/^\d\. .*$/gm).map((l) => l.replace(/^\d\. /, "")), note: "nothing" };
       return { scripts: [{ pain: PAIN, lines: [SECOND[0], HARD[1], GOOD[2]] }, { pain: PAIN, lines: [GOOD[0].replace("stronger", "leaner"), HARD[1], GOOD[2]] }, { pain: PAIN, lines: [GOOD[0].replace("stronger", "better"), "I built the 12 Week Full Body Transformation to bring back your vitality, with a coach beside you.", GOOD[2]] }] }; };
     const r = await draftScripts({ brandDir: g, libraryDir: join(d, "lib2"), offer: OFFER, count: 3, ask, words: LOOSE });
-    assert.deepEqual([r.calls, r.reads, r.mended, r.added.length, r.added[0].lines[1], asked.length], [3, 1, 1, 1, SECOND[1], 4]);
+    assert.deepEqual([r.calls, r.reads, r.mended, r.added.length, r.added[0].lines[1], asked.length], [4, 1, 1, 1, SECOND[1], 5]);   // every draft that breaks a rule is said again once (2026-11-22), whatever the rule
     assert.deepEqual(r.dropped.map((x) => x.reason.slice(0, 26)), ['line 2: "vitality" is not ', 'line 2 speaks as one perso']);
     // A script kept before the rule needs an edit, and the agent proposes it: the hard words swapped, the rest as it was.
     const data = JSON.parse(readFileSync(join(g, SCRIPTS_FILE), "utf-8")); data.scripts.push({ id: "v-old", lines: HARD, offer: OFFER, status: "kept", source: "drafted", added: "2026-11-14" }); writeFileSync(join(g, SCRIPTS_FILE), JSON.stringify(data));
@@ -774,11 +777,11 @@ test("PV13 the second kind, with exercises (2026-11-15, the owner, with a coach'
     assert.deepEqual(F1.calls.image.map((c) => c.refs.map(plain)), [["room.png"], ["still-1.jpg", "room.png"], ["still-1.jpg", "room.png"], ["still-1.jpg", "room.png"]], "the presenter's own picture first, from the room; every cut's picture from it and the room");
     assert.match(F1.calls.image[0].prompt, /standing beside the dumbbell rack/); assert.ok(F1.calls.image[1].prompt.includes(mine[0].m.pose({ He: "He", he: "he", his: "his" }, mine[0].k, (k) => ["dumbbell", "plate", "box"].includes(k))));
     // A move cut is TWO clips (2026-11-16, "Build 3"): the move alone in silence (4 s), then the line as an ordinary talking clip that starts from the move clip's last frame.
-    assert.deepEqual([F1.calls.clip.map((c) => c.seconds), F1.calls.clip.map((c) => /-move-[0-9a-f]{6}\.mp4$/.test(c.out)), F1.calls.clip.map((c) => /\.last\.png$/.test(c.image)), MOVE_SECONDS], [[MOVE_SECONDS, S1, S2, MOVE_SECONDS, S3], [true, false, false, true, false], [false, true, false, false, true], 4]);
+    assert.deepEqual([F1.calls.clip.map((c) => c.seconds), F1.calls.clip.map((c) => /-move-[0-9a-f]{6}\.mp4$/.test(c.out)), F1.calls.clip.map((c) => /\.last\.png$/.test(c.image)), MOVE_SECONDS], [[MOVE_SECONDS, S3, MOVE_SECONDS, S1, S2], [true, false, true, false, false], [false, true, false, true, false], 4]);   // the closing cut first: its move, its line; then the others
     assert.match(F1.calls.clip[0].prompt, /^Bring this photograph to life as 4 seconds of video\. Nobody speaks at any point: his mouth stays closed and there is no voice\. He does two .* and holds still\./); assert.doesNotMatch(F1.calls.clip[0].prompt, /pace: "/);
-    assert.ok(F1.calls.clip[1].prompt.includes('says, in a warm, natural Singaporean English voice, at an easy conversational pace: "People in Bishan, this one is for you.') && /When the sentence is finished he stops talking/.test(F1.calls.clip[1].prompt) && !/For the first two seconds/.test(F1.calls.clip[1].prompt), F1.calls.clip[1].prompt);
+    assert.ok(F1.calls.clip[3].prompt.includes('says, in a warm, natural Singaporean English voice, at an easy conversational pace: "People in Bishan, this one is for you.') && /When the sentence is finished he stops talking/.test(F1.calls.clip[3].prompt) && !/For the first two seconds/.test(F1.calls.clip[3].prompt), F1.calls.clip[3].prompt);   // the closing cut's move and line come first: line 1's talking clip is the fourth
     assert.equal(F1.calls.clip[1].image, F1.calls.clip[0].out.replace(/\.mp4$/, ".last.png"), "the line starts on the frame the move ended on"); assert.ok(existsSync(F1.calls.clip[1].image));
-    assert.match(F1.calls.clip[2].prompt, /keeps looking into the camera and says/);
+    assert.match(F1.calls.clip[4].prompt, /keeps looking into the camera and says/);   // line 2, the one cut with no move, is filmed last
     assert.ok(logged.some((m) => /^line 1, the move, take 1: 4 s$/.test(m)) && logged.some((m) => /line-1-move-[0-9a-f]{6}\.mp4: .+, done in silence$/.test(m)), logged.join("\n"));
     assert.deepEqual([v.kind, v.failed, v.flags, v.moves, v.parts.map((p) => p.move)], ["active", undefined, undefined, [1, 2, 3].map((n) => ({ line: n, move: moveLabel(mine[n - 1]) })), mine.map(moveLabel)]);
     assert.deepEqual(v.lines.map((l) => l.speech.kept[0]), [0, 1, 2].map(() => Math.round((QUIET_START - LEAD) * 100) / 100), "every line is cut to its voice: the move plays before it, whole, as its own clip");
@@ -788,7 +791,7 @@ test("PV13 the second kind, with exercises (2026-11-15, the owner, with a coach'
     // On file afterwards: nothing to film, nothing to picture; the same script filmed talking uses the same presenter's picture and films its own clips.
     const need1 = videoNeeds({ gymDir: g, script, areas: ["BISHAN"], room, profile, kind: "active" }); assert.deepEqual([need1.seconds, need1.images, need1.reused], [0, 0, S1 + S2 + S3 + 2 * MOVE_LEAD]);
     const F2 = fakes(); const T = await makePresenterVideos({ gymDir: g, outDir: join(g, "outputs", "b2", "videos"), script, areas: ["BISHAN"], offer: OFFER, room, profile, caps: { seconds: 120, images: 8 }, takes: 2, models: F2.models });
-    assert.deepEqual([T.videos[0].kind, T.videos[0].moves, F2.calls.image.length, F2.calls.clip.map((c) => c.seconds)], ["presenter", undefined, 2, [S1, S2, S3]], "its own clips, the words alone; two pictures, the presenter's own being on file");
+    assert.deepEqual([T.videos[0].kind, T.videos[0].moves, F2.calls.image.length, F2.calls.clip.map((c) => c.seconds)], ["presenter", undefined, 2, [S3, S1, S2]], "its own clips, the words alone; two pictures, the presenter's own being on file");
     assert.ok(F2.calls.image.every((c) => plain(c.refs[0]) === "still-1.jpg"), "one presenter for both kinds of the script");
     // The check: a move that was not done fails the take; the cut is made all the same, flagged, for the owner to decide.
     const B = gym(), s2 = addScript(B.g, { lines: GOOD, offer: OFFER }, { profile: B.profile }), F3 = fakes({ moved: (line, n, file) => !/line-1-move-/.test(file) });
@@ -799,7 +802,7 @@ test("PV13 the second kind, with exercises (2026-11-15, the owner, with a coach'
       const F4 = fakes({ moved: () => true }), real = F4.models.clip; F4.models.clip = async (o) => { if (/Nobody speaks at any point/.test(o.prompt)) throw new Error("Request blocked due to prohibited content guidelines"); return real(o); };
       const C4 = gym(), s4 = addScript(C4.g, { lines: GOOD, offer: OFFER }, { profile: C4.profile }), lg4 = [], base4 = { gymDir: C4.g, outDir: join(C4.g, "o"), script: s4, areas: ["BISHAN"], offer: OFFER, room: C4.room, profile: C4.profile, kind: "active", caps: { seconds: 200, images: 8 }, takes: 2 };
       const Y = await makePresenterVideos({ ...base4, models: F4.models, log: (m) => lg4.push(m) });
-      assert.deepEqual([Y.videos[0].failed, Y.videos[0].flags, F4.calls.clip.map((c) => c.seconds), /For the first two seconds he says nothing/.test(F4.calls.clip[0].prompt)], [undefined, undefined, [S1 + MOVE_LEAD, S2, S3 + MOVE_LEAD], true]);
+      assert.deepEqual([Y.videos[0].failed, Y.videos[0].flags, F4.calls.clip.map((c) => c.seconds), /For the first two seconds he says nothing/.test(F4.calls.clip[0].prompt)], [undefined, undefined, [S3 + MOVE_LEAD, S1 + MOVE_LEAD, S2], true]);   // the closing cut first
       assert.ok(lg4.some((m) => /the move could not be filmed on its own: the cut is filmed the old way/.test(m)), lg4.join("\n"));
       const F5 = fakes({ moved: () => true }), Z = await makePresenterVideos({ ...base4, models: F5.models });
       assert.deepEqual([F5.calls.clip.length, F5.calls.image.length, Z.videos[0].flags, videoNeeds({ gymDir: C4.g, script: s4, areas: ["BISHAN"], room: C4.room, profile: C4.profile, kind: "active" }).seconds], [0, 0, undefined, 0], "the one-clip takes that passed stand");
@@ -972,16 +975,16 @@ test("PV16 a gym's real coach in place of the invented presenter (2026-11-17, th
     const store = join(g, "video-clips", `${script.id}--mei`);
     assert.deepEqual([F.calls.image.length, existsSync(store), existsSync(join(g, "video-clips", script.id)), R.spent.images], [0, true, false, 0], "no picture is made, and the invented presenter's store is not touched");
     // Each cut starts from a real frame, one after the other, copied as it is.
-    assert.deepEqual(F.calls.clip.map((c) => [plain(c.out), plain(c.image)]), [["line-1-bishan.mp4", "still-1.jpg"], ["line-2.mp4", "still-2.jpg"], ["line-2-take2.mp4", "still-2.jpg"], ["line-3.mp4", "still-3.jpg"], ["line-3-take2.mp4", "still-3.jpg"]]);
-    assert.deepEqual([F.calls.clip[0], F.calls.clip[1], F.calls.clip[3]].map((c) => readFileSync(c.image).equals(readFileSync(starts[[0, 1, 0][[F.calls.clip[0], F.calls.clip[1], F.calls.clip[3]].indexOf(c)]]))), [true, true, true]);
-    const p = F.calls.clip[0].prompt;
+    assert.deepEqual(F.calls.clip.map((c) => [plain(c.out), plain(c.image)]), [["line-3.mp4", "still-3.jpg"], ["line-3-take2.mp4", "still-3.jpg"], ["line-1-bishan.mp4", "still-1.jpg"], ["line-2.mp4", "still-2.jpg"], ["line-2-take2.mp4", "still-2.jpg"]]);
+    assert.deepEqual([F.calls.clip[2], F.calls.clip[3], F.calls.clip[0]].map((c) => readFileSync(c.image).equals(readFileSync(starts[[0, 1, 0][[F.calls.clip[2], F.calls.clip[3], F.calls.clip[0]].indexOf(c)]]))), [true, true, true]);
+    const p = F.calls.clip.find((c) => /line-1-bishan/.test(c.out)).prompt;
     assert.match(p, /The person in the photograph is a real coach at this gym: keep the coach's face, hair, build, clothes and the room exactly as they are/);
     assert.match(p, /says, in this voice — a clear, medium-low voice with a light Singaporean accent, warm and measured — at an easy, natural pace: "People in Bishan, this one is for you\./);
     assert.match(p, /the logo and the words STRONGER THAN YESTERDAY, sharp and readable, never warped, never changed — and so do any lettering on the walls behind/);
     assert.match(p, /The camera is fixed on a tripod for the whole clip: it does not move closer, pull back, sway or turn/); assert.ok(!/handheld sway/.test(p)); assert.match(p, /nothing in front of the print on the coach's top/);
     assert.ok(!/There is no text of any kind/.test(p) && !/\b(he|she|his|her|him)\b/i.test(p), "the gym's own words are kept, and a coach is never written as he or she");
     // Held against the picture each take started from, only when the take is otherwise right.
-    assert.deepEqual(sames, [["still-1.jpg", "line-1-bishan.mp4"], ["still-2.jpg", "line-2.mp4"], ["still-2.jpg", "line-2-take2.mp4"], ["still-3.jpg", "line-3.mp4"], ["still-3.jpg", "line-3-take2.mp4"]]);
+    assert.deepEqual(sames, [["still-3.jpg", "line-3.mp4"], ["still-3.jpg", "line-3-take2.mp4"], ["still-1.jpg", "line-1-bishan.mp4"], ["still-2.jpg", "line-2.mp4"], ["still-2.jpg", "line-2-take2.mp4"]]);
     assert.ok(logged.some((l) => /line-2-[0-9a-f]{6}\.mp4: the gym's lettering on the wall changed \(it reads "BE TH BE PON"\)/.test(l)) && logged.some((l) => /line-2-[0-9a-f]{6}-take2\.mp4: said as written, one person, Mei and the uniform as they are/.test(l)), logged.join("\n"));
     // The video is cut all the same, says who presents, and waits for the owner on the line that does not look like the coach.
     const v = R.videos[0];
@@ -1039,8 +1042,8 @@ test("PV17 what BFIT's re-make taught (2026-11-18): whatever is written in the r
     assert.equal(F.calls.image.filter((c) => plain(c.out) === "still-1.jpg").length, 2);
     // The last line: refused twice from the move's last frame, then filmed standing from a real picture; the video is whole.
     assert.deepEqual([refused.length, v.failed, v.flags, existsSync(join(store, "cut-3-standing.json")), logs.some((l) => /line 3: refused twice after the move — filmed standing instead, from a real picture of Mei/.test(l))], [2, undefined, undefined, true, true], logs.join("\n"));
-    const last = F.calls.clip.at(-1);
-    assert.ok(/^still-3-[0-9a-f]{6}\.jpg$/.test(last.image.split("/").pop()) && starts.some((s) => readFileSync(s).equals(readFileSync(last.image))) && /now is your time/.test(last.prompt), "the line is filmed from a real frame, copied as it is");
+    const last = F.calls.clip.filter((c) => /^still-3-[0-9a-f]{6}\.jpg$/.test(c.image.split("/").pop())).at(-1);
+    assert.ok(last && /^still-3-[0-9a-f]{6}\.jpg$/.test(last.image.split("/").pop()) && starts.some((s) => readFileSync(s).equals(readFileSync(last.image))) && /now is your time/.test(last.prompt), "the line is filmed from a real frame, copied as it is");
     assert.ok(v.moves.length >= 1 && !v.moves.some((m) => m.line === 3), JSON.stringify(v.moves));
     assert.ok(v.parts.every((p) => !p.flag) && !v.notes.some((n) => /^the maker|5$/.test(n)), JSON.stringify(v.notes));
     // It stays so: nothing is left to film, and a second run films nothing and asks Google for nothing.
@@ -1080,8 +1083,10 @@ test("PV18 Chinese scripts (2026-11-20, F45 Xinyi): a line is measured in charac
   assert.equal(pv.spokenLines(linked).at(-1), "如果你想給自己一個好的開始，讓我們更認識你！");
   assert.equal(pv.spokenLines({ ...linked, link_on_screen: false }).at(-1), linked.lines[1]);
   assert.equal(pv.spokenLines({ ...linked, lines: [linked.lines[0], "如果你準備好讓自己的體態變好，快點進連結，讓我們更認識你！"] }).at(-1), "如果你準備好讓自己的體態變好，讓我們更認識你！");
-  const offer = "六週雕塑體態計畫", script = ["如果你在信義區上班，或是住在信義區，", "我們在找10位，參加我們的六週雕塑體態計畫。", "如果你準備好讓自己更有精神，就趁現在！現在就報名，我們會跟你聯絡！"];
+  const offer = "六週雕塑體態計畫", script = ["如果你在信義區工作，或是住在信義區，", "我們在找10位，參加我們的六週雕塑體態計畫。", "如果你準備好讓自己更有精神，就趁現在！現在就報名，我們會跟你聯絡！"];
   assert.deepEqual(scriptProblems(script, { offer, profile }), []);
+  // A word the video model says in the wrong tone is never in a spoken script (2026-11-22): the owner's "use other words".
+  assert.deepEqual(scriptProblems(["如果你在信義區上班，或是住在信義區，", ...script.slice(1)], { offer, profile }), ['line 1 says "上班": the video model says it in the wrong tone — say "工作"']);
   assert.equal(pv.closingFor(script), "現在就報名，我們會跟你聯絡！");
   assert.match(scriptProblems([script[0], script[1], "現在就報名，我們會跟你聯絡！"], { offer, profile }).join(" "), /closing line/, "no bridge before the closing line");
   assert.match(scriptProblems(["我上個月開始在這裡練，", script[1], script[2]], { offer, profile }).join(" "), /speaks as one person/);
@@ -1099,4 +1104,80 @@ test("PV18 Chinese scripts (2026-11-20, F45 Xinyi): a line is measured in charac
   assert.equal(pv.spokenLine("如果你在信義區上班，", said), "如果你在信義區上班，");
   assert.match(clipPrompt({ presenter: { gender: "woman", age: 30, look: "" }, profile, line: "如果你在信義區上班，", seconds: 6, said }), /Pronunciation: "上班" is pronounced shàng bān — 班 in the first tone/);
   assert.deepEqual([pv.saidProblems("上班", "shàng bān"), pv.saidProblems("上班", "上班").length], [[], 1]);
+});
+
+test("PV19 the app makes Chinese videos by itself (2026-11-22, after F45 Xinyi's twenty were made by hand): the gym's own \"say this, not that\" rules are told to the drafter and held by the check, line by line, with the words the video model says in the wrong tone; a Chinese closing that asks for a click is shown on screen without anyone setting it, unless the script says otherwise; a Chinese gym's scripts are drafted in Taiwanese Mandarin to the standard of the scripts the owner approved, measured in characters, and a draft that breaks a rule is dropped; the closing cut is filmed first, and refused outright the rest of that video is not filmed", async () => {
+  const pv = await import("./presenter-video.mjs");
+  const { d, g, room } = gym();
+  try {
+    const profile = { ...JSON.parse(readFileSync(join(g, "gym-profile.json"), "utf-8")), display_name: "F45 Xinyi", locale: { country: "TW", currency: "TWD", languages: ["zh-TW"] } };
+    profile.brand_lock = { ...(profile.brand_lock || {}), voice: { never: [], say_instead: ["一對一諮詢 => 獨一無二的教練諮詢", "計劃 => 計畫", "流汗 => 動起來 [spoken]"], name_in_ads: "F45信義" } };
+    writeFileSync(join(g, "gym-profile.json"), JSON.stringify(profile));
+    const OFFER_ZH = "六週雕塑體態計畫", END = "如果你想更有精神，點進連結吧～讓我們更認識你！";
+    const OK = ["每天忙完工作，累到只想躺在沙發上嗎？", "F45信義的六週雕塑體態計畫，在找10位{AREA}的朋友。", END];
+    assert.deepEqual(scriptProblems(OK, { offer: OFFER_ZH, profile }), []);
+    // The gym's wording, with its line; a rule for speech only holds for a script; the tone words are every Chinese gym's.
+    assert.deepEqual(scriptProblems([OK[0], "我們的六週雕塑體態計畫，有一對一諮詢，一起流汗。", END], { offer: OFFER_ZH, profile }), ['line 2 says "一對一諮詢": at this gym it is "獨一無二的教練諮詢"', 'line 2 says "流汗": at this gym it is "動起來"']);
+    assert.deepEqual(scriptProblems(["每天下班，累到只想躺在沙發上嗎？", OK[1], END], { offer: OFFER_ZH, profile }), ['line 1 says "下班": the video model says it in the wrong tone — say "忙完工作"']);
+    assert.deepEqual(pv.SPOKEN_AVOID_ZH.map((a) => a.word), ["上班", "下班"]);
+    // The link on screen: by itself for a Chinese closing that asks for a click; the script's own word wins; never for English or for a closing with no link.
+    assert.deepEqual([pv.linkOnScreen({ lines: OK }), pv.linkOnScreen({ lines: OK, link_on_screen: false }), pv.linkOnScreen({ lines: [OK[0], OK[1], "如果你準備好讓自己更有精神，就趁現在！現在就報名，我們會跟你聯絡！"] }), pv.linkOnScreen({ lines: GOOD }), pv.linkOnScreen({ lines: GOOD, link_on_screen: true })], [true, false, false, false, true]);
+    assert.deepEqual([pv.spokenLines({ lines: OK }).at(-1), pv.spokenLines({ lines: OK, link_on_screen: false }).at(-1)], ["如果你想更有精神，讓我們更認識你！", END]);
+    // The drafter's request for a Chinese gym: the language, characters not words, the closing sentence, the gym's name as ads say it, its rules, the tone words, the approved scripts as the standard.
+    const { prompt } = pv.buildScriptPrompt({ profile, offer: OFFER_ZH, count: 2, facts: ["一堂課45分鐘"], models: [OK] });
+    for (const re of [/Traditional Chinese as SPOKEN in Taiwan \(zh-TW\)/, /10 to 28 characters and never more/, /the last line may run to 36/, /「點進連結吧～讓我們更認識你！」/, /F45信義's programme 「六週雕塑體態計畫」/, /never "一對一諮詢" → "獨一無二的教練諮詢"/, /never "流汗" → "動起來"/, /上班 \(say 工作\), 下班 \(say 忙完工作\)/, /「一堂課45分鐘」/, /THE STANDARD — scripts the owner has already approved for this gym/, /--- APPROVED 1\n每天忙完工作/, /\{AREA\} in Latin capitals and braces/]) assert.match(prompt, re);
+    assert.doesNotMatch(prompt, /plain spoken English/);
+    assert.match(pv.buildScriptPrompt({ profile: { display_name: "Test Gym", brand_lock: { voice: { say_instead: ["one-to-one session => coach consultation"] } } }, offer: OFFER, count: 1 }).prompt, /plain spoken English[\s\S]*never "one-to-one session" → "coach consultation"/, "an English gym's drafter is told its rules too");
+    assert.deepEqual(pv.draftLengths(["每天忙完工作，累到只想躺在沙發上嗎？每天忙完工作，累到只想躺在沙發上嗎？", END]), ["line 1 is 32 characters: a drafted line is at most 28, so that it is said cleanly in one take — say it shorter, or split it in two lines"]);
+    // Drafting: one kept script is the standard; a draft that says an avoided phrase is dropped with the reason, a clean one arrives as a draft with its link shown on screen.
+    addScript(g, { lines: OK, offer: OFFER_ZH }, { profile });
+    const asked = [];
+    const ask = async (_img, p) => {
+      asked.push(p);
+      if (/Read each line aloud/.test(p)) return { lines: [] };
+      return { scripts: [
+        { pain: "一直說下個月再開始", lines: ["你是不是也一直說，下個月再開始運動？", "我們的六週雕塑體態計畫，這次只找10位。", "如果你想給自己一個好的開始，點進連結吧～讓我們更認識你！"] },
+        { pain: "不知道怎麼開始", lines: ["從來沒在健身房運動過？完全沒關係。", "F45信義的六週雕塑體態計畫，有一對一諮詢。", "如果你想更有自信，點進連結吧～讓我們更認識你！"] },
+      ] };
+    };
+    const r = await pv.draftScripts({ brandDir: g, offer: OFFER_ZH, count: 2, libraryDir: join(d, "lib"), ask });
+    assert.deepEqual([r.added.length, r.added[0].status, pv.linkOnScreen(r.added[0]), r.dropped.length, /一對一諮詢.*獨一無二的教練諮詢/.test(r.dropped[0].reason)], [1, "draft", true, 1, true], JSON.stringify(r.dropped));
+    assert.match(asked[0], /--- APPROVED 1\n每天忙完工作/, "the script he kept is the drafter's standard");
+    assert.match(asked.find((p) => /Read each line aloud/.test(p)) || "", /judge them as Mandarin SPOKEN in Taipei/);
+    // The closing cut first: refused outright, the other cuts of that video are not filmed and nothing is spent on them.
+    const { g: g2, profile: p2, room: room2 } = gym(), script = addScript(g2, { lines: GOOD, offer: OFFER }, { profile: p2 });
+    const F = fakes(), tried = [];
+    const models = { ...F.models, async clip(a) { tried.push(a.out.split("/").pop()); if (/Click the link below/.test(a.prompt)) throw new Error('video failed (400): {"error":{"message":"Request blocked due to prohibited content guidelines.","code":"prohibited_content"}}'); return F.models.clip(a); } };
+    const R = await makePresenterVideos({ gymDir: g2, outDir: join(g2, "o1"), store: join(g2, "o1", "clips"), script, areas: ["BISHAN"], offer: OFFER, room: room2, profile: p2, caps: { seconds: 120, images: 6 }, takes: 2, models });
+    assert.deepEqual([R.videos[0].refused, R.videos[0].closing_refused, F.calls.clip.length, R.spent.seconds, tried.every((n) => /^line-3/.test(n))], [true, true, 0, 0, true], "only the closing cut was asked for, and nothing was filmed");
+    assert.match(R.videos[0].failed, /^line 3: refused by Google's video model .*The other 2 cuts were not filmed, so nothing was spent on them: change the closing words/);
+    assert.ok(room);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("PV20 a new batch films the scripts not filmed yet (2026-11-22: a gym's second batch for the same offer picked among every ready script and could film nothing new): the scripts with a folder of clips are the filmed ones; given them, the pick takes the others first and the filmed ones only to make up the number; without them the pick is the seed's own, as every batch made before; a batch keeps the sheet scripts it was given", async () => {
+  const pv = await import("./presenter-video.mjs"), pp = await import("./paper-video.mjs");
+  const { d, g, profile } = gym();
+  try {
+    const line1 = (w) => `People in {AREA}, this one is for you. If you have wanted to ${w} and never knew where to start, keep watching.`;
+    const ids = ["get stronger", "feel fitter", "move better", "sleep better"].map((w) => addScript(g, { lines: [line1(w), GOOD[1], GOOD[2]], offer: OFFER }, { profile }).id);
+    assert.deepEqual([...pv.filmedScripts(g)], []);
+    for (const id of [ids[0], ids[1]]) mkdirSync(join(g, "video-clips", id), { recursive: true });
+    mkdirSync(join(g, "video-clips", `${ids[2]}--mei`), { recursive: true });      // a coach's clips of a script count as that script filmed
+    assert.deepEqual([...pv.filmedScripts(g)].sort(), [ids[0], ids[1], ids[2]].sort());
+    const fresh = pv.filmedScripts(g), pick = (o) => pv.pickScripts(g, { offer: OFFER, libraryDir: join(d, "lib"), ...o }).map((x) => x.id);
+    assert.equal(pick({ count: 1, seed: "a", fresh })[0], ids[3], "the one script not filmed yet is the first taken");
+    for (const seed of ["a", "b", "c"]) { const got = pick({ count: 3, seed, fresh }); assert.equal(got[0], ids[3]); assert.equal(new Set(got).size, 3); }
+    assert.deepEqual(pick({ count: 4, seed: "a" }).slice().sort(), ids.slice().sort());
+    assert.deepEqual(pick({ count: 2, seed: "a" }), pick({ count: 2, seed: "a" }), "without it, the seed's own order, the same on every run");
+    assert.deepEqual(pick({ count: 2, seed: "a", pin: [ids[1], ids[0]], fresh }), [ids[1], ids[0]], "a batch keeps what it was given");
+    // Sheet scripts: the same, and a pin of their own.
+    const C = pv.CLOSING_LINE, sheetsOf = (w) => [`Want to ${w}?`, "Tired of starting over?", `Join our ${OFFER}`, "A coach beside you", "A plan for your week", "Feel stronger every day", C];
+    const sids = ["get stronger", "feel fitter"].map((w) => pp.addSheetScript(g, { sheets: sheetsOf(w), offer: OFFER }, { profile, closing: C }).id);
+    mkdirSync(join(g, "video-clips", sids[0]), { recursive: true });
+    const spick = (o) => pp.pickSheetScripts(g, { offer: OFFER, libraryDir: join(d, "lib"), ...o }).map((x) => x.id);
+    assert.equal(spick({ count: 1, seed: "a", fresh: pv.filmedScripts(g) })[0], sids[1]);
+    assert.deepEqual(spick({ count: 1, seed: "a", pin: [sids[0]] }), [sids[0]]);
+    assert.throws(() => spick({ count: 1, pin: ["p-000000aaaa"] }), /the batch names white-paper script p-000000aaaa, which is not kept and ready/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });

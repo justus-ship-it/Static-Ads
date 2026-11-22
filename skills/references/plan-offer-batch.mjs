@@ -50,6 +50,7 @@ import { pickSheetScripts, paperNeeds, makePaperVideos } from "./paper-video.mjs
 import { pickCoaches, coachForVideo, readCoaches } from "./coach-look.mjs";
 import { plainGemini } from "./gemini-busy.mjs";
 import { FOOTAGE_NO_RUN } from "./footage-video.mjs";
+import { MERGED, MERGED_NO_RUN } from "./merge-batches.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
 import { makePixelTools } from "./clean-photo.mjs";
 import { whoIn } from "./scene-library.mjs";
@@ -113,6 +114,7 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
   if (brief.coach != null && !(typeof brief.coach === "string" && /^coach-[a-z0-9-]+$/.test(brief.coach))) errs.push("coach must be one of the gym's coaches (its id), or left out to share the videos between them");
   // Which spoken script each spoken video films, in order (2026-11-21: Xinyi's talking v01 and its exercise twin v09 had been one script, and the owner asked for different words in each).
   if (brief.video_scripts != null && !(Array.isArray(brief.video_scripts) && brief.video_scripts.length === spokenCount(brief.videos) && brief.video_scripts.every((x) => typeof x === "string" && /^v-[0-9a-f]{6,}$/.test(x)))) errs.push(`video_scripts must list one spoken script id for each of the ${spokenCount(brief.videos)} talking and exercise videos, in order`);
+  if (brief.paper_scripts != null && !(Array.isArray(brief.paper_scripts) && brief.paper_scripts.length === paperCount(brief.videos) && brief.paper_scripts.every((x) => typeof x === "string" && /^p-[0-9a-f]{6,}$/.test(x)))) errs.push("paper_scripts must list one white-paper script id for each white-paper video, in order");
   if (brief.max_video_seconds != null && !(Number.isInteger(brief.max_video_seconds) && brief.max_video_seconds >= 0 && brief.max_video_seconds <= MAX_VIDEO_SECONDS)) errs.push(`max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`);
   // Cards (Phase 5): text-led ads with no photograph — how many of each kind. No image call.
   errs.push(...cardsProblems(brief.cards));
@@ -602,7 +604,7 @@ export function batchCoaches(brandDir, brief, profile, kinds, seed) {
   let s = 0, p = 0;
   return kinds.map((k) => coachForVideo(brandDir, k === "paper" ? sheets[p++] : spoken[s++]));
 }
-export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id, profile = null } = {}) {
+export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id, profile = null, fresh = null } = {}) {
   const n = videoCount(brief.videos); if (!n) return null;
   const prof = profile || (() => { try { return JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8")); } catch { return {}; } })();
   // The scripts in the order they are picked: the spoken ones — the first filmed talking, the rest with exercises — then
@@ -610,7 +612,7 @@ export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id
   const room = roomOf(brandDir, brief), takes = brief.attempts ?? 2, kinds = videoKinds(brief.videos), ns = spokenCount(brief.videos), np = paperCount(brief.videos);
   // Shared between the gym's coaches, a script may be filmed once by each of them (2026-11-20: F45 Xinyi's 20 videos from 8 spoken scripts and 5 sheet sets).
   const reuse = !brief.coach && presentsOf(prof) === "coaches" ? Math.max(1, readCoaches(brandDir).coaches.length) : 1;
-  const scripts = [...(ns ? pickScripts(brandDir, { count: ns, offer: brief.offer, seed, reuse, pin: brief.video_scripts || null }) : []), ...(np ? pickSheetScripts(brandDir, { count: np, offer: brief.offer, seed, reuse }) : [])];
+  const scripts = [...(ns ? pickScripts(brandDir, { count: ns, offer: brief.offer, seed, reuse, pin: brief.video_scripts || null, fresh }) : []), ...(np ? pickSheetScripts(brandDir, { count: np, offer: brief.offer, seed, reuse, pin: brief.paper_scripts || null, fresh }) : [])];
   const coaches = batchCoaches(brandDir, brief, prof, kinds.slice(0, scripts.length), seed);
   const needs = scripts.map((x, i) => (kinds[i] === "paper" ? paperNeeds({ gymDir: brandDir, script: x, areas: brief.locations, room, profile: prof, takes, coach: coaches[i] })
     : videoNeeds({ gymDir: brandDir, script: x, areas: brief.locations, room, profile: prof, legacy: videoFolders(brandDir, x.id, brief.batch_id), takes, kind: kinds[i], coach: coaches[i] })));
@@ -628,15 +630,22 @@ export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id
 /** The image calls a batch's videos may make in one run: a clean pass's pictures, two to spare, and two more for each
  * white-paper video (a coach's picture whose paper comes back too low is made again higher: 2026-11-21). */
 export const videoImageCap = (plan) => (plan.images || 0) + 2 + 2 * (plan.paper || 0);
+export const REFUSALS_STOP = 3;
 export async function renderBatchVideos(browser, { brandDir, out, brief, profile, seed, audience = null, log = console.log, prog = null, models = null }) {
   const plan = videoPlan(brandDir, brief, { seed, profile }), room = roomOf(brandDir, brief);
   if (plan.reused) log(`· videos: ${plan.reused} s already filmed for ${plan.scripts.length === 1 ? "this script" : "these scripts"} are reused; ${plan.seconds} s to film`);
   const spendPath = join(out, VIDEO_SPEND), before = (() => { try { return JSON.parse(readFileSync(spendPath, "utf-8")); } catch { return { seconds: 0, images: 0, checks: 0 }; } })();
   const spent = { seconds: 0, images: 0, checks: 0 }, save = () => writeFileSync(spendPath, JSON.stringify({ seconds: before.seconds + spent.seconds, images: before.images + spent.images, checks: before.checks + spent.checks, max_seconds: plan.max_seconds }, null, 2) + "\n");
   const outVideos = [], tally = { filmed: 0, in_videos: 0, replaced: 0, failed: 0, waiting: 0 };
+  // Stop early when Google keeps refusing (2026-11-22): F45 Xinyi's first run went through 13 videos, each one's closing
+  // refused in turn. `REFUSALS_STOP` videos in a row refused outright, with none made between, and the filming stops:
+  // the videos left are named as not filmed, with why and what to change. One refusal is one video's problem; three
+  // running is the words' (or Google's), and filming on only spends.
+  let refusedRow = 0, stopWhy = null;
   for (const [i, script] of plan.scripts.entries()) {
     const id = `v${String(i + 1).padStart(2, "0")}`;
     const kind = plan.kinds[i], coach = plan.coaches[i] || null;
+    if (stopWhy) { for (const area of brief.locations) { log(`⚑ ${id} ${area}: ${stopWhy}`); outVideos.push({ id, script_id: script.id, kind, area, failed: stopWhy, not_filmed: true }); } continue; }
     log(`· ${id}: ${kind === "paper" ? "white-paper video" : `presenter video${kind === "active" ? " with exercises" : ""}`} from script ${script.id} (${brief.locations.length} location${brief.locations.length === 1 ? "" : "s"})${coach ? ` — ${coach.name} presents` : ""}`);
     const shared = { gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, room, profile, ...(coach ? { coach } : {}), caps: { seconds: plan.allow, images: videoImageCap(plan) }, spent, takes: plan.takes, browser, ...(models ? { models } : {}),
       log: (m) => log(`  ${m}`), onProgress: (p) => { save(); prog?.set({ stage: "videos", video: { id, script: script.id, ...p }, video_seconds: before.seconds + spent.seconds, video_max_seconds: plan.max_seconds }); } };
@@ -652,6 +661,11 @@ export async function renderBatchVideos(browser, { brandDir, out, brief, profile
       // A line no take passed for is in the cut all the same, flagged: the owner watches it and decides on Pick Ads.
       else if (v.flags?.length) log(`⚑ ${id} ${v.area}: cut for you to watch, and waiting for your decision on Pick Ads — ${v.flags.map((f) => `${f.label}: ${f.why}`).join("; ")}`);
       outVideos.push({ id, script_id: script.id, kind, ...v });
+    }
+    if (r.videos.length && r.videos.every((v) => v.failed && v.refused)) refusedRow++; else if (r.videos.some((v) => !v.failed)) refusedRow = 0;
+    if (refusedRow >= REFUSALS_STOP && i < plan.scripts.length - 1) {
+      stopWhy = `not filmed: Google's video model refused ${REFUSALS_STOP} videos in a row under its content rules, so the filming stopped before this one and nothing was spent on it. Change the words it refuses (it is most often the closing: in Chinese a link to click is shown on screen, not said), then Run again`;
+      log(`■ the filming stopped: ${REFUSALS_STOP} videos in a row were refused by Google's video model. The ${plan.scripts.length - 1 - i} left are not filmed.`);
     }
   }
   // What this run's filming cost and what became of it (2026-11-15: a run filmed 229 s for one video and said nothing of where they went).
@@ -701,7 +715,7 @@ export function progressWriter(out, base) {
  */
 export async function runBatch({ brandDir, brief, outDir = null, dryRun = false, renderOnly = false, keepVideos = false, approveScenes: confirmScenes = false, scenesPath = null, deps = {}, log = console.log }) {
   // Videos added as they are (footage-video.mjs, 2026-11-19): a run would plan nothing and write an empty batch over them.
-  if (brief.imported) throw new Error(FOOTAGE_NO_RUN);
+  if (brief.imported) throw new Error(brief.imported === MERGED ? MERGED_NO_RUN : FOOTAGE_NO_RUN);
   const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
   // The reference palettes, the gym's brand palettes, or both (creative_defaults.palettes).
   // The batch's look family (its own, else the gym's default) picks the catalogue; the feed ad's shape likewise.

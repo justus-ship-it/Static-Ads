@@ -343,3 +343,34 @@ test("P23 a location is never the whole country (2026-11-14, the owner: \"We can
   const item = (p) => profileCompleteness(p).sections.find((x) => x.id === "defaults").items.find((i) => /location callout/.test(i.what)).ok;
   assert.deepEqual([item(withLocs(["SINGAPORE"])), item(withLocs(["BOAT QUAY"])), item(withLocs([]))], [false, true, false], "the country alone is no location callout");
 });
+
+test("P25 a gym's own wording and its video counts (2026-11-22, F45 Xinyi: the owner corrected the same phrases on twelve videos, and the corrections were kept nowhere a drafter reads): \"what is never said => what is said instead\" lines on the profile, a line for speech only, checked at save; the phrases a text says; the rules as a drafter is told them; an edit that swaps a phrase offered back as a rule, never a rewritten line or a rule the gym has; the gym's name as ads say it; the videos a batch opens with", async () => {
+  const C = await import("./client-config.mjs");
+  const profile = { ...PROFILE_STARTER("testgym", "F45 Xinyi", "TW") };
+  profile.brand_lock.voice = { ...profile.brand_lock.voice, say_instead: ["一對一諮詢 => 獨一無二的教練諮詢", "上班 → 工作 [spoken]", "one to one -> coach chat"], name_in_ads: "F45信義" };
+  assert.deepEqual(validateProfile(profile).errors, []);
+  assert.deepEqual(C.sayInstead(profile), [{ avoid: "一對一諮詢", say: "獨一無二的教練諮詢", spoken: false }, { avoid: "上班", say: "工作", spoken: true }, { avoid: "one to one", say: "coach chat", spoken: false }]);
+  assert.deepEqual(C.sayInstead(profile, { spoken: false }).map((r) => r.avoid), ["一對一諮詢", "one to one"]);
+  // What a text says: written copy is not held to a rule for speech; a Latin phrase is a whole phrase, any case and spacing.
+  const text = "我們有一對一諮詢，上班前也可以來。A One  to One chat first; zone to oneness is another word.";
+  assert.deepEqual([C.wordingHits(text, profile).map(C.wordingWhy), C.wordingHits(text, profile, { spoken: true }).length, C.wordingHits("zone to oneness", profile).length], [['says "一對一諮詢": at this gym it is "獨一無二的教練諮詢"', 'says "one to one": at this gym it is "coach chat"'], 3, 0]);
+  assert.match(C.wordingRule(profile, { spoken: true }), /^THIS GYM'S OWN WORDING, the owner's rulings[\s\S]*- never "一對一諮詢" → "獨一無二的教練諮詢"\n- never "上班" → "工作"\n- never "one to one" → "coach chat"$/);
+  assert.equal(C.wordingRule({}), "");
+  assert.deepEqual([C.nameInAds(profile), C.nameInAds({ display_name: "Test Gym" }), C.nameInAds({})], ["F45信義", "Test Gym", "the gym"]);
+  // Refused at save, in words.
+  const bad = (list) => validateProfile({ ...profile, brand_lock: { ...profile.brand_lock, voice: { say_instead: list } } }).errors;
+  assert.ok(bad(["just words"]).some((e) => /brand_lock\.voice\.say_instead line 1 \("just words"\) is not "what is never said => what is said instead"/.test(e)));
+  assert.ok(bad(["free => totally free"]).some((e) => /still holds the phrase that is never said/.test(e)));
+  assert.ok(bad(["a => b", "a => c"]).some((e) => /"a" is listed twice|2 to 60 characters/.test(e)));
+  assert.ok(validateProfile({ ...profile, brand_lock: { ...profile.brand_lock, voice: { name_in_ads: "two\nlines" } } }).errors.some((e) => /name_in_ads is the gym's name as an ad says it/.test(e)));
+  // An edit offered back as a rule: a phrase for a phrase; never a line written afresh, an unchanged line, or a rule already there.
+  assert.deepEqual(C.wordingSuggestions(["每天下班，累到只想躺著嗎？", "A full body scan to check your baseline first.", "同一句話。"], ["每天忙完工作，累到只想躺著嗎？", "A full body scan to check where you are now first.", "同一句話。"], {}), [{ avoid: "下班", say: "忙完工作" }, { avoid: "your baseline", say: "where you are now" }]);
+  assert.deepEqual(C.wordingSuggestions(["完全不同的一句話。"], ["這是另外一句，講別的事情。"], {}), []);
+  assert.deepEqual(C.wordingSuggestions(["我們有一對一諮詢。"], ["我們有獨一無二的教練諮詢。"], { brand_lock: { voice: { say_instead: ["一對一 => 獨一無二的教練"] } } }), []);
+  const p2 = {}; assert.equal(C.addSayInstead(p2, { avoid: " baseline ", say: "where you are now", spoken: true }), "baseline => where you are now [spoken]");
+  assert.throws(() => C.addSayInstead(p2, { avoid: "baseline", say: "x" }), /this rule: "baseline" is listed twice/);
+  assert.throws(() => C.addSayInstead({}, { avoid: "", say: "x" }), /not "what is never said => what is said instead"|this rule/);
+  // The videos a batch opens with.
+  assert.deepEqual([C.defaultVideosProblems(undefined), C.defaultVideosProblems({ presenter: 8, active: 5, paper: 7 }), C.defaultVideosProblems({ presenter: 15, paper: 7 }), C.defaultVideosProblems({ talking: 1 }), C.defaultVideosProblems({ paper: 1.5 })], [[], [], ["videos: a batch makes at most 20 in all"], ["videos.talking is not a kind of video (presenter, active, paper)"], ["videos.paper must be a whole number from 0 to 20"]]);
+  assert.ok(validateProfile({ ...profile, creative_defaults: { ...profile.creative_defaults, videos: { presenter: 30 } } }).errors.some((e) => /creative_defaults\.videos\.presenter must be a whole number from 0 to 20/.test(e)));
+});

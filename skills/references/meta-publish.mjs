@@ -29,7 +29,7 @@ export { WHOLE_UNIT_CURRENCIES, budgetUnits };
 import { calloutGender, pinFor, pinUsable, withPoint, titleCase, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
 import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
 import { readLibrary as readTargetingLibrary, libraryEntry, asPreset as libraryPreset } from "./targeting-library.mjs";
-import { textOptionsFor, MAX_OPTIONS, fillButton, ctaLabel, gymLanguage } from "./draft-copy.mjs";
+import { textOptionsFor, MAX_OPTIONS, fillButton, ctaLabel, gymLanguage, ownCopies } from "./draft-copy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
@@ -250,7 +250,7 @@ export function videoCreativeFor({ name, page_id, instagram_user_id, website, fo
  *   kept:    [{ folder, file, location, words, story: file|null }]
  *   settings: { campaign: { name, level, daily, bid_strategy, bid_cap }, adsets: { [CALLOUT]: { pin, radius_km, age_min, age_max, gender, preset, daily } }, words: { message, headline, description, cta }, destination: { lead_form_id, instagram_user_id } }
  */
-export function buildPlan({ profile, batch, kept, presets = { presets: [] }, settings = {}, copies = [], headlines = [], tag = today(), library = null }) {
+export function buildPlan({ profile, batch, kept, presets = { presets: [] }, settings = {}, copies = [], headlines = [], own = {}, tag = today(), library = null }) {
   const problems = [], warnings = [];
   // A video ad (2026-11-12) is an ad like any other: the same campaign, its location's ad set, the same copy and form.
   // Its creative is the video with its poster frame; a video is 9:16 already, so it has no Stories version to miss.
@@ -355,14 +355,17 @@ export function buildPlan({ profile, batch, kept, presets = { presets: [] }, set
   const ads = kept.map((a, i) => {
     const callout = String(a.location || a.words?.location || "ALL").toUpperCase();
     const name = `${date} ${titleCase(callout)} | ${offer} | ${a.video ? "Video" : "Image"}: ${a.folder}`;
-    const bodies = textOptionsFor(keptCopy, maxOptions, i), titles = keptHead.length ? textOptionsFor(keptHead, maxHeadlines, i) : [];
+    // An ad with copy of its own (a testimonial video: testimonial-video.mjs) carries that — all of it, never rotated — and the campaign's shared copy only for the list it has none of.
+    const raw = a.video_id ? own?.[a.video_id] : null;
+    const mine = raw ? { copies: (raw.copies || []).filter((c) => c && c.message).map((c) => ({ id: c.id, message: fillButton(c.message, ctaLabel), headline: "", description: "", cta: ctaKey })), headlines: (raw.headlines || []).filter((h) => h && h.headline).map((h) => ({ id: h.id, headline: fillButton(h.headline, ctaLabel), description: fillButton(h.description || "", ctaLabel) })) } : null;
+    const bodies = mine?.copies?.length ? mine.copies.slice(0, MAX_OPTIONS) : textOptionsFor(keptCopy, maxOptions, i), titles = mine?.headlines?.length ? mine.headlines.slice(0, MAX_OPTIONS) : keptHead.length ? textOptionsFor(keptHead, maxHeadlines, i) : [];
     const texts = bodies.length ? {
       bodies: bodies.map((b) => fillArea(b.message, callout)),
       titles: titles.length ? titles.map((t) => fillArea(t.headline, callout)) : bodies.map((b) => fillArea(b.headline, callout)).filter(Boolean),
       descriptions: (titles.length ? titles.map((t) => t.description) : bodies.map((b) => b.description)).map((d) => fillArea(d, callout)).filter(Boolean),
     } : null;
     return {
-      folder: a.folder, ...(a.format ? { format: a.format } : {}), adset: callout, name, copies: bodies.map((t) => t.id), headlines: titles.map((t) => t.id),
+      folder: a.folder, ...(a.format ? { format: a.format } : {}), adset: callout, name, copies: bodies.map((t) => t.id), headlines: titles.map((t) => t.id), ...(mine?.copies?.length || mine?.headlines?.length ? { own_copy: { copies: mine.copies?.length || 0, headlines: mine.headlines?.length || 0 } } : {}),
       image: { file: a.file, name: `${batch.batch_id}__${basename(a.file)}` }, // a video's poster frame
       story: !a.video && a.story ? { file: a.story, name: `${batch.batch_id}__${basename(a.story)}` } : null,
       ...(a.video ? { video: { file: a.video, name: `${batch.batch_id}__${basename(a.video)}`, seconds: a.seconds ?? null, ...(a.video_style ? { style: a.video_style } : {}), ...(a.video_kind ? { kind: a.video_kind } : {}), ...(a.video_coach ? { coach: a.video_coach } : {}) } } : {}),
@@ -448,8 +451,9 @@ export function keptAds(batchDir) {
   const storyOf = new Map((stories?.ads || []).filter((s) => existsSync(join(batchDir, s.file))).map((s) => [s.folder, s.file]));
   const excludedPhotos = new Set(Object.entries(review.photos || {}).filter(([, v]) => v === "exclude").map(([k]) => k));
   // A video with a line no take passed for (2026-11-15) is shown to the owner flagged and is never published until he has decided that line: an ad not looked at counts as kept, and this one must not.
-  return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)) && !a.video?.flags?.length)
-    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null, ...(a.video?.style ? { video_style: a.video.style } : {}), ...(["active", "paper", "real"].includes(a.video?.kind) ? { video_kind: a.video.kind } : {}), ...(a.video?.coach?.name ? { video_coach: a.video.coach.name } : {}) } : {}) }));
+  // A testimonial that states a weight figure or shows before-and-after (2026-11-22, the owner: "Flag and let me decide") is kept only on his own Keep.
+  return batch.ads.filter((a) => review.ads?.[a.folder] !== "exclude" && !a.photos.some((p) => excludedPhotos.has(p)) && !a.video?.flags?.length && !(a.video?.decide?.length && review.ads?.[a.folder] !== "keep"))
+    .map((a) => ({ folder: a.folder, file: a.file, location: a.location, words: a.words, story: storyOf.get(a.folder) || (a.story_file && existsSync(join(batchDir, a.story_file)) ? a.story_file : null), ...(a.format ? { format: a.format } : {}), ...(a.video_file ? { video: a.video_file, seconds: a.video?.seconds ?? null, ...(a.video?.style ? { video_style: a.video.style } : {}), ...(a.video?.id ? { video_id: a.video.id } : {}), ...(["active", "paper", "real", "testimonial"].includes(a.video?.kind) ? { video_kind: a.video.kind } : {}), ...(a.video?.coach?.name ? { video_coach: a.video.coach.name } : {}) } : {}) }));
 }
 
 /** POST a creative; a feature Meta refuses by name is dropped and the post retried; the opt-out as a whole refused → made without it, said so. */
@@ -521,8 +525,20 @@ export function remakePreview(plan, record, batchDir, { first = null } = {}) {
 }
 /** A video is asked about every few seconds until Meta has processed it, for this long at most. */
 export const VIDEO_POLL_MS = 4000, VIDEO_READY_MS = 6 * 60000;
-export async function createPlan(plan, { client, batchDir, record, log = console.log, first = null, archiveReplaced = false, wait = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+/**
+ * Meta's temporary errors are tried again (2026-11-22). F45 Xinyi's create stopped at its 17th ad on "Something went
+ * wrong. Please try again later", and the run had to be started again by hand. An error Meta itself marks temporary
+ * (`is_transient`), its "service temporarily unavailable" (code 2), an "unknown error" from its server (code 1 with a
+ * 5xx) or a "try again later" is waited out — `TRANSIENT_WAITS` — and asked again, three times at most; then the run
+ * stops in words as before. A connection that dropped is never retried on a write (the object may have been made).
+ */
+export const TRANSIENT_WAITS = [3000, 10000, 30000];
+export const isTransient = (e) => !!e && e.name === "MetaError" && (e.transient === true || e.code === 2 || (e.code === 1 && Number(e.status) >= 500) || /try again later|temporarily unavailable/i.test(String(e.message || "")));
+export async function createPlan(plan, { client: given, batchDir, record, log = console.log, first = null, archiveReplaced = false, wait = (ms) => new Promise((r) => setTimeout(r, ms)), waits = TRANSIENT_WAITS }) {
   if (!plan.ready) throw new Error(`the plan has problems: ${plan.problems.join("; ")}`);
+  let retried = 0;
+  const again = async (what, fn) => { for (let i = 0; ; i++) { try { return await fn(); } catch (e) { if (!isTransient(e) || i >= waits.length) throw e; retried++; log(`  Meta answered with a temporary error on ${what} (${scrubTokens(e.message)}): trying again in ${Math.round(waits[i] / 1000)} s (${i + 1} of ${waits.length})`); await wait(waits[i]); } } };
+  const client = { ...given, post: (...a) => again(String(a[0]), () => given.post(...a)), get: (...a) => again(String(a[0]), () => given.get(...a)) };
   const rec = record, account = plan.account;
   const save = () => writeWhole(rec.path, JSON.stringify({ ...rec, path: undefined }, null, 2) + "\n");
   const run = { started: new Date().toISOString(), made: { images: 0, videos: 0, campaign: 0, adsets: 0, creatives: 0, ads: 0 }, reused: { images: 0, videos: 0, campaign: 0, adsets: 0, ads: 0 }, updated: { campaign: 0, adsets: 0 }, superseded: 0, first: first ?? null };
@@ -692,7 +708,7 @@ export async function createPlan(plan, { client, batchDir, record, log = console
       log(`· ad ${ad.folder}: ${r.id} (creative ${creative.id}, ${creative.enhancements})`);
     } catch (e) { rec.orphan_creatives = [...(rec.orphan_creatives || []), { folder: ad.folder, creative_id: creative.id }]; fail("ad", ad.folder, e); }
   }
-  run.finished = new Date().toISOString();
+  run.finished = new Date().toISOString(); if (retried) run.retried = retried;
   rec.done = Object.keys(rec.ads).length >= plan.ads.length ? run.finished : null;
   save();
   return { run, campaign: rec.campaign, adsets: rec.adsets, ads: Object.keys(rec.ads).length, of: plan.ads.length, url: adsManagerUrl(account, rec.campaign.id) };
@@ -795,7 +811,7 @@ if (isMain) {
       const { readPresets } = await import("./meta-targeting.mjs");
       const settings = existsSync(join(out, "publish-settings.json")) ? JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")) : {};
       const { keptCopies } = await import("./draft-copy.mjs");
-      const plan = buildPlan({ library: readTargetingLibrary(), profile, batch, kept: keptAds(out), presets: readPresets(brandDir), settings, copies: keptCopies(out), headlines: keptCopies(out, "headline") });
+      const plan = buildPlan({ library: readTargetingLibrary(), profile, batch, kept: keptAds(out), presets: readPresets(brandDir), settings, copies: keptCopies(out), headlines: keptCopies(out, "headline"), own: ownCopies(out) });
       for (const c of publishReadiness(plan, { formName: profile.meta_assets?.lead_form_id === plan.lead_form_id ? profile.meta_assets?.labels?.form || null : null }).checks) if (c.ok !== true) console.log(`check: ${c.text}`);
       const first = v.first ? parseInt(v.first, 10) : null;
       if (v.first && !(Number.isInteger(first) && first >= 1)) throw new Error("--first takes a whole number of ads");

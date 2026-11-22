@@ -392,6 +392,11 @@ const WAITS = [
   [/POST/, /\/footage\/[^/]+\/ad$/, 'Adding the cut to this gym’s ads, as it is.'],
   [/PUT/, /\/footage\/[^/]+\/file\//, 'Adding the file to the shoot, as it is. A large clip takes a few seconds.'], [/GET/, /\/footage(\/[^/]+)?$/, null], [/PUT/, /\/footage\/[^/]+$/, 'Saving your choice and laying the cutting sheet out again.'], [/POST/, /\/footage$/, 'Creating the shoot and listing its files.'],
   [/GET/, /\/coaches$/, null],
+  [/POST/, /\/coaches\/coach\/[\w.-]+\/sound$/, 'Filming one test line with Google’s video model, for you to listen to. This takes a minute or two.'],
+  [/GET/, /\/pins$/, 'Reading the pins this ad account has used.'],
+  [/POST/, /\/wording$/, 'Saving the rule for this gym.'],
+  [/POST/, /\/testimonials\/read$/, 'The agent is listening to each testimonial and looking at its frames. About a minute.'], [/POST/, /\/testimonials\/draft$/, 'The agent is drafting copy and headlines for each testimonial and checking every one against what is said in the video. About a minute.'],
+  [/POST/, /\/batches\/merge$/, 'Copying the kept ads of the batches into one new batch. Nothing is generated.'], [/POST/, /\/batches\/unmerge$/, 'Setting the merged batch aside and freeing the batches it came from.'],
   [/POST/, /\/video\/draft$/, 'The agent is drafting video scripts and checking each one against the rules. About half a minute.'],
   [/POST/, /\/video\/script\/[\w-]+\/propose$/, 'The agent is reading the script aloud and writing the edit it needs, for you to approve. A few seconds.'],
   [/POST/, /\/video\/facts\/suggest$/, 'The agent is reading your sample scripts for facts to tick. About half a minute.'],
@@ -934,6 +939,13 @@ async function viewBrand(v, seq=VIEW_SEQ){
     <p class="hint">For ad copy, later: words and offers this gym never uses (for example free trial).</p>
     <textarea rows="4" ${lines('brand_lock.voice.never', L.voice?.never)}</textarea>
   </div>
+  <div class="card" id="brSay">
+    <h3>Say this, not that</h3>
+    <p class="hint">This gym's own wording, for video scripts, white-paper sheets and ad copy. One rule a line: <b>what is never said =&gt; what is said instead</b> (for example <code>one-to-one session =&gt; coach consultation</code>). End a line with <code>[spoken]</code> when it only matters for words said aloud. Every draft is written to these rules, and a script, sheet or copy that says an avoided phrase is flagged for an edit. When you edit a draft and swap a phrase, the app offers to add it here.</p>
+    <textarea rows="6" id="brSayIn" placeholder="what is never said => what is said instead" ${lines('brand_lock.voice.say_instead', L.voice?.say_instead)}</textarea>
+    <label for="brNameInAds">The gym's name in ads <span class="n">· optional: how scripts and copy name the gym, where that is not “${esc(STATE.profile.display_name||'')}”</span></label>
+    <input id="brNameInAds" value="${esc(L.voice?.name_in_ads||'')}" placeholder="${esc(STATE.profile.display_name||'')}" oninput="setP('brand_lock.voice.name_in_ads', this.value.trim() || undefined)">
+  </div>
   ${saveBar('profile')}`;
 }
 
@@ -1002,7 +1014,13 @@ async function viewDefaults(v, seq=VIEW_SEQ){
     <p class="hint" id="cdShape" style="margin-top:10px"><b>Shape:</b> every feed ad is portrait 4:5 and its Stories and Reels version 9:16, made from the ad's own photo. The square (1:1) is no longer made; a batch made as a square before keeps its shape.</p>
   </div>
   <div class="card" id="cdPresenter"><h3>Presenter · videos</h3>
-    <div id="cdCoaches"><p class="hint">Loading who presents…</p></div>
+    <h4 style="margin:0 0 4px">Videos a batch opens with</h4>
+    <div class="row" id="cdVideos" style="gap:14px;flex-wrap:wrap;align-items:flex-end">
+      <div><label for="cdVidTalk" style="margin-top:0">Talking</label><input id="cdVidTalk" type="number" min="0" max="20" style="width:70px" value="${esc(D.videos?.presenter ?? 0)}" oninput="cdVideos()"></div>
+      <div><label for="cdVidActive" style="margin-top:0">With exercises</label><input id="cdVidActive" type="number" min="0" max="20" style="width:70px" value="${esc(D.videos?.active ?? 0)}" oninput="cdVideos()"></div>
+      <div><label for="cdVidPaper" style="margin-top:0">White paper</label><input id="cdVidPaper" type="number" min="0" max="20" style="width:70px" value="${esc(D.videos?.paper ?? 0)}" oninput="cdVideos()"></div>
+      <p class="hint" id="cdVideosWhy" style="margin:0;flex:1">Generate Creatives opens with these counts; each batch can still change them. A batch makes at most 20 videos in all. Saved with the page.</p></div>
+    <div id="cdCoaches" style="margin-top:12px"><p class="hint">Loading who presents…</p></div>
     <h4 style="margin:14px 0 4px">The invented presenter</h4>
     <p class="hint">Who talks to the camera when the gym does not present with its own coaches. An invented person who speaks for the gym (“we”, “our”), never as a named coach or a member with a story of their own. Choose what fits the gym — no video of this kind is made until this is set.</p>
     <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
@@ -1363,7 +1381,7 @@ function paintTargeting(v){
         <span class="pill ${pin.place_key?'on':''}" title="how Meta will target it">${pin.place_key?`Meta place · ${esc(pin.place_name||pin.place_key)}`:(Number.isFinite(pin.lat)&&Number.isFinite(pin.lng))?`point · ${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`:'not on the map yet'}</span>
         <div class="spacer"></div><button class="sm" onclick="removePin(${i})">Remove</button></div>
       <div class="grid" style="margin-top:10px">
-        <div><label>Address or postal code</label><div class="row" style="gap:6px"><input class="mono" id="pinq_${i}" value="${esc(pin.postal_code||'')}" placeholder="575583, or an address" oninput="setPin(${i},'postal_code',this.value.trim())" onkeydown="if(event.key==='Enter')findPin(${i})"><button class="sm" onclick="findPin(${i})">Find</button></div><div class="hint" id="pinfind_${i}" style="margin:4px 0 0">OneMap puts it on the map (a point). Their own ad sets use a named Meta place instead — pick one from the account's history below, or paste its key.</div></div>
+        <div><label>Address, postal code or coordinates</label><div class="row" style="gap:6px"><input class="mono" id="pinq_${i}" value="${esc(pin.postal_code||'')}" placeholder="575583, an address, or 1.3522, 103.8496" oninput="if(!parsePoint(this.value)&&!/^[([]?-?\\d{1,3}\\.\\d/.test(this.value.trim()))setPin(${i},'postal_code',this.value.trim())" onkeydown="if(event.key==='Enter')findPin(${i})"><button class="sm" onclick="findPin(${i})">Find</button></div><div class="hint" id="pinfind_${i}" style="margin:4px 0 0">OneMap puts it on the map (a point). Their own ad sets use a named Meta place instead — pick one from the account's history below, or paste its key.</div></div>
         <div><label>Meta place key <span class="n">· optional, from the account's history</span></label><div class="row" style="gap:6px"><input class="mono" value="${esc(pin.place_key||'')}" placeholder="e.g. 107327800879305" oninput="setPin(${i},'place_key',this.value.trim()); if(!this.value.trim()) setPin(${i},'place_name','')"><button class="sm" onclick="namePlace(${i})" ${pin.place_key?'':'disabled'}>Look up</button></div>${hist.length?`<select style="margin-top:6px" onchange="if(this.value)pinFromHistory(${i},this.value)"><option value="">— a pin the account already targets —</option>${hist.map((h,k)=>`<option value="${k}">${h.kind==='place'?esc(h.name||h.key):`point ${h.lat?.toFixed(4)}, ${h.lng?.toFixed(4)}`} · ${h.radius_km??'?'} km · ${h.adsets} ad set${h.adsets===1?'':'s'} · e.g. ${esc((h.example||'').slice(0,40))}</option>`).join('')}</select>`:`<div class="hint" style="margin:4px 0 0">${MT.link?'The account targets no pins yet.':'<a href="#" onclick="loadHistory();return false">Load the account\'s existing pins</a> (needs the Meta link).'}</div>`}</div>
         <div><label>Radius (km)</label><input type="number" min="1" max="80" step="0.5" value="${esc(pin.radius_km??5)}" oninput="setPin(${i},'radius_km',parseFloat(this.value)||null)"></div>
         <div><label>People</label><select onchange="setPin(${i},'location_types',this.value==='both'?['home','recent']:[this.value])">
@@ -1471,6 +1489,8 @@ function toggleCallout(i, c){ const pin = STATE.profile.targeting_defaults.geo.r
 /** OneMap: the typed address or postal code → a point (the first result); more results are offered to choose from. */
 async function findPin(i){
   const q = $('#pinq_'+i)?.value.trim(); const out = $('#pinfind_'+i); if (!q){ out.textContent = 'Type a postal code or an address first.'; return; }
+  const pt = parsePoint(q);
+  if (pt) { setPin(i,'lat',pt.lat); setPin(i,'lng',pt.lng); setPin(i,'postal_code',''); setPin(i,'place_key',''); setPin(i,'place_name',''); viewTargeting($('#view')); return; }
   out.textContent = 'Looking it up…';
   try {
     const r = await api(`/api/geocode?q=${encodeURIComponent(q)}&gym=${encodeURIComponent(STATE.sel)}`);
@@ -1568,7 +1588,8 @@ function freshDraft(){
   const locs = (cd.locations||[]).filter(Boolean), real = (cd.real_photos||[]).filter(p=>clean.includes(p));
   return { batch_id:'', offer:'', locations: locs.length ? [...locs] : [''], audience:'', generated: cd.generated ?? 30, real: cd.real_photos?.length ? real : [], // no photo of the empty room becomes an ad unless the owner ticks one (2026-11-11: they were added to every batch by themselves)
     looks_per_photo: cd.looks_per_photo ?? 2, max_calls: cd.max_calls ?? '', attempts: cd.attempts ?? 2, seed:'', direction_words:'', direction_reference:'', spread: cd.spread ?? true,
-    cards: { review:0, statement:0, timeline:0 }, videos: 0, videos_active: 0, videos_paper: 0,
+    // The videos are the gym's own counts (Ad defaults → Videos a batch opens with): talking and with exercises together, of which with exercises, and white paper.
+    cards: { review:0, statement:0, timeline:0 }, videos: (cd.videos?.presenter||0) + (cd.videos?.active||0), videos_active: cd.videos?.active||0, videos_paper: cd.videos?.paper||0,
     look: cd.look || 'reference', mix: (()=>{ const m = allocMix(B.setup.mix || profileMix(cd), cd.generated ?? 30); delete m.workout; return m; })(),
     age_min: (B.setup.photo_ages||[25,60])[0], age_max: (B.setup.photo_ages||[25,60])[1] };
 }
@@ -1763,6 +1784,13 @@ function bVideoWhy(asked, got, why){ const el = $('#bVideosWhy'); if (el) el.tex
 const bVideoMax = () => B.setup.videos?.max || 9;
 function bVideoActiveSet(v){ B.draft.videos_active = Math.max(0, Math.min(B.draft.videos||0, Math.round(Number(v)||0))); bVideoWhy(v, B.draft.videos_active, `“With exercises” is a share of the presenter videos above it: ${B.draft.videos||0} at most. Raise that number first.`); B.touched = true; const i = $('#bVideosActive'); if (i && Number(i.value) !== B.draft.videos_active) i.value = B.draft.videos_active; scheduleCheck(); }
 /** White-paper videos: their own count (they have scripts of their own kind); nine videos a batch between all kinds. */
+/** Which script each video of the batch films, and who presents it (2026-11-22): each video its own script; one shared with another video is said, with what to do. */
+function bVideoEach(v){
+  if (!(v.each||[]).length) return '';
+  const kind = { presenter:'talking', active:'with exercises', paper:'white paper' };
+  const rows = v.each.map((x, i) => `<div data-each="${i+1}">v${String(i+1).padStart(2,'0')} · ${kind[x.kind]||esc(x.kind)}${x.coach?` · ${esc(x.coach)}`:''} · <span style="color:var(--dim)">${esc(x.opens)}${x.opens.length>=60?'…':''}</span></div>`).join('');
+  return `<details class="how" id="bVideoEach" style="margin-top:4px"><summary>Which script each video films${v.shared ? ` · <span style="color:var(--warn)">${v.shared} video${v.shared===1?' shares':'s share'} a script with another</span>` : ' · each its own'}</summary>${rows}${v.shared ? `<p class="hint" style="margin:6px 0 0;color:var(--warn)">${v.shared} video${v.shared===1?'':'s'} would say the same words as another, with a different coach. Keep ${v.shared} more script${v.shared===1?'':'s'} for this offer on Draft Scenes → Video scripts and each video gets its own.</p>` : ''}</details>`;
+}
 function bVideoPaperSet(v){ B.draft.videos_paper = Math.max(0, Math.min(bVideoMax() - (B.draft.videos||0), Math.round(Number(v)||0))); bVideoWhy(v, B.draft.videos_paper, `A batch makes at most ${bVideoMax()} videos in all, every kind together: with ${B.draft.videos||0} presenter video${(B.draft.videos||0)===1?'':'s'} that leaves ${B.draft.videos_paper} white-paper.`); B.touched = true; const i = $('#bVideosPaper'); if (i && Number(i.value) !== B.draft.videos_paper) i.value = B.draft.videos_paper; scheduleCheck(); }
 /** Beside the white-paper count: what it is, and how many sheet scripts are ready for the offer typed — or the one thing to press. */
 function bPaperHint(){ const P = B.setup.videos?.paper || {}, offer = (B.draft?.offer||'').replace(/\s+/g,' ').trim().toLowerCase(), of = (xs) => (xs||[]).filter(x=>!offer || x.offer.toLowerCase()===offer).length, n = of(P.kept);
@@ -1803,7 +1831,7 @@ function paintList(){
   box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>{ const r = b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
       <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':b.failed?` · <span class="pill warn">${b.failed.stage==='failed'?'stopped on an error':'did not finish'} · ${b.failed.image_calls} call${b.failed.image_calls===1?'':'s'} used</span>`:b.stopped?` · <span class="pill warn">stopped · ${b.stopped.image_calls} call${b.stopped.image_calls===1?'':'s'} used</span>`:' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}${b.published?` · <span class="pill ${b.published.status==='live'?'on':''}">on Facebook · ${esc(b.published.status)}${b.published.leads!=null?` · ${b.published.leads} leads${b.published.cost_per_lead!=null?` at ${b.published.cost_per_lead}`:''}`:''}</span>`:''}</div>
-      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button>${b.imported?`<span class="hint" data-imported="${esc(b.id)}">Real footage, added as it is: nothing to generate or run again.</span>`:''}${b.imported?`<button class="sm" data-fwords="${esc(b.id)}" onclick="bFootageWords('${esc(b.id)}')">Change the offer name…</button>`:''}<button class="sm" ${b.imported?'hidden':''} onclick="bWords('${esc(b.id)}')">Change words</button><button class="sm" ${b.imported?'hidden':''} data-grow="${esc(b.id)}" onclick="bGrow('${esc(b.id)}')" title="More photos for this batch. The ads it has keep their looks, numbers and your picks.">Add photos…</button>${b.left||b.videos?`<button class="sm" data-again="${esc(b.id)}" onclick="bRunAgain('${esc(b.id)}')" title="${b.left?`${b.left} not finished last time. `:''}Makes only what is missing; everything already made is reused.">Run again…</button>`:''}`:`${b.stopped||b.failed?`<button class="sm primary" onclick="bRunAgain('${esc(b.id)}')">Run again…</button><button class="sm" onclick="openGenerating('${esc(b.id)}')">Open</button>`:''}<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
+      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button>${b.imported?`<span class="hint" data-imported="${esc(b.id)}">${b.imported==='merged'?`Merged from ${(b.merged_from||[]).map(esc).join(' + ')}, as they are: nothing to generate or run again.`:'Real footage, added as it is: nothing to generate or run again.'}</span>`:''}${b.imported==='merged'&&!b.published?`<button class="sm" data-unmerge="${esc(b.id)}" onclick="mgUndo('${esc(b.id)}')">Undo the merge…</button>`:''}${b.imported&&b.imported!=='merged'?`<button class="sm" data-fwords="${esc(b.id)}" onclick="bFootageWords('${esc(b.id)}')">Change the offer name…</button>`:''}${b.merged_into?`<span class="pill" data-merged-into="${esc(b.id)}" title="Its kept ads are in the merged batch; publish that one.">merged into ${esc(b.merged_into)}</span>`:''}<button class="sm" ${b.imported?'hidden':''} onclick="bWords('${esc(b.id)}')">Change words</button><button class="sm" ${b.imported?'hidden':''} data-grow="${esc(b.id)}" onclick="bGrow('${esc(b.id)}')" title="More photos for this batch. The ads it has keep their looks, numbers and your picks.">Add photos…</button>${b.left||b.videos?`<button class="sm" data-again="${esc(b.id)}" onclick="bRunAgain('${esc(b.id)}')" title="${b.left?`${b.left} not finished last time. `:''}Makes only what is missing; everything already made is reused.">Run again…</button>`:''}`:`${b.stopped||b.failed?`<button class="sm primary" onclick="bRunAgain('${esc(b.id)}')">Run again…</button><button class="sm" onclick="openGenerating('${esc(b.id)}')">Open</button>`:''}<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
     </div></div>`; }).join('')}</div>` : '<div class="hint">No campaigns yet. Fill in the brief above and press Generate.</div>';
 }
 
@@ -1825,7 +1853,7 @@ function paintDerived(){
   const sb = $('#bSummary');
   if (sb) sb.innerHTML = s ? (B.mode==='rerender'
       ? `${s.ads} ads re-rendered with these words · <b>0 image calls</b>`
-      : `<b>${s.photos} photo${s.photos===1?'':'s'}</b> × ${s.looks} look${s.looks===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'} = <b>${s.ads} ads</b><br>Up to <b>${s.max_calls} image call${s.max_calls===1?'':'s'}</b>${s.videos ? `<br><span id="bVideoSum">${s.videos.count} presenter video${s.videos.count===1?'':'s'}${vidKinds(s.videos)} × ${s.locations} location${s.locations===1?'':'s'}: about <b>${s.videos.seconds} s of video</b>${s.videos.reused?' to film':''} (US$${s.videos.usd.toFixed(2)}), never more than ${s.videos.allow ?? s.videos.max_seconds} s (US$${s.videos.usd_max.toFixed(2)})${s.videos.reused ? ` · ${s.videos.reused} s already filmed for ${s.videos.count===1?'this script':'these scripts'} are reused` : ''}</span>` : ''}${errs.length? '' : ' · <span class="pill on">brief valid</span>'}`) : '';
+      : `<b>${s.photos} photo${s.photos===1?'':'s'}</b> × ${s.looks} look${s.looks===1?'':'s'} × ${s.locations} location${s.locations===1?'':'s'} = <b>${s.ads} ads</b><br>Up to <b>${s.max_calls} image call${s.max_calls===1?'':'s'}</b>${s.videos ? `<br><span id="bVideoSum">${s.videos.count} presenter video${s.videos.count===1?'':'s'}${vidKinds(s.videos)} × ${s.locations} location${s.locations===1?'':'s'}: about <b>${s.videos.seconds} s of video</b>${s.videos.reused?' to film':''} (US$${s.videos.usd.toFixed(2)}), never more than ${s.videos.allow ?? s.videos.max_seconds} s (US$${s.videos.usd_max.toFixed(2)})${s.videos.reused ? ` · ${s.videos.reused} s already filmed for ${s.videos.count===1?'this script':'these scripts'} are reused` : ''}</span>${bVideoEach(s.videos)}` : ''}${errs.length? '' : ' · <span class="pill on">brief valid</span>'}`) : '';
   const busy = STATE.run && !STATE.run.done;
   for (const id of ['bPlan','bRun','bRerender']) { const b=$('#'+id); if (b) b.disabled = !c || errs.length>0 || busy; }
   const run = $('#bRun'); if (run && s && !errs.length) run.textContent = `Generate ${s.ads} ads…`;
@@ -2210,6 +2238,7 @@ function paintFoot(busy){
   const d = R.data, box = $('#rvFoot'); if (!box) return;
   const st = d.stories;
   box.innerHTML = !d.made ? `<span>The ads render once every photo is in. You can review the photos meanwhile.</span>${d.run?`<button class="sm" onclick="openGenerating('${esc(R.id)}')">Watch progress →</button>`:''}<span class="spacer"></span>`
+    : d.imported === 'merged' ? `<span id="rvImported">Merged from other batches, as they are: each ad came with its Stories version. To change an ad, change it in the batch it came from and merge again.</span>`
     : d.imported ? `<span id="rvImported">Real footage, added as it is. Each video is 9:16 already, so there is no Stories version to make and nothing to run again.</span>
       <button class="sm ok" onclick="openPublish('${esc(R.id)}')" ${busy?'disabled':''}>Publish Ads →</button>
       <span class="spacer"></span><span id="rvSaved">${d.saved?'Picks saved':''}</span>`
@@ -2251,8 +2280,8 @@ const waits = !photo && it.video_flags > 0 && st !== 'exclude';
     info.innerHTML = `<b>${esc(it.id)}</b>${it.scene_id?`<span>${esc(it.scene_id)}</span>`:''}<span>in ${it.ads} ad${it.ads===1?'':'s'}</span>${it.primary?`<span>made for ${esc(layoutName(it.primary))}</span>`:''}${it.scene?`<span class="scene">${esc(it.scene)}</span>`:''}${(it.notes||[]).length?`<span class="note" title="${esc(it.notes.join(' · '))}">${esc(it.notes.join(' · '))}</span>`:''}`;
   } else if (it.video) {
     // A video ad: it plays here, sound and all. Keep and Exclude work as for any ad; a video is 9:16 already, so it has no Stories version to make.
-    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · ${it.video_kind==='paper'?'White-paper video · no voice':it.video_kind==='real'?'Real footage · the gym’s own clips, cut and captioned':'Presenter video'}${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${rvLinesPanel(it)}${STAMPS}</div>`;
-    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${it.video_kind==='paper'?'white-paper video':it.video_kind==='real'?`real footage${it.video_title?` · ${esc(it.video_title)}`:''}`:'presenter video'}</span>${it.video_coach?`<span id="rvCoach">${esc(it.video_coach)} presents · your eye is the check that it looks and sounds like them</span>`:''}${it.video_flags?`<span class="note">waiting for you: ${it.video_flags} ${rvNoun(it)}${it.video_flags===1?'':'s'} did not pass its check</span>`:''}${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
+    box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><video id="rvVideo" src="${esc(it.video)}" poster="${esc(it.url)}" controls playsinline preload="metadata"></video><figcaption>9:16 · ${it.video_kind==='paper'?'White-paper video · no voice':it.video_kind==='real'?'Real footage · the gym’s own clips, cut and captioned':it.video_kind==='testimonial'?'Testimonial · a member’s own video, as it is':'Presenter video'}${it.video_seconds?` · ${Math.round(it.video_seconds)} s`:''} · Reels, Stories and feed</figcaption></figure>${rvLinesPanel(it)}${STAMPS}</div>`;
+    info.innerHTML = `<b>${esc(it.number)}</b><span>${esc(it.location)}</span><span>${it.video_kind==='paper'?'white-paper video':it.video_kind==='real'?`real footage${it.video_title?` · ${esc(it.video_title)}`:''}`:it.video_kind==='testimonial'?'testimonial video':'presenter video'}</span>${it.video_kind==='testimonial'&&it.video_summary?`<span class="scene" id="rvTSummary" title="${esc(it.video_summary)}">${esc(it.video_summary)}</span>`:''}${(it.video_decide||[]).map(x=>`<span class="note" data-rv-decide title="${esc(x.text)}">for you to decide: ${esc(x.text)}. It is published only if you press Keep</span>`).join('')}${it.video_small?'<span class="note" title="A download of a post is 720 wide; the original file would be sharper.">720 wide: the original file would be sharper</span>':''}${it.video_coach?`<span id="rvCoach">${esc(it.video_coach)} presents · your eye is the check that it looks and sounds like them</span>`:''}${it.video_flags?`<span class="note">waiting for you: ${it.video_flags} ${rvNoun(it)}${it.video_flags===1?'':'s'} did not pass its check</span>`:''}${(it.video_words||[]).length?`<span class="scene" title="${esc(it.video_words.join(' '))}">${esc(it.video_words.join(' '))}</span>`:''}${it.notes?`<span class="note" title="${esc(it.notes)}">the check noticed: ${esc(it.notes)}</span>`:''}`;
   } else {
     box.innerHTML = `${nav}${badge}<div class="rv-cards" id="rvCards"><figure class="${st==='exclude'?'ex':''}"><img src="${esc(it.url)}" alt="" draggable="false"><figcaption>${esc(it.ratio==='1x1'?'1:1':'4:5')} · Feed</figcaption></figure>
       <figure class="${st==='exclude'?'ex':''}">${it.story?`<img src="${esc(it.story)}" alt="" draggable="false">`:`<div class="nostory">${it.story_failure?`No Stories version: ${esc(it.story_failure)}.`:'No Stories version yet.'}<br>${R.data.stories&&st!=='exclude'?`<button class="sm primary" style="margin-top:8px" onclick="rvStoryOne('${esc(it.candidate)}')">Make a Stories version for this ad…</button>`:'Keep the ads you want, then Make Stories versions below.'}</div>`}<figcaption>9:16 · Stories / Reels${it.story&&st!=='exclude'?` · <a href="#" onclick="rvStoryOne('${esc(it.candidate)}');return false">make this one again…</a>`:''}</figcaption></figure>${STAMPS}</div>`;
@@ -2581,12 +2610,68 @@ async function viewExports(v, seq=VIEW_SEQ){
   if (B.gym !== STATE.sel || !B.setup){ B.gym = STATE.sel; await loadSetup(); }
   if (seq !== VIEW_SEQ) return;
   const bs = (B.setup?.batches||[]).filter(b=>b.ads);
-  v.innerHTML = `<h1>Publish Ads</h1><p class="sub">Every campaign with ads: its kept ads go to the gym's Facebook ad account as a campaign, one ad set per location callout and one ad per kept ad — every object paused, nothing switched on here.</p>
-  ${bs.length ? bs.map(b=>{ const r=b.review||{}; return `<div class="card"><div class="row" style="gap:14px">
+  const canMerge = bs.filter(mgCan).length >= 2;
+  v.innerHTML = `<div class="row" style="align-items:flex-start"><div style="flex:1"><h1>Publish Ads</h1><p class="sub">Every campaign with ads: its kept ads go to the gym's Facebook ad account as a campaign, one ad set per location callout and one ad per kept ad — every object paused, nothing switched on here.</p></div>
+    <button id="mgOpen" ${canMerge?'':'disabled'} title="${canMerge?'Two or more batches as one campaign: their kept ads in one batch, published together.':'Merging needs two batches with ads that are not on Facebook yet.'}" onclick="mgOpen()">Merge batches…</button></div>
+  ${bs.length ? bs.map(b=>{ const r=b.review||{}; return `<div class="card" data-batch="${esc(b.id)}"><div class="row" style="gap:14px">
       ${b.thumb?`<img src="${esc(b.thumb)}" alt="" style="width:64px;height:64px;border-radius:8px;object-fit:cover">`:''}
       <div style="flex:1"><b>${esc(b.words.offer)}</b> · ${esc(b.words.locations.join(' / '))}${b.words.audience?` · ${esc(b.words.audience)}`:''}
-        <div class="hint">${esc(b.id)} · ${b.ads} ads · ${r.kept||0} kept${r.excluded?`, ${r.excluded} excluded`:''}${r.unreviewed?`, ${r.unreviewed} to review`:''} · ${b.stories} Stories versions</div></div>
-      <button class="sm" onclick="openReview('${esc(b.id)}')">Pick ads</button><button class="sm primary" onclick="openPublish('${esc(b.id)}')">Open →</button></div></div>`; }).join('') : '<div class="empty">No campaign has ads yet. Create one first.</div>'}`;
+        <div class="hint">${esc(b.id)} · ${b.ads} ads · ${r.kept||0} kept${r.excluded?`, ${r.excluded} excluded`:''}${r.unreviewed?`, ${r.unreviewed} to review`:''}${b.imported==='merged'?'':` · ${b.stories} Stories versions`}</div>
+        ${b.imported==='merged'?`<div class="hint" data-merged-from="${esc(b.id)}">Merged from ${(b.merged_from||[]).map(esc).join(' + ')}</div>`:''}${b.merged_into?`<div class="hint" data-merged-into="${esc(b.id)}" style="color:var(--warn)">Its kept ads are in the merged batch <b>${esc(b.merged_into)}</b>: publish that one.</div>`:''}</div>
+      <button class="sm" onclick="openReview('${esc(b.id)}')">Pick ads</button><button class="sm ${b.merged_into?'':'primary'}" onclick="openPublish('${esc(b.id)}')">Open →</button></div></div>`; }).join('') : '<div class="empty">No campaign has ads yet. Create one first.</div>'}`;
+}
+
+// ── Merge batches (2026-11-22) ───────────────────────────────────────────────
+// Two or more finished batches as one: their ads that are not excluded, as they are, in ONE new batch — so they are
+// published as one campaign (one ad set for each area the images name). Tick the batches, read what it comes to (the
+// server works it out with nothing written), confirm. The batches themselves are left as they are; Undo the merge
+// sets the merged batch aside and frees them. Nothing is generated and nothing costs anything.
+const MG = { picked: new Set(), plan: null, busy: false, error: null };
+const mgCan = (b) => b.ads && !b.published && b.imported !== 'merged' && !b.running;
+function mgOpen(pre = []){
+  MG.picked = new Set(pre); MG.plan = null; MG.error = null; mgPaint(); if (MG.picked.size >= 2) mgPlan();
+}
+function mgPaint(){
+  const bs = (B.setup?.batches||[]).filter(b => b.ads), P = MG.plan;
+  const row = (b) => { const ok = mgCan(b), r = b.review||{}, why = b.published ? 'on Facebook already' : b.imported === 'merged' ? 'a merged batch itself' : b.running ? 'being made right now' : '';
+    return `<label class="mgrow" data-mg="${esc(b.id)}" style="display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-weight:400;color:var(--text);${ok?'':'opacity:.55'}">
+      <input type="checkbox" style="width:auto;margin:0" ${MG.picked.has(b.id)?'checked':''} ${ok?'':'disabled'} onchange="mgTick('${esc(b.id)}', this.checked)">
+      ${b.thumb?`<img src="${esc(b.thumb)}" alt="" style="width:40px;height:40px;border-radius:6px;object-fit:cover">`:''}
+      <span style="flex:1"><b>${esc(b.words.offer)}</b> · ${esc((b.words.locations||[]).join(' / '))}<br><span class="hint">${esc(b.id)} · ${b.ads} ads · ${r.kept||0} kept${r.excluded?`, ${r.excluded} excluded`:''}${r.unreviewed?`, ${r.unreviewed} to review`:''}${b.videos||b.imported?' · videos':''}${why?` · <b>${why}</b>`:''}${b.merged_into?` · already in ${esc(b.merged_into)}`:''}</span></span></label>`; };
+  const sum = !P ? `<p class="hint" id="mgSum" style="margin:10px 0 0">${MG.picked.size < 2 ? 'Tick two batches or more.' : MG.busy ? 'Working out what merging comes to…' : ''}</p>`
+    : `<div id="mgSum" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px">
+        <b>${P.ads} ads in one batch</b> · ${P.images} image${P.images===1?'':'s'}${P.videos?`, ${P.videos} video${P.videos===1?'':'s'}`:''}${P.cards?`, ${P.cards} card${P.cards===1?'':'s'}`:''} · <b>${Object.keys(P.by_location).length} ad set${Object.keys(P.by_location).length===1?'':'s'}</b>: ${Object.entries(P.by_location).map(([l,n])=>`${esc(l)} (${n})`).join(', ')}
+        <div class="hint" style="margin-top:4px">${esc(P.offer||'')}${P.audience?` · ${esc(P.audience)}`:''} · the new batch is called <b>${esc(P.batch_id)}</b></div>
+        ${P.sources.map(x=>`<div class="hint" data-mg-src="${esc(x.id)}">From ${esc(x.id)}: ${x.ads} of ${x.of} ads${x.left.excluded?` · the ${x.left.excluded} you excluded stay behind`:''}</div>`).join('')}
+        ${(P.notes||[]).map(n=>`<div class="hint" data-mg-note style="margin-top:4px">· ${esc(n)}</div>`).join('')}
+        ${(P.problems||[]).map(n=>`<div class="hint" data-mg-problem style="margin-top:4px;color:var(--err)">${esc(n.charAt(0).toUpperCase()+n.slice(1))}.</div>`).join('')}</div>`;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card" id="mgCard" style="max-width:720px">
+    <h3>Merge batches</h3>
+    <p class="hint">The ads you have not excluded, from each batch you tick, go into <b>one new batch</b> as they are — images with their Stories versions, videos, your Keeps. You publish that one batch as one campaign. The batches themselves stay as they are, nothing is generated, and it costs nothing. It can be undone.</p>
+    <div style="max-height:300px;overflow:auto">${bs.map(row).join('') || '<p class="hint">No batch has ads yet.</p>'}</div>
+    ${sum}
+    <p class="hint" id="mgWhy" style="color:var(--err);min-height:18px;margin:6px 0 0">${esc(MG.error||'')}</p>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="mgGo" ${P && P.ready && !MG.busy ? '' : 'disabled'} onclick="mgRun()">${P && P.ready ? `Merge into one batch of ${P.ads} ads` : 'Merge'}</button></div></div></div>`;
+}
+function mgTick(id, on){ if (on) MG.picked.add(id); else MG.picked.delete(id); MG.plan = null; MG.error = null; if (MG.picked.size >= 2) mgPlan(); else mgPaint(); }
+async function mgPlan(){
+  MG.busy = true; mgPaint(); const asked = [...MG.picked].join('|');
+  try { const p = await api(`/api/client/${STATE.sel}/batches/merge`, { method:'POST', body:{ sources:[...MG.picked], dry:true } }); if (asked === [...MG.picked].join('|')) MG.plan = p; }
+  catch(e){ MG.error = e.message; }
+  MG.busy = false; if ($('#mgCard')) mgPaint();
+}
+async function mgRun(){
+  const P = MG.plan; if (!P || !P.ready || MG.busy) return; MG.busy = true; mgPaint();
+  try {
+    const r = await api(`/api/client/${STATE.sel}/batches/merge`, { method:'POST', body:{ sources:[...MG.picked], confirm:{ ads: P.ads } } });
+    $('#gModal').innerHTML = ''; MG.busy = false; await loadSetup(); toast(`Merged: ${r.ads} ads in ${r.batch_id}. The batches it came from are as they were.`, 'ok'); openPublish(r.batch_id);
+  } catch(e){ MG.busy = false; MG.error = e.message; MG.plan = null; if ($('#mgCard')) { mgPaint(); mgPlan(); } }
+}
+async function mgUndo(id){
+  const b = (B.setup?.batches||[]).find(x => x.id === id);
+  if (!confirm(`Undo the merge ${id}? The merged batch is set aside in outputs/_discarded (not deleted), with its picks, copy and settings. The batches it was made from (${(b?.merged_from||[]).join(', ')}) are as they were, and can be published by themselves or merged again.`)) return;
+  try { const r = await api(`/api/client/${STATE.sel}/batches/unmerge`, { method:'POST', body:{ batch:id } }); await loadSetup(); toast(`The merge is undone. ${r.freed.length} batch${r.freed.length===1?' is':'es are'} free again.`, 'ok'); render(); }
+  catch(e){ toast(e.message, 'err'); }
 }
 
 // ── From the ad account (onboarding, part three) ────────────────────────────
@@ -3254,7 +3339,32 @@ async function vsFactsSuggestRun(){
 }
 function vsFactsTickRun(){ const E = VS.editing, ticked = E.list.filter((t,i)=>$('#vsFactTick'+i)?.checked); if (!ticked.length){ $('#gModal').innerHTML = ''; return; } vsSend('POST', '/facts', { offer: E.offer, items: [...E.have, ...ticked] }); }
 const vsModal = (title, body, go, label) => { $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>${title}</h3>${body}<p class="hint" id="vsWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p><div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="vsGo" onclick="${go}">${label}</button></div></div></div>`; };
-async function vsSend(method, path, body){ try { const d = await api(`/api/client/${STATE.sel}/video${path}`, { method, body }); VS.data = d; $('#gModal').innerHTML = ''; paintScripts(); return d; } catch(e){ const w = $('#vsWhy'); if (w) w.textContent = e.message; else toast(e.message, 'err'); return null; } }
+async function vsSend(method, path, body){ try { const d = await api(`/api/client/${STATE.sel}/video${path}`, { method, body }); VS.data = d; $('#gModal').innerHTML = ''; paintScripts(); if ((d.suggest_rules||[]).length && !VS.queue) ruleOffer(d.suggest_rules); return d; } catch(e){ const w = $('#vsWhy'); if (w) w.textContent = e.message; else toast(e.message, 'err'); return null; } }
+/**
+ * An edit offered back as a rule (2026-11-22): when a saved edit swapped a phrase for another, the app asks whether
+ * this gym always says it that way. Both sides can be changed first; nothing is saved without the click.
+ */
+let RULE_LIST = [];
+function ruleOffer(list, at = 0){
+  RULE_LIST = list; const r = list[at]; if (!r) return;
+  const gymName = (STATE.clients.find(c => c.gym === STATE.sel) || {}).display_name || 'this gym';
+  $('#gModal').innerHTML = `<div class="modal"><div class="card" id="ruleCard"><h3>Make this a rule for ${esc(gymName)}?</h3>
+    <p class="hint">Your edit swapped one phrase for another${list.length>1?` (${at+1} of ${list.length})`:''}. As a rule, every script, sheet and copy drafted for this gym is written this way, and one that says the old phrase is flagged for an edit.</p>
+    <div class="grid"><div><label for="ruleAvoid">Never say</label><input id="ruleAvoid" value="${esc(r.avoid)}"></div><div><label for="ruleSay">Say instead</label><input id="ruleSay" value="${esc(r.say)}"></div></div>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:8px"><input type="checkbox" id="ruleSpoken" style="width:auto;margin:0"> Only for words said aloud <span class="hint" style="font-weight:400">· a video script, not a sheet or written copy</span></label>
+    <p class="hint" id="ruleWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button id="ruleNo" onclick="ruleNext(${at})">Not a rule</button><button class="primary" id="ruleGo" onclick="ruleKeep(${at})">Make it a rule</button></div></div></div>`;
+}
+function ruleNext(at){ $('#gModal').innerHTML = ''; ruleOffer(RULE_LIST, at + 1); }
+async function ruleKeep(at){
+  const why = $('#ruleWhy');
+  try {
+    await api(`/api/client/${STATE.sel}/wording`, { method:'POST', body:{ avoid: $('#ruleAvoid').value, say: $('#ruleSay').value, spoken: $('#ruleSpoken').checked } });
+    toast('Rule kept: Profile → Brand & photography → Say this, not that.', 'ok'); await refreshProfile();
+    if (STATE.tab === 'scenes') { try { VS.data = await api(`/api/client/${STATE.sel}/video`); paintScripts(); } catch {} }
+    ruleNext(at);
+  } catch(e){ if (why) why.textContent = e.message; }
+}
 function vsDraft(offer, style){
   offer = typeof offer === 'string' && offer ? offer : vsOffer();
   const styles = (VS.data?.samples||[]).filter(x=>!x.retired);
@@ -3381,6 +3491,13 @@ async function vsSampleRun(){ const d = await vsSend('POST', '/sample', { text: 
 function vsSampleRetire(id){ VS.editing = id; vsModal('Retire this sample', `<p class="hint">The drafter stops following it. It is kept on file.</p><label for="vsReason">Why</label><input id="vsReason">`, 'vsSampleRetireRun()', 'Retire'); }
 function vsSampleRetireRun(){ vsSend('PUT', `/sample/${VS.editing}`, { retired:true, reason: $('#vsReason').value.trim() }); }
 /** Ad defaults → Presenter: the colour of the word being said in the captions. A value that is not a colour is said, not saved. */
+/** The videos a batch opens with (Ad defaults): three whole numbers, at most 20 between them; all nought clears it. */
+function cdVideos(){
+  const n = (id) => Math.max(0, Math.min(20, Math.round(Number($(id)?.value) || 0))), v = { presenter: n('#cdVidTalk'), active: n('#cdVidActive'), paper: n('#cdVidPaper') }, sum = v.presenter + v.active + v.paper, why = $('#cdVideosWhy');
+  if (sum > 20) { if (why) { why.textContent = `That is ${sum} videos: a batch makes at most 20 in all. Nothing is saved until it is 20 or fewer.`; why.style.color = 'var(--err)'; } return; }
+  if (why) { why.textContent = 'Generate Creatives opens with these counts; each batch can still change them. A batch makes at most 20 videos in all. Saved with the page.'; why.style.color = ''; }
+  setP('creative_defaults.videos', sum ? v : undefined);
+}
 function cdCapAccent(v){
   const t = String(v || '').trim(), why = $('#cdCapWhy'), sw = $('#cdCapSwatch');
   if (!t) { setP('creative_defaults.caption_accent', undefined); if (why) why.textContent = ''; if (sw) sw.style.background = '#FFD84A'; return; }
@@ -3579,7 +3696,7 @@ function paintPublish(v){
     <div style="margin:8px 0 10px"><label>Ad set name</label><input value="${esc(a.name)}" placeholder="${esc(a.house_name)}" maxlength="400" style="width:100%" onchange="pbSetAdset('${esc(a.callout)}','name',this.value.trim()||null)">
       <div class="hint" style="margin:4px 0 0">${a.own_name ? `House style: ${esc(a.house_name)} — clear the box to go back to it.` : 'The house style, so the reports read it; type your own to change it. A changed name is updated on Meta by the next create.'}</div></div>
     <div class="grid">
-      <div><label>Pin</label><select onchange="pbSetAdset('${esc(a.callout)}','pin',this.value===''?null:+this.value)"><option value="" ${o.pin==null?'selected':''}>${esc(a.pin?.fallback?'the gym\'s first pin (none names this callout)':'the pin that names this callout')}</option>${D.pins.map((p,i)=>`<option value="${i}" ${o.pin===i?'selected':''}>${esc(p.label||p.place_name||p.postal_code||('pin '+(i+1)))}${p.place_key?' · Meta place':''}</option>`).join('')}</select><div class="hint" style="margin:4px 0 0">${esc(a.pin?.words||'no usable pin')}</div></div>
+      <div><label>Pin</label><select data-pin="${esc(a.callout)}" onchange="if(this.value==='more'){this.value='${o.pin==null?'':o.pin}';pbPinOpen('${esc(a.callout)}')}else pbSetAdset('${esc(a.callout)}','pin',this.value===''?null:+this.value)"><option value="" ${o.pin==null?'selected':''}>${esc(a.pin?.fallback?'the gym\'s first pin (none names this callout)':'the pin that names this callout')}</option>${D.pins.map((p,i)=>`<option value="${i}" ${o.pin===i?'selected':''}>${esc(p.label||p.place_name||p.postal_code||('pin '+(i+1)))}${p.place_key?' · Meta place':Number.isFinite(p.lat)?` · point ${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`:''}${p.radius_km?` · ${p.radius_km} km`:''}</option>`).join('')}<option value="more">Another place… (from the ad account, or coordinates)</option></select><div class="hint" style="margin:4px 0 0">${esc(a.pin?.words||'no usable pin')}</div></div>
       <div><label>Radius (km)</label><input type="number" min="1" max="80" step="0.5" value="${esc(a.pin?.radius_km??5)}" onchange="pbSetAdset('${esc(a.callout)}','radius_km',parseFloat(this.value)||null)"></div>
       <div><label>Ages</label><div class="row" style="gap:6px"><input type="number" min="18" max="65" value="${a.age_min}" onchange="pbSetAdset('${esc(a.callout)}','age_min',parseInt(this.value)||null)"><span>to</span><input type="number" min="18" max="65" value="${a.age_max}" onchange="pbSetAdset('${esc(a.callout)}','age_max',parseInt(this.value)||null)"></div></div>
       <div><label>Gender</label><select onchange="pbSetAdset('${esc(a.callout)}','gender',this.value)">${[['men','men'],['women','women'],['all','everyone']].map(([k,l])=>`<option value="${k}" ${k===a.gender?'selected':''}>${l}</option>`).join('')}</select></div>
@@ -3642,7 +3759,7 @@ function copyCard(D, P, sw){
     ${rec?`<div class="hint" style="margin-top:6px"><b>Why:</b> ${esc(rec.why)}${d.clarity!=null?` · clarity ${d.clarity}/10`:''}</div>`:d.clarity!=null?`<div class="hint" style="margin-top:6px">clarity ${d.clarity}/10 · ${esc(d.clarity_why||'')}</div>`:''}</div>`; };
   const order = (a,b) => (a.recommended?a.recommended.rank:99) - (b.recommended?b.recommended.rank:99) || (b.clarity??0) - (a.clarity??0);
   const section = (kind) => {
-    const isH = kind==='headline', list = drafts.filter(d=>(d.kind||'copy')===kind);
+    const isH = kind==='headline', list = drafts.filter(d=>(d.kind||'copy')===kind && !d.for);
     const kept = list.filter(d=>d.status==='keep'), open = list.filter(d=>d.status==='draft').sort(order), out = list.filter(d=>d.status==='exclude'), recs = open.filter(d=>d.recommended);
     const noun = isH ? 'headlines' : 'copies', have = isH ? lib.headline : lib.copy;
     return `<div class="card"><div class="row" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">${isH?'Headlines':'Copy'} ${kept.length?`<span class="pill on">${kept.length} kept</span>`:`<span class="pill warn">${isH?'none kept':'placeholders'}</span>`}</h3><div class="spacer"></div>
@@ -3659,7 +3776,72 @@ function copyCard(D, P, sw){
     ${out.length?`<details style="margin-top:6px"><summary class="hint">Excluded · ${out.length}</summary>${out.map(card).join('')}</details>`:''}
     ${!list.length?`<div class="hint" style="margin-top:8px">Nothing yet. Draft ${noun}, or add your own.${!isH?` Until something is kept the ads carry placeholders that say so: <i>${esc(P.words.message)}</i>`:''}${!have?` The library has no ${isH?'headline':'copy'} skeletons yet: paste a few on Library → Copy first.`:''}</div>`:''}
   </div>`; };
-  return section('copy') + section('headline') + (PB.cpmsg?`<div class="msg ${/could not|failed|not /i.test(PB.cpmsg)?'err':'ok'}" style="margin-top:8px">${esc(PB.cpmsg)}</div>`:'');
+  return testimonialCard(D, card) + section('copy') + section('headline') + (PB.cpmsg?`<div class="msg ${/could not|failed|not /i.test(PB.cpmsg)?'err':'ok'}" style="margin-top:8px">${esc(PB.cpmsg)}</div>`:'');
+}
+/**
+ * Testimonial videos and their own copy (2026-11-22): each video with what the agent read of it — who speaks, the
+ * story, their words — what is for you to decide (a weight figure, before-and-after), and its own five copies and five
+ * headlines, kept per video. A video with nothing kept runs with the campaign's shared copy below.
+ */
+function testimonialCard(D, card){
+  const T = D.testimonials; if (!T) return '';
+  const drafts = (D.copy?.drafts || []), busy = !!PB.tbusy;
+  const one = (v) => { const mine = drafts.filter(d => d.for === v.id), cs = mine.filter(d => (d.kind||'copy') === 'copy' && d.status !== 'exclude'), hs = mine.filter(d => d.kind === 'headline' && d.status !== 'exclude'), out = mine.filter(d => d.status === 'exclude'), open = mine.filter(d => d.status === 'draft'), R = v.reading;
+    return `<div class="tvid" data-testimonial="${esc(v.id)}" style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:10px">
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><b>${esc(R?.name || v.folder.replace(/^\d+-/, '').replace(/-testimonial-video$/, ''))}</b><span class="hint" style="margin:0">${esc(v.folder)}${v.seconds?` · ${Math.round(v.seconds)} s`:''}</span>
+        <span class="pill ${v.kept.copy&&v.kept.headline?'on':'warn'}" data-tkept>${v.kept.copy} cop${v.kept.copy===1?'y':'ies'} · ${v.kept.headline} headline${v.kept.headline===1?'':'s'} kept</span><div class="spacer"></div>
+        ${R?`<button class="sm" data-tname onclick="tvName('${esc(v.id)}')">${R.name?'Fix the name…':'Add a name…'}</button>`:''}
+        ${open.length?`<button class="sm ok" data-tkeepall onclick="tvKeepAll('${esc(v.id)}')" ${busy?'disabled':''}>Keep all ${open.length}</button>`:''}
+        ${R && (cs.length < T.per_video || hs.length < T.per_video)?`<button class="sm ${mine.length?'':'primary'}" data-tdraft onclick="tvDraft('${esc(v.id)}')" ${busy?'disabled':''}>${mine.length?'Draft more…':`Draft ${T.per_video} + ${T.per_video}…`}</button>`:''}</div>
+      ${v.error?`<p class="hint" style="color:var(--err);margin:6px 0 0">Could not be read: ${esc(v.error)}</p>`:''}
+      ${R?`<p class="hint" data-tsummary style="margin:6px 0 0"><b>${esc(R.speaker||'A member')}.</b> ${esc(R.summary)}</p>
+        <details class="how" style="margin-top:4px"><summary>What the agent read</summary><p class="hint" style="margin:6px 0 0">${R.struggle.length?`<b>Struggled with:</b> ${esc(R.struggle.join('; '))}<br>`:''}${R.change.length?`<b>What changed:</b> ${esc(R.change.join('; '))}<br>`:''}${R.liked.length?`<b>Liked:</b> ${esc(R.liked.join('; '))}<br>`:''}${R.quotes.length?`<b>Their words:</b> ${R.quotes.map(q=>`“${esc(q)}”`).join(' · ')}<br>`:''}<b>Everything said:</b> ${esc(R.transcript)}</p></details>`:`<p class="hint" style="margin:6px 0 0">Not read yet.</p>`}
+      ${(v.decide||[]).map(x=>`<p class="hint" data-tdecide style="margin:6px 0 0;color:var(--warn)"><b>For you to decide on Pick Ads:</b> ${esc(x.text)}. This video is published only if you press Keep on it yourself.</p>`).join('')}
+      ${cs.length?`<div class="hint" style="margin:8px 0 4px"><b>Copies · ${cs.length}</b></div>${cs.map(card).join('')}`:''}
+      ${hs.length?`<div class="hint" style="margin:8px 0 4px"><b>Headlines · ${hs.length}</b></div>${hs.map(card).join('')}`:''}
+      ${out.length?`<details style="margin-top:6px"><summary class="hint">Excluded · ${out.length}</summary>${out.map(card).join('')}</details>`:''}
+    </div>`; };
+  return `<div class="card" id="tvCard"><div class="row" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">Testimonial videos <span class="pill">${T.videos.length}</span></h3><div class="spacer"></div>
+      ${T.unread?`<button class="sm primary" id="tvRead" onclick="tvRead()" ${busy?'disabled':''}>${busy?'Working…':`Read ${T.unread} video${T.unread===1?'':'s'}…`}</button>`:T.videos.some(v=>v.read && v.drafts < T.per_video*2)?`<button class="sm" id="tvDraftAll" onclick="tvDraft()" ${busy?'disabled':''}>${busy?'Working…':'Draft copy for every video…'}</button>`:''}</div>
+    <p class="hint">Each testimonial has <b>copy of its own</b>: ${T.per_video} primary texts and ${T.per_video} headlines written from what is said in that video and tied to this campaign's offer. They never repeat a weight figure, quote only the person's exact words, and state nothing the video does not. The ones you keep are that ad's text options on Facebook; a video with none kept runs with the campaign's copy below.</p>
+    ${PB.tmsg?`<div class="msg ${/could not|failed|not /i.test(PB.tmsg)?'err':'ok'}" id="tvMsg">${esc(PB.tmsg)}</div>`:''}
+    ${T.videos.map(one).join('')}</div>`;
+}
+function tvRead(){
+  const T = PB.data?.testimonials; if (!T || !T.unread) return;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Read ${T.unread} testimonial video${T.unread===1?'':'s'}</h3>
+    <p class="hint">The agent listens to each video and looks at eight of its frames, then writes down who speaks, what they struggled with, what changed and their exact words. About <b>US$${T.usd_read.toFixed(2)}</b> in small calls; nothing is generated, and the videos are not changed. It takes about a minute.</p>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="tvReadGo" onclick="tvReadRun(${T.unread})">Read ${T.unread === 1 ? 'it' : 'them'}</button></div></div></div>`;
+}
+function tvName(id){
+  const v = (PB.data?.testimonials?.videos || []).find(x => x.id === id); if (!v) return;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>The member's name</h3>
+    <p class="hint">The name is heard, so it may be misspelt. Type it as it should read: it changes in what was read and in every draft for this video. Leave it empty to use no name in new drafts.</p>
+    <label for="tvNameIn">First name</label><input id="tvNameIn" value="${esc(v.reading?.name || '')}">
+    <p class="hint" id="tvNameWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="tvNameGo" onclick="tvNameSave('${esc(id)}')">Save</button></div></div></div>`;
+}
+async function tvNameSave(id){
+  try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/testimonials/name`, { method:'POST', body:{ id, name: $('#tvNameIn').value } }); $('#gModal').innerHTML = ''; PB.tmsg = `Name saved; ${r.changed} draft${r.changed===1?'':'s'} changed.`; await cpReload(); paintPublish($('#view')); }
+  catch(e){ const w = $('#tvNameWhy'); if (w) w.textContent = e.message; }
+}
+async function tvReadRun(n){
+  $('#gModal').innerHTML = ''; PB.tbusy = true; PB.tmsg = null; paintPublish($('#view'));
+  try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/testimonials/read`, { method:'POST', body:{ confirm:{ videos:n } } }); PB.tmsg = `Read ${r.read} video${r.read===1?'':'s'}${r.left?`; ${r.left} could not be read`:''}. Draft their copy next.`; await cpReload(); }
+  catch(e){ PB.tmsg = e.message; }
+  PB.tbusy = false; paintPublish($('#view'));
+}
+async function tvDraft(id){
+  PB.tbusy = true; PB.tmsg = null; paintPublish($('#view'));
+  try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/testimonials/draft`, { method:'POST', body: id ? { only:[id] } : {} }); PB.tmsg = `Drafted ${r.drafted} text${r.drafted===1?'':'s'}${r.dropped?`; ${r.dropped} dropped by the checks`:''}. Read them and keep the ones you want.`; await cpReload(); }
+  catch(e){ PB.tmsg = e.message; }
+  PB.tbusy = false; paintPublish($('#view'));
+}
+async function tvKeepAll(id){
+  const open = (PB.data?.copy?.drafts || []).filter(d => d.for === id && d.status === 'draft'); if (!open.length) return;
+  PB.tbusy = true; paintPublish($('#view')); let kept = 0, why = null;
+  for (const d of open) { try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${d.id}`, { method:'PUT', body:{ status:'keep' } }); kept++; } catch(e){ why = e.message; } }
+  PB.tmsg = why ? `Kept ${kept}; ${why}` : `Kept ${kept} for this video.`; await cpReload(); PB.tbusy = false; paintPublish($('#view'));
 }
 async function cpReload(){ try { const r = await api(`/api/client/${PB.gym}/batch/${PB.id}/publish`); PB.data = r; PB.settings = r.settings; } catch(e){ PB.error = e.message; } }
 async function cpDraft(kind){ const noun = kind==='headline'?'headlines':'copies'; const v = prompt(`How many ${noun} to draft? (1-20)`, '10'); if (v==null) return; const count = parseInt(v,10); if (!Number.isInteger(count)||count<1||count>20){ toast('A whole number, 1 to 20.','err'); return; }
@@ -3874,6 +4056,40 @@ async function pbNewForm(){
   if (LF.gym !== PB.gym || !LF.data){ try { LF.data = await api(`/api/client/${PB.gym}/lead-forms`); LF.gym = PB.gym; } catch(e){ toast(e.message, 'err'); return; } }
   const P = PB.data.plan;
   lfNew({ offer: PB.data.offer || '', callout: (P.adsets||[])[0]?.callout || '', onCreated: async (made) => { PB.settings.destination = { ...(PB.settings.destination||{}), lead_form_id: made.id, form_confirmed: made.id }; pbSave(); LF.data = null; if (PB.link) await pbLoadLink(); toast(`Form "${made.name}" created on the Page, set as this campaign's form and confirmed.`); } });
+}
+/**
+ * Another place for an ad set (2026-11-22): every pin the ad account's own ad sets target — places and dropped points,
+ * a point moved in Ads Manager included — and a box for coordinates. The one chosen is saved with the gym's pins and
+ * used for this ad set; ticked, it serves this area in later campaigns too.
+ */
+const PN = { callout:null, history:null, why:null, gym:null };
+async function pbPinOpen(callout){
+  PN.callout = callout; pbPinPaint();
+  if (PN.history && PN.gym === PB.gym) return;
+  PN.history = null; PN.gym = PB.gym; pbPinPaint();
+  try { const r = await api(`/api/client/${PB.gym}/pins?history=1`); PN.history = r.history || []; PN.why = r.why || null; } catch(e){ PN.history = []; PN.why = e.message; }
+  if ($('#pnCard')) pbPinPaint();
+}
+function pbPinPaint(){
+  const rows = PN.history, c = PN.callout, kept = { pt: $('#pnPoint')?.value || '', r: $('#pnRadius')?.value || '3', a: $('#pnAlways') ? $('#pnAlways').checked : true };
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card" id="pnCard" style="max-width:680px"><h3>Another place for ${esc(c)}</h3>
+    <label style="margin-top:0">Pins this ad account has used <span class="n">· read from its ad sets, Ads Manager's changes included</span></label>
+    <div style="max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:2px 10px">${rows ? (rows.map((h,k)=>`<div class="row" data-pn="${k}" style="gap:10px;padding:8px 0;${k?'border-top:1px solid var(--line)':''}"><span style="flex:1"><b>${h.kind==='place'?esc(h.name||h.key):`Point ${h.lat?.toFixed(6)}, ${h.lng?.toFixed(6)}`}</b> · ${h.radius_km} km<br><span class="hint">${h.adsets} ad set${h.adsets===1?'':'s'} · e.g. ${esc((h.example||'').slice(0,70))}</span></span><button class="sm" onclick="pbPinUse(${k})">Use this</button></div>`).join('') || `<p class="hint">${esc(PN.why||'None found.')}</p>`) : '<p class="hint">Reading the ad account…</p>'}</div>
+    <label for="pnPoint">Or a point on the map</label>
+    <div class="row" style="gap:8px;align-items:center"><input id="pnPoint" class="mono" style="flex:1" placeholder="1.3522, 103.8496" value="${esc(kept.pt)}"><input id="pnRadius" type="number" min="1" max="80" step="0.5" style="width:84px" value="${esc(kept.r)}" aria-label="Radius in km"><span class="hint" style="margin:0">km</span><button class="sm primary" id="pnGo" onclick="pbPinPoint()">Use this point</button></div>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:10px"><input type="checkbox" id="pnAlways" style="width:auto;margin:0" ${kept.a?'checked':''}> Use it for ${esc(c)} in later campaigns too</label>
+    <p class="hint" id="pnWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p>
+    <div class="row"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button></div></div></div>`;
+}
+function pbPinUse(k){ const h = PN.history[k]; return pbPinSave({ ...(h.kind==='place' ? { place_key:h.key, place_name:h.name||'' } : {}), lat:h.lat, lng:h.lng, radius_km:h.radius_km, location_types:h.location_types || undefined, label: h.kind==='place' ? (h.name||'') : PN.callout, source:'account-history' }); }
+function parsePoint(t){ const m = String(t||'').trim().replace(/^[([]\s*|\s*[)\]]$/g,'').match(/^(-?\d{1,3}(?:\.\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)$/); return m && /\./.test(m[0]) && Math.abs(+m[1])<=90 && Math.abs(+m[2])<=180 ? { lat:+m[1], lng:+m[2] } : null; }
+function pbPinPoint(){ const p = parsePoint($('#pnPoint').value); if (!p){ $('#pnWhy').textContent = 'Type the point as latitude, longitude — like 1.3522, 103.8496.'; return; } return pbPinSave({ ...p, radius_km:+$('#pnRadius').value, label:PN.callout }); }
+async function pbPinSave(body){
+  try {
+    const r = await api(`/api/client/${PB.gym}/pins`, { method:'POST', body:{ ...body, callout:PN.callout, always: $('#pnAlways').checked } });
+    const o = (PB.settings.adsets ||= {})[PN.callout] ||= {}; o.pin = r.index; o.radius_km = null; delete PB.estimates[PN.callout];
+    $('#gModal').innerHTML = ''; toast('Pin saved, and used for this ad set.' + (r.warnings?.length ? ' Check: ' + r.warnings[0] : ''), 'ok'); PB.data.pins = r.pins; pbSave(); refreshProfile();
+  } catch(e){ const w = $('#pnWhy'); if (w) w.textContent = e.message; }
 }
 async function pbLoadLink(){ PB.busy = true; paintPublish($('#view')); try { const r = await api(`/api/client/${PB.gym}/meta-link`); PB.link = r.configured ? r : null; if (!r.configured) PB.error = 'The Meta link is not set up yet (Meta link page).'; } catch(e){ PB.error = e.message; } PB.busy = false; paintPublish($('#view')); }
 async function pbEstimate(callout){ const a = PB.data.plan.adsets.find(x=>x.callout===callout); if (!a) return; PB.busy = true; paintPublish($('#view'));
@@ -4377,6 +4593,39 @@ async function chMount(){
 function chRepaint(){ const a = $('#cdCoaches'); if (a) a.innerHTML = chDefaultsBlock(); const b = $('#cvCard'); if (b) b.innerHTML = chSamplesBlock(); }
 async function chDo(path, opts){ try { CH.data = await api(`/api/client/${STATE.sel}/coaches${path}`, opts); CH.gym = STATE.sel; chRepaint(); return true; } catch(e){ toast(e.message, 'err'); return false; } }
 const chCoach = (id) => (CH.data?.coaches || []).find(c => c.id === id);
+/**
+ * The sound check on a coach's card (2026-11-22): whether you have heard this coach's voice in the gym's language, the
+ * test lines filmed, Film a test line… (one confirmation with what it costs) and Sounds right — your yes, kept until
+ * the words under "How … sounds" change.
+ */
+function chSoundBlock(c){
+  const S = c.sound; if (!S) return '';
+  const t = (S.tests||[])[0], lang = S.language || 'this language';
+  const state = S.checked ? `<span class="pill on" data-sound-state>heard and approved in ${esc(lang)}${S.on?` · ${esc(S.on)}`:''}</span>` : `<span class="pill warn" data-sound-state>not heard in ${esc(lang)} yet</span>`;
+  const heard = (c.shown_in||[]).reduce((n, x) => n + (x.spoken||0), 0);   // spoken videos already made with this coach: his ear has had them
+  const none = !c.voice?.description ? `Describe how ${esc(c.name)} sounds above first (or read a sample of them talking).` : c.why ? `${esc(c.name)} cannot be filmed yet, so there is nothing to listen to.` : '';
+  return `<div class="snd" data-sound="${S.checked?'ok':'needed'}" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)">
+      <div class="row" style="gap:8px;align-items:center"><b>Sound check</b>${state}<div class="spacer"></div>
+        ${none ? '' : `<button class="sm${t&&t.current&&!S.checked?'':' primary'}" data-sound-film onclick="chSoundOpen('${esc(c.id)}')">${t?'Film another test line…':'Film a test line…'}</button>`}
+        ${t && t.current && !S.checked ? `<button class="sm primary" data-sound-ok onclick="chDo('/coach/${esc(c.id)}',{method:'PUT',body:{sound:{ok:true}}}).then(ok=>ok&&toast('Kept: this coach sounds right in ${esc(lang)}.','ok'))">Sounds right</button>` : ''}
+        ${!S.checked && !(t && t.current) && !none && heard ? `<button class="sm" data-sound-heard onclick="chDo('/coach/${esc(c.id)}',{method:'PUT',body:{sound:{ok:true,note:'heard on the videos already made'}}}).then(ok=>ok&&toast('Kept: this coach sounds right in ${esc(lang)}.','ok'))">Already heard on ${heard} video${heard===1?'':'s'} — sounds right</button>` : ''}
+        ${S.checked ? `<button class="sm" data-sound-undo onclick="chDo('/coach/${esc(c.id)}',{method:'PUT',body:{sound:{ok:false}}})">Take back</button>` : ''}</div>
+      ${none ? `<p class="hint" style="margin:6px 0 0">${none}</p>` : t ? `<div class="row" style="gap:10px;align-items:flex-start;margin-top:8px"><video controls preload="metadata" src="${esc(t.url)}" style="width:108px;border-radius:6px;background:#000"></video><p class="hint" style="margin:0;flex:1">“${esc(t.line)}” · filmed ${esc(t.on)}${t.current?'':' · <b>with the earlier voice words</b>: film another to hear the words as they are now'}.<br>${S.checked ? 'Change the words above and this is asked again.' : t.current ? `Listen. If ${esc(c.name)} sounds right, press <b>Sounds right</b>. If not, change the words under “How ${esc(c.name)} sounds”, save, and film another line.` : ''}</p></div>` : `<p class="hint" style="margin:6px 0 0">Before ${esc(c.name)} speaks in a batch: one short line is filmed (about US$${(CH.data?.sound_usd||0.42).toFixed(2)}) and you listen. A voice is only ever a description the video model is given, so how it comes out is known by ear alone.</p>`}
+    </div>`;
+}
+function chSoundOpen(id){
+  const c = chCoach(id); if (!c || !c.sound) return;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card"><h3>Film a test line of ${esc(c.name)}</h3>
+    <p class="hint">One short line, about six seconds of video (<b>about US$${(CH.data?.sound_usd||0.42).toFixed(2)}</b>). ${esc(c.name)} says it from a real picture of them, in the voice as it is described on the card. Nothing else is made, and no batch is touched.</p>
+    <label for="chSoundLine">The line</label><input id="chSoundLine" value="${esc(c.sound.line||'')}">
+    <p class="hint" id="chSoundWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="chSoundGo" onclick="chSoundRun('${esc(c.id)}')">Film it</button></div></div></div>`;
+}
+async function chSoundRun(id){
+  const go = $('#chSoundGo'), why = $('#chSoundWhy'), line = ($('#chSoundLine')?.value || '').trim(); if (go) { go.disabled = true; go.textContent = 'Filming…'; }
+  try { CH.data = await api(`/api/client/${STATE.sel}/coaches/coach/${id}/sound`, { method:'POST', body:{ line, confirm:true } }); CH.gym = STATE.sel; $('#gModal').innerHTML = ''; chRepaint(); toast('The test line is ready: listen on the coach’s card.', 'ok'); }
+  catch(e){ if (why) why.textContent = e.message; else toast(e.message, 'err'); if (go) { go.disabled = false; go.textContent = 'Film it'; } }
+}
 function chDefaultsBlock(){
   const D = CH.data; if (!D) return '<p class="hint">Loading who presents…</p>'; if (D.error) return `<p class="hint" style="color:var(--err)">${esc(D.error)}</p>`;
   const radio = (v, l, d) => `<label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:6px"><input type="radio" name="chPresents" value="${v}" style="width:auto;margin:0" ${D.presents===v?'checked':''} onchange="chDo('/presents',{method:'POST',body:{presents:'${v}'}})"> ${l} <span class="hint" style="font-weight:400">· ${d}</span></label>`;
@@ -4390,6 +4639,7 @@ function chDefaultsBlock(){
       ${(c.shown_in||[]).length?`<p class="hint" data-shown style="margin:4px 0 0${c.why?';color:var(--warn)':''}">${c.why?`Videos already made still show ${esc(c.name)}: `:`Shown in: `}${c.shown_in.map(x=>`${esc(x.batch)} (${x.ads} video ad${x.ads===1?'':'s'}${x.on_meta?`, ${x.on_meta} on Facebook`:''})`).join(' · ')}${c.why&&c.shown_in.some(x=>x.on_meta)?'. Pause those in Ads Manager: the app pauses nothing by itself.':''}</p>`:''}
       <label style="margin-top:8px">How ${esc(c.name)} sounds <span class="n">· told to the video model; ${c.voice?.by==='owner'?'your words':c.voice?'from the samples, yours to change':'read the samples to fill this'}</span></label>
       <div class="row" style="gap:8px;align-items:flex-start"><textarea data-voice rows="2" style="flex:1" placeholder="e.g. a clear, medium-low voice with a light Singaporean accent, warm and measured">${esc(c.voice?.description || '')}</textarea><button class="sm" onclick="chDo('/coach/${esc(c.id)}',{method:'PUT',body:{voice:this.parentNode.querySelector('textarea').value}}).then(ok=>ok&&toast('Voice saved','ok'))">Save voice</button></div>
+      ${chSoundBlock(c)}
     </div>`;
   return `<label style="margin-top:0">Who presents this gym's videos</label>
     ${radio('invented','An invented presenter','nobody in particular; set below')}

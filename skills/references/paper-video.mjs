@@ -44,7 +44,8 @@ import { isRefusal } from "./gemini-busy.mjs";
 import { callVision } from "./check-visual.mjs";
 import { launchBrowser, isWholeCountry } from "./render-composites.mjs";
 import { onAdProblems } from "./cards.mjs";
-import { COPY_MODEL, plainDashes } from "./draft-copy.mjs";
+import { COPY_MODEL, plainDashes, gymLanguage } from "./draft-copy.mjs";
+import { wordingRule, nameInAds } from "./client-config.mjs";
 import { themeOf, themeRule, readScripts, writeScripts, coachStore, stillFault, stillWhy, presenterOf, presenterWords, realModels, closingLine, closingFor, endsWithClosing, closingAlone, plainWords, hardWords, PLAIN_RULE, FIRST_PERSON, FIRST_PERSON_ZH, isZh, units, zhForm, TAP, IDEAL_BODY, countryNamed, factsFor, painsFor, painSources, fillLine, wordCount, videoLibraryDir, clipStore, asideOf, ownerKeptClip, durationOf, hasFfmpeg, letteringOf, LIVE, USD_PER_SECOND, USD_PER_IMAGE } from "./presenter-video.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -248,10 +249,16 @@ export function noSheetScriptWhy(gymDir, offer, { libraryDir = videoLibraryDir()
   return { state: "none", text: "nothing is written for this offer yet: press Draft sheets… there, or write your own" };
 }
 /** The sheet scripts a batch makes: that many of the ones ready for its offer, in an order the seed fixes. Too few is refused by name. */
-export function pickSheetScripts(gymDir, { count, offer, seed = "batch", libraryDir = videoLibraryDir(), reuse = 1 } = {}) {
+export function pickSheetScripts(gymDir, { count, offer, seed = "batch", libraryDir = videoLibraryDir(), reuse = 1, pin = null, fresh = null } = {}) {
   const profile = readJson(join(gymDir, "gym-profile.json")) || {}, ready = readySheetScripts(gymDir, offer, { profile, closing: closingLine(libraryDir), plain: plainWords(libraryDir) });
+  // `pin`: the sheet script each white-paper video films, in order (the brief's `paper_scripts`); `fresh`: the ids already filmed — a new batch takes the others first (2026-11-22).
+  if (pin) {
+    const byId = new Map(ready.map((x) => [x.id, x])), missing = pin.filter((id) => !byId.has(id));
+    if (missing.length) throw new Error(`the batch names white-paper script${missing.length === 1 ? "" : "s"} ${[...new Set(missing)].join(", ")}, which ${missing.length === 1 ? "is" : "are"} not kept and ready for "${norm(offer)}"`);
+    return pin.slice(0, count).map((id) => byId.get(id));
+  }
   if (ready.length * Math.max(1, reuse) < count) throw new Error(`${count} white-paper video${count === 1 ? "" : "s"} asked for, but ${ready.length ? `only ${ready.length} white-paper script${ready.length === 1 ? " is" : "s are"}` : "no white-paper script is"} ready for "${norm(offer)}": ${noSheetScriptWhy(gymDir, offer, { libraryDir, profile }).text} (Draft Scenes → Video scripts → White-paper scripts)`);
-  const order = ready.map((s) => ({ s, k: sha(`${seed}|${s.id}`) })).sort((a, b) => a.k.localeCompare(b.k)).map((x) => x.s);
+  const order = ready.map((s) => ({ s, k: sha(`${seed}|${s.id}`) })).sort((a, b) => (fresh ? Number(fresh.has(a.s.id)) - Number(fresh.has(b.s.id)) : 0) || a.k.localeCompare(b.k)).map((x) => x.s);
   return Array.from({ length: count }, (_, i) => order[i % order.length]);
 }
 /** What making a sheet script takes: one picture, one clip a sheet (a sheet that says the area: one for each location). */
@@ -263,7 +270,34 @@ export function sheetCost(script, areas = [""]) {
 
 // ── drafting ─────────────────────────────────────────────────────────────────
 const DRAFT_SCHEMA = { type: "OBJECT", properties: { scripts: { type: "ARRAY", items: { type: "OBJECT", properties: { sheets: { type: "ARRAY", items: { type: "STRING" } } }, required: ["sheets"] } } }, required: ["scripts"] };
-export function buildSheetPrompt({ profile = {}, offer, audience = null, count = 3, facts = [], pains = [], ads = [], library = [], existing = [], closing = closingLine(), refused = [], theme = null }) {
+/**
+ * The sheet drafter's request for a gym whose ads are in Chinese (2026-11-22; F45 Xinyi's five sheet scripts were
+ * written by hand). The English drafter's shape and rules, said for Chinese: sheets measured in characters, 我們 for
+ * the gym, the Chinese closing sentence on the last sheet, the gym's own wording, and `models` — the sheet scripts the
+ * owner has already approved here, as the standard.
+ */
+export function buildSheetPromptZh({ profile = {}, offer, audience = null, count = 3, facts = [], pains = [], ads = [], library = [], existing = [], closing = closingLine(), refused = [], theme = null, models = [] }) {
+  const gym = nameInAds(profile), never = (profile.brand_lock?.voice?.never || []).filter(Boolean), end = closingFor(["中"], closing), scarce = facts.filter((f) => SCARCE_ZH.test(f) || SCARCE.test(apos(f))), house = wordingRule(profile);
+  return { schema: DRAFT_SCHEMA, prompt: [
+    `Write ${count} script${count === 1 ? "" : "s"} for a silent video advert for ${gym}'s programme 「${offer}」${audience ? `, for ${audience}` : ""}. In the video one coach stands in the gym holding a stack of hand-written sheets of paper. Nobody speaks. The viewer reads the front sheet, it is dropped, and the next one shows. A script is the words on the sheets, in order.`,
+    `LANGUAGE: Traditional Chinese as written by hand in Taiwan (zh-TW): everyday words, never formal or mainland wording, never a simplified character, no English word except the gym's own name; digits for numbers (10位). Only characters a pen writes: no emoji, no hashtag.`,
+    `THE SHAPE:
+1. One or two sheets that call the right person out, or name ONE thing that bothers them in their day — a moment of their day, never a judgement of them (「忙完工作累到不想動？」).
+2. One sheet that names the programme in its exact characters, 「${offer}」, with at most a few characters around it (「加入我們的${offer}」).
+3. One to three sheets of what they get. ${facts.length ? "Each fact below may be its own sheet, in a few of its own words; say nothing else about how the programme works." : "Nothing about how the programme works was given, so say what the person will feel or be able to do, and state no fact about the gym."}
+4. ALWAYS exactly one sheet of scarcity, just before the last sheet. ${scarce.length ? `Say it only as the facts state it (${scarce.map((f) => `「${f}」`).join("、")}): the same number, nothing added (「只找10位！」).` : "The owner has typed no number of places, so say that places are limited with NO number and no date (「名額有限！」) — for the owner to check. Never invent a number of people or places, and never a deadline."}
+5. The last sheet is exactly this, and nothing else: 「${end}」`,
+    `THE RULES. ${SHEETS[0]} to ${SHEETS[1]} sheets. Each sheet is ${SHEET_CHARS[0]} to ${SHEET_CHARS[1]} characters — the last sheet and the sheet with the programme's name may be longer — a phrase read in two seconds. A sentence may run over two sheets, with … at the break. The gym speaks as 我們; never 我 alone. At most one sheet may call people out by where they live, with the place written exactly {AREA} in Latin capitals and braces (「住在{AREA}附近？」): never a country or a city. Never: a price, 免費, a trial (試用, 體驗課), before and after, a guarantee (保證), a promised result, a number of kilos or sizes, an ideal body, a button's name, a dash.${never.length ? ` Never these words: ${never.join(", ")}.` : ""} Each script takes a different way in.`,
+    house,
+    facts.length ? `THE FACTS the owner has typed as true of this programme (the only ones that may be stated):\n${facts.map((f) => `- ${f}`).join("\n")}` : "",
+    theme ? themeRule(theme, "script") + " The first one or two sheets name it; the sheets of what they get answer it." : pains.length ? `WHAT BOTHERS THESE PEOPLE, in the owner's words (open on one of these):\n${pains.map((p) => `- ${p}`).join("\n")}` : (ads.length || library.length) ? `READING MATERIAL for what bothers these people (never copy a sentence):\n${[...ads.map((a) => a.text), ...library].slice(0, 6).map((t) => `--- ${t}`).join("\n")}` : "",
+    models.length ? `THE STANDARD — sheet scripts the owner has already approved for this gym. Write to this standard (how short the sheets are, how they open and build); never copy a script, and open differently from each of them:\n${models.map((m, i) => `--- APPROVED ${i + 1}\n${m.join(" / ")}`).join("\n")}` : "",
+    existing.length ? `ALREADY WRITTEN (write something different):\n${existing.map((e) => `- ${e}`).join("\n")}` : "",
+    refused.length ? `THESE WERE REFUSED — do not make the same mistake:\n${refused.map((r) => `- ${r}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n") };
+}
+export function buildSheetPrompt({ profile = {}, offer, audience = null, count = 3, facts = [], pains = [], ads = [], library = [], existing = [], closing = closingLine(), refused = [], theme = null, models = [] }) {
+  if (gymLanguage(profile) === "zh") return buildSheetPromptZh({ profile, offer, audience, count, facts, pains, ads, library, existing, closing, refused, theme, models });
   const gym = profile.display_name || "the gym", never = (profile.brand_lock?.voice?.never || profile.voice?.never || []).filter(Boolean), scarce = facts.filter((f) => SCARCE.test(apos(f)));
   return { schema: DRAFT_SCHEMA, prompt: [
     `Write ${count} script${count === 1 ? "" : "s"} for a silent video advert for ${gym}'s programme "${offer}"${audience ? `, for ${audience}` : ""}. In the video one person stands in the gym holding a stack of hand-written sheets of paper. Nobody speaks. The viewer reads the front sheet, it is dropped, and the next one shows. A script is the words on the sheets, in order.`,
@@ -275,6 +309,7 @@ export function buildSheetPrompt({ profile = {}, offer, audience = null, count =
 5. The last sheet is exactly this, and nothing else: "${closing}"`,
     `THE RULES. ${SHEETS[0]} to ${SHEETS[1]} sheets. Each sheet is ${SHEET_WORDS[0]} to ${SHEET_WORDS[1]} words — the last sheet and the sheet with the programme's name may be longer — a phrase read in two seconds. A sentence may run over two sheets, with "…" at the break. The gym speaks as "we" and "our"; never "I", "my" or "me". At most one sheet may call people out by where they live, with the place written exactly {AREA} ("Live near {AREA}?"): use it in about half the scripts, and never name a country or a city. Never: a price, free, a trial, before and after, a guarantee, a promised result, a number of kilos or sizes, an ideal body, "tap", an emoji, a hashtag, an em dash.${never.length ? ` Never these words: ${never.join(", ")}.` : ""} Each script takes a different way in.`,
     PLAIN_RULE,
+    wordingRule(profile),
     facts.length ? `THE FACTS the owner has typed as true of this programme (the only ones that may be stated):\n${facts.map((f) => `- ${f}`).join("\n")}` : "",
     theme ? themeRule(theme, "script") + " The first one or two sheets name it; the sheets of what they get answer it." : pains.length ? `WHAT BOTHERS THESE PEOPLE, in the owner's words (open on one of these):\n${pains.map((p) => `- ${p}`).join("\n")}` : (ads.length || library.length) ? `READING MATERIAL for what bothers these people (never copy a sentence):\n${[...ads.map((a) => a.text), ...library].slice(0, 6).map((t) => `--- ${t}`).join("\n")}` : "",
     existing.length ? `ALREADY WRITTEN (write something different):\n${existing.map((e) => `- ${e}`).join("\n")}` : "",
@@ -293,7 +328,9 @@ export async function draftSheetScripts({ brandDir, offer, audience = null, coun
   const theme = themeOf(pain, profile);
   const added = [], dropped = []; let calls = 0;
   for (let roundNo = 0; roundNo < 2 && added.length < count; roundNo++) {
-    const { prompt, schema } = buildSheetPrompt({ profile, offer: offer.trim(), audience, count: count - added.length, facts, pains, ...src, existing: readSheetScripts(brandDir).filter((s) => s.status !== "retired").map((s) => s.sheets.join(" / ")), closing, theme, refused: dropped.map((d) => `"${d.text}" — ${d.reason}`).slice(0, 6) });
+    // The standard for a Chinese gym: the sheet scripts he has already approved here (the newest four that still pass today's rules).
+    const models = gymLanguage(profile) === "zh" ? readSheetScripts(brandDir).filter((x) => x.status === "kept" && isZh(x.sheets) && !sheetIssues(x, { profile, closing, plain, gymDir: brandDir }).length).slice(-4).map((x) => x.sheets) : [];
+    const { prompt, schema } = buildSheetPrompt({ profile, offer: offer.trim(), audience, count: count - added.length, facts, pains, ...src, models, existing: readSheetScripts(brandDir).filter((s) => s.status !== "retired").map((s) => s.sheets.join(" / ")), closing, theme, refused: dropped.map((d) => `"${d.text}" — ${d.reason}`).slice(0, 6) });
     const answer = await ask(null, prompt, schema, { model }); calls++;
     for (const d of (answer?.scripts || []).slice(0, count - added.length)) {
       try {

@@ -569,6 +569,23 @@ test("M7 createPlan: images once per file by content, the campaign, the ad sets 
     assert.ok(log.some((l) => /archived on Meta — making a new one/.test(l)));
     archived.s2 = false;
     assert.ok(!readFileSync(path, "utf-8").includes(TOKEN));
+    // Meta's temporary errors are tried again (2026-11-22: Xinyi's create stopped at its 17th ad on "Please try again
+    // later" and was started again by hand): a temporary error on a write is waited out and asked again, the run goes
+    // on and says how often; an error that is not temporary stops at once, and so does a temporary one after three tries.
+    {
+      const { isTransient, TRANSIENT_WAITS } = await import("./meta-publish.mjs");
+      const temp = () => new MetaError("Something went wrong. Please try again later. (code 2)", { code: 2, status: 500 });
+      assert.deepEqual([isTransient(temp()), isTransient(new MetaError("x", { transient: true })), isTransient(new MetaError("unknown", { code: 1, status: 500 })), isTransient(new MetaError("unknown", { code: 1, status: 400 })), isTransient(new MetaError("Invalid parameter", { code: 100, status: 400 })), isTransient(new Error("Please try again later"))], [true, true, true, false, false, false]);
+      const flaky = (fails, make = temp) => { const c = client(); let left = fails; return { ...c, post: async (path2, ...rest) => { if (/\/ads$/.test(path2) && left-- > 0) throw make(); return c.post(path2, ...rest); } }; };
+      const fresh = (name) => freshRecord(join(d, name), { batch_id: batch.batch_id, account: "act_111" });
+      const waited = [], lines = [];
+      const ok = await createPlan(plan, { client: flaky(2), batchDir: d, record: fresh("retry.json"), first: 1, log: (m) => lines.push(m), wait: async (ms) => { waited.push(ms); } });
+      assert.deepEqual([ok.ads, waited, ok.run.retried, lines.filter((l) => /temporary error/.test(l)).length], [1, TRANSIENT_WAITS.slice(0, 2), 2, 2]);
+      await assert.rejects(createPlan(plan, { client: flaky(9), batchDir: d, record: fresh("retry2.json"), first: 1, log: () => {}, wait: async () => {} }), /try again later/);
+      assert.equal(JSON.parse(readFileSync(join(d, "retry2.json"), "utf-8")).error.step, "ad", "after three tries the run stops in words, with its step on record");
+      const once = []; await assert.rejects(createPlan(plan, { client: flaky(1, () => new MetaError("Invalid parameter", { code: 100, status: 400 })), batchDir: d, record: fresh("retry3.json"), first: 1, log: () => {}, wait: async (ms) => { once.push(ms); } }), /Invalid parameter/);
+      assert.deepEqual(once, [], "an error that is not temporary is never retried");
+    }
   } finally {
     errorHook = errorFor;
     for (const k of ["act_111/adimages", "act_111/campaigns", "act_111/adsets", "act_111/adcreatives", "act_111/ads", "c1", "s2"]) delete answers[k];
