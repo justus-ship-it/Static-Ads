@@ -1,0 +1,6228 @@
+{
+ "chrome": "Chrome/152.0.7977.83",
+ "cases": {
+  "s1-heavy-sans/white-on-dark/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 333.09,
+      "y": 520.16,
+      "w": 413.8,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 326.72,
+      "y": 520.16,
+      "w": 426.54,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 231.39,
+      "y": 631.78,
+      "w": 617.19,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 227.17,
+      "y": 631.78,
+      "w": 625.64,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 190.27,
+      "y": 709.09,
+      "w": 699.44,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "300b3f834d4686d4261db2a13e0b297aa2453fccb6c8b4af7b48526e12ec096b"
+  },
+  "s1-heavy-sans/blue-white/LIGHT": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 333.09,
+      "y": 520.16,
+      "w": 413.8,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 326.72,
+      "y": 520.16,
+      "w": 426.54,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 4.33,
+      "after": 4.33
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 231.39,
+      "y": 631.78,
+      "w": 617.19,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 227.17,
+      "y": 631.78,
+      "w": 625.64,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 4.33,
+      "after": 4.33
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 190.27,
+      "y": 709.09,
+      "w": 699.44,
+      "h": 152.88
+     },
+     "band": {
+      "x": 170.43,
+      "y": 698.8,
+      "w": 739.13,
+      "h": 173.45,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 21
+     },
+     "steps": [
+      "band"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 4.33,
+      "after": 4.33
+     },
+     "steps": [
+      "stroke"
+     ]
+    }
+   ],
+   "png_sha256": "658af9a097eb74279279be13b6247e5f8bf87315f7014033e461d624a60b8bc8"
+  },
+  "s1-heavy-sans/green-white/STRIPES": {
+   "scrim": 0.607,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 333.09,
+      "y": 520.16,
+      "w": 413.8,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 326.72,
+      "y": 520.16,
+      "w": 426.54,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 1.31,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 231.39,
+      "y": 631.78,
+      "w": 617.19,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 227.17,
+      "y": 631.78,
+      "w": 625.64,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 5.9
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 190.27,
+      "y": 709.09,
+      "w": 699.44,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 1.31,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 1.31,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "febbc2559b1b7e2dae32f4051f198151b0f46a9d034f9009b5ccab68e82f3646"
+  },
+  "s1-heavy-sans/white-on-dark/SOLID/long": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 55,
+     "lines": 1,
+     "layout_rect": {
+      "x": 75.59,
+      "y": 631.44,
+      "w": 928.78,
+      "h": 57.19
+     },
+     "rect": {
+      "x": 72.02,
+      "y": 631.44,
+      "w": 935.93,
+      "h": 57.19
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 55,
+     "lines": 1,
+     "layout_rect": {
+      "x": 278.88,
+      "y": 698.34,
+      "w": 522.22,
+      "h": 57.19
+     },
+     "rect": {
+      "x": 275.3,
+      "y": 698.34,
+      "w": 529.37,
+      "h": 57.19
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 765.25,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 190.27,
+      "y": 765.25,
+      "w": 699.44,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Strength and Confidence Comeback Challenge For Busy Parents",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 42,
+     "lines": 2,
+     "layout_rect": {
+      "x": 67.52,
+      "y": 927.84,
+      "w": 944.94,
+      "h": 87.34
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 927.84,
+      "w": 950.4,
+      "h": 87.34
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "58eecf455992e1c548c8cc066167d6ad020939e3a73d5e5c3363fa5ee579c544"
+  },
+  "s2-heavy-outlined/cyan-pink/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 334.48,
+      "y": 520.16,
+      "w": 411.02,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 328.11,
+      "y": 520.16,
+      "w": 423.76,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA",
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 214.73,
+      "y": 631.78,
+      "w": 650.52,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 210.51,
+      "y": 631.78,
+      "w": 658.97,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#FF5DBB"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 190.27,
+      "y": 709.09,
+      "w": 699.44,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 10.84,
+      "after": 10.84
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFA6DC",
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "ac59cae00c8b3f700efd644cfd7722cc2f6483c7366302dcad5f4a2cc2c6bdef"
+  },
+  "s2-heavy-outlined/purple-white/LIGHT": {
+   "scrim": 0.49,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 334.48,
+      "y": 520.16,
+      "w": 411.02,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 328.11,
+      "y": 520.16,
+      "w": 423.76,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#C98BFF",
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 2,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 214.73,
+      "y": 631.78,
+      "w": 650.52,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 210.51,
+      "y": 631.78,
+      "w": 658.97,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#7B2FBF"
+     ],
+     "contrast": {
+      "before": 5.74,
+      "after": 4.5
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 190.27,
+      "y": 709.09,
+      "w": 699.44,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": {
+      "x": 64.8,
+      "y": 866.86,
+      "w": 950.4,
+      "h": 148.34,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#E7C4FF",
+      "#4A1566"
+     ],
+     "contrast": {
+      "before": 10.83,
+      "after": 13.74
+     },
+     "steps": [
+      "scrim",
+      "band"
+     ]
+    }
+   ],
+   "png_sha256": "cc5bec600be915773211d4832807fca9dcc281b861a6e06f3b6a780477116263"
+  },
+  "s2-heavy-outlined/yellow-accent/STRIPES": {
+   "scrim": 0.622,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 334.48,
+      "y": 520.16,
+      "w": 411.02,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 328.11,
+      "y": 520.16,
+      "w": 423.76,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 1.21,
+      "after": 6.24
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 214.73,
+      "y": 631.78,
+      "w": 650.52,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 210.51,
+      "y": 631.78,
+      "w": 658.97,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFD83D",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 1.39,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 190.27,
+      "y": 709.09,
+      "w": 699.44,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFD83D"
+     ],
+     "contrast": {
+      "before": 1.39,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 1.21,
+      "after": 6.24
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "1091e9082e4082c61c61513aca0bb36abc6bca24a9e5d2e58b2f3b769ce6e537"
+  },
+  "s2-heavy-outlined/white-on-dark/SOLID/long": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 56,
+     "lines": 1,
+     "layout_rect": {
+      "x": 70.52,
+      "y": 629.34,
+      "w": 938.95,
+      "h": 58.23
+     },
+     "rect": {
+      "x": 66.88,
+      "y": 629.34,
+      "w": 946.23,
+      "h": 58.23
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 56,
+     "lines": 1,
+     "layout_rect": {
+      "x": 259.77,
+      "y": 697.3,
+      "w": 560.45,
+      "h": 58.23
+     },
+     "rect": {
+      "x": 256.13,
+      "y": 697.3,
+      "w": 567.73,
+      "h": 58.23
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 765.25,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 190.27,
+      "y": 765.25,
+      "w": 699.44,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Strength and Confidence Comeback Challenge For Busy Parents",
+     "face": "Montserrat normal 900",
+     "effect": "outline-bold",
+     "size": 42,
+     "lines": 2,
+     "layout_rect": {
+      "x": 67.52,
+      "y": 927.84,
+      "w": 944.94,
+      "h": 87.34
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 927.84,
+      "w": 950.4,
+      "h": 87.34
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "e3eef6ac7847dc25b18bcc7a576939628bbe24f04ca19d2459d4e881d00cfcbd"
+  },
+  "s3-condensed/red-white/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 96,
+     "lines": 1,
+     "layout_rect": {
+      "x": 406.13,
+      "y": 590.7,
+      "w": 267.73,
+      "h": 101.75
+     },
+     "rect": {
+      "x": 400.37,
+      "y": 590.7,
+      "w": 279.25,
+      "h": 101.75
+     },
+     "band": null,
+     "judged_colours": [
+      "#FF2A2A"
+     ],
+     "contrast": {
+      "before": 4.56,
+      "after": 4.56
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Oswald normal 600",
+     "effect": "fill",
+     "size": 63,
+     "lines": 1,
+     "layout_rect": {
+      "x": 325.36,
+      "y": 702.17,
+      "w": 429.27,
+      "h": 66.77
+     },
+     "rect": {
+      "x": 321.58,
+      "y": 702.17,
+      "w": 436.83,
+      "h": 66.77
+     },
+     "band": null,
+     "judged_colours": [
+      "#FF2A2A"
+     ],
+     "contrast": {
+      "before": 4.56,
+      "after": 4.56
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 145,
+     "lines": 1,
+     "layout_rect": {
+      "x": 311.88,
+      "y": 778.66,
+      "w": 456.22,
+      "h": 153.69
+     },
+     "rect": {
+      "x": 303.18,
+      "y": 778.66,
+      "w": 473.62,
+      "h": 153.69
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 69,
+     "lines": 1,
+     "layout_rect": {
+      "x": 73.23,
+      "y": 942.06,
+      "w": 933.52,
+      "h": 73.13
+     },
+     "rect": {
+      "x": 69.09,
+      "y": 942.06,
+      "w": 941.8,
+      "h": 73.13
+     },
+     "band": null,
+     "judged_colours": [
+      "#FF2A2A"
+     ],
+     "contrast": {
+      "before": 4.56,
+      "after": 4.56
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "fce6cd9364b2a6138b4502ee909537738ee19555ed737f7a4405c9fb58c71962"
+  },
+  "s3-condensed/pink-white/LIGHT": {
+   "scrim": 0.63,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 96,
+     "lines": 1,
+     "layout_rect": {
+      "x": 406.13,
+      "y": 590.7,
+      "w": 267.73,
+      "h": 101.75
+     },
+     "rect": {
+      "x": 400.37,
+      "y": 590.7,
+      "w": 279.25,
+      "h": 101.75
+     },
+     "band": {
+      "x": 386.93,
+      "y": 583.98,
+      "w": 306.13,
+      "h": 115.19,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#D6337F"
+     ],
+     "contrast": {
+      "before": 3.71,
+      "after": 4.64
+     },
+     "steps": [
+      "scrim",
+      "band"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Oswald normal 600",
+     "effect": "fill",
+     "size": 63,
+     "lines": 1,
+     "layout_rect": {
+      "x": 325.36,
+      "y": 702.17,
+      "w": 429.27,
+      "h": 66.77
+     },
+     "rect": {
+      "x": 321.58,
+      "y": 702.17,
+      "w": 436.83,
+      "h": 66.77
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 7.32
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 145,
+     "lines": 1,
+     "layout_rect": {
+      "x": 311.88,
+      "y": 778.66,
+      "w": 456.22,
+      "h": 153.69
+     },
+     "rect": {
+      "x": 303.18,
+      "y": 778.66,
+      "w": 473.62,
+      "h": 153.69
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFB6D5"
+     ],
+     "contrast": {
+      "before": 1.33,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 69,
+     "lines": 1,
+     "layout_rect": {
+      "x": 73.23,
+      "y": 942.06,
+      "w": 933.52,
+      "h": 73.13
+     },
+     "rect": {
+      "x": 69.09,
+      "y": 942.06,
+      "w": 941.8,
+      "h": 73.13
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFB6D5"
+     ],
+     "contrast": {
+      "before": 1.33,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "870fab50d876116265965f2521983ed891750728c3ab34aaeea9a0c69766b192"
+  },
+  "s3-condensed/cyan-white/STRIPES": {
+   "scrim": 0.714,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 96,
+     "lines": 1,
+     "layout_rect": {
+      "x": 406.13,
+      "y": 590.7,
+      "w": 267.73,
+      "h": 101.75
+     },
+     "rect": {
+      "x": 400.37,
+      "y": 590.7,
+      "w": 279.25,
+      "h": 101.75
+     },
+     "band": null,
+     "judged_colours": [
+      "#43C3FF"
+     ],
+     "contrast": {
+      "before": 2,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Oswald normal 600",
+     "effect": "fill",
+     "size": 63,
+     "lines": 1,
+     "layout_rect": {
+      "x": 325.36,
+      "y": 702.17,
+      "w": 429.27,
+      "h": 66.77
+     },
+     "rect": {
+      "x": 321.58,
+      "y": 702.17,
+      "w": 436.83,
+      "h": 66.77
+     },
+     "band": null,
+     "judged_colours": [
+      "#43C3FF"
+     ],
+     "contrast": {
+      "before": 2,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 145,
+     "lines": 1,
+     "layout_rect": {
+      "x": 311.88,
+      "y": 778.66,
+      "w": 456.22,
+      "h": 153.69
+     },
+     "rect": {
+      "x": 303.18,
+      "y": 778.66,
+      "w": 473.62,
+      "h": 153.69
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 9.01
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 69,
+     "lines": 1,
+     "layout_rect": {
+      "x": 73.23,
+      "y": 942.06,
+      "w": 933.52,
+      "h": 73.13
+     },
+     "rect": {
+      "x": 69.09,
+      "y": 942.06,
+      "w": 941.8,
+      "h": 73.13
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 9.01
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "0af2699b1d3a280a7f0a6741e60243c2f222b5d8ae9a7329cc8899d2b564f9f8"
+  },
+  "s3-condensed/white-on-dark/SOLID/long": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 83,
+     "lines": 1,
+     "layout_rect": {
+      "x": 74.88,
+      "y": 544.08,
+      "w": 930.23,
+      "h": 87.97
+     },
+     "rect": {
+      "x": 69.9,
+      "y": 544.08,
+      "w": 940.19,
+      "h": 87.97
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Oswald normal 600",
+     "effect": "fill",
+     "size": 63,
+     "lines": 1,
+     "layout_rect": {
+      "x": 325.36,
+      "y": 641.77,
+      "w": 429.27,
+      "h": 66.77
+     },
+     "rect": {
+      "x": 321.58,
+      "y": 641.77,
+      "w": 436.83,
+      "h": 66.77
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 145,
+     "lines": 1,
+     "layout_rect": {
+      "x": 311.88,
+      "y": 718.25,
+      "w": 456.22,
+      "h": 153.69
+     },
+     "rect": {
+      "x": 303.18,
+      "y": 718.25,
+      "w": 473.62,
+      "h": 153.69
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Strength and Confidence Comeback Challenge For Busy Parents",
+     "face": "Anton normal 400",
+     "effect": "fill",
+     "size": 63,
+     "lines": 2,
+     "layout_rect": {
+      "x": 68.58,
+      "y": 881.66,
+      "w": 942.83,
+      "h": 133.53
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 881.66,
+      "w": 950.39,
+      "h": 133.53
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "79d0cec7da536ddff9592e57b1fef4b9da844a7b47a20c2cc340333fbd209d66"
+  },
+  "s4-wide-tracked/blue-white/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 600",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 257.88,
+      "y": 534.72,
+      "w": 564.22,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 251.51,
+      "y": 534.72,
+      "w": 576.96,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 3.23,
+      "after": 3.23
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 600",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 143.75,
+      "y": 646.34,
+      "w": 792.47,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 139.53,
+      "y": 646.34,
+      "w": 800.92,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 3.23,
+      "after": 3.23
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 122.5,
+      "y": 723.66,
+      "w": 834.97,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 112.95,
+      "y": 723.66,
+      "w": 854.08,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 62,
+     "lines": 2,
+     "layout_rect": {
+      "x": 68.83,
+      "y": 886.25,
+      "w": 942.33,
+      "h": 128.94
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 886.25,
+      "w": 950.39,
+      "h": 128.94
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 3.23,
+      "after": 3.23
+     },
+     "steps": [
+      "stroke"
+     ]
+    }
+   ],
+   "png_sha256": "2b506cb7d7bd99b8890c521475056ec8788b7d4357aa48c3f4e171e7ccf024a3"
+  },
+  "s4-wide-tracked/green-white/LIGHT": {
+   "scrim": 0.569,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 600",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 257.88,
+      "y": 534.72,
+      "w": 564.22,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 251.51,
+      "y": 534.72,
+      "w": 576.96,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 1.08,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 600",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 143.75,
+      "y": 646.34,
+      "w": 792.47,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 139.53,
+      "y": 646.34,
+      "w": 800.92,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 5.9
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 122.5,
+      "y": 723.66,
+      "w": 834.97,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 112.95,
+      "y": 723.66,
+      "w": 854.08,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 1.08,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 62,
+     "lines": 2,
+     "layout_rect": {
+      "x": 68.83,
+      "y": 886.25,
+      "w": 942.33,
+      "h": 128.94
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 886.25,
+      "w": 950.39,
+      "h": 128.94
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 1.08,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "2a55938f1e2bc5b598b9102f8abc55e44a052071d256b50d37b334875095b67a"
+  },
+  "s4-wide-tracked/red-pink/STRIPES": {
+   "scrim": 0.535,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 600",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 257.88,
+      "y": 534.72,
+      "w": 564.22,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 251.51,
+      "y": 534.72,
+      "w": 576.96,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 600",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 143.75,
+      "y": 646.34,
+      "w": 792.47,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 139.53,
+      "y": 646.34,
+      "w": 800.92,
+      "h": 67.59
+     },
+     "band": {
+      "x": 130.75,
+      "y": 641.79,
+      "w": 818.47,
+      "h": 76.69,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#FF4D6D"
+     ],
+     "contrast": {
+      "before": 3.21,
+      "after": 6.53
+     },
+     "steps": [
+      "scrim",
+      "band"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 122.5,
+      "y": 723.66,
+      "w": 834.97,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 112.95,
+      "y": 723.66,
+      "w": 854.08,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 62,
+     "lines": 2,
+     "layout_rect": {
+      "x": 68.83,
+      "y": 886.25,
+      "w": 942.33,
+      "h": 128.94
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 886.25,
+      "w": 950.39,
+      "h": 128.94
+     },
+     "band": {
+      "x": 64.8,
+      "y": 881.91,
+      "w": 950.4,
+      "h": 133.29,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#FF4D6D"
+     ],
+     "contrast": {
+      "before": 3.21,
+      "after": 6.53
+     },
+     "steps": [
+      "scrim",
+      "band"
+     ]
+    }
+   ],
+   "png_sha256": "b473e379b59f765b97965ef584d37df5558a79df46b9fa0094869d542c811dd9"
+  },
+  "s4-wide-tracked/white-on-dark/SOLID/long": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Montserrat normal 600",
+     "effect": "fill",
+     "size": 42,
+     "lines": 1,
+     "layout_rect": {
+      "x": 69.55,
+      "y": 670.94,
+      "w": 940.89,
+      "h": 43.67
+     },
+     "rect": {
+      "x": 66.82,
+      "y": 670.94,
+      "w": 946.35,
+      "h": 43.67
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 600",
+     "effect": "fill",
+     "size": 42,
+     "lines": 1,
+     "layout_rect": {
+      "x": 283.95,
+      "y": 724.33,
+      "w": 512.06,
+      "h": 43.67
+     },
+     "rect": {
+      "x": 281.22,
+      "y": 724.33,
+      "w": 517.52,
+      "h": 43.67
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 122.5,
+      "y": 777.72,
+      "w": 834.97,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 112.95,
+      "y": 777.72,
+      "w": 854.08,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Strength and Confidence Comeback Challenge For Busy Parents",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 36,
+     "lines": 2,
+     "layout_rect": {
+      "x": 67.13,
+      "y": 940.31,
+      "w": 945.72,
+      "h": 74.88
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 940.31,
+      "w": 950.4,
+      "h": 74.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "afc0ba495453d775800cc6bc50f343eef281fb2fe640c867274309f1ddfcfd33"
+  },
+  "s5-italic-heavy/purple-white/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat italic 900",
+     "effect": "outline-bold",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 334.48,
+      "y": 520.16,
+      "w": 411.02,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 320.76,
+      "y": 520.16,
+      "w": 438.46,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#C98BFF",
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat italic 800",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 246.31,
+      "y": 631.78,
+      "w": 587.34,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 237.21,
+      "y": 631.78,
+      "w": 605.54,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat italic 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 200.42,
+      "y": 709.09,
+      "w": 679.14,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 179.84,
+      "y": 709.09,
+      "w": 720.3,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat italic 900",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 74.45,
+      "y": 871.69,
+      "w": 931.08,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 871.69,
+      "w": 950.4,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#E7C4FF"
+     ],
+     "contrast": {
+      "before": 11.15,
+      "after": 11.15
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "65e4918526434e018dd01387ae89459818ceb47265d7bfd3d7024948dac67142"
+  },
+  "s5-italic-heavy/yellow-accent/LIGHT": {
+   "scrim": 0.585,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat italic 900",
+     "effect": "outline-bold",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 334.48,
+      "y": 520.16,
+      "w": 411.02,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 320.76,
+      "y": 520.16,
+      "w": 438.46,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 14.28,
+      "after": 6.24
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat italic 800",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 246.31,
+      "y": 631.78,
+      "w": 587.34,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 237.21,
+      "y": 631.78,
+      "w": 605.54,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFD83D"
+     ],
+     "contrast": {
+      "before": 1.14,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat italic 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 200.42,
+      "y": 709.09,
+      "w": 679.14,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 179.84,
+      "y": 709.09,
+      "w": 720.3,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFD83D"
+     ],
+     "contrast": {
+      "before": 1.14,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat italic 900",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 74.45,
+      "y": 871.69,
+      "w": 931.08,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 871.69,
+      "w": 950.4,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 6.24
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "f0f82b84234e938e455f3deb580d1435bf1b57da040159b87d85aeb67c82bc2c"
+  },
+  "s5-italic-heavy/white-on-dark/STRIPES": {
+   "scrim": 0.535,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat italic 900",
+     "effect": "outline-bold",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 334.48,
+      "y": 520.16,
+      "w": 411.02,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 320.76,
+      "y": 520.16,
+      "w": 438.46,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 1.21,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat italic 800",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 246.31,
+      "y": 631.78,
+      "w": 587.34,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 237.21,
+      "y": 631.78,
+      "w": 605.54,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat italic 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 200.42,
+      "y": 709.09,
+      "w": 679.14,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 179.84,
+      "y": 709.09,
+      "w": 720.3,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat italic 900",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 74.45,
+      "y": 871.69,
+      "w": 931.08,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 871.69,
+      "w": 950.4,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "c64d32ca3c31b156a6e6ecfd0a6973e8878810b99c08900fb14251fb9771ba40"
+  },
+  "s5-italic-heavy/white-on-dark/SOLID/long": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Montserrat italic 900",
+     "effect": "outline-bold",
+     "size": 55,
+     "lines": 1,
+     "layout_rect": {
+      "x": 79.17,
+      "y": 633.53,
+      "w": 921.64,
+      "h": 57.19
+     },
+     "rect": {
+      "x": 71.47,
+      "y": 633.53,
+      "w": 937.04,
+      "h": 57.19
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat italic 800",
+     "effect": "fill",
+     "size": 55,
+     "lines": 1,
+     "layout_rect": {
+      "x": 291.5,
+      "y": 700.44,
+      "w": 496.98,
+      "h": 57.19
+     },
+     "rect": {
+      "x": 283.8,
+      "y": 700.44,
+      "w": 512.38,
+      "h": 57.19
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat italic 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 200.42,
+      "y": 767.34,
+      "w": 679.14,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 179.84,
+      "y": 767.34,
+      "w": 720.3,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Strength and Confidence Comeback Challenge For Busy Parents",
+     "face": "Montserrat italic 900",
+     "effect": "fill",
+     "size": 41,
+     "lines": 2,
+     "layout_rect": {
+      "x": 70.53,
+      "y": 929.94,
+      "w": 938.91,
+      "h": 85.25
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 929.94,
+      "w": 950.39,
+      "h": 85.25
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "61449b0170a380417aec1f73002f9cbd71a178de4b2e4cb220b1244dd59b84e1"
+  },
+  "s6-serif-display/pink-white/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 327.63,
+      "y": 520.64,
+      "w": 424.73,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 321.26,
+      "y": 520.64,
+      "w": 437.47,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#D6337F"
+     ],
+     "contrast": {
+      "before": 3.76,
+      "after": 3.76
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 213.2,
+      "y": 632.27,
+      "w": 653.58,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 208.98,
+      "y": 632.27,
+      "w": 662.03,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Abril Fatface normal 400",
+     "effect": "outline-bold",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 245.05,
+      "y": 709.58,
+      "w": 589.88,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 232.27,
+      "y": 709.58,
+      "w": 615.43,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFB6D5",
+      "#D6337F"
+     ],
+     "contrast": {
+      "before": 10.47,
+      "after": 10.47
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Abril Fatface normal 400",
+     "effect": "outline-bold",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 70.73,
+      "y": 872.66,
+      "w": 938.52,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFB6D5",
+      "#D6337F"
+     ],
+     "contrast": {
+      "before": 10.47,
+      "after": 10.47
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "aac073522686ff3bbef06e6741cb57ef8a48833bbe73f5206e505a795acea8d8"
+  },
+  "s6-serif-display/cyan-white/LIGHT": {
+   "scrim": 0.686,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 327.63,
+      "y": 520.64,
+      "w": 424.73,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 321.26,
+      "y": 520.64,
+      "w": 437.47,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#43C3FF"
+     ],
+     "contrast": {
+      "before": 1.64,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 213.2,
+      "y": 632.27,
+      "w": 653.58,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 208.98,
+      "y": 632.27,
+      "w": 662.03,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#43C3FF"
+     ],
+     "contrast": {
+      "before": 1.64,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Abril Fatface normal 400",
+     "effect": "outline-bold",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 245.05,
+      "y": 709.58,
+      "w": 589.88,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 232.27,
+      "y": 709.58,
+      "w": 615.43,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#0A2A3A"
+     ],
+     "contrast": {
+      "before": 12.26,
+      "after": 9.01
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Abril Fatface normal 400",
+     "effect": "outline-bold",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 70.73,
+      "y": 872.66,
+      "w": 938.52,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#0A2A3A"
+     ],
+     "contrast": {
+      "before": 12.26,
+      "after": 9.01
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "f733280a896ea38f9f7df1e49325ab50bd70638ad8623eefbf0249f1d13309ad"
+  },
+  "s6-serif-display/cyan-pink/STRIPES": {
+   "scrim": 0.653,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 327.63,
+      "y": 520.64,
+      "w": 424.73,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 321.26,
+      "y": 520.64,
+      "w": 437.47,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 1.57,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 213.2,
+      "y": 632.27,
+      "w": 653.58,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 208.98,
+      "y": 632.27,
+      "w": 662.03,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 7.07
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Abril Fatface normal 400",
+     "effect": "outline-bold",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 245.05,
+      "y": 709.58,
+      "w": 589.88,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 232.27,
+      "y": 709.58,
+      "w": 615.43,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA",
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.57,
+      "after": 7.07
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Abril Fatface normal 400",
+     "effect": "outline-bold",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 70.73,
+      "y": 872.66,
+      "w": 938.52,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFA6DC",
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.79,
+      "after": 7.07
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "a099d9767a5a58f2cdf4166b26cbb6c0279be73546620e68b40c583bced0a432"
+  },
+  "s6-serif-display/white-on-dark/SOLID/long": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 54,
+     "lines": 1,
+     "layout_rect": {
+      "x": 73.78,
+      "y": 618.86,
+      "w": 932.42,
+      "h": 56.16
+     },
+     "rect": {
+      "x": 70.27,
+      "y": 618.86,
+      "w": 939.44,
+      "h": 56.16
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 54,
+     "lines": 1,
+     "layout_rect": {
+      "x": 268.5,
+      "y": 684.73,
+      "w": 542.97,
+      "h": 56.16
+     },
+     "rect": {
+      "x": 264.99,
+      "y": 684.73,
+      "w": 549.99,
+      "h": 56.16
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Abril Fatface normal 400",
+     "effect": "outline-bold",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 245.05,
+      "y": 750.61,
+      "w": 589.88,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 232.27,
+      "y": 750.61,
+      "w": 615.43,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Strength and Confidence Comeback Challenge For Busy Parents",
+     "face": "Abril Fatface normal 400",
+     "effect": "outline-bold",
+     "size": 47,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.02,
+      "y": 913.69,
+      "w": 941.94,
+      "h": 101.5
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 913.69,
+      "w": 950.4,
+      "h": 101.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF",
+      "#1A1A1A"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "e3ad67f332454a0b7fac3e52cda2ede38f40e09943a4c00f61e4e63bae7fa6f1"
+  },
+  "s7-elegant-serif/green-white/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 13,
+      "after": 13
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 13,
+      "after": 13
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#0E2A06"
+     },
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 11.84
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "cfae94a64ce9e7402ddc4c5434416c3ade75cdbee02ec3585ac688d85be9c8ac"
+  },
+  "s7-elegant-serif/red-pink/LIGHT": {
+   "scrim": 0.822,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 14.46
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#FF4D6D"
+     ],
+     "contrast": {
+      "before": 2.64,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 14.46
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#2A0710"
+     },
+     "judged_colours": [
+      "#FF4D6D"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 5.75
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "10271b2ca66b5e135942ba4a4bce8200c29948e5dbd9f99099e1617f7e9d5b4b"
+  },
+  "s7-elegant-serif/red-white/STRIPES": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#FF2A2A"
+     ],
+     "contrast": {
+      "before": 3.74,
+      "after": 3.74
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#FF2A2A"
+     ],
+     "contrast": {
+      "before": 3.74,
+      "after": 3.74
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": {
+      "x": 195.49,
+      "y": 699.64,
+      "w": 688.99,
+      "h": 173.24,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 21
+     },
+     "steps": [
+      "band"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#FF2A2A"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 5.62
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "26268deb8275c915e2ea6d7716bf828341c93de3e8090601eb8f2d2b6c50d99a"
+  },
+  "s7-elegant-serif/white-on-dark/SOLID/long": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 54,
+     "lines": 1,
+     "layout_rect": {
+      "x": 71.84,
+      "y": 627.52,
+      "w": 936.28,
+      "h": 58.31
+     },
+     "rect": {
+      "x": 67.52,
+      "y": 627.52,
+      "w": 944.92,
+      "h": 58.31
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 54,
+     "lines": 1,
+     "layout_rect": {
+      "x": 274.56,
+      "y": 695.55,
+      "w": 530.84,
+      "h": 58.31
+     },
+     "rect": {
+      "x": 270.24,
+      "y": 695.55,
+      "w": 539.48,
+      "h": 58.31
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 763.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 763.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Strength and Confidence Comeback Challenge For Busy Parents",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 41,
+     "lines": 2,
+     "layout_rect": {
+      "x": 77.91,
+      "y": 926.66,
+      "w": 924.16,
+      "h": 88.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 926.66,
+      "w": 950.4,
+      "h": 88.53
+     },
+     "band": {
+      "x": 68.89,
+      "y": 922.56,
+      "w": 942.2,
+      "h": 92.64,
+      "colour": "#111111"
+     },
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 18.88
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "c989d9b1d647147f1c57302f5d0a629692c6413fd9ac1d4aa9678d51bef32149"
+  },
+  "s8-script-accent/yellow-accent/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 89,
+     "lines": 1,
+     "layout_rect": {
+      "x": 347.13,
+      "y": 520.91,
+      "w": 385.72,
+      "h": 92.55
+     },
+     "rect": {
+      "x": 341.34,
+      "y": 520.91,
+      "w": 397.29,
+      "h": 92.55
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Great Vibes normal 400",
+     "effect": "fill",
+     "size": 73,
+     "lines": 1,
+     "layout_rect": {
+      "x": 342.17,
+      "y": 623.17,
+      "w": 395.63,
+      "h": 102.19
+     },
+     "rect": {
+      "x": 317.35,
+      "y": 623.17,
+      "w": 445.27,
+      "h": 102.19
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFD83D"
+     ],
+     "contrast": {
+      "before": 12.29,
+      "after": 12.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 134,
+     "lines": 1,
+     "layout_rect": {
+      "x": 229.91,
+      "y": 735.08,
+      "w": 620.16,
+      "h": 139.36
+     },
+     "rect": {
+      "x": 221.2,
+      "y": 735.08,
+      "w": 637.58,
+      "h": 139.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFD83D"
+     ],
+     "contrast": {
+      "before": 12.29,
+      "after": 12.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 63,
+     "lines": 2,
+     "layout_rect": {
+      "x": 68.89,
+      "y": 884.16,
+      "w": 942.2,
+      "h": 131.03
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 884.16,
+      "w": 950.39,
+      "h": 131.03
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "9ee37342f215189c14ff14ff2ba4601b2988b5eb6246bb1eba406dfb7ac66d01"
+  },
+  "s8-script-accent/white-on-dark/LIGHT": {
+   "scrim": 0.49,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 89,
+     "lines": 1,
+     "layout_rect": {
+      "x": 347.13,
+      "y": 520.91,
+      "w": 385.72,
+      "h": 92.55
+     },
+     "rect": {
+      "x": 341.34,
+      "y": 520.91,
+      "w": 397.29,
+      "h": 92.55
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Great Vibes normal 400",
+     "effect": "fill",
+     "size": 73,
+     "lines": 1,
+     "layout_rect": {
+      "x": 342.17,
+      "y": 623.17,
+      "w": 395.63,
+      "h": 102.19
+     },
+     "rect": {
+      "x": 317.35,
+      "y": 623.17,
+      "w": 445.27,
+      "h": 102.19
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 134,
+     "lines": 1,
+     "layout_rect": {
+      "x": 229.91,
+      "y": 735.08,
+      "w": 620.16,
+      "h": 139.36
+     },
+     "rect": {
+      "x": 221.2,
+      "y": 735.08,
+      "w": 637.58,
+      "h": 139.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 63,
+     "lines": 2,
+     "layout_rect": {
+      "x": 68.89,
+      "y": 884.16,
+      "w": 942.2,
+      "h": 131.03
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 884.16,
+      "w": 950.39,
+      "h": 131.03
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "6cd48a50238e8df407073623cfc5924257534ca02f585621d4ea1def298118d3"
+  },
+  "s8-script-accent/blue-white/STRIPES": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 89,
+     "lines": 1,
+     "layout_rect": {
+      "x": 347.13,
+      "y": 520.91,
+      "w": 385.72,
+      "h": 92.55
+     },
+     "rect": {
+      "x": 341.34,
+      "y": 520.91,
+      "w": 397.29,
+      "h": 92.55
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 3.98,
+      "after": 3.98
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Great Vibes normal 400",
+     "effect": "fill",
+     "size": 73,
+     "lines": 1,
+     "layout_rect": {
+      "x": 342.17,
+      "y": 623.17,
+      "w": 395.63,
+      "h": 102.19
+     },
+     "rect": {
+      "x": 317.35,
+      "y": 623.17,
+      "w": 445.27,
+      "h": 102.19
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 3.98,
+      "after": 3.98
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 134,
+     "lines": 1,
+     "layout_rect": {
+      "x": 229.91,
+      "y": 735.08,
+      "w": 620.16,
+      "h": 139.36
+     },
+     "rect": {
+      "x": 221.2,
+      "y": 735.08,
+      "w": 637.58,
+      "h": 139.36
+     },
+     "band": {
+      "x": 203.11,
+      "y": 725.7,
+      "w": 673.76,
+      "h": 158.12,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 21
+     },
+     "steps": [
+      "band"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 63,
+     "lines": 2,
+     "layout_rect": {
+      "x": 68.89,
+      "y": 884.16,
+      "w": 942.2,
+      "h": 131.03
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 884.16,
+      "w": 950.39,
+      "h": 131.03
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 3.98,
+      "after": 3.98
+     },
+     "steps": [
+      "stroke"
+     ]
+    }
+   ],
+   "png_sha256": "e8d3e4510110ff6bc5560e2d4b8e5e69938dc3cfe4ddbe709e4642db03e7f0d3"
+  },
+  "s8-script-accent/white-on-dark/SOLID/long": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 54,
+     "lines": 1,
+     "layout_rect": {
+      "x": 73.78,
+      "y": 627.58,
+      "w": 932.42,
+      "h": 56.16
+     },
+     "rect": {
+      "x": 70.27,
+      "y": 627.58,
+      "w": 939.44,
+      "h": 56.16
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Great Vibes normal 400",
+     "effect": "fill",
+     "size": 54,
+     "lines": 1,
+     "layout_rect": {
+      "x": 393.66,
+      "y": 693.45,
+      "w": 292.67,
+      "h": 75.59
+     },
+     "rect": {
+      "x": 375.3,
+      "y": 693.45,
+      "w": 329.39,
+      "h": 75.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 134,
+     "lines": 1,
+     "layout_rect": {
+      "x": 229.91,
+      "y": 778.77,
+      "w": 620.16,
+      "h": 139.36
+     },
+     "rect": {
+      "x": 221.2,
+      "y": 778.77,
+      "w": 637.58,
+      "h": 139.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Strength and Confidence Comeback Challenge For Busy Parents",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 42,
+     "lines": 2,
+     "layout_rect": {
+      "x": 67.52,
+      "y": 927.84,
+      "w": 944.94,
+      "h": 87.34
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 927.84,
+      "w": 950.4,
+      "h": 87.34
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "f9636ef8ba25574f4e1b8aefc97cfff6027d306b8a7ff23b260c86d187d590c0"
+  },
+  "s9-hollow-duration/cyan-white/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 334.48,
+      "y": 520.16,
+      "w": 411.02,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 328.11,
+      "y": 520.16,
+      "w": 423.76,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#43C3FF"
+     ],
+     "contrast": {
+      "before": 8.51,
+      "after": 8.51
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 226.84,
+      "y": 631.78,
+      "w": 626.28,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 222.62,
+      "y": 631.78,
+      "w": 634.73,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#43C3FF"
+     ],
+     "contrast": {
+      "before": 8.51,
+      "after": 8.51
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "hollow",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 185.86,
+      "y": 709.09,
+      "w": 708.26,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "9f367d3664c567a2745e62f6371bab2dbd744e8bc6709c4dcfdf87e1f4bb95a3"
+  },
+  "s9-hollow-duration/cyan-pink/LIGHT": {
+   "scrim": 0.656,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 334.48,
+      "y": 520.16,
+      "w": 411.02,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 328.11,
+      "y": 520.16,
+      "w": 423.76,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 1.29,
+      "after": 5.12
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 226.84,
+      "y": 631.78,
+      "w": 626.28,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 222.62,
+      "y": 631.78,
+      "w": 634.73,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 8.05
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "hollow",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 185.86,
+      "y": 709.09,
+      "w": 708.26,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 1.29,
+      "after": 5.12
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFA6DC"
+     ],
+     "contrast": {
+      "before": 1.47,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "c0b82de790369fc73f4ecfd72335046b3819da179bef841dedc183c8a30f87a8"
+  },
+  "s9-hollow-duration/purple-white/STRIPES": {
+   "scrim": 0.763,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 334.48,
+      "y": 520.16,
+      "w": 411.02,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 328.11,
+      "y": 520.16,
+      "w": 423.76,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#C98BFF"
+     ],
+     "contrast": {
+      "before": 2.44,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 226.84,
+      "y": 631.78,
+      "w": 626.28,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 222.62,
+      "y": 631.78,
+      "w": 634.73,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 10.96
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "hollow",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 185.86,
+      "y": 709.09,
+      "w": 708.26,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 10.96
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#E7C4FF"
+     ],
+     "contrast": {
+      "before": 1.53,
+      "after": 7.17
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "2c692263c11168e6d1786d6a51fca251badfa65702e63b2b0b1df277e359b000"
+  },
+  "s9-hollow-duration/white-on-dark/SOLID/long": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 56,
+     "lines": 1,
+     "layout_rect": {
+      "x": 70.52,
+      "y": 629.34,
+      "w": 938.95,
+      "h": 58.23
+     },
+     "rect": {
+      "x": 66.88,
+      "y": 629.34,
+      "w": 946.23,
+      "h": 58.23
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 56,
+     "lines": 1,
+     "layout_rect": {
+      "x": 270.2,
+      "y": 697.3,
+      "w": 539.56,
+      "h": 58.23
+     },
+     "rect": {
+      "x": 266.56,
+      "y": 697.3,
+      "w": 546.84,
+      "h": 58.23
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "hollow",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 765.25,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 185.86,
+      "y": 765.25,
+      "w": 708.26,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Strength and Confidence Comeback Challenge For Busy Parents",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 42,
+     "lines": 2,
+     "layout_rect": {
+      "x": 67.52,
+      "y": 927.84,
+      "w": 944.94,
+      "h": 87.34
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 927.84,
+      "w": 950.4,
+      "h": 87.34
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 16.29,
+      "after": 16.29
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "78523354f5f10049783e9b1c4448c193de3f3b10596a2d4303178ff1863cee65"
+  },
+  "s7-elegant-serif/white-on-dark/STRIPES": {
+   "scrim": 0.535,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#111111"
+     },
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 18.88
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "ca89a9f74e02474cba1c4116c3e6938aabf9998fdcc1809921c5a55d2484e55e"
+  },
+  "s7-elegant-serif/cyan-pink/STRIPES": {
+   "scrim": 0.653,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 1.57,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 7.07
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 1.57,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#1B1B2E"
+     },
+     "judged_colours": [
+      "#FFA6DC"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 9.45
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "3b4d5ad578efacccfb491d54c7bf5f9852186e85df771ffd8a1ab514101da70a"
+  },
+  "s7-elegant-serif/blue-white/STRIPES": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 3.98,
+      "after": 3.98
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": 3.98,
+      "after": 3.98
+     },
+     "steps": [
+      "stroke"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": {
+      "x": 195.49,
+      "y": 699.64,
+      "w": 688.99,
+      "h": 173.24,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 21
+     },
+     "steps": [
+      "band"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#FFFFFF"
+     },
+     "judged_colours": [
+      "#2B59FF"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 5.28
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "4d9c116553be7e88b08143de3b97a8372da594d0cfd52334165d1ccfb6a30e3e"
+  },
+  "s7-elegant-serif/purple-white/STRIPES": {
+   "scrim": 0.763,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#C98BFF"
+     ],
+     "contrast": {
+      "before": 2.44,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 10.96
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 10.96
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#3D1452"
+     },
+     "judged_colours": [
+      "#E7C4FF"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 9.67
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "31cd13cda77428a1a50bc1a3bef5426a01eb43ea243120b5a986d6948ff2c7cd"
+  },
+  "s7-elegant-serif/pink-white/STRIPES": {
+   "scrim": 0.662,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": {
+      "x": 316.9,
+      "y": 518.4,
+      "w": 446.16,
+      "h": 111.37,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#D6337F"
+     ],
+     "contrast": {
+      "before": 4.53,
+      "after": 4.64
+     },
+     "steps": [
+      "scrim",
+      "band"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 7.32
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFB6D5"
+     ],
+     "contrast": {
+      "before": 1.63,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#5A0F33"
+     },
+     "judged_colours": [
+      "#FFB6D5"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 8.32
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "c058af6b5a67961ee57effcbc747923c567044417dffe26ac86b06c487232d4d"
+  },
+  "s7-elegant-serif/green-white/STRIPES": {
+   "scrim": 0.607,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 1.31,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 5.9
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": 1.31,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#0E2A06"
+     },
+     "judged_colours": [
+      "#6CFF3F"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 11.84
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "1be1878c4cd55b8d69b6f57587275eab322ec803098cae5eefd21c5e0ac06e62"
+  },
+  "s7-elegant-serif/yellow-accent/STRIPES": {
+   "scrim": 0.622,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 6.24
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFD83D"
+     ],
+     "contrast": {
+      "before": 1.39,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFD83D"
+     ],
+     "contrast": {
+      "before": 1.39,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#1A1A1A"
+     },
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 17.4
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "78bb1e772fec8e77424392e38be232ad7d1436eace42d51065841dcafe261360"
+  },
+  "s7-elegant-serif/cyan-white/STRIPES": {
+   "scrim": 0.714,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#43C3FF"
+     ],
+     "contrast": {
+      "before": 2,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": null,
+     "judged_colours": [
+      "#43C3FF"
+     ],
+     "contrast": {
+      "before": 2,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 9.01
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#0B0B0B"
+     },
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 19.68
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "f9b947824103409c38b67e1026df73df584a4159a0c09d192a5b7bbcce47fe2e"
+  },
+  "s7-elegant-serif/red-pink/STRIPES": {
+   "scrim": 0.535,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Cinzel normal 700",
+     "effect": "fill",
+     "size": 94,
+     "lines": 1,
+     "layout_rect": {
+      "x": 335.7,
+      "y": 521.67,
+      "w": 408.56,
+      "h": 101.52
+     },
+     "rect": {
+      "x": 328.18,
+      "y": 521.67,
+      "w": 423.6,
+      "h": 101.52
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Cinzel normal 600",
+     "effect": "fill",
+     "size": 62,
+     "lines": 1,
+     "layout_rect": {
+      "x": 235.25,
+      "y": 632.91,
+      "w": 609.48,
+      "h": 66.95
+     },
+     "rect": {
+      "x": 230.29,
+      "y": 632.91,
+      "w": 619.4,
+      "h": 66.95
+     },
+     "band": {
+      "x": 222.85,
+      "y": 628.57,
+      "w": 634.28,
+      "h": 75.63,
+      "colour": "#000000"
+     },
+     "judged_colours": [
+      "#FF4D6D"
+     ],
+     "contrast": {
+      "before": 3.21,
+      "after": 6.53
+     },
+     "steps": [
+      "scrim",
+      "band"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Cinzel normal 900",
+     "effect": "fill",
+     "size": 142,
+     "lines": 1,
+     "layout_rect": {
+      "x": 223.89,
+      "y": 709.58,
+      "w": 632.19,
+      "h": 153.36
+     },
+     "rect": {
+      "x": 212.53,
+      "y": 709.58,
+      "w": 654.91,
+      "h": 153.36
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Cinzel normal 700",
+     "effect": "band",
+     "size": 66,
+     "lines": 2,
+     "layout_rect": {
+      "x": 85.91,
+      "y": 872.66,
+      "w": 908.16,
+      "h": 142.53
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 872.66,
+      "w": 950.4,
+      "h": 142.53
+     },
+     "band": {
+      "x": 71.39,
+      "y": 866.06,
+      "w": 937.2,
+      "h": 149.14,
+      "colour": "#2A0710"
+     },
+     "judged_colours": [
+      "#FF4D6D"
+     ],
+     "contrast": {
+      "before": null,
+      "after": 5.75
+     },
+     "steps": [
+      "style-band"
+     ]
+    }
+   ],
+   "png_sha256": "f69eba1a575194c1bf71129ac513545736aa6838984a87697673b64ee07e4f06"
+  },
+  "s1/no-audience/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 117,
+     "lines": 1,
+     "layout_rect": {
+      "x": 292.98,
+      "y": 541.3,
+      "w": 494.02,
+      "h": 121.67
+     },
+     "rect": {
+      "x": 285.38,
+      "y": 541.3,
+      "w": 509.23,
+      "h": 121.67
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 10.84,
+      "after": 10.84
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 176,
+     "lines": 1,
+     "layout_rect": {
+      "x": 132.72,
+      "y": 672.69,
+      "w": 814.53,
+      "h": 183.03
+     },
+     "rect": {
+      "x": 121.28,
+      "y": 672.69,
+      "w": 837.41,
+      "h": 183.03
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 10.84,
+      "after": 10.84
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 72,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.47,
+      "y": 865.44,
+      "w": 941.03,
+      "h": 149.75
+     },
+     "rect": {
+      "x": 64.79,
+      "y": 865.44,
+      "w": 950.39,
+      "h": 149.75
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFA6DC"
+     ],
+     "contrast": {
+      "before": 9.53,
+      "after": 9.53
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "c4e98d99e74f0eb407333f40e39fbd36ea5f4b28c7b4fbdd2128dd9bc9f3265c"
+  },
+  "s1/free/LIGHT": {
+   "scrim": 0.656,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 98,
+     "lines": 1,
+     "layout_rect": {
+      "x": 333.09,
+      "y": 547.2,
+      "w": 413.8,
+      "h": 101.91
+     },
+     "rect": {
+      "x": 326.72,
+      "y": 547.2,
+      "w": 426.54,
+      "h": 101.91
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 1.29,
+      "after": 5.12
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 65,
+     "lines": 1,
+     "layout_rect": {
+      "x": 231.39,
+      "y": 658.83,
+      "w": 617.19,
+      "h": 67.59
+     },
+     "rect": {
+      "x": 227.17,
+      "y": 658.83,
+      "w": 625.64,
+      "h": 67.59
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 1.22,
+      "after": 8.05
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "duration",
+     "text": "FREE 12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 121,
+     "lines": 1,
+     "layout_rect": {
+      "x": 76.38,
+      "y": 736.14,
+      "w": 927.23,
+      "h": 125.83
+     },
+     "rect": {
+      "x": 68.51,
+      "y": 736.14,
+      "w": 942.96,
+      "h": 125.83
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 1.29,
+      "after": 5.12
+     },
+     "steps": [
+      "scrim"
+     ]
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFA6DC"
+     ],
+     "contrast": {
+      "before": 1.47,
+      "after": 4.5
+     },
+     "steps": [
+      "scrim"
+     ]
+    }
+   ],
+   "png_sha256": "7443df0050af9415e2b4c5e9c3be8208ed519f2f5e89bb8e7a1eacf3f8e75cc4"
+  },
+  "s1/long-location/DARK": {
+   "scrim": 0,
+   "blocks": [
+    {
+     "block": "location",
+     "text": "BISHAN AND UPPER THOMSON",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 55,
+     "lines": 1,
+     "layout_rect": {
+      "x": 75.59,
+      "y": 575.28,
+      "w": 928.78,
+      "h": 57.19
+     },
+     "rect": {
+      "x": 72.02,
+      "y": 575.28,
+      "w": 935.93,
+      "h": 57.19
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 10.84,
+      "after": 10.84
+     },
+     "steps": []
+    },
+    {
+     "block": "audience",
+     "text": "LADIES WANTED",
+     "face": "Montserrat normal 700",
+     "effect": "fill",
+     "size": 55,
+     "lines": 1,
+     "layout_rect": {
+      "x": 278.88,
+      "y": 642.19,
+      "w": 522.22,
+      "h": 57.19
+     },
+     "rect": {
+      "x": 275.3,
+      "y": 642.19,
+      "w": 529.37,
+      "h": 57.19
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFFFFF"
+     ],
+     "contrast": {
+      "before": 17.04,
+      "after": 17.04
+     },
+     "steps": []
+    },
+    {
+     "block": "duration",
+     "text": "12 Week",
+     "face": "Montserrat normal 900",
+     "effect": "fill",
+     "size": 147,
+     "lines": 1,
+     "layout_rect": {
+      "x": 199.83,
+      "y": 709.09,
+      "w": 680.33,
+      "h": 152.88
+     },
+     "rect": {
+      "x": 190.27,
+      "y": 709.09,
+      "w": 699.44,
+      "h": 152.88
+     },
+     "band": null,
+     "judged_colours": [
+      "#3BE3EA"
+     ],
+     "contrast": {
+      "before": 10.84,
+      "after": 10.84
+     },
+     "steps": []
+    },
+    {
+     "block": "offer_name",
+     "text": "Confidence Comeback Challenge",
+     "face": "Montserrat normal 800",
+     "effect": "fill",
+     "size": 69,
+     "lines": 2,
+     "layout_rect": {
+      "x": 69.28,
+      "y": 871.69,
+      "w": 941.42,
+      "h": 143.5
+     },
+     "rect": {
+      "x": 64.8,
+      "y": 871.69,
+      "w": 950.39,
+      "h": 143.5
+     },
+     "band": null,
+     "judged_colours": [
+      "#FFA6DC"
+     ],
+     "contrast": {
+      "before": 9.53,
+      "after": 9.53
+     },
+     "steps": []
+    }
+   ],
+   "png_sha256": "d2ccec4c8f44dd9932066f9159889b262af4a1ba1bf8deb4323cc43f3a5e8230"
+  }
+ }
+}
