@@ -45,11 +45,13 @@ import { callVision } from "./check-visual.mjs";
 import { launchBrowser, isWholeCountry } from "./render-composites.mjs";
 import { onAdProblems } from "./cards.mjs";
 import { COPY_MODEL, plainDashes } from "./draft-copy.mjs";
-import { themeOf, themeRule, readScripts, writeScripts, coachStore, stillFault, stillWhy, presenterOf, presenterWords, realModels, closingLine, endsWithClosing, closingAlone, plainWords, hardWords, PLAIN_RULE, FIRST_PERSON, TAP, IDEAL_BODY, countryNamed, factsFor, painsFor, painSources, fillLine, wordCount, videoLibraryDir, clipStore, asideOf, ownerKeptClip, durationOf, hasFfmpeg, letteringOf, LIVE, USD_PER_SECOND, USD_PER_IMAGE } from "./presenter-video.mjs";
+import { themeOf, themeRule, readScripts, writeScripts, coachStore, stillFault, stillWhy, presenterOf, presenterWords, realModels, closingLine, closingFor, endsWithClosing, closingAlone, plainWords, hardWords, PLAIN_RULE, FIRST_PERSON, FIRST_PERSON_ZH, isZh, units, zhForm, TAP, IDEAL_BODY, countryNamed, factsFor, painsFor, painSources, fillLine, wordCount, videoLibraryDir, clipStore, asideOf, ownerKeptClip, durationOf, hasFfmpeg, letteringOf, LIVE, USD_PER_SECOND, USD_PER_IMAGE } from "./presenter-video.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 /** A sheet script is 6 to 9 sheets; a sheet is 2 to 8 words (the closing line and the sheet with the offer's name may be longer). Each sheet is one clip of 4 seconds. */
 export const SHEETS = [6, 9], SHEET_WORDS = [2, 8], SHEET_SECONDS = 4;
+/** A Chinese sheet (2026-11-20, F45 Xinyi) is measured in characters, written in a pen hand that has Chinese (Iansui, OFL). */
+export const SHEET_CHARS = [2, 14];
 /** How long a sheet must stay readable; what is kept of a clip after its drop begins; how much of the last sheet is kept. */
 export const MIN_HOLD = 1.6, LAST_KEEP = 3.2, DROP_FALL = 0.5;
 /**
@@ -61,8 +63,11 @@ export const MIN_HOLD = 1.6, LAST_KEEP = 3.2, DROP_FALL = 0.5;
  */
 export const DROP_KEEP = 0.5, SHEET_FADE = 0.25;
 /** The paper in the picture: the least of the picture's width it may be, how blank it must be, how much of its height must be inside Meta's live area, the words' box on it, and the smallest the letters may be (of the picture's width). */
+/** Pictures a white-paper video may make in one run: the first and two fresh ones (2026-11-21: it was two). */
+export const BLANK_PER_RUN = 3;
 export const PAPER = { min_w: 0.24, fill: 0.8, usable: 0.5, text_w: 0.78, pad: 0.08, min_letter: 0.034, skew: 0.12 };
 export const PAPER_FONT = join(REPO_ROOT, "assets/fonts/permanentmarker/PermanentMarker-Regular.ttf");
+export const PAPER_FONT_ZH = join(REPO_ROOT, "assets/fonts/iansui/Iansui-Regular.ttf");
 const W = 720, H = 1280, FPS = 24, CHECK_V = 1;
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
@@ -79,14 +84,15 @@ const round = (x, p = 100) => Math.round(x * p) / p;
 const NUM = "(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|fifty)";
 const SPOT = "(?:spots?|places?|slots?|seats?|spaces?)", PEOPLE = "(?:people|persons?|members?|women|men|ladies|guys|locals|mums|moms|dads|beginners)";
 /** Scarcity, the way an advert says it: limited places, a number of people or places, a deadline. */
+export const SCARCE_ZH = /\d+\s*位|名額|限量|只剩|僅剩|最後機會|額滿/;
 export const SCARCE = new RegExp(`\\b(?:limited|${NUM} (?:more )?(?:${SPOT}|${PEOPLE})|${SPOT} (?:left|are|is|fill|filling|going|remaining|open)|only ${NUM} left|last chance|last few|few ${SPOT}|filling (?:up|fast)|sell(?:s|ing)? out|sold out|closing soon|ends? (?:soon|today|tonight|this week)|hurry|don'?t miss|while ${SPOT} last)\\b`, "i");
 /** The letters and digits of a text, lower-cased: what "letter for letter" compares. */
-export const lettersOf = (s) => apos(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+export const lettersOf = (s) => (isZh(s) ? zhForm(s).replace(/[^a-z0-9\u3400-\u9fff\uf900-\ufaff]/g, "") : apos(s).toLowerCase().replace(/[^a-z0-9]/g, ""));
 export const sameWriting = (read, text) => lettersOf(read) === lettersOf(text);
 /** A sheet's words as they are written on the paper: plain quotes and three dots, which every marker font has. */
 export const inkText = (s) => norm(s).replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/…/g, "...");
-const UNWRITABLE = /[^\x20-\x7E’‘“”…]/;
-const scarceOf = (s, offer) => { const key = norm(offer).toLowerCase(), t = norm(s); return apos(key && t.toLowerCase().includes(key) ? t.toLowerCase().split(key).join(" ") : t).match(SCARCE); };
+const UNWRITABLE = /[^\x20-\x7E’‘“”…]/, UNWRITABLE_ZH = /[^\x20-\x7E’‘“”…\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/;
+const scarceOf = (s, offer) => { const key = norm(offer).toLowerCase(), t = norm(s), rest = apos(key && t.toLowerCase().includes(key) ? t.toLowerCase().split(key).join(" ") : t); return isZh(rest) ? rest.match(SCARCE_ZH) : rest.match(SCARCE); };
 /** The sheets of a script that say places are limited (never the last one, the closing line): [{ sheet (1-based), text, phrase }]. */
 export const scarceSheets = (sheets, offer = null) => (sheets || []).map((s, i, a) => { const m = i < a.length - 1 ? scarceOf(s, offer) : null; return m ? { sheet: i + 1, text: norm(s), phrase: m[0] } : null; }).filter(Boolean);
 /**
@@ -96,7 +102,7 @@ export const scarceSheets = (sheets, offer = null) => (sheets || []).map((s, i, 
  */
 export function scarcityOf(script, facts = []) {
   const first = scarceSheets(script.sheets, script.offer)[0]; if (!first) return null;
-  const byFact = (facts || []).some((f) => SCARCE.test(apos(f)));
+  const byFact = (facts || []).some((f) => SCARCE.test(apos(f)) || SCARCE_ZH.test(f));
   return { sheet: first.sheet, text: first.text, by: byFact ? "fact" : (script.scarce_ok || []).includes(lettersOf(first.text)) ? "you" : null };
 }
 /**
@@ -108,16 +114,20 @@ export function scarcityOf(script, facts = []) {
  */
 export function sheetProblems(sheets, { offer = null, profile = {}, closing = closingLine(), plain = plainWords(), facts = [], approved = [], ask = false } = {}) {
   if (!Array.isArray(sheets) || sheets.length < SHEETS[0] || sheets.length > SHEETS[1]) return [`a white-paper script is ${SHEETS[0]} to ${SHEETS[1]} sheets`];
-  const errs = [], ss = sheets.map(norm), last = ss.length - 1, key = norm(offer).toLowerCase(), asIs = [offer, profile.display_name, closing, ...(facts || [])].filter(Boolean);
-  const scarceFacts = (facts || []).filter((f) => SCARCE.test(apos(f))), factNumbers = new Set(scarceFacts.join(" ").match(/\d+/g) || []);
+  closing = closingFor(sheets, closing);
+  const errs = [], ss = sheets.map(norm), last = ss.length - 1, key = norm(offer).toLowerCase(), asIs = [offer, profile.display_name, closing, ...(facts || [])].filter(Boolean), zh = isZh(ss);
+  const scarceFacts = (facts || []).filter((f) => SCARCE.test(apos(f)) || SCARCE_ZH.test(f)), factNumbers = new Set(scarceFacts.join(" ").match(/\d+/g) || []);
   ss.forEach((s, i) => {
-    const filled = fillLine(s, "Ang Mo Kio"), n = wordCount(filled), hasOffer = !!key && s.toLowerCase().includes(key), most = hasOffer ? Math.max(SHEET_WORDS[1], wordCount(offer) + 3) : SHEET_WORDS[1];
-    if (i !== last && (n < SHEET_WORDS[0] || n > most)) errs.push(`sheet ${i + 1} is ${n} word${n === 1 ? "" : "s"}: a sheet is ${SHEET_WORDS[0]} to ${most} words, read in two seconds`);
+    const filled = fillLine(s, "Ang Mo Kio"), hasOffer = !!key && s.toLowerCase().includes(key);
+    if (zh) { const n = units(filled), most = hasOffer ? Math.max(SHEET_CHARS[1], units(offer) + 6) : SHEET_CHARS[1]; if (i !== last && (n < SHEET_CHARS[0] || n > most)) errs.push(`sheet ${i + 1} is ${n} characters: a sheet is ${SHEET_CHARS[0]} to ${most} characters, read in two seconds`); }
+    else { const n = wordCount(filled), most = hasOffer ? Math.max(SHEET_WORDS[1], wordCount(offer) + 3) : SHEET_WORDS[1]; if (i !== last && (n < SHEET_WORDS[0] || n > most)) errs.push(`sheet ${i + 1} is ${n} word${n === 1 ? "" : "s"}: a sheet is ${SHEET_WORDS[0]} to ${most} words, read in two seconds`); }
     const odd = (s.match(/\{[^}]*\}/g) || []).filter((x) => x !== "{AREA}"); if (odd.length) errs.push(`sheet ${i + 1}: only {AREA} may stand in for a word (found ${odd.join(", ")})`);
     if (/[\n\r]/.test(String(sheets[i]))) errs.push(`sheet ${i + 1} is two lines: one sheet is one clip`);
-    if (UNWRITABLE.test(s.replace(/\{AREA\}/g, ""))) errs.push(`sheet ${i + 1} has a character the marker cannot write ("${s.match(UNWRITABLE)[0]}"): plain letters, numbers and punctuation only`);
+    const unw = zh ? UNWRITABLE_ZH : UNWRITABLE;
+    if (unw.test(s.replace(/\{AREA\}/g, ""))) errs.push(`sheet ${i + 1} has a character the ${zh ? "pen" : "marker"} cannot write ("${s.match(unw)[0]}"): plain letters, numbers and punctuation only`);
     if (i === last) return;
     const own = s.replace(/\{AREA\}/g, "");
+    if (zh && FIRST_PERSON_ZH.test(own)) errs.push(`sheet ${i + 1} speaks as one person ("我"): the gym speaks as 我們, never as a coach or a member with a story of their own`);
     if (FIRST_PERSON.test(own)) errs.push(`sheet ${i + 1} speaks as one person ("${own.match(FIRST_PERSON)[0]}"): the gym speaks as we, our and us, never as a coach or a member with a story of their own (I, my, me)`);
     if (TAP.test(s)) errs.push(`sheet ${i + 1} says "${s.match(TAP)[0]}": the only call to action is the closing line, on the last sheet`);
     const ideal = apos(s).match(IDEAL_BODY); if (ideal) errs.push(`sheet ${i + 1} promises an ideal body ("${ideal[0]}"): say what the person will feel or be able to do`);
@@ -126,7 +136,7 @@ export function sheetProblems(sheets, { offer = null, profile = {}, closing = cl
     // Scarcity is a claim about the gym: it stands on the owner's word — his typed fact (with its number), or this sheet's own words.
     const scarce = scarceOf(s, offer);
     if (scarce) {
-      const num = scarce[0].match(/\d+/)?.[0];
+      const num = String(scarce[0]).match(/\d+/)?.[0];
       if (scarceFacts.length) { if (num && factNumbers.size && !factNumbers.has(num)) errs.push(`sheet ${i + 1} says "${scarce[0]}": the number you typed for this offer is ${[...factNumbers].join(" or ")} (What each challenge includes)`); }
       else if (!ask && !approved.includes(lettersOf(s))) errs.push(`sheet ${i + 1} says places are limited ("${scarce[0]}"): that is a claim about this gym, so it stands on your word — say it is true when you keep the script, write the sheet yourself, or type it under What each challenge includes (e.g. "Only 10 places")`);
     }
@@ -238,10 +248,11 @@ export function noSheetScriptWhy(gymDir, offer, { libraryDir = videoLibraryDir()
   return { state: "none", text: "nothing is written for this offer yet: press Draft sheets… there, or write your own" };
 }
 /** The sheet scripts a batch makes: that many of the ones ready for its offer, in an order the seed fixes. Too few is refused by name. */
-export function pickSheetScripts(gymDir, { count, offer, seed = "batch", libraryDir = videoLibraryDir() } = {}) {
+export function pickSheetScripts(gymDir, { count, offer, seed = "batch", libraryDir = videoLibraryDir(), reuse = 1 } = {}) {
   const profile = readJson(join(gymDir, "gym-profile.json")) || {}, ready = readySheetScripts(gymDir, offer, { profile, closing: closingLine(libraryDir), plain: plainWords(libraryDir) });
-  if (ready.length < count) throw new Error(`${count} white-paper video${count === 1 ? "" : "s"} asked for, but ${ready.length ? `only ${ready.length} white-paper script${ready.length === 1 ? " is" : "s are"}` : "no white-paper script is"} ready for "${norm(offer)}": ${noSheetScriptWhy(gymDir, offer, { libraryDir, profile }).text} (Draft Scenes → Video scripts → White-paper scripts)`);
-  return ready.map((s) => ({ s, k: sha(`${seed}|${s.id}`) })).sort((a, b) => a.k.localeCompare(b.k)).slice(0, count).map((x) => x.s);
+  if (ready.length * Math.max(1, reuse) < count) throw new Error(`${count} white-paper video${count === 1 ? "" : "s"} asked for, but ${ready.length ? `only ${ready.length} white-paper script${ready.length === 1 ? " is" : "s are"}` : "no white-paper script is"} ready for "${norm(offer)}": ${noSheetScriptWhy(gymDir, offer, { libraryDir, profile }).text} (Draft Scenes → Video scripts → White-paper scripts)`);
+  const order = ready.map((s) => ({ s, k: sha(`${seed}|${s.id}`) })).sort((a, b) => a.k.localeCompare(b.k)).map((x) => x.s);
+  return Array.from({ length: count }, (_, i) => order[i % order.length]);
 }
 /** What making a sheet script takes: one picture, one clip a sheet (a sheet that says the area: one for each location). */
 export function sheetCost(script, areas = [""]) {
@@ -299,13 +310,20 @@ export async function draftSheetScripts({ brandDir, offer, audience = null, coun
 // ── the prompts ──────────────────────────────────────────────────────────────
 const G = (p) => (p.coach ? { He: "The coach", he: "the coach", his: "the coach's" } : p.gender === "man" ? { He: "He", he: "he", his: "his" } : { He: "She", he: "she", his: "her" });
 const NO_WORDS = "There is no text of any kind anywhere in the picture: no captions, no titles, no logos, no watermark, no lettering on walls, screens or clothing.";
+/**
+ * The paper held HIGH (2026-11-21, F45 Xinyi): with the paper's top under the chest logo and its bottom at the hips, all 7
+ * of Xinyi's coach pictures came back with 21–47% of the paper inside Meta's live area (half is needed), so the picture
+ * after one that came back too low asks for the paper higher and a little smaller, and lets it cover the logo. The
+ * first picture keeps the owner's choice (the logo above the paper), and its name, so nothing on file is made again.
+ */
+const HIGHER_PAPER = "The paper is held HIGH and is a little smaller: about 40% of the picture's width. Its top edge is just below the collarbones, so the coach's whole face and neck show above it, and its bottom edge is at the waist, no lower than the navel; it may cover the logo on the chest. The paper is in the middle of the picture, with the face above it and nothing of it below the waist.";
 /** The one picture a white-paper video is made from: the presenter holding a stack of blank sheets, high and large. */
-export function blankPrompt({ presenter, profile }) {
+export function blankPrompt({ presenter, profile, higher = false }) {
   const g = G(presenter);
   // A real coach (2026-11-17): the same person as in two real pictures of them, in the gym's uniform, the paper a little LOWER than the invented presenter holds it so the logo on the chest shows above it (the owner's choice: the words under it are covered).
   if (presenter.coach) {
     const c = presenter.coach, wears = [c.wears?.top, c.wears?.bottom, c.wears?.glasses ? "glasses" : null].filter(Boolean).join(", ");
-    return `A real photograph taken on a phone held upright, 9:16. The person is the SAME real person as in the first and second images: exactly the same face, hair, build and skin, wearing the same clothes${wears ? ` (${wears})` : ""}, with the same small microphone clipped at the collar if there is one. The coach stands facing the camera, close to it, framed from the waist up with the top of the head close to the top edge of the picture, and holds a small stack of plain white A4 paper sheets upright in front of the stomach with both hands. The paper is LARGE in the picture: about half the picture's width. Its top edge is just BELOW the logo on the chest of the top, so the coach's whole face, the collar and that logo show above the paper, and its bottom edge is at the hips. The front sheet is flat and faces the lens squarely, with no tilt and no curl; the coach's fingers hold the stack only at its left and right edges, so the whole face of the paper is clear. The paper is COMPLETELY BLANK: pure white, nothing written, printed or drawn on it. The coach looks straight into the lens with a small, friendly closed-mouth smile. ${presenter.room === true ? "The room is the gym in the THIRD image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, the coach is alone in it, and no words, sign or logo is on any wall" : "The room is the room of the first image — its walls, ceiling, lights, equipment and floor — and the coach is alone in it. The picture is framed so that NO lettering on any wall is in view: the coach stands where the wall behind is plain or only equipment shows, and no words, sign or logo is on any wall in the picture"}. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; the coach's hands look natural. Apart from the logo on the top there is no text anywhere: no captions, no titles, no watermark.`;
+    return `A real photograph taken on a phone held upright, 9:16. The person is the SAME real person as in the first and second images: exactly the same face, hair, build and skin, wearing the same clothes${wears ? ` (${wears})` : ""}, with the same small microphone clipped at the collar if there is one. The coach stands facing the camera, close to it, framed from the waist up with the top of the head close to the top edge of the picture, and holds a small stack of plain white A4 paper sheets upright in front of the stomach with both hands. ${higher ? HIGHER_PAPER : "The paper is LARGE in the picture: about half the picture's width. Its top edge is just BELOW the logo on the chest of the top, so the coach's whole face, the collar and that logo show above the paper, and its bottom edge is at the hips."} The front sheet is flat and faces the lens squarely, with no tilt and no curl; the coach's fingers hold the stack only at its left and right edges, so the whole face of the paper is clear. The paper is COMPLETELY BLANK: pure white, nothing written, printed or drawn on it. The coach looks straight into the lens with a small, friendly closed-mouth smile. ${presenter.room === true ? "The room is the gym in the THIRD image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, the coach is alone in it, and no words, sign or logo is on any wall" : "The room is the room of the first image — its walls, ceiling, lights, equipment and floor — and the coach is alone in it. The picture is framed so that NO lettering on any wall is in view: the coach stands where the wall behind is plain or only equipment shows, and no words, sign or logo is on any wall in the picture"}. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; the coach's hands look natural. Apart from the logo on the top there is no text anywhere: no captions, no titles, no watermark.`;
   }
   return `A real photograph taken on a phone held upright, 9:16. ${g.He} is ${presenterWords(presenter, profile)}. ${g.He} stands on the open gym floor facing the camera, close to it, framed from the hips up with ${g.his} head near the top of the picture, and holds a small stack of plain white A4 paper sheets upright in front of ${g.his} chest with both hands. The paper is LARGE in the picture: about half the picture's width. Its top edge is just below ${g.his} chin, so ${g.his} whole face shows, and its bottom edge is above ${g.his} waist: the whole sheet sits in the upper two thirds of the picture. The front sheet is flat and faces the lens squarely, with no tilt and no curl; ${g.his} fingers hold the stack only at its left and right edges, so the whole face of the paper is clear. The paper is COMPLETELY BLANK: pure white, nothing written, printed or drawn on it. ${g.He} looks straight into the lens with a small, friendly closed-mouth smile. The room is the gym in the image — its walls, ceiling, lights, equipment and floor — matched for the room only: nobody in that image appears, and ${g.he} is alone. Natural indoor light, real skin texture, nothing glossy, not a studio portrait; ${g.his} hands look natural. ${NO_WORDS}`;
 }
@@ -432,14 +450,15 @@ const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
  */
 export async function writeSheet(browser, { picture, paper, text, out }) {
   const { quad, W: w, H: h, usable: [from, to] } = paper, bw = 1000, bh = Math.round(bw * (dist(quad[0], quad[3]) / dist(quad[0], quad[1]))), mw = Math.round(bw * PAPER.text_w), mh = Math.round(bh * (to - from));
-  const html = `<!doctype html><meta charset="utf-8"><style>@font-face{font-family:Marker;src:url("file://${PAPER_FONT}")}html,body{margin:0;width:${w}px;height:${h}px;overflow:hidden;background:#000}img{position:absolute;left:0;top:0;width:${w}px;height:${h}px}
+  const zh = isZh(text), fam = zh ? "ZhHand" : "Marker";
+  const html = `<!doctype html><meta charset="utf-8"><style>@font-face{font-family:Marker;src:url("file://${PAPER_FONT}")}@font-face{font-family:ZhHand;src:url("file://${PAPER_FONT_ZH}")}html,body{margin:0;width:${w}px;height:${h}px;overflow:hidden;background:#000}img{position:absolute;left:0;top:0;width:${w}px;height:${h}px}
     #b{position:absolute;left:0;top:0;width:${bw}px;height:${bh}px;transform-origin:0 0;transform:${homography(bw, bh, quad)};mix-blend-mode:multiply}
     #a{position:absolute;left:${Math.round((bw - mw) / 2)}px;top:${Math.round(bh * from)}px;width:${mw}px;height:${mh}px;display:flex;align-items:center;justify-content:center}
-    #t{font-family:Marker;font-weight:400;color:#16161c;text-align:center;line-height:1.12;width:${mw}px;transform:rotate(-1.2deg);filter:blur(.7px);opacity:.93;overflow-wrap:normal}</style>
+    #t{font-family:${fam};font-weight:400;color:#16161c;text-align:center;line-height:1.12;width:${mw}px;transform:rotate(-1.2deg);filter:blur(.7px);opacity:.93;overflow-wrap:normal}</style>
     <img src="${dataUrl(picture)}"><div id="b"><div id="a"><div id="t">${esc(inkText(text))}</div></div></div>`;
-  const fit = `(async () => { await document.fonts.load('40px Marker'); await document.fonts.ready; await document.querySelector('img').decode(); const t = document.getElementById('t'); let s = 400; t.style.fontSize = s + 'px';
+  const fit = `(async () => { await document.fonts.load('40px ${fam}', ${JSON.stringify(inkText(text).slice(0, 8))}); await document.fonts.ready; await document.querySelector('img').decode(); const t = document.getElementById('t'); let s = 400; t.style.fontSize = s + 'px';
     const over = () => t.scrollWidth > ${mw} + 1 || t.scrollHeight > ${mh}; while (s > 24 && over()) { s -= 4; t.style.fontSize = s + 'px'; }
-    const r = t.getBoundingClientRect(); return JSON.stringify({ css: s, fits: !over(), font: document.fonts.check('40px Marker'), box: { x: r.left / ${w}, y: r.top / ${h}, w: r.width / ${w}, h: r.height / ${h} } }); })()`;
+    const r = t.getBoundingClientRect(); return JSON.stringify({ css: s, fits: !over(), font: document.fonts.check('40px ${fam}', ${JSON.stringify(inkText(text).slice(0, 8))}), box: { x: r.left / ${w}, y: r.top / ${h}, w: r.width / ${w}, h: r.height / ${h} } }); })()`;
   const r = await page(browser, html, { w, h, expr: fit, shot: out });
   const px = r.css * (dist(quad[0], quad[1]) / bw), letter = px / w, box = Object.fromEntries(Object.entries(r.box).map(([k, v]) => [k, round(v, 1000)]));
   const inside = box.x >= LIVE.left - 0.005 && box.x + box.w <= LIVE.right + 0.005 && box.y >= LIVE.top - 0.005 && box.y + box.h <= LIVE.bottom + 0.005;
@@ -479,7 +498,7 @@ export function dropFrom(series) {
 
 // ── the check ────────────────────────────────────────────────────────────────
 const READ_SCHEMA = { type: "OBJECT", properties: { written: { type: "STRING" }, clean: { type: "BOOLEAN" } }, required: ["written", "clean"] };
-const READ_QUESTION = "A person holds a sheet of paper towards the camera. written: every word written on the front sheet of paper, exactly as written, letter for letter, in reading order, as one line; an empty string if that sheet is blank. clean: true only if every letter is sharp and correctly formed, with no warped, melted, doubled or invented letters.";
+const READ_QUESTION = "A person holds a sheet of paper towards the camera. written: every word written on the front sheet of paper, exactly as written, letter for letter, in reading order, as one line; an empty string if that sheet is blank. clean: true only if every letter is sharp and correctly formed, with no warped, melted, doubled or invented letters. If the writing is Chinese, write it in the Traditional Chinese characters as written, numbers as digits.";
 /** The models a white-paper video uses: the presenter's image and video models and the watching pass, plus reading a sheet back from one frame. */
 export function paperModels(profile = {}) { return { ...realModels(profile), async read(frame) { return callVision(frame, READ_QUESTION, READ_SCHEMA); } }; }
 /**
@@ -576,11 +595,12 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
   const last = script.sheets.length - 1, label = (i) => `sheet ${i + 1}`;
   try {
     // ── the one picture: the presenter holding blank sheets. One whose paper cannot be written on is made again (a fresh one each run, at most).
-    const prompt = blankPrompt({ presenter, profile }), main = join(store, blankName(prompt, room));
-    let blank = null, paper = null, why = null, madeNow = 0;
+    const base = blankPrompt({ presenter, profile }), main = join(store, blankName(base, room));
+    let blank = null, paper = null, why = null, madeNow = 0, low = false;
     for (const pic of blankFiles(main)) {
+      const prompt = low && presenter.coach ? blankPrompt({ presenter, profile, higher: true }) : base;
       if (!existsSync(pic)) {
-        if (madeNow >= 2) break;
+        if (madeNow >= BLANK_PER_RUN) break;
         if (!within("images", 1)) { why = why ? `${why}, and the cap of ${caps.images} image call${caps.images === 1 ? "" : "s"} leaves none for another` : `the cap of ${caps.images} image call${caps.images === 1 ? "" : "s"} was reached before the presenter's picture was made`; break; }
         spent.images++; madeNow++; onProgress({ stage: "still", line: 1, paper: true }); log(pic === main ? "the presenter's picture, holding the blank sheets" : "a fresh picture of the presenter");
         writeFileSync(pic.replace(/\.jpg$/, ".prompt.txt"), prompt + "\n");
@@ -593,7 +613,7 @@ export async function makePaperVideos({ gymDir, outDir, script, areas, offer, ro
       // A coach's picture is held against a real one of them: a picture that is not the same person is not used, and another is made.
       if (coach && !p.problem && models.same && p.same === undefined) { spent.checks++; p.same = await models.same(coach.refs[0], pic); if (p.same?.same_person === false) p.problem = `it does not look like ${coach.name}${(p.same.differences || []).length ? ` (${p.same.differences.slice(0, 3).join("; ")})` : ""}`; else if (stillFault(p.same) === "wallwords") p.problem = stillWhy(p.same, coach.name); writeFileSync(paperFile(pic), JSON.stringify(p, null, 2) + "\n"); }
       if (!p.problem) { blank = pic; paper = p; break; }
-      why = p.problem; log(`  ${basename(pic)}: ${p.problem}`);
+      why = p.problem; low = low || /held too low/.test(p.problem); log(`  ${basename(pic)}: ${p.problem}`);
     }
     if (!blank) return failAll(`the presenter's picture could not be used: ${why}. Nothing was filmed. Run again asks for a fresh picture`);
     log(`the paper is ${Math.round(paper.width * 100)}% of the picture's width; the words go on it by software`);

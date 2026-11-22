@@ -81,7 +81,7 @@ export const REGULATED = {
 export const regulatedFor = (profile) => REGULATED[String(profile?.locale?.country || "SG").toUpperCase()] || null;
 export const hasIdentity = (profile, r = regulatedFor(profile)) => !r || r.fields.every((f) => !!profile?.meta_assets?.[f]);
 /** The ad set's regulated category and identities for the gym's country; nothing for a country Meta does not gate. */
-export const regulatedPayload = (profile, r = regulatedFor(profile)) => (r ? { regional_regulated_categories: [r.category], regional_regulation_identities: { [r.beneficiary]: profile.meta_assets[r.fields[0]], [r.payer]: profile.meta_assets[r.fields[1]] } } : {});
+export const regulatedPayload = (profile, r = regulatedFor(profile)) => (r ? { regional_regulated_categories: [r.category], regional_regulation_identities: { [r.beneficiary]: profile?.meta_assets?.[r.fields[0]], [r.payer]: profile?.meta_assets?.[r.fields[1]] } } : {});
 
 /** Every payload for one campaign / ad set / ad from one finished ad, built from the profile and the batch. */
 export function buildTestOne({ profile, batch, ad, words = null, storyFile = null, tag = today() }) {

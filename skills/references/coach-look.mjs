@@ -205,7 +205,8 @@ export function lookModels() {
 const index = (gymDir) => join(gymDir, SAMPLES_DIR, "samples.json");
 const writeSamples = (gymDir, list) => writeFileSync(index(gymDir), JSON.stringify({ samples: list }, null, 2) + "\n");
 const evenly = (xs, n) => (xs.length <= n ? xs : Array.from({ length: n }, (_, i) => xs[Math.round((i * (xs.length - 1)) / (n - 1))]));
-const wordsIn = (t) => norm(t).split(" ").filter(Boolean).length;
+// A Chinese transcript has no spaces: there a character is a word (a run of Latin letters or digits is one).
+const wordsIn = (t) => { const x = String(t || ""); return /[\u3400-\u9fff]/.test(x) ? (x.match(/[A-Za-z0-9]+|[\u3400-\u9fff]/g) || []).length : x.split(/\s+/).filter(Boolean).length; };
 
 /**
  * Read every video sample not read yet (`max` at most; `only`: these names). Returns { read[], left, calls }. A
@@ -327,7 +328,9 @@ export function buildStarts(gymDir) {
 }
 /** A coach's voice as a video model is told it: from the sample where one person says the most, with how fast they speak there. */
 function voiceFrom(mine) {
-  const best = mine.filter((s) => s.read.heard?.voice).sort((a, b) => Number(a.read.heard.speakers !== 1) - Number(b.read.heard.speakers !== 1) || b.read.heard.words - a.read.heard.words)[0];
+  // A sample with music over it (a white-paper video's soundtrack) is no sample of the coach's voice: the reader describes the singer (2026-11-20, F45 Xinyi).
+  const music = (h) => /\b(music|sing|singer|singing|vocals?|lyrics?|song)\b/i.test(`${h.voice} ${h.energy} ${h.accent}`);
+  const best = mine.filter((s) => s.read.heard?.voice && !music(s.read.heard)).sort((a, b) => Number(a.read.heard.speakers !== 1) - Number(b.read.heard.speakers !== 1) || b.read.heard.words - a.read.heard.words)[0];
   if (!best) return null;
   const h = best.read.heard, strip = (t) => norm(t).replace(/[.\s]+$/, "");
   return { description: `${strip(h.voice)}; ${strip(h.pitch)} pitch; ${strip(h.accent)} accent; ${strip(h.energy)}`.replace(/^([A-Z])/, (m) => m.toLowerCase()), from: best.name, per_second: h.per_second, by: "read" };
@@ -389,7 +392,8 @@ export function paperWhy(coach) {
  */
 export function pickCoaches(gymDir, count, { only = null, seed = "", paper = false } = {}) {
   // `paper`: for white-paper videos — never a coach whose top the paper cannot be told from.
-  const all = readCoaches(gymDir).coaches, whyNot = (c) => coachWhy(c) || (paper ? paperWhy(c) : null);
+  // A spoken video needs the coach's voice described (2026-11-20, F45 Xinyi: one coach's only samples were silent white-paper videos with music, so no voice could be read): such a coach fronts white-paper videos only.
+  const all = readCoaches(gymDir).coaches, whyNot = (c) => coachWhy(c) || (paper ? paperWhy(c) : !norm(c.voice?.description) ? `${c.name}'s voice is not on file yet (add a sample of them talking, or describe it): they front white-paper videos only` : null);
   if (!count) return [];
   if (only) { const c = all.find((x) => x.id === only); if (!c) throw new Error(`this gym has no coach ${only}`); const why = whyNot(c); if (why) throw new Error(why); return Array.from({ length: count }, () => c); }
   const ready = all.filter((c) => !whyNot(c));

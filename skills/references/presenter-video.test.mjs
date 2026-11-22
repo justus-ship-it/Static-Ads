@@ -292,9 +292,9 @@ test("PV5 benefits, not features, and the owner's own samples (2026-11-12): the 
     assert.ok(!/STYLE A|Sample 1/.test(seen[1])); assert.equal(readSamples(L).samples.length, 1, "retired, never deleted");
     assert.equal(decideSample(L, s1.id, { retired: false }).retired, undefined);
     // A batch's videos: how many, and which scripts.
-    assert.deepEqual([videosProblems(undefined), videosProblems({ presenter: 2 }), videoCount({ presenter: 2 }), videoCount(null), MAX_VIDEOS], [[], [], 2, 0, 9]);
-    assert.deepEqual(videosProblems({ presenter: 10, talking: 1 }), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 9"]);
-    assert.deepEqual([MAX_VIDEOS, videosProblems({ presenter: 4 }), videosProblems({ presenter: 9 })], [9, [], []], "nine since 2026-11-16: it was three, and the count fields stopped there without a word");
+    assert.deepEqual([videosProblems(undefined), videosProblems({ presenter: 2 }), videoCount({ presenter: 2 }), videoCount(null), MAX_VIDEOS], [[], [], 2, 0, 20]);
+    assert.deepEqual(videosProblems({ presenter: 21, talking: 1 }), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 20"]);
+    assert.deepEqual([MAX_VIDEOS, videosProblems({ presenter: 4 }), videosProblems({ presenter: 9 }), videosProblems({ presenter: 20 })], [20, [], [], []], "twenty since 2026-11-20 (F45 Xinyi's 20 videos in one ad set): it was nine, and three before that");
     // No script for the offer: the refusal says which case it is and what to press (2026-11-12: a sample on the screen was taken for a script).
     const { noScriptWhy } = await import("./presenter-video.mjs");
     assert.throws(() => pickScripts(g, { count: 1, offer: OFFER, libraryDir: L }), /1 presenter video asked for, but no script is kept for "12 Week Full Body Transformation": keep 1 more on Draft Scenes → Video scripts \(nothing is written for this offer yet\. The sample script there is a template, not a script to film: press Draft scripts…, read the drafts and keep one\)$/);
@@ -558,13 +558,15 @@ test("PV10 how a word is said, and an ending in two beats (2026-11-14, the owner
   const { d, g, profile, room } = gym(), L = join(d, "lib"), C = CLOSING_LINE;
   try {
     // The list: the standing entry, the owner's own beside it, a change, a removal that stays removed.
-    assert.deepEqual([SAID_AS, saidAs(L)], [[{ word: "Quay", say: "Key", heard: ["kee"] }], [{ word: "Quay", say: "Key", heard: ["kee"] }]]);
+    assert.deepEqual([SAID_AS.filter((x) => !x.pinyin && !x.zh), saidAs(L).filter((x) => !x.pinyin && !x.zh)], [[{ word: "Quay", say: "Key", heard: ["kee"] }], [{ word: "Quay", say: "Key", heard: ["kee"] }]]);
+    // A Chinese-only entry (2026-11-21): F45 is said 「F四十五」 in a Chinese line and is left alone in an English one.
+    assert.deepEqual([saidIn("F45信義的六週雕塑體態計畫", SAID_AS).map((x) => x.say), saidIn("F45 Jurong West is here", SAID_AS).map((x) => x.say)], [["F四十五"], []]);
     assert.deepEqual([saidProblems("Quay", "kee"), saidProblems("Boat Quay", "kee").length, saidProblems("Quay", "k33").length, saidProblems("", "").length], [[], 1, 1, 2]);
-    assert.deepEqual(setSaid(L, "Yishun", "ee-shoon").map((x) => [x.word, x.say]), [["Quay", "Key"], ["Yishun", "ee-shoon"]]);
+    assert.deepEqual(setSaid(L, "Yishun", "ee-shoon").filter((x) => !x.pinyin && !x.zh).map((x) => [x.word, x.say]), [["Quay", "Key"], ["Yishun", "ee-shoon"]]);
     assert.throws(() => setSaid(L, "Boat Quay", "kee"), /the word is one word as it is written/);
-    assert.deepEqual(setSaid(L, "Quay", "").map((x) => x.word), ["Yishun"], "a standing word taken off stays off");
-    assert.deepEqual(setSaid(L, "quay", "kee").map((x) => [x.word, x.say]), [["quay", "kee"], ["Yishun", "ee-shoon"]]);
-    assert.deepEqual(setSaid(L, "Yishun", "").map((x) => x.word), ["quay"]);
+    assert.deepEqual(setSaid(L, "Quay", "").filter((x) => !x.pinyin && !x.zh).map((x) => x.word), ["Yishun"], "a standing word taken off stays off");
+    assert.deepEqual(setSaid(L, "quay", "kee").filter((x) => !x.pinyin && !x.zh).map((x) => [x.word, x.say]), [["quay", "kee"], ["Yishun", "ee-shoon"]]);
+    assert.deepEqual(setSaid(L, "Yishun", "").filter((x) => !x.pinyin && !x.zh).map((x) => x.word), ["quay"]);
     const LIST = SAID_AS;
     assert.deepEqual([saidIn("If you live in Boat Quay and work late", LIST).length, saidIn("down by the quayside", LIST).length, saidIn("CLARKE QUAY", LIST).length, saidIn("People in Bishan", LIST).length], [1, 0, 1, 0], "the whole word, any case");
     // The word as said is the word as written.
@@ -753,7 +755,7 @@ test("PV13 the second kind, with exercises (2026-11-15, the owner, with a coach'
     assert.deepEqual(long.map((p) => p?.m.kind), ["move", "hold", "hold"]);
     // A brief: the two kinds, MAX_VIDEOS between them; the talking ones are picked first.
     assert.deepEqual([videosProblems({ presenter: 1, active: 2 }), videoCount({ presenter: 1, active: 2 }), videoKinds({ presenter: 1, active: 2 }), videoCount({ active: 1 }), videoCount({ presenter: 2 })], [[], 3, ["presenter", "active", "active"], 1, 2]);
-    assert.match(videosProblems({ presenter: 6, active: 4 })[0], /at most 9 presenter videos in all/); assert.match(videosProblems({ active: MAX_VIDEOS + 1 })[0], /videos\.active must be a whole number from 0 to 9/); assert.match(videosProblems({ walking: 1 })[0], /not a kind of video \(presenter, active, paper\)/);
+    assert.match(videosProblems({ presenter: 12, active: 9 })[0], /at most 20 presenter videos in all/); assert.match(videosProblems({ active: MAX_VIDEOS + 1 })[0], /videos\.active must be a whole number from 0 to 20/); assert.match(videosProblems({ walking: 1 })[0], /not a kind of video \(presenter, active, paper\)/);
     // The prompts: the picture is the start of the move; the clip is the move in silence, then the line said in place; a hold is said as it is held.
     const P = presenterOf(profile), twist = { m: M("russian-twist"), k: "plate" }, seat = { m: M("seated"), k: "box" };
     assert.match(moveStillPrompt({ presenter: P, profile, move: twist, kit: KIT }), /The person is the SAME person as in the first image.*He sits on the gym floor, side-on to the camera.*holding one round black weight plate in both hands.*fills the width of the frame\..*There is no text of any kind/);
@@ -1049,4 +1051,52 @@ test("PV17 what BFIT's re-make taught (2026-11-18): whatever is written in the r
     assert.deepEqual([F.calls.clip.length - clips, F.calls.image.length - images, refused.length - asked, again.videos[0].failed, logs.some((l) => /line 3: filmed standing, from a real picture/.test(l))], [0, 0, 0, undefined, true], logs.join("\n"));
     assert.ok(readdirSync(store).some((f) => /^line-3-move-/.test(f)), "the move's clip is kept on file, unused");
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("PV18 Chinese scripts (2026-11-20, F45 Xinyi): a line is measured in characters and timed at a Mandarin pace; the said-as-written check takes numerals, variant forms, particles and a homophone or two, never a character added or dropped; the closing line is the Chinese one; 我 alone is one person's voice; captions split by clause and never through a listed word", async () => {
+  const pv = await import("./presenter-video.mjs");
+  const profile = { ...PROFILE_STARTER("f45-xinyi", "F45 Xinyi", "TW") };
+  assert.equal(pv.units("我們在找10位，參加F45的InBody。"), 11);
+  assert.equal(pv.clipSeconds("如果你在信義區上班，或是住在信義區，我們在找10位，參加我們的六週雕塑體態計畫。"), Math.ceil(36 / pv.CHARS_PER_SECOND + 0.8));
+  const line = "我們在找10位，參加我們的六週雕塑體態計畫。";
+  assert.ok(sameWords("我們在找十位參加我們的6週雕塑體態計劃", line), "a numeral as a word, a variant form");
+  assert.ok(sameWords("我們再找10位，參加我們的六週雕塑體態計畫啦", line), "a homophone and a particle");
+  assert.ok(!sameWords("我們我們在找10位，參加我們的六週雕塑體態計畫", line), "a word said twice");
+  assert.ok(!sameWords("我們在找10位，參加我們的六週雕塑計畫", line), "a word dropped");
+  assert.ok(!sameWords("他們都在找一些人參加別的什麼十二週計畫了", line), "another line");
+  // 2026-11-21: the check writes the gym's name as the profile spells it ("F45 Xinyi"); a Latin word of the name stands for the line's characters there, never for words dropped or added.
+  const named = { names: ["F45 Xinyi"] }, place = "我們就在信義路和基隆路口，F45信義店。";
+  assert.ok(sameWords("我們就在信義路和基隆路口 F45 Xinyi店", place, named), "the gym's Latin name for its Chinese name");
+  assert.ok(!sameWords("我們就在信義路和基隆路口 F45 Xinyi店", place), "without the name, a difference");
+  assert.ok(!sameWords("我們就在信義路和基隆路口", place, named), "the name dropped is still a difference");
+  assert.ok(!sameWords("我們就在信義路和基隆路口 F45 Xinyi店 F45 Xinyi店", place, named), "said twice is still a difference");
+  assert.equal(pv.CLOSING_ZH, "點進連結吧～讓我們更認識你！", "the Chinese closing drafted");
+  // The owner's closings (2026-11-21): a script is held to whichever it ends on; 「快點進連結」 is read whole.
+  assert.equal(pv.closingFor(["想讓自己更有力氣嗎？", "如果你準備好讓自己更有精神，快點進連結，讓我們更認識你！"]), "快點進連結，讓我們更認識你！");
+  assert.equal(pv.closingFor(["想讓自己更有力氣嗎？", "如果你想從今天開始改變，現在就報名，我們會跟你聯絡！"]), "現在就報名，我們會跟你聯絡！");
+  assert.equal(pv.closingFor(["想讓自己更有力氣嗎？", "我們等你。"]), pv.CLOSING_ZH, "none matched: the drafted one");
+  // Fallback A (2026-11-22): the link shown, not said — the last line is filmed without it, the script's words unchanged.
+  const linked = { lines: ["想讓自己更有力氣嗎？", "如果你想給自己一個好的開始，點進連結吧～讓我們更認識你！"], link_on_screen: true };
+  assert.equal(pv.spokenLines(linked).at(-1), "如果你想給自己一個好的開始，讓我們更認識你！");
+  assert.equal(pv.spokenLines({ ...linked, link_on_screen: false }).at(-1), linked.lines[1]);
+  assert.equal(pv.spokenLines({ ...linked, lines: [linked.lines[0], "如果你準備好讓自己的體態變好，快點進連結，讓我們更認識你！"] }).at(-1), "如果你準備好讓自己的體態變好，讓我們更認識你！");
+  const offer = "六週雕塑體態計畫", script = ["如果你在信義區上班，或是住在信義區，", "我們在找10位，參加我們的六週雕塑體態計畫。", "如果你準備好讓自己更有精神，就趁現在！現在就報名，我們會跟你聯絡！"];
+  assert.deepEqual(scriptProblems(script, { offer, profile }), []);
+  assert.equal(pv.closingFor(script), "現在就報名，我們會跟你聯絡！");
+  assert.match(scriptProblems([script[0], script[1], "現在就報名，我們會跟你聯絡！"], { offer, profile }).join(" "), /closing line/, "no bridge before the closing line");
+  assert.match(scriptProblems(["我上個月開始在這裡練，", script[1], script[2]], { offer, profile }).join(" "), /speaks as one person/);
+  assert.match(scriptProblems([script[0], script[1].replace("六週雕塑體態計畫", "計畫"), script[2]], { offer, profile }).join(" "), /exact words/);
+  assert.match(scriptProblems([script[0], "打造你的完美身材，" + script[1], script[2]], { offer, profile }).join(" "), /ideal body/);
+  assert.match(scriptProblems([script[0], script[1], script[2] + "還有免費體驗課"], { offer, profile }).join(" "), /free|免費|trial|試用|體驗/i);
+  assert.equal(pv.filmedLines([...script.slice(0, 2), "如果你準備好讓自己更有精神，就趁現在！", "現在就報名，我們會跟你聯絡！"]).length, 3, "the closing line alone shares the cut before it");
+  assert.deepEqual(captionChunks("我們就在信義路和基隆路口，F45信義店。").map((c) => c.text), ["我們就在信義路", "和基隆路口", "F45信義店"]);
+  assert.deepEqual(captionWords({ text: "F45信義店", from: 0, to: 1 }).map((w) => w.word), ["F45", "信", "義", "店"]);
+  assert.match(pv.capHtml("F45信義店", 1), /class="cap zh"/);
+  assert.match(clipPrompt({ presenter: { gender: "woman", age: 30, look: "" }, profile, line, seconds: 6 }), /Mandarin Chinese as a native speaker from Taipei speaks it/);
+  // A Chinese word's tones (the owner: 班 in 上班 is the first tone): the line is not rewritten, the model is told how it is said.
+  const said = pv.saidIn("如果你在信義區上班，", pv.SAID_AS);
+  assert.deepEqual(said.map((x) => x.word), ["上班"]);
+  assert.equal(pv.spokenLine("如果你在信義區上班，", said), "如果你在信義區上班，");
+  assert.match(clipPrompt({ presenter: { gender: "woman", age: 30, look: "" }, profile, line: "如果你在信義區上班，", seconds: 6, said }), /Pronunciation: "上班" is pronounced shàng bān — 班 in the first tone/);
+  assert.deepEqual([pv.saidProblems("上班", "shàng bān"), pv.saidProblems("上班", "上班").length], [[], 1]);
 });

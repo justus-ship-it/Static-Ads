@@ -339,6 +339,7 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     const dur = by("duration"), name = by("offer_name"), loc = by("location"), aud = by("audience");
     const lead = (S.lead === "location" ? loc : null) || dur || name;
     for (const b of blocks) if (lead && b !== lead && b.size > lead.size) b.size = lead.size;
+    for (const b of blocks) if (lead && b !== lead && b.spec.of_lead && b.size > Math.floor(lead.size * b.spec.of_lead)) b.size = Math.max(b.spec.min_px || 0, Math.floor(lead.size * b.spec.of_lead));
     if (loc && aud && aud.size > loc.size) aud.size = loc.size;
 
     // 6. Stack each group from its anchor edge using real rendered heights, so no group can leave

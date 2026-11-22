@@ -61,7 +61,9 @@ import { relayoutCopies, flatCopies, draftCopy, readCopy, keptCopies, keepRecomm
 import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as readCopyLibrary, addEntry, editEntry, retireEntry, restoreEntry, usesIn, PLACEHOLDERS as LIBRARY_PLACEHOLDERS } from "../skills/references/copy-library.mjs";
 import { readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { FOOTAGE_NO_RUN, setFootageWords } from "../skills/references/footage-video.mjs";
-import { listShoots, readShoot as readFootageShoot, addShoot, editShoot, dropFile, syncFiles as syncFootage, buildSheet, decideSheet, scriptLines, MEDIA as FOOTAGE_MEDIA, USD_PER_FILE as FOOTAGE_USD_PER_FILE, SHOOT_LIMITS } from "../skills/references/footage-editor.mjs";
+import { cutShoot, listCuts, hasWhisper } from "../skills/references/footage-cut.mjs";
+import { addFootageBatch } from "../skills/references/footage-video.mjs";
+import { listShoots, readShoot as readFootageShoot, addShoot, editShoot, dropFile, syncFiles as syncFootage, buildSheet, decideSheet, matchFootage, scriptLines, MEDIA as FOOTAGE_MEDIA, USD_PER_FILE as FOOTAGE_USD_PER_FILE, SHOOT_LIMITS } from "../skills/references/footage-editor.mjs";
 import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, MAX_PHOTOS, madeShape, batchMix, videoPlan, growOptions, growBatch } from "../skills/references/plan-offer-batch.mjs";
 import { ROOMS, libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName } from "../skills/references/scene-library.mjs";
 import { IMAGE_EXT as REFERENCE_EXT, MAX_WORDS, REFERENCES_DIR } from "../skills/references/refresh-scenes.mjs";
@@ -81,6 +83,7 @@ const REFRESH_SCRIPT = join(REPO_ROOT, "skills", "references", "refresh-scenes.m
 const CLEAN_SCRIPT = join(REPO_ROOT, "skills", "references", "clean-photo.mjs");
 const COACH_SCRIPT = join(REPO_ROOT, "skills", "references", "coach-look.mjs");
 const FOOTAGE_SCRIPT = join(REPO_ROOT, "skills", "references", "footage-editor.mjs");
+const FOOTAGE_CUT_SCRIPT = join(REPO_ROOT, "skills", "references", "footage-cut.mjs");
 /** A sample video of a coach may be large (a minute of phone video is about 120 MB). */
 const MAX_SAMPLE_BYTES = 600 * 1024 * 1024;
 const READ_SCRIPT = join(REPO_ROOT, "skills", "references", "read-website.mjs");
@@ -179,6 +182,8 @@ const RUNNABLE = {
   // Reading a gym's coach samples: two small check calls a video (the sound, the frames), then the starting pictures. No image call.
   // The raw-footage editor (2026-11-19): every file of a shoot not read yet is listened to and looked at (two small calls a file; the owner's click).
   "footage-read": { label: "Listen to the shoot's files", argv: ({ gym, shoot }) => [FOOTAGE_SCRIPT, "--brand-dir", brandDir(gym), "--shoot", shoot, "--read"] },
+  // Stage 2: the video cut from the sheet, with captions. No model is called: ffmpeg, headless Chrome and whisper.cpp on this Mac.
+  "footage-cut": { label: "Cut the video from the sheet", argv: ({ gym, shoot }) => [FOOTAGE_CUT_SCRIPT, "--brand-dir", brandDir(gym), "--shoot", shoot] },
   "coach-read": { label: "Read the coach videos", argv: ({ gym }) => [COACH_SCRIPT, "--brand-dir", brandDir(gym), "--read"] },
   checksync: { label: "Check skill/command sync", argv: () => ["skills/references/check-sync.mjs"] },
   // Offer-first batches (Step 6). Built from the gym and batch id only; the brief is the file on disk.
@@ -1009,6 +1014,9 @@ function settingsProblem(b) {
   if (!isPlainObject(d) || (d.lead_form_id != null && !/^\d{5,20}$/.test(String(d.lead_form_id))) || (d.instagram_user_id != null && d.instagram_user_id !== "" && !/^\d{5,20}$/.test(String(d.instagram_user_id))) || (d.form_confirmed != null && !/^\d{5,20}$/.test(String(d.form_confirmed)))) return "destination: the lead form and Instagram account are ids";
   return null;
 }
+/** A batch's publish settings as they are on disk now: what the page loaded must be this to save over it. */
+const settingsVersion = (p) => { try { return createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 16); } catch { return "none"; } };
+const SETTINGS_STALE = "these settings were changed somewhere else since this page loaded (another tab, or a change from the results): the page now shows them as they are; make your change again";
 const DECISIONS = new Set(["keep", "exclude", null]);
 /** Replace a file whole: another process (the Stories step) reading it never sees half of one. */
 const writeWhole = (p, text) => { writeFileSync(p + ".tmp", text); renameSync(p + ".tmp", p); };
@@ -1296,6 +1304,8 @@ const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "
 function footageView(gym, id) {
   const dir = brandDir(gym), shoot = syncFootage(dir, readFootageShoot(dir, id)), sheet = buildSheet(shoot);
   return { id: shoot.id, title: shoot.title, created: shoot.created, script: shoot.script, folder: shoot.folder, missing_folder: !!shoot.missing_folder, sheet, frames: `/files/brands/${gym}/footage/${shoot.id}/frames/`,
+    cuts: listCuts(dir, shoot.id).map((c) => ({ ...c, url: `/files/brands/${gym}/footage/${shoot.id}/cuts/${c.name}.mp4`, poster: `/files/brands/${gym}/footage/${shoot.id}/cuts/${c.name}.jpg` })), tighten: shoot.choices?.tighten !== false, whisper: hasWhisper(),
+    cutting: [...runs.values()].find((r) => !r.done && r.kind === "footage-cut" && r.gym === gym && r.shoot === id)?.id || null,
     usd: Math.round(sheet.unread * FOOTAGE_USD_PER_FILE * 100) / 100, reading: [...runs.values()].find((r) => !r.done && r.kind === "footage-read" && r.gym === gym && r.shoot === id)?.id || null };
 }
 function allowedFile(rel) {
@@ -1307,7 +1317,7 @@ function allowedFile(rel) {
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "brand-assets" && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "logo")) && parts[3] !== "_trash") base = join(BRANDS, parts[1], "brand-assets");
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === REFERENCES_DIR && parts.length === 4 && REFERENCE_NAME.test(parts[3])) base = join(BRANDS, parts[1], REFERENCES_DIR);
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "onboarding" && ["website", "instagram"].includes(parts[3]) && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "website" && parts[4] === "logos"))) base = join(BRANDS, parts[1], "onboarding", parts[3]);
-  else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "footage" && parts.length === 6 && parts[4] === "frames" && IMAGE_EXT.has(ext)) base = join(BRANDS, parts[1], "footage"); // a shoot's frame sheets (never the footage itself)
+  else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "footage" && parts.length === 6 && ((parts[4] === "frames" && IMAGE_EXT.has(ext)) || (parts[4] === "cuts" && /^cut-\d+\.(mp4|jpg)$/.test(parts[5])))) base = join(BRANDS, parts[1], "footage"); // a shoot's frame sheets and its finished cuts (never the raw footage)
   else if (parts[0] === "swipe" && parts.length >= 3 && (ext === ".html" || IMAGE_EXT.has(ext))) base = SWIPE;
   if (!base) return null;
   const abs = parts[0] === "brands" ? join(base, ...parts.slice(parts[2] === "onboarding" ? 4 : 3)) : join(SWIPE, ...parts.slice(1));
@@ -2065,6 +2075,33 @@ const server = createServer(async (req, res) => {
     //   GET /footage/{id} — the shoot with its cutting sheet; PUT /footage/{id} { title | script | folder } or the owner's
     //   choice on the sheet { line, take | pictures | drop } | { order }; PUT /footage/{id}/file/{name} — a file dropped in (raw bytes).
     // Listening to the files is the run `footage-read` (the owner's click). Nothing here cuts a video: that is stage 2.
+    // POST /footage/{id}/match — the script's B-roll notes matched to what the clips show (one text call: the owner's click;
+    // a listening run does it by itself when it ends). A thing no clip shows is flagged, never filled.
+    const ftx = p.match(/^\/api\/client\/([^/]+)\/footage\/([a-z0-9][a-z0-9-]{2,60})\/match$/);
+    if (ftx && req.method === "POST") {
+      const [, gym, id] = ftx;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      try { const body = await readBody(req); const r = await matchFootage({ gymDir: brandDir(gym), id, force: body.again === true }); return json(res, 200, { ...footageView(gym, id), matched: { calls: r.calls } }); }
+      catch (e) { return json(res, /^no such shoot/.test(e.message) ? 404 : 400, { error: scrubTokens(plainGemini(e)) }); }
+    }
+    // POST /footage/{id}/ad { cut, offer, location, audience? } — a finished cut becomes a video ad of the gym, in a batch of its own
+    // (footage-video.mjs: the file as it is, marked real footage, never run). The offer and the area are the owner's words.
+    const fta = p.match(/^\/api\/client\/([^/]+)\/footage\/([a-z0-9][a-z0-9-]{2,60})\/ad$/);
+    if (fta && req.method === "POST") {
+      const [, gym, id] = fta;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      try {
+        const body = await readBody(req), dir = brandDir(gym), shoot = readFootageShoot(dir, id), cut = listCuts(dir, id).find((c) => c.name === body.cut);
+        if (!cut) return json(res, 404, { error: "that cut is not on file: cut the video first" });
+        const offer = typeof body.offer === "string" ? body.offer.trim() : "", location = typeof body.location === "string" ? body.location.trim() : "", audience = typeof body.audience === "string" && body.audience.trim() ? body.audience.trim() : null;
+        if (!offer || !location) return json(res, 400, { error: "say the offer and the area this advert is for: they are your words, never filled in" });
+        const day = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10), slug = shoot.title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 36) || "shoot";
+        let batchId = `${day}-footage-${slug}`, k = 2; while (existsSync(briefPath(gym, batchId)) || existsSync(join(dir, "outputs", batchId))) batchId = `${day}-footage-${slug}-${k++}`;
+        const r = addFootageBatch({ brandDir: dir, batchId, offer, locations: [location], audience, videos: [{ file: join(dir, "footage", id, "cuts", `${cut.name}.mp4`), title: shoot.title, words: cut.lines.map((l) => l.said), poster_at: Math.min(1.5, cut.seconds / 2), source: `footage/${id}/${cut.name}` }] });
+        try { recordUse(dir, offer); } catch {}
+        return json(res, 200, { ok: true, batch: r.batch_id, ads: r.ads });
+      } catch (e) { return json(res, /^no such shoot/.test(e.message) ? 404 : 400, { error: e.message }); }
+    }
     const ftm = p.match(/^\/api\/client\/([^/]+)\/footage(?:\/([a-z0-9][a-z0-9-]{2,60})(?:\/file\/([^/]{1,160}))?)?$/);
     if (ftm) {
       const [, gym, id, fileName] = ftm;
@@ -2083,7 +2120,7 @@ const server = createServer(async (req, res) => {
         if (id && !fileName && req.method === "PUT") {
           const body = await readBody(req);
           if (body.title !== undefined || body.script !== undefined || body.folder !== undefined) editShoot(dir, id, { title: body.title, script: body.script, folder: body.folder === undefined ? undefined : typeof body.folder === "string" ? body.folder.trim() : null });
-          else decideSheet(dir, id, { line: body.line ?? null, take: body.take, pictures: body.pictures, drop: body.drop, order: body.order });
+          else decideSheet(dir, id, { line: body.line ?? null, take: body.take, pictures: body.pictures, show: body.show, drop: body.drop, order: body.order, tighten: body.tighten });
           return json(res, 200, footageView(gym, id));
         }
       } catch (e) { return json(res, /^no such shoot/.test(e.message) ? 404 : 400, { error: e.message }); }
@@ -2318,6 +2355,11 @@ const server = createServer(async (req, res) => {
         let settings = readJsonFile(settingsPath) || {};
         if (req.method === "PUT") {
           const body = await readBody(req);
+          // Only over what the page has seen (2026-11-22): a page open since before the settings were changed elsewhere
+          // (another tab, the drift's "Use Meta's figure", the agent) sent its whole old copy and wiped the change. The
+          // page sends the version it loaded; a file changed since is refused, and the page reloads it.
+          const seen = req.headers["x-settings-version"];
+          if (seen != null && seen !== settingsVersion(settingsPath)) return json(res, 409, { error: SETTINGS_STALE, stale: true });
           const err = settingsProblem(body);
           if (err) return json(res, 400, { error: err });
           settings = { ...body, updated: new Date().toISOString() };
@@ -2337,7 +2379,7 @@ const server = createServer(async (req, res) => {
         const lead_form_name = formNameFor(dir, profile, plan.lead_form_id);
         const readiness = publishReadiness(plan, { formName: lead_form_name });
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, readiness, lead_form_name, settings, thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")), room: roomFor(plan, out) });
+        return json(res, 200, { plan, readiness, lead_form_name, settings, settings_version: settingsVersion(settingsPath), thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account" }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")), room: roomFor(plan, out) });
       }
       if (what === "drift/take" && req.method === "POST") {
         const { kind, callout } = await readBody(req);
@@ -2594,6 +2636,15 @@ const server = createServer(async (req, res) => {
         if (!hasFfmpeg()) return json(res, 409, { error: "reading footage needs ffmpeg on this machine: run `brew install ffmpeg` once in Terminal" });
         if (!view.sheet.unread) return json(res, 400, { error: view.sheet.files.length ? "every file of this shoot has been read already: nothing to do" : "this shoot has no files yet: give it the folder they are in, or drop them in" });
         if (body.confirm?.unread !== view.sheet.unread) return json(res, 409, { error: "the files changed since you looked: look again and confirm what it says now", unread: view.sheet.unread });
+        const run = startRun(kind, { gym: body.gym, shoot: body.shoot });
+        return json(res, 200, { id: run.id, label: run.label });
+      }
+      if (kind === "footage-cut") {
+        if (!okSlug(body.gym) || !existsSync(brandDir(body.gym))) return json(res, 400, { error: "bad gym" });
+        let view; try { view = footageView(body.gym, body.shoot); } catch (e) { return json(res, 404, { error: e.message }); }
+        if (view.cutting || view.reading) return json(res, 409, { error: "this shoot is being worked on now: wait for it to end, or stop it" });
+        if (!hasFfmpeg()) return json(res, 409, { error: "cutting needs ffmpeg on this machine: run `brew install ffmpeg` once in Terminal" });
+        if (!view.sheet.can_cut) return json(res, 400, { error: view.sheet.unread ? "listen to every file first: the sheet is not complete" : "the sheet is not ready to cut: every line needs a take (or to be left out), and a voice-only take needs footage under it" });
         const run = startRun(kind, { gym: body.gym, shoot: body.shoot });
         return json(res, 200, { id: run.id, label: run.label });
       }

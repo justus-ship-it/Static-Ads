@@ -1422,6 +1422,17 @@ test("U20 the Publish Ads screen: the plan for a batch's kept ads from the API (
     assert.equal(bad.status, 400, JSON.stringify(body));
   }
   assert.equal(JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")).campaign.name, "Test campaign", "a refused save writes nothing");
+  // Only over what was seen (2026-11-22): a save carrying the version it loaded goes through; one whose settings were
+  // changed since is refused in words and writes nothing; one without a version (the CLI, older pages) is taken as before.
+  const v = (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json()).settings_version;
+  assert.match(v, /^[0-9a-f]{16}$/);
+  const keepBody = { campaign: { name: "Test campaign", level: "campaign", daily: 80 }, adsets: { [first]: { pin: 1, age_min: 30, gender: "women", preset: "a97f701a193c" } }, words: { message: "Come and train.", headline: "Six weeks", description: "", cta: "APPLY_NOW" }, destination: {} };
+  r = await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: keepBody, headers: { "x-settings-version": v } })).json();
+  assert.ok(r.plan && r.settings_version && r.settings_version !== v, "a save on the version it loaded is taken and answers the new version");
+  const stale = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { ...keepBody, campaign: { ...keepBody.campaign, name: "Old page" } }, headers: { "x-settings-version": v } });
+  assert.equal(stale.status, 409);
+  assert.match((await stale.json()).error, /changed somewhere else since this page loaded/);
+  assert.equal(JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")).campaign.name, "Test campaign", "a stale save writes nothing");
   assert.equal((await call(`/api/client/${GYM}/batch/no-such/publish`)).status, 404);
   // The page.
   await open(`${panel.url}/?u20#/${GYM}/publish/${BRIEF.batch_id}`);
@@ -1437,6 +1448,15 @@ test("U20 the Publish Ads screen: the plan for a batch's kept ads from the API (
   const saved = JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8"));
   assert.deepEqual([saved.campaign.level, saved.adsets[first].daily, saved.words.message], ["adset", 70, "Come and train."]);
   assert.match(await ev("document.querySelector('#view').textContent"), /a day in all/);
+  // Settings changed somewhere else while the page is open: the page's next save is refused, it reloads what is on disk
+  // (the other change kept) and says so — the change that wiped F45 Xinyi's ad set settings on 2026-11-21.
+  const other = JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8"));
+  other.adsets[first].daily = 95; writeFileSync(join(out, "publish-settings.json"), JSON.stringify(other, null, 2) + "\n");
+  await ev("pbSet('campaign.name','From the old page'); true");
+  await until("PB.settings?.adsets?.['" + first + "']?.daily === 95 && !PB.busy", "the page reloaded the settings changed elsewhere");
+  const after = JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8"));
+  assert.deepEqual([after.adsets[first].daily, after.campaign.name], [95, "Test campaign"], "the change made elsewhere is kept; the old page wrote nothing");
+  assert.match(await ev("document.querySelector('#toast')?.textContent || ''"), /changed somewhere else/);
   // Review's foot leads here.
   await open(`${panel.url}/?u20b#/${GYM}/review/${BRIEF.batch_id}`);
   await until("R.data && [...document.querySelectorAll('#rvFoot button')].some(b=>/Publish Ads →/.test(b.textContent))", "the Publish button on Review");
@@ -3764,6 +3784,8 @@ test("U62 the ledger across gyms on Review Data, and step 0 — Survey Ad Librar
   } finally { rmSync(join(dirname(brands), "swipe"), { recursive: true, force: true }); }
 });
 
+/** The said-as list without the standing entries for Chinese lines (F45 said F四十五, the tone notes: 2026-11-20). */
+const latin = (said) => said.filter((x) => !/[\u3400-\u9fff]/.test(x.word + x.say));
 const HAS_FFMPEG = (() => { try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); return true; } catch { return false; } })();
 test("U63 presenter videos through the panel (2026-11-12): who presents is the gym's own setting, saved on Ad defaults and refused when it is not a woman or a man; a script is the owner's — his own kept at once, checked by the rules (the offer's exact words, no I / we / our), edited, put back, retired with a reason, never twice — and a sample of his is kept for the drafter; a brief may ask for videos only once someone presents and that many scripts are kept for its offer, and the check says what they take in seconds and dollars; a video ad plays on Pick Ads, is served in parts, goes into the picks file and the zip as the 9:16 it is, and is left out of the Facebook plan with the reason; the scripts sit on Draft Scenes and the count on Generate Creatives", { skip: !HAS_FFMPEG && "ffmpeg is not installed" }, async () => {
   const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8"), scriptsFile = join(g, "video-scripts.json"), out = join(g, "outputs", "u63-batch"), samplesFile = join(dirname(brands), "library", "video-samples.json"), other = join(brands, "u63-other");
@@ -3774,7 +3796,7 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     { const p = JSON.parse(before); if (p.creative_defaults) delete p.creative_defaults.presenter; writeFileSync(pf, JSON.stringify(p, null, 2)); }
     // Nothing yet: nobody presents, no script, no sample.
     let [st, D] = await V();
-    assert.deepEqual([st, D.presenter, D.scripts, D.samples, D.genders, D.limits.max_videos, D.ffmpeg], [200, null, [], [], ["woman", "man"], 9, true]);
+    assert.deepEqual([st, D.presenter, D.scripts, D.samples, D.genders, D.limits.max_videos, D.ffmpeg], [200, null, [], [], ["woman", "man"], 20, true]);
     // Who presents.
     assert.equal((await V("/presenter", { method: "POST", body: { gender: "coach" } }))[0], 400);
     assert.equal((await V("/presenter", { method: "POST", body: { gender: "man", age: 12 } }))[0], 400);
@@ -3865,12 +3887,13 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     { const alone = D.scripts.find((x) => x.lines.length === 4); assert.deepEqual([st, alone.joined, alone.cost.images, alone.problems, D.scripts.find((x) => x.id === id).joined], [200, true, 3, [], false]);
       const j = JSON.parse(readFileSync(scriptsFile, "utf-8")); j.scripts = j.scripts.filter((x) => x.id !== alone.id); writeFileSync(scriptsFile, JSON.stringify(j, null, 2)); } // the test's own script, taken out again
     // How a word is said, for every gym (2026-11-14: "'Quay' is pronounced 'Kee' in Singapore"): the standing entry, the owner's own beside it, a removal; and a script that goes straight into the closing line is refused in words (2026-11-14: "it's too abrupt").
-    [st, D] = await V(); assert.deepEqual(D.said, [{ word: "Quay", say: "Key" }]);
+    [st, D] = await V(); assert.deepEqual(latin(D.said), [{ word: "Quay", say: "Key" }]);
+    assert.deepEqual(D.said.filter((x) => !latin([x]).length).map((x) => x.word), ["F45", "上班", "下班"], "the standing Chinese entries (F45 said F四十五; the tone notes) come with them");
     assert.equal((await V("/said", { method: "POST", body: { word: "Boat Quay", say: "kee" } }))[0], 400);
     assert.equal((await call(`/api/client/${GYM}/video/said`, { method: "POST", body: { word: "Yishun", say: "ee-shoon" }, token: null })).status, 403);
-    [st, D] = await V("/said", { method: "POST", body: { word: "Yishun", say: "ee-shoon" } }); assert.deepEqual([st, D.said], [200, [{ word: "Quay", say: "Key" }, { word: "Yishun", say: "ee-shoon" }]]);
-    assert.deepEqual((await (await call("/api/client/u63-other/video")).json()).said.map((x) => x.word), ["Quay", "Yishun"], "one list for every gym");
-    [st, D] = await V("/said", { method: "POST", body: { word: "Yishun", say: "" } }); assert.deepEqual(D.said, [{ word: "Quay", say: "Key" }]);
+    [st, D] = await V("/said", { method: "POST", body: { word: "Yishun", say: "ee-shoon" } }); assert.deepEqual([st, latin(D.said)], [200, [{ word: "Quay", say: "Key" }, { word: "Yishun", say: "ee-shoon" }]]);
+    assert.deepEqual(latin((await (await call("/api/client/u63-other/video")).json()).said).map((x) => x.word), ["Quay", "Yishun"], "one list for every gym");
+    [st, D] = await V("/said", { method: "POST", body: { word: "Yishun", say: "" } }); assert.deepEqual(latin(D.said), [{ word: "Quay", say: "Key" }]);
     [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0].replace("keep watching", "hear this out"), LINES[1], "You will feel stronger and your clothes will fit better. Click the link below and we'll be in touch!"] } });
     assert.equal(st, 400); assert.match(D.error, /the script goes straight into the closing line: just before it, in the same cut, one sentence turns to the viewer and names what they want/);
     [st, D] = await V("/script", { method: "POST", body: { offer: BRIEF.offer, lines: [LINES[0].replace("keep watching", "hear this out"), LINES[1], "If you're ready to get the body that you've always wanted, now is your time. Click the link below and we'll be in touch!"] } });
@@ -3882,9 +3905,9 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     assert.deepEqual([c.summary.videos.reused, c.summary.videos.allow], [0, c.summary.videos.max_seconds], "nothing is filmed yet for this script, so nothing is reused and the run may film its whole allowance");
     assert.equal(c.summary.ads, (await check({})).summary.ads + 2, "one video for each location is one more ad each");
     c = await check({ videos: { presenter: 2 } }); assert.ok(c.errors.some((e) => /2 presenter videos asked for, but only 1 script is kept for "12 Week Total Body Reset": keep 1 more on Draft Scenes → Video scripts/.test(e)), c.errors.join(" | "));
-    c = await check({ videos: { presenter: 10 } }); assert.ok(c.errors.some((e) => /videos\.presenter must be a whole number from 0 to 9/.test(e)));
+    c = await check({ videos: { presenter: 21 } }); assert.ok(c.errors.some((e) => /videos\.presenter must be a whole number from 0 to 20/.test(e)), c.errors.join(" | "));
     const setup = await (await call(`/api/client/${GYM}/batch-setup`)).json();
-    assert.deepEqual([setup.videos.presenter.gender, setup.videos.kept, setup.videos.needs_edit, setup.videos.max, setup.videos.ffmpeg], ["man", [{ id, offer: BRIEF.offer }], [], 9, true]);
+    assert.deepEqual([setup.videos.presenter.gender, setup.videos.kept, setup.videos.needs_edit, setup.videos.max, setup.videos.ffmpeg], ["man", [{ id, offer: BRIEF.offer }], [], 20, true]);
     // Never the whole country (2026-11-14: "We can't say the full of Singapore no matter what"): a location that names it is refused for every kind of ad, and the areas a gym has used before are offered, never the country.
     c = await check({ locations: ["SINGAPORE"] }); assert.ok(c.errors.some((e) => /"SINGAPORE": location names the whole country: an ad says the area around the gym \(BOAT QUAY, BISHAN\), never the country/.test(e)), c.errors.join(" | "));
     c = await check({ locations: ["BISHAN", "Islandwide"] }); assert.ok(c.errors.some((e) => /"Islandwide": location names the whole country/.test(e)));
@@ -3918,7 +3941,7 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     assert.deepEqual(JSON.parse(readFileSync(join(out, "selections.json"), "utf-8"))[folder], { "9x16": mp4 });
     const zip = await call(`/api/client/${GYM}/batch/u63-batch/images.zip`); assert.equal(zip.status, 200);
     const zb = Buffer.from(await zip.arrayBuffer()); assert.ok(zb.includes(Buffer.from(`Bishan/${folder}_9x16.mp4`)) && zb.length > size, "the video itself is in the zip");
-    const plan = (await (await call(`/api/client/${GYM}/batch/u63-batch/publish`)).json()).plan;
+    const pubAnswer = await (await call(`/api/client/${GYM}/batch/u63-batch/publish`)).json(), plan = pubAnswer.plan; assert.ok(plan, JSON.stringify(pubAnswer).slice(0, 400));
     // …and it is an ad of the Facebook plan like any other: its location's ad set, the video with its first frame as the cover, the lead form.
     const pa = plan.ads[0], vdata = pa.creative.object_story_spec.video_data;
     assert.deepEqual([plan.counts.ads, plan.counts.videos, plan.counts.with_story, pa.folder, pa.adset, pa.video.file, pa.video.seconds, pa.image.file, pa.story, vdata.video_id, vdata.image_hash, vdata.call_to_action.type, / \| Video: 101-v01-bishan-presenter-video$/.test(pa.name)],
@@ -4039,10 +4062,10 @@ test("U63 presenter videos through the panel (2026-11-12): who presents is the g
     await V("/facts", { method: "POST", body: { offer: BRIEF.offer, items: ["A full body scan assessment at the start"] } });
     await open("scenes", "!!document.querySelector('#vsCard [data-script]')");
     // How words are said is on the card: the standing word, Add a word…, and a word of his own saved from the dialog.
-    assert.deepEqual(await ev("[[...document.querySelectorAll('#vsSaid [data-said]')].map(x => x.innerText.replace(/\\s+/g, ' ').trim()), document.querySelector('#vsSaidAdd').textContent]"), [["“Quay” is given to the presenter as “Key” Change… Remove"], "Add a word…"]);
+    assert.deepEqual(await ev("[[...document.querySelectorAll('#vsSaid [data-said]')].map(x => x.innerText.replace(/\\s+/g, ' ').trim()).filter(t => !/[\\u3400-\\u9fff]/.test(t)), document.querySelector('#vsSaidAdd').textContent]"), [["“Quay” is given to the presenter as “Key” Change… Remove"], "Add a word…"]);
     await ev("document.querySelector('#vsSaidAdd').click(); document.querySelector('#vsSaidWord').value = 'Tampines'; document.querySelector('#vsSaidSay').value = 'tam-pin-ees'; document.querySelector('#vsGo').click(); true");
-    await until("document.querySelectorAll('#vsSaid [data-said]').length === 2");
-    assert.deepEqual((await V())[1].said, [{ word: "Quay", say: "Key" }, { word: "Tampines", say: "tam-pin-ees" }]);
+    await until("[...document.querySelectorAll('#vsSaid [data-said]')].some(x => /Tampines/.test(x.textContent))");
+    assert.deepEqual(latin((await V())[1].said), [{ word: "Quay", say: "Key" }, { word: "Tampines", say: "tam-pin-ees" }]);
     await V("/said", { method: "POST", body: { word: "Tampines", say: "" } });
     // Plain words are on the card (2026-11-15: "it must be third grade reading and below"): the rule, the standing words folded away, a word of his own saved from the dialog with what to say instead, a long word called fine; a word with nothing to say in its place is refused, and so is a write without the token.
     assert.deepEqual(await ev("[/words a nine-year-old knows/.test(document.querySelector('#vsPlain').innerText), /^\\d+ standing words never used$/.test(document.querySelector('#vsPlainStanding summary').textContent), document.querySelectorAll('#vsPlainStanding [data-plain]').length > 80, document.querySelector('#vsPlainStanding [data-plain=\"vitality\"] .body').textContent, document.querySelector('#vsPlainAdd').textContent, document.querySelector('#vsPlainFine').textContent]"), [true, true, true, "“vitality” → say “energy”", "Add a word never used…", "A long word that is fine…"]);
@@ -4230,7 +4253,7 @@ test("U64 white-paper videos through the panel (2026-11-15): the third kind's sc
     const check = async (over) => (await call(`/api/client/${GYM}/batch/check`, { method: "POST", body: { brief: { ...BRIEF, batch_id: "u64-new", ...over } } })).json();
     let c = await check({ videos: { paper: 1 } });
     assert.deepEqual(c.errors, []); assert.deepEqual([c.summary.videos.count, c.summary.videos.paper, c.summary.videos.active, c.summary.videos.videos, c.summary.videos.scripts, c.summary.videos.images, c.summary.videos.seconds], [1, 1, 0, 2, [id], 1, 24 + 4 * 2]);
-    c = await check({ videos: { presenter: 4, active: 3, paper: 3 } }); assert.ok(c.errors.some((e) => /at most 9 presenter videos in all, talking, with exercises and white paper together/.test(e)), c.errors.join(" | "));
+    c = await check({ videos: { presenter: 8, active: 7, paper: 6 } }); assert.ok(c.errors.some((e) => /at most 20 presenter videos in all, talking, with exercises and white paper together/.test(e)), c.errors.join(" | "));
     c = await check({ offer: "6 Week Reset", videos: { paper: 1 } }); assert.ok(c.errors.some((e) => /1 white-paper video asked for, but no white-paper script is ready for "6 Week Reset": the white-paper scripts kept there are for "12 Week Total Body Reset"/.test(e)), c.errors.join(" | "));
     // A batch with a white-paper ad on disk, as the runner leaves it: sheet 2 did not pass.
     const folder = "101-v01-bishan-paper-video", mp4 = join(folder, "9x16", "v01-bishan_9x16_v1.mp4"), jpg = mp4.replace(/\.mp4$/, ".jpg"), store = join(g, "video-clips", id), WHY = 'the paper read "Live near Bishn?"';
@@ -4302,10 +4325,10 @@ test("U64 white-paper videos through the panel (2026-11-15): the third kind's sc
     assert.equal(await ev("JSON.stringify(briefFromDraft().videos)"), '{"paper":1}');
     await until("/white paper/.test(document.querySelector('#bVideoSum')?.innerText || '')");
     assert.match(await ev("document.querySelector('#bVideoSum').innerText"), /^1 presenter video \(1 white paper\) × 2 locations: about 32 s of video \(US\$2\.24\), never more than \d+ s \(US\$\d+\.\d\d\)$/);
-    // Nine videos a batch between all kinds (2026-11-16: it was three, and the fields stopped there without a word): more than three is taken, and a number cut down says why beside the fields.
-    await ev("bVideoPaperSet(5); true"); assert.deepEqual(await ev("[B.draft.videos_paper, document.querySelector('#bVideosPaper').value, document.querySelector('#bVideosPaper').max, document.querySelector('#bVideosWhy').textContent]"), [5, "5", "9", ""]);
-    await ev("bVideoPaperSet(12); true"); assert.deepEqual(await ev("[B.draft.videos_paper, document.querySelector('#bVideosPaper').value, document.querySelector('#bVideosWhy').textContent]"), [9, "9", "A batch makes at most 9 videos in all, every kind together: with 0 presenter videos that leaves 9 white-paper."]);
-    await ev("document.querySelector('#bVideos').value = '2'; bVideoSet(2); true"); assert.deepEqual(await ev("[B.draft.videos, document.querySelector('#bVideos').value, document.querySelector('#bVideosWhy').textContent]"), [0, "0", "A batch makes at most 9 videos in all, every kind together: with 9 white-paper videos that leaves 0 presenter."], "nine videos between all kinds");
+    // Twenty videos a batch between all kinds (nine from 2026-11-16, twenty from 2026-11-20; it was three, and the fields stopped there without a word): more than three is taken, and a number cut down says why beside the fields.
+    await ev("bVideoPaperSet(5); true"); assert.deepEqual(await ev("[B.draft.videos_paper, document.querySelector('#bVideosPaper').value, document.querySelector('#bVideosPaper').max, document.querySelector('#bVideosWhy').textContent]"), [5, "5", "20", ""]);
+    await ev("bVideoPaperSet(25); true"); assert.deepEqual(await ev("[B.draft.videos_paper, document.querySelector('#bVideosPaper').value, document.querySelector('#bVideosWhy').textContent]"), [20, "20", "A batch makes at most 20 videos in all, every kind together: with 0 presenter videos that leaves 20 white-paper."]);
+    await ev("document.querySelector('#bVideos').value = '2'; bVideoSet(2); true"); assert.deepEqual(await ev("[B.draft.videos, document.querySelector('#bVideos').value, document.querySelector('#bVideosWhy').textContent]"), [0, "0", "A batch makes at most 20 videos in all, every kind together: with 20 white-paper videos that leaves 0 presenter."], "twenty videos between all kinds");
     await ev("bVideoPaperSet(3); bVideoSet(4); bVideoActiveSet(6); true"); assert.deepEqual(await ev("[B.draft.videos, B.draft.videos_active, B.draft.videos_paper, document.querySelector('#bVideosWhy').textContent]"), [4, 4, 3, "“With exercises” is a share of the presenter videos above it: 4 at most. Raise that number first."]);
     await ev("bVideoActiveSet(0); true");
     await ev("bVideoPaperSet(1); bVideoSet(1); true"); assert.equal(await ev("JSON.stringify(briefFromDraft().videos)"), '{"presenter":1,"paper":1}');
@@ -4574,6 +4597,11 @@ test("U69 the raw-footage editor, stage 1 (2026-11-19): a shoot is made from a p
     r = await F(`/${id}`, { method: "PUT", body: { order: [2, 1, 3, 4] } }); assert.deepEqual((await r.json()).sheet.lines.map((x) => x.n), [2, 1, 3, 4]);
     assert.deepEqual(JSON.parse(readFileSync(file, "utf-8")).choices, { 3: { take: [0, 0] }, order: [2, 1, 3, 4] });
     assert.equal((await F(`/${id}`, { method: "PUT", body: { line: 1, drop: true }, token: null })).status, 403);
+    // Matching B-roll notes to the clips is a text call: with no note that names what to show it is refused in words, and no call is made.
+    r = await F(`/${id}/match`, { method: "POST", body: {} }); assert.equal(r.status, 400); assert.match((await r.json()).error, /the script asks for no footage by name/);
+    assert.equal((await F(`/${id}/match`, { method: "POST", body: {}, token: null })).status, 403);
+    r = await F(`/${id}`, { method: "PUT", body: { line: 2, show: "sideways" } }); assert.equal(r.status, 400); assert.match((await r.json()).error, /a line shows the take or the footage/);
+    d = await (await F(`/${id}`)).json(); assert.deepEqual([d.sheet.groups, d.sheet.to_match], [[], 0]);
     // A frame sheet is served; the footage itself never is.
     assert.equal((await raw(`/files/brands/${GYM}/footage/${id}/frames/abc.jpg`)).status, 200);
     for (const pth of [`/files/brands/${GYM}/footage/${id}/files/t1.mov`, `/files/brands/${GYM}/footage/${id}/shoot.json`, `/files/brands/${GYM}/footage/readings.json`]) assert.equal((await raw(pth)).status, 404, pth);
@@ -4601,4 +4629,58 @@ test("U69 the raw-footage editor, stage 1 (2026-11-19): a shoot is made from a p
     r = await F(`/${id}`, { method: "PUT", body: { script: "This is for you if you are done going round in circles and want to get into your best shape." } }); d = await r.json();
     assert.deepEqual([d.sheet.counts.lines, d.sheet.unread, JSON.parse(readFileSync(file, "utf-8")).choices], [1, 0, {}]);
   } finally { rmSync(join(g, "footage"), { recursive: true, force: true }); }
+});
+
+test("U70 the raw-footage editor, stage 2 on the panel (2026-11-20): a sheet that is not ready is not cut (said in words) and tightening long pauses is the owner's switch; a cut on file is shown with its lines, played from the shoot's own folder in the parts a player asks for while the raw footage is never served; Add to this gym's ads puts the cut in as a real-footage video ad in a batch of its own, with the owner's offer and area and never the whole country", async () => {
+  const g = join(brands, GYM), F = (path = "", opts) => call(`/api/client/${GYM}/footage${path}`, opts);
+  const SCRIPT = "Give us six weeks and see what changes for you.\n\nClick the link below and we will be in touch.";
+  try {
+    let r = await F("", { method: "POST", body: { title: "Cut me", script: SCRIPT } }); assert.equal(r.status, 200); let d = await r.json(); const id = d.id;
+    assert.deepEqual([d.cuts, d.tighten, typeof d.whisper, d.cutting], [[], true, "boolean", null]);
+    // Not ready: nothing listened to, no take. The run is refused before anything starts.
+    r = await call("/api/run", { method: "POST", body: { kind: "footage-cut", gym: GYM, shoot: id } }); assert.equal(r.status, 400); assert.match((await r.json()).error, /the sheet is not ready to cut/);
+    r = await call("/api/run", { method: "POST", body: { kind: "footage-cut", gym: GYM, shoot: "no-such-shoot" } }); assert.equal(r.status, 404);
+    // The owner's switch.
+    r = await F(`/${id}`, { method: "PUT", body: { tighten: false } }); assert.equal((await r.json()).tighten, false);
+    assert.equal(JSON.parse(readFileSync(join(g, "footage", id, "shoot.json"), "utf-8")).choices.tighten, false);
+    r = await F(`/${id}`, { method: "PUT", body: { tighten: true } }); assert.equal((await r.json()).tighten, true);
+    // A cut on file, as the run leaves it.
+    const cuts = join(g, "footage", id, "cuts"); mkdirSync(cuts, { recursive: true });
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=1080x1920:r=12:d=5", "-f", "lavfi", "-i", "sine=frequency=300:duration=5", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", join(cuts, "cut-1.mp4")]);
+    writeFileSync(join(cuts, "cut-1.jpg"), Buffer.from(svg(108, 192, "").split(",")[1], "base64"));
+    writeFileSync(join(cuts, "cut-1.json"), JSON.stringify({ name: "cut-1", made: "2026-11-20T01:00:00Z", seconds: 5, tightened: true, timed_by: "heard", notes: [], pieces: [], captions: [],
+      lines: [{ n: 1, script: "Give us six weeks and see what changes for you.", said: "Just give us 6 weeks and see what changes.", show: "take", footage: null, takes: ["a.mov"], differs: true, at: 0 }, { n: 2, script: "Click the link below and we will be in touch.", said: "Click the link below and we'll be in touch.", show: "footage", footage: ["b.mov"], takes: ["vo.m4a"], differs: false, at: 2.5 }] }));
+    d = await (await F(`/${id}`)).json();
+    assert.deepEqual(d.cuts.map((c) => [c.name, c.seconds, c.url, c.lines.length]), [["cut-1", 5, `/files/brands/${GYM}/footage/${id}/cuts/cut-1.mp4`, 2]]);
+    r = await raw(d.cuts[0].url, { headers: { range: "bytes=0-99" } }); assert.equal(r.status, 206, "a player asks for parts");
+    assert.equal((await raw(d.cuts[0].poster)).status, 200);
+    for (const pth of [`/files/brands/${GYM}/footage/${id}/cuts/cut-1.json`, `/files/brands/${GYM}/footage/${id}/cuts/other.mp4`, `/files/brands/${GYM}/footage/${id}/files/a.mov`]) assert.equal((await raw(pth)).status, 404, pth);
+    // Into the gym's ads: the owner's words, checked like any brief's.
+    const ad = (body) => call(`/api/client/${GYM}/footage/${id}/ad`, { method: "POST", body });
+    r = await ad({ cut: "cut-1", offer: "", location: "BISHAN" }); assert.equal(r.status, 400); assert.match((await r.json()).error, /say the offer and the area/);
+    r = await ad({ cut: "cut-1", offer: "6 Week Total Body Reset", location: "SINGAPORE" }); assert.equal(r.status, 400); assert.match((await r.json()).error, /cannot be added/);
+    r = await ad({ cut: "cut-9", offer: "6 Week Total Body Reset", location: "BISHAN" }); assert.equal(r.status, 404);
+    assert.equal((await call(`/api/client/${GYM}/footage/${id}/ad`, { method: "POST", body: { cut: "cut-1", offer: "6 Week Total Body Reset", location: "BISHAN" }, token: null })).status, 403);
+    r = await ad({ cut: "cut-1", offer: "6 Week Total Body Reset", location: "BISHAN" }); assert.equal(r.status, 200, JSON.stringify(await r.clone().json())); const made = await r.json();
+    assert.match(made.batch, /^\d{4}-\d\d-\d\d-footage-cut-me$/); assert.equal(made.ads, 1);
+    const batch = JSON.parse(readFileSync(join(g, "outputs", made.batch, "batch.json"), "utf-8"));
+    assert.deepEqual([batch.imported, batch.ads.length, batch.ads[0].video.kind, batch.ads[0].video.title, batch.ads[0].video.words, batch.ads[0].words.offer, batch.ads[0].words.location], ["real-footage", 1, "real", "Cut me", ["Just give us 6 weeks and see what changes.", "Click the link below and we'll be in touch."], "6 Week Total Body Reset", "BISHAN"]);
+    assert.ok(existsSync(join(g, "outputs", made.batch, batch.ads[0].video_file)));
+    const rv = await (await call(`/api/client/${GYM}/batch/${made.batch}/review`)).json(); assert.deepEqual(rv.ads.map((a) => [a.video_kind, a.video_title]), [["real", "Cut me"]]);
+    // The page: the cut with its lines, the buttons.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const until = async (cond) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(cond))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(cond), cond); };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u70#/${GYM}/scenes` }, sessionId); await loaded;
+    await until("!!document.querySelector('#vsTabs [data-vtab=\"footage\"]')");
+    await ev("document.querySelector('#vsTabs [data-vtab=\"footage\"]').click(); true");
+    await until(`!!document.querySelector('#ftList [data-shoot="${id}"]')`);
+    await ev(`ftOpen(${JSON.stringify(id)}); true`);
+    await until("!!document.querySelector('#ftCut')");
+    assert.deepEqual(await ev("[document.querySelector('#ftCut').dataset.cut, document.querySelectorAll('#ftCut [data-cutline]').length, /not as the script has it/.test(document.querySelector('#ftCut [data-cutline=\"1\"]').textContent), /b\\.mov/.test(document.querySelector('#ftCut [data-cutline=\"2\"]').textContent), document.querySelector('#ftVideo').getAttribute('src'), !!document.querySelector('#ftAdGo'), !!document.querySelector('#ftCutGo')]"), ["cut-1", 2, true, true, `/files/brands/${GYM}/footage/${id}/cuts/cut-1.mp4`, true, false]);
+    assert.match(await ev("document.querySelector('#ftCut').textContent"), /cut-1 · 5 s · 2 lines · long pauses tightened/);
+    await ev("ftAd('cut-1'); true"); await until("!!document.querySelector('#ftAdOffer')");
+    assert.match(await ev("document.querySelector('#gModal').textContent"), /The offer and the area name the campaign and its ad set; they are your words/);
+    await ev("document.querySelector('#gModal').innerHTML = ''; true");
+  } finally { rmSync(join(g, "footage"), { recursive: true, force: true }); for (const x of (existsSync(join(g, "outputs")) ? (await import("node:fs")).readdirSync(join(g, "outputs")) : [])) if (/-footage-cut-me/.test(x)) { rmSync(join(g, "outputs", x), { recursive: true, force: true }); rmSync(join(g, "batches", x), { recursive: true, force: true }); } }
 });

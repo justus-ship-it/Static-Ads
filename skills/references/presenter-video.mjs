@@ -98,7 +98,7 @@ import { loadGeminiKey, generateImage } from "./generate_ads_gemini.mjs";
 import { whenGeminiFree, isRefusal } from "./gemini-busy.mjs";
 import { callVision, CHECK_MODEL } from "./check-visual.mjs";
 import { imageModelFor, countryRules, profileCountry, titleCase, PRESENTER_GENDERS, presenterProblems, captionAccentOf } from "./client-config.mjs";
-import { launchBrowser, isWholeCountry } from "./render-composites.mjs";
+import { launchBrowser, isWholeCountry, hasCJK } from "./render-composites.mjs";
 import { onAdProblems } from "./cards.mjs";
 import { COPY_MODEL, plainDashes } from "./draft-copy.mjs";
 
@@ -125,6 +125,31 @@ export const USD_PER_SECOND = 0.07, USD_PER_IMAGE = 0.15;
  * would be a made-up testimony.
  */
 export const FIRST_PERSON = /\b(i|i'm|im|i've|i'll|i'd|my|mine|me|myself)\b/i;
+/**
+ * Chinese scripts (2026-11-20, F45 Xinyi: every video in Taiwanese Mandarin). A Chinese line has no spaces, so it is
+ * measured in characters (`units`: a Han character is one, a run of Latin letters or digits — "F45", "InBody", "10" —
+ * is one), spoken at about `CHARS_PER_SECOND`; one breath is `LINE_CHARS`, and a cut that carries the closing line
+ * may run to `JOINED_CHARS`. One person's own voice in Chinese is 我 alone (我們 is the gym's). The closing line is the
+ * language's own (`CLOSING_ZH`, or the library's `closing_zh`).
+ */
+export const CHARS_PER_SECOND = 4.2, LINE_CHARS = [4, 40], JOINED_CHARS = 60;
+export const FIRST_PERSON_ZH = /我(?!們|们)/;
+// The Chinese closing line (2026-11-21): 「點擊下方連結，我們會跟你聯絡！」 was refused by Google's video model on every
+// one of 13 scripts (each 3 times, on two pictures), even after a bridge sentence; 「想了解更多，就留下資料…」 was
+// refused too (a call to click a link or leave details is what it blocks); 「現在就報名…」 was filmed and said as written.
+export const CLOSING_ZH = "點進連結吧～讓我們更認識你！";
+/**
+ * The Chinese closings a script may end on (2026-11-21, the owner on Xinyi's videos: "no need to say 現在就報名 … replace
+ * it with 點進連結吧～讓我們更認識你", and for some videos 「點進連結，…」 or 「快點進連結，…」 after a bridge he wrote;
+ * v05 and v13 keep 「現在就報名，我們會跟你聯絡！」). A Chinese script is held to whichever of these its last line ends on
+ * (the first that matches, so 「快點進連結」 is not read as 「點進連結」 with a stray 快); `CLOSING_ZH` is the one drafted.
+ */
+export const CLOSINGS_ZH = ["快點進連結，讓我們更認識你！", "點進連結吧～讓我們更認識你！", "點進連結，讓我們更認識你！", "現在就報名，我們會跟你聯絡！"];
+const ZH_PUNCT = /[\s，。！？、；：「」『』（）…,.!?;:()"'～~—-]/g;
+/** A line or text is Chinese when it carries a Han character. */
+export const isZh = (x) => hasCJK(Array.isArray(x) ? x.join("") : x);
+/** How long a line is: words, or — for a Chinese line — characters (a run of Latin letters or digits counts as one). */
+export const units = (line) => (isZh(line) ? (String(line).replace(ZH_PUNCT, "").match(/[A-Za-z0-9]+|[\u3400-\u9fff\uf900-\ufaff]/g) || []).length : wordCount(line));
 const W = 720, H = 1280, FPS = 24;
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
@@ -176,6 +201,7 @@ const near = (a, b) => {
  * added, dropped or changed is a difference.
  */
 export function sameWords(said, line, { names = [], sounds = [] } = {}) {
+  if (isZh(line)) return sameChinese(said, line, { names });
   const a = spoken(said), b = spoken(line);
   const named = new Set(names.flatMap((n) => spoken(n).map((t) => t.w)).filter((w) => w.length >= 4));
   // `sounds`: words that are one word to the ear — a word and the way it is said here ("quay", "key", "kee"). A word said
@@ -194,10 +220,49 @@ export function sameWords(said, line, { names = [], sounds = [] } = {}) {
   return i === a.length && j === b.length;
 }
 export const wordCount = (line) => norm(line).split(" ").filter(Boolean).length;
+const ZH_DIGIT = { 零: 0, 〇: 0, 一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+/** Chinese numerals up to 99 as digits ("十" 10, "四十五" 45, "十五" 15), so "10位" and "十位" are the same said. Only a numeral before a measure word or another number is touched where it could be a word ("一起", "一步" stay). */
+const zhNumbers = (t) => t.replace(/([一二兩两三四五六七八九]?)十([一二三四五六七八九]?)/g, (m, a, b) => String((a ? ZH_DIGIT[a] : 1) * 10 + (b ? ZH_DIGIT[b] : 0)))
+  .replace(/[零〇一二兩两三四五六七八九](?=[0-9]|位|週|周|天|個|堂|分鐘|分|次|號|樓)/g, (m) => String(ZH_DIGIT[m]));
+/** The same characters to a listener: one form for the variants a transcript may pick (simplified forms, 劃/畫, 着/著, 台/臺). */
+const ZH_SAME = {们: "們", 计: "計", 划: "畫", 劃: "畫", 练: "練", 课: "課", 运: "運", 动: "動", 体: "體", 态: "態", 饮: "飲", 会: "會", 联: "聯", 络: "絡", 连: "連", 结: "結", 点: "點", 击: "擊", 这: "這", 时: "時", 间: "間", 后: "後", 么: "麼", 样: "樣", 还: "還", 没: "沒", 关: "關", 系: "係", 给: "給", 让: "讓", 帮: "幫", 对: "對", 个: "個", 着: "著", 臺: "台", 裏: "裡", 里: "裡", 为: "為", 过: "過", 开: "開", 门: "門", 进: "進", 气: "氣", 觉: "覺", 现: "現", 发: "發", 变: "變", 数: "數", 据: "據", 专: "專", 属: "屬", 规: "規", 准: "準", 备: "備", 话: "話", 说: "說", 听: "聽", 来: "來", 机: "機", 义: "義", 区: "區", 周: "週"};
+export const zhForm = (t) => zhNumbers(String(t || "").toLowerCase().replace(ZH_PUNCT, "")).replace(/./gu, (c) => ZH_SAME[c] || c);
+/** Particles a speaker may add or drop without changing what is said. */
+const ZH_SOFT = new Set([..."的啊囉喔呀吧了嗎呢耶哦欸啦嘛唷哈"]);
+/**
+ * Said as written, for a Chinese line (2026-11-20). What a listener cannot hear is not a difference: punctuation, a
+ * numeral said or written as a digit, a variant form of a character, a particle added or dropped — and a character
+ * that sounds the same but was transcribed another way (the check writes what it hears in characters, and Mandarin has
+ * many homophones: 在/再, 的/得), up to about one in eight. A character added or dropped (a word said twice, words
+ * spoken into the time left over) is a difference.
+ */
+export function sameChinese(said, line, { names = [] } = {}) {
+  // The gym's name in Latin letters (2026-11-21, F45 Xinyi): the check is told to write the business's name the way the
+  // profile spells it, so a coach saying 「F45信義店」 came back as "F45 Xinyi店" and good takes failed. A Latin word of the
+  // name (3 letters or more) that the line does not carry stands for 1–3 characters of the line where it falls.
+  const NAME = "\u0001", l = zhForm(line);
+  let s = zhForm(said);
+  for (const w of new Set(names.flatMap((n) => String(n).toLowerCase().match(/[a-z]{3,}/g) || []))) if (!l.includes(w)) s = s.split(w).join(NAME);
+  const a = [...s].filter((c) => !ZH_SOFT.has(c)), b = [...l].filter((c) => !ZH_SOFT.has(c));
+  if (!a.length || !b.length) return false;
+  const budget = Math.floor(b.length / 8);
+  if (!a.includes(NAME)) {
+    if (a.length !== b.length) return false;
+    return a.reduce((n, c, i) => n + (c === b[i] ? 0 : 1), 0) <= budget;
+  }
+  const fit = (i, j, d) => {
+    if (d > budget) return false;
+    if (i === a.length) return j === b.length;
+    if (j >= b.length) return false;
+    if (a[i] === NAME) { for (let k = 1; k <= 3 && j + k <= b.length; k++) if (fit(i + 1, j + k, d)) return true; return false; }
+    return fit(i + 1, j + 1, d + (a[i] === b[j] ? 0 : 1));
+  };
+  return fit(0, 0, 0);
+}
 /** `{AREA}` filled the way the plan fills it in copy: "ANG MO KIO" → "Ang Mo Kio", "CBD" stays. */
 export const fillLine = (line, area) => norm(line).replace(/\{AREA\}/g, titleCase(String(area || "")));
 /** How long a line's clip is: its words at a talking pace and a second to finish, inside the model's limits (the test's lines of 22, 23 and 15 words were said in 8, 9 and 7 seconds). */
-export const clipSeconds = (line) => Math.max(CLIP_SECONDS[0], Math.min(CLIP_SECONDS[1], Math.ceil(wordCount(line) / WORDS_PER_SECOND + CLIP_PAD)));
+export const clipSeconds = (line) => Math.max(CLIP_SECONDS[0], Math.min(CLIP_SECONDS[1], Math.ceil(isZh(line) ? units(line) / CHARS_PER_SECOND + CLIP_PAD : wordCount(line) / WORDS_PER_SECOND + CLIP_PAD)));
 
 // ── who presents ─────────────────────────────────────────────────────────────
 /** The gym's presenter, or null when it has not said who presents. */
@@ -218,8 +283,21 @@ export const CLOSING_LINE = "Click the link below and we'll be in touch!", CLOSI
 const apos = (x) => String(x ?? "").replace(/[’‘]/g, "'");
 const closingRe = (closing) => new RegExp("(?<![A-Za-z0-9'])" + apos(closing).split(/\s+/).map((w) => w.replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, "")).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^A-Za-z0-9']+") + "[^A-Za-z0-9']*$", "i");
 /** Does a line end with the closing line? Case, spacing and punctuation aside; every word must be there, in order. */
-export const endsWithClosing = (line, closing = CLOSING_LINE) => closingRe(closing).test(apos(line).trim());
-const withoutClosing = (line, closing) => apos(line).trim().replace(closingRe(closing), "");
+/** The closing line in the script's own language: a Chinese script ends on the Chinese closing line whatever the shared English one says. */
+export function closingFor(lines, closing = CLOSING_LINE) {
+  if (!isZh(lines) || isZh(closing)) return closing;
+  const ls = Array.isArray(lines) ? lines : [lines], last = zhBare(ls[ls.length - 1] || "");
+  return CLOSINGS_ZH.find((c) => last.endsWith(zhBare(c))) || CLOSING_ZH;
+}
+const zhBare = (t) => String(t || "").replace(ZH_PUNCT, "");
+export const endsWithClosing = (line, closing = CLOSING_LINE) => (isZh(closing) ? zhBare(line).endsWith(zhBare(closing)) : closingRe(closing).test(apos(line).trim()));
+const withoutClosing = (line, closing) => {
+  if (!isZh(closing)) return apos(line).trim().replace(closingRe(closing), "");
+  // Walk back from the end until the closing line's characters are used up; what is left before them is the rest.
+  const t = String(line).trim(), want = [...zhBare(closing)]; let k = want.length, i = t.length;
+  while (i > 0 && k > 0) { const c = t[i - 1]; i--; if (c.replace(ZH_PUNCT, "") === "") continue; if (c === want[k - 1]) k--; else return t; }
+  return k === 0 ? t.slice(0, i) : t;
+};
 /** Another call to action than the closing line: "tap below", "tap the button". */
 export const TAP = /\btap (?:below|the|on|here|now|this|that)\b/i;
 /** The country's own names, for a line that says the whole country as the place. */
@@ -234,11 +312,23 @@ export function countryNamed(line, { profile = {}, offer = null } = {}) {
  * (2026-11-14, three times on two pictures) and films it after a few words in the same clip, so it is filmed with the
  * line before it: one cut for the two. `filmedLines` is the script as it is filmed — the words unchanged.
  */
-export const closingAlone = (line, closing = CLOSING_LINE) => endsWithClosing(line, closing) && !/[A-Za-z0-9]/.test(withoutClosing(line, closing));
+export const closingAlone = (line, closing = CLOSING_LINE) => endsWithClosing(line, closing) && !/[A-Za-z0-9\u3400-\u9fff]/.test(withoutClosing(line, closing));
+/**
+ * The link shown, not said (2026-11-21, the owner's choice when Google's video model refuses 「點進連結」 — it refused
+ * 「…，點進連結，讓我們更認識你！」 on v02 and v03 on two pictures each): a script marked `link_on_screen` is filmed with
+ * the link phrase left out of its last line («如果你想給自己一個好的開始，讓我們更認識你！»), and once the voice ends the
+ * words 「點進連結」 are shown where the captions were, for `LINK_HOLD` seconds. The script's own words are unchanged.
+ */
+export const LINK_ZH = /快?點進連結吧?[～~]?[，,、]?/, LINK_TEXT_ZH = "點進連結", LINK_HOLD = 1.5, LINK_EXTRA = 2;
+export function spokenLines(script, closing = closingLine()) {
+  const said = filmedLines(script.lines, closing);
+  if (!script.link_on_screen) return said;
+  const n = said.length - 1; return said.map((l, i) => (i === n ? l.replace(LINK_ZH, "") : l));
+}
 export const JOINED_WORDS = 36;
 export function filmedLines(lines, closing = closingLine()) {
-  const ls = (lines || []).map(norm), n = ls.length;
-  return n >= 2 && closingAlone(ls[n - 1], closing) ? [...ls.slice(0, n - 2), `${ls[n - 2]} ${ls[n - 1]}`] : ls;
+  const ls = (lines || []).map(norm), n = ls.length; closing = closingFor(ls, closing);
+  return n >= 2 && closingAlone(ls[n - 1], closing) ? [...ls.slice(0, n - 2), `${ls[n - 2]}${isZh(ls) ? "" : " "}${ls[n - 1]}`] : ls;
 }
 /**
  * The ending is two beats (2026-11-14, the owner on a video that went from "…your body feels stronger." straight into
@@ -250,24 +340,28 @@ export function filmedLines(lines, closing = closingLine()) {
  * no-promised-result rule, and Meta's rules on appearance).
  */
 export const BRIDGE_WORDS = 8;
-export const IDEAL_BODY = /\b(?:dream|perfect|ideal|beach|bikini|summer) body\b|\bbody (?:that )?(?:you|they)(?:'ve| have)? always wanted\b/i;
+export const IDEAL_BODY = /\b(?:dream|perfect|ideal|beach|bikini|summer) body\b|\bbody (?:that )?(?:you|they)(?:'ve| have)? always wanted\b|(?:完美|理想|夢想|夢幻|比基尼|夏日)(?:身材|體態|曲線)/i;
 export function bridgeOf(lines, closing = CLOSING_LINE) {
-  const cuts = filmedLines(lines, closing), parts = withoutClosing(cuts[cuts.length - 1] || "", closing).trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+  closing = closingFor(lines, closing);
+  const cuts = filmedLines(lines, closing), parts = withoutClosing(cuts[cuts.length - 1] || "", closing).trim().split(/(?<=[.!?])\s+|(?<=[。！？])/).filter((x) => x.replace(ZH_PUNCT, ""));
   return (parts[parts.length - 1] || "").trim();
 }
-export const isBridge = (sentence) => wordCount(sentence) >= BRIDGE_WORDS && /\byou(?:'re|r)?\b/i.test(apos(sentence)) && (/^(?:so |and |but )?if\b/i.test(sentence) || /\bready\b/i.test(sentence));
+/** A Chinese bridge: a clause of its own that turns to the viewer (你) and speaks of what they want or being ready (如果…, 準備好, 想…). */
+export const isBridge = (sentence) => (isZh(sentence) ? units(sentence) >= BRIDGE_WORDS && /你/.test(sentence) && /如果|準備|想/.test(sentence) : wordCount(sentence) >= BRIDGE_WORDS && /\byou(?:'re|r)?\b/i.test(apos(sentence)) && (/^(?:so |and |but )?if\b/i.test(sentence) || /\bready\b/i.test(sentence)));
 export const BRIDGE_WHY = `the script goes straight into the closing line: just before it, in the same cut, one sentence turns to the viewer and names what they want — "If you're ready to …, now is your time." (${BRIDGE_WORDS} words or more)`;
 /** What is wrong with a script's lines, in words; empty when it may be made. `offer`: the exact words it must name; `closing`: the sentence it must end on. */
 export function scriptProblems(lines, { offer = null, profile = {}, closing = closingLine(), plain = plainWords(), allow = [] } = {}) {
   const errs = [], asIs = [offer, profile.display_name, closing, ...(allow || [])].filter(Boolean);
   if (!Array.isArray(lines) || lines.length < LINES[0] || lines.length > LINES[1]) return [`a script is ${LINES[0]} to ${LINES[1]} lines, one for each cut`];
-  const ls = lines.map(norm), last = ls.length - 1;
+  const ls = lines.map(norm), last = ls.length - 1, zh = isZh(ls); closing = closingFor(ls, closing); asIs.push(closing);
   ls.forEach((l, i) => {
-    const n = wordCount(fillLine(l, "Ang Mo Kio"));
-    if (n < LINE_WORDS[0] || n > LINE_WORDS[1]) errs.push(`line ${i + 1} is ${n} words: a line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words`);
+    const n = units(fillLine(l, "Ang Mo Kio"));
+    if (zh) { if (n < LINE_CHARS[0] || n > LINE_CHARS[1]) errs.push(`line ${i + 1} is ${n} characters: a line is one breath, ${LINE_CHARS[0]} to ${LINE_CHARS[1]} characters`); }
+    else if (n < LINE_WORDS[0] || n > LINE_WORDS[1]) errs.push(`line ${i + 1} is ${n} words: a line is one breath, ${LINE_WORDS[0]} to ${LINE_WORDS[1]} words`);
     const odd = (l.match(/\{[^}]*\}/g) || []).filter((x) => x !== "{AREA}"); if (odd.length) errs.push(`line ${i + 1}: only {AREA} may stand in for a word (found ${odd.join(", ")})`);
     // "We", "our" and "us" are the gym's voice; one person's own (I, my, me) is not the presenter's to use. The closing line is the owner's own sentence, as it is.
     const own = (i === last ? withoutClosing(l, closing) : l).replace(/\{AREA\}/g, "");
+    if (zh && FIRST_PERSON_ZH.test(own)) errs.push(`line ${i + 1} speaks as one person ("我"): the presenter may speak for the gym (我們), never as a coach or a member with a story of their own (我)`);
     if (FIRST_PERSON.test(own)) errs.push(`line ${i + 1} speaks as one person ("${own.match(FIRST_PERSON)[0]}"): the presenter may speak for the gym (we, our, us), never as a coach or a member with a story of their own (I, my, me)`);
     if (TAP.test(l)) errs.push(`line ${i + 1} says "${l.match(TAP)[0]}": the only call to action is the closing line`);
     const ideal = apos(l).match(IDEAL_BODY); if (ideal) errs.push(`line ${i + 1} promises an ideal body ("${ideal[0]}"): say what the person will feel or be able to do`);
@@ -277,7 +371,8 @@ export function scriptProblems(lines, { offer = null, profile = {}, closing = cl
   });
   if (!endsWithClosing(ls[last], closing)) errs.push(`the last line ends with the closing line, word for word: "${closing}"`);
   else if (!isBridge(bridgeOf(ls, closing))) errs.push(BRIDGE_WHY);
-  if (endsWithClosing(ls[last], closing) && closingAlone(ls[last], closing) && wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio")) > JOINED_WORDS) errs.push(`line ${last} and the closing line are filmed as one cut (the closing line cannot be a clip of its own) and together they are ${wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio"))} words: at most ${JOINED_WORDS}, so shorten line ${last}`);
+  if (zh && endsWithClosing(ls[last], closing) && closingAlone(ls[last], closing) && units(`${ls[last - 1]}${ls[last]}`) > JOINED_CHARS) errs.push(`line ${last} and the closing line are filmed as one cut and together they are ${units(`${ls[last - 1]}${ls[last]}`)} characters: at most ${JOINED_CHARS}, so shorten line ${last}`);
+  if (!zh && endsWithClosing(ls[last], closing) && closingAlone(ls[last], closing) && wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio")) > JOINED_WORDS) errs.push(`line ${last} and the closing line are filmed as one cut (the closing line cannot be a clip of its own) and together they are ${wordCount(fillLine(`${ls[last - 1]} ${ls[last]}`, "Ang Mo Kio"))} words: at most ${JOINED_WORDS}, so shorten line ${last}`);
   const all = ls.join(" ");
   if (offer && !all.toLowerCase().includes(norm(offer).toLowerCase())) errs.push(`the script must name the offer in its exact words: "${norm(offer)}"`);
   for (const e of onAdProblems(fillLine(all, "Bishan"), profile)) if (!errs.includes(e)) errs.push(e);
@@ -287,7 +382,7 @@ const objOf = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : {});
 // `sheets`: the white-paper videos' scripts (paper-video.mjs) — their own list, kept through every write of this file.
 export const readScripts = (gymDir) => { const j = readJson(join(gymDir, SCRIPTS_FILE)); return { schema: 1, scripts: Array.isArray(j?.scripts) ? j.scripts : [], sheets: Array.isArray(j?.sheets) ? j.sheets : [], samples: Array.isArray(j?.samples) ? j.samples : [], facts: objOf(j?.facts), pains: objOf(j?.pains) }; };
 export const writeScripts = (gymDir, data) => writeFileSync(join(gymDir, SCRIPTS_FILE), JSON.stringify({ schema: 1, scripts: data.scripts || [], ...((data.sheets || []).length ? { sheets: data.sheets } : {}), samples: data.samples || [], facts: data.facts || {}, pains: data.pains || {} }, null, 2) + "\n");
-const shape = (lines) => lines.map(norm).join(" ").toLowerCase().replace(/[^a-z0-9 ]/g, "");
+const shape = (lines) => lines.map(norm).join(" ").toLowerCase().replace(/[^a-z0-9 \u3400-\u9fff\uf900-\ufaff]/g, "");
 /** Add a script: the owner's own is kept at once, a drafted one waits for him. Never twice. */
 export function addScript(gymDir, { lines, offer, source = "owner", pain = null, style = null }, { profile = {}, closing = closingLine(), plain = plainWords() } = {}) {
   const ls = (lines || []).map((l) => plainDashes(norm(l))), errs = scriptProblems(ls, { offer, profile, closing, plain, allow: factsFor(gymDir, offer) });
@@ -418,15 +513,21 @@ const writeSamples = (libDir, data) => { mkdirSync(libDir, { recursive: true });
  * takes either spelling for the word; how it sounded is the owner's to judge — the check's ear called "kway" "kee" —
  * so Pick Ads names the word to listen for, with Film this line again beside it.
  */
-export const SAID_AS = [{ word: "Quay", say: "Key", heard: ["kee"] }];
-const letters = (w) => String(w).toLowerCase().replace(/[^a-z0-9]/g, "");
+/**
+ * A Chinese word's tones (2026-11-20, the owner on a coach's test clip: "when she says 上班 she uses the fourth tone for
+ * 班 but it's supposed to be the first tone"). A Chinese entry gives the word's pinyin (`pinyin: true`): the line is
+ * not rewritten — the video model is told how the word is said, tone by tone — and the owner is told to listen for it.
+ */
+export const SAID_AS = [{ word: "Quay", say: "Key", heard: ["kee"] }, { word: "F45", say: "F四十五", zh: true }, { word: "上班", say: "shàng bān", pinyin: true, note: "班 in the first tone, bān (flat and high), never the fourth tone" }, { word: "下班", say: "xià bān", pinyin: true, note: "班 in the first tone, bān (flat and high), never the fourth tone" }];
+const letters = (w) => String(w).normalize("NFD").toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]/g, "");
 export function saidAs(libDir = videoLibraryDir()) {
   const out = new Map(SAID_AS.map((x) => [letters(x.word), { ...x }]));
-  for (const x of readSamples(libDir).said) { const k = letters(x.word); if (x.removed) out.delete(k); else if (x.word && x.say) out.set(k, { word: x.word, say: x.say, heard: out.get(k)?.say === x.say ? out.get(k).heard || [] : [] }); }
+  for (const x of readSamples(libDir).said) { const k = letters(x.word); if (x.removed) out.delete(k); else if (x.word && x.say) out.set(k, { word: x.word, say: x.say, ...(isZh(x.word) ? { pinyin: true, ...(x.note ? { note: x.note } : {}) } : {}), heard: out.get(k)?.say === x.say ? out.get(k).heard || [] : [] }); }
   return [...out.values()];
 }
 export function saidProblems(word, say) {
   const errs = [];
+  if (isZh(word)) { if (!/^[\u3400-\u9fff]{1,6}$/.test(String(word).trim())) errs.push("the word is 1 to 6 Chinese characters, as written (\"上班\")"); if (!/^[a-zA-Z\u00C0-\u024F\u0300-\u036F ]{2,60}$/.test(String(say || "").trim())) errs.push("how it is said is its pinyin, with tone marks (\"shàng bān\")"); return errs; }
   if (!/^[A-Za-z][A-Za-z'-]{1,29}$/.test(String(word || "").trim())) errs.push("the word is one word as it is written, 2 to 30 letters (\"Quay\")");
   if (!/^[A-Za-z][A-Za-z '-]{0,39}$/.test(String(say || "").trim())) errs.push("how it is said is written the way it sounds, in letters, as a real word where there is one (\"Key\"): the presenter reads exactly this");
   return errs;
@@ -434,12 +535,13 @@ export function saidProblems(word, say) {
 /** Add or change how a word is said, for every gym; an empty `say` takes the word off the list. */
 export function setSaid(libDir, word, say) {
   const w = norm(word), how = norm(say), data = readSamples(libDir), rest = data.said.filter((x) => letters(x.word) !== letters(w));
-  if (!how) { if (!/^[A-Za-z][A-Za-z'-]{1,29}$/.test(w)) throw new Error("which word?"); data.said = [...rest, ...(SAID_AS.some((x) => letters(x.word) === letters(w)) ? [{ word: w, removed: true, updated: today() }] : [])]; }
+  if (!how) { if (!/^[A-Za-z][A-Za-z'-]{1,29}$/.test(w) && !/^[\u3400-\u9fff]{1,6}$/.test(w)) throw new Error("which word?"); data.said = [...rest, ...(SAID_AS.some((x) => letters(x.word) === letters(w)) ? [{ word: w, removed: true, updated: today() }] : [])]; }
   else { const errs = saidProblems(w, how); if (errs.length) throw new Error(errs.join("; ")); data.said = [...rest, { word: w, say: how, updated: today() }]; }
   writeSamples(libDir, data); return saidAs(libDir);
 }
 /** The entries whose word is in a line, as a whole word. */
-export const saidIn = (line, list = []) => list.filter((x) => new RegExp(`(?<![A-Za-z])${x.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`, "i").test(String(line)));
+// An entry marked `zh` is for Chinese lines only (2026-11-21: in Chinese "F45" is said 「F四十五」, the owner's word; in English it is "F forty-five" as it is).
+export const saidIn = (line, list = []) => list.filter((x) => !x.zh || isZh(line)).filter((x) => (isZh(x.word) ? String(line).includes(x.word) : false) || new RegExp(`(?<![A-Za-z])${x.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`, "i").test(String(line)));
 /** What names a clip beside its words and its picture: a changed way of saying a word films that line again, and no other. */
 const saidNote = (entries) => entries.map((x) => `${letters(x.word)}=${letters(x.say)}`).sort().join("|");
 /** Words that are one word to the ear: the word, the way it is written for the presenter, and other ways the check may spell that sound. */
@@ -785,7 +887,7 @@ export async function suggestPains({ brandDir, offer, audience = null, count = 6
  * a word ("figure out why I can't type more than 3 … Fix it"). What bounds a batch now is the scripts ready for its
  * offer (one for each video) and what the run says it will cost before it is confirmed.
  */
-export const MAX_VIDEOS = 9;
+export const MAX_VIDEOS = 20;
 const kindCount = (videos, k) => (Number.isInteger(videos?.[k]) && videos[k] > 0 ? videos[k] : 0);
 /** The videos made from a spoken script: talking, and with exercises. */
 export const spokenCount = (videos) => kindCount(videos, "presenter") + kindCount(videos, "active");
@@ -825,11 +927,20 @@ export function noScriptWhy(gymDir, offer, { libraryDir = videoLibraryDir(), pro
   return { state: "none", text: "nothing is written for this offer yet: press Draft scripts… there, or write your own" };
 }
 /** The scripts a batch makes: that many of the ones kept for its offer, in an order the seed fixes (a re-run picks the same). Too few is refused by name. */
-export function pickScripts(gymDir, { count, offer, seed = "batch", libraryDir = videoLibraryDir() } = {}) {
-  const profile = readJson(join(gymDir, "gym-profile.json")) || {}, all = keptScripts(gymDir, offer), kept = readyScripts(gymDir, offer, { profile, closing: closingLine(libraryDir) });
+export function pickScripts(gymDir, { count, offer, seed = "batch", libraryDir = videoLibraryDir(), reuse = 1, pin = null } = {}) {
+  const profile = readJson(join(gymDir, "gym-profile.json")) || {}, all = keptScripts(gymDir, offer), kept0 = readyScripts(gymDir, offer, { profile, closing: closingLine(libraryDir) });
+  // `pin`: the script each video films, in order (the brief's `video_scripts`); each must be kept and ready for this offer.
+  if (pin) {
+    const byId = new Map(kept0.map((x) => [x.id, x])), missing = pin.filter((id) => !byId.has(id));
+    if (missing.length) throw new Error(`the batch names script${missing.length === 1 ? "" : "s"} ${[...new Set(missing)].join(", ")}, which ${missing.length === 1 ? "is" : "are"} not kept and ready for "${offer}"`);
+    return pin.slice(0, count).map((id) => byId.get(id));
+  }
+  // `reuse` (a batch whose videos are shared between the gym's coaches): a script may be filmed that many times, each by another coach — two coaches saying the same words are two adverts.
+  const kept = reuse > 1 && kept0.length && kept0.length < count ? Array.from({ length: Math.min(count, kept0.length * reuse) }, (_, i) => kept0[i % kept0.length]) : kept0;
   if (kept.length < count && all.length > kept.length) throw new Error(`${count} presenter video${count === 1 ? "" : "s"} asked for, but ${kept.length ? `only ${kept.length} script${kept.length === 1 ? " is" : "s are"}` : "no script is"} ready for "${norm(offer)}": ${noScriptWhy(gymDir, offer, { libraryDir, profile }).text} (Draft Scenes → Video scripts)`);
   if (kept.length < count) throw new Error(`${count} presenter video${count === 1 ? "" : "s"} asked for, but ${kept.length ? `only ${kept.length} script${kept.length === 1 ? " is" : "s are"}` : "no script is"} kept for "${norm(offer)}": keep ${count - kept.length} more on Draft Scenes → Video scripts${kept.length ? "" : ` (${noScriptWhy(gymDir, offer, { libraryDir }).text})`}`);
-  return kept.map((s2) => ({ s: s2, k: sha(`${seed}|${s2.id}`) })).sort((a, b) => a.k.localeCompare(b.k)).slice(0, count).map((x) => x.s);
+  const order = kept0.map((s2) => ({ s: s2, k: sha(`${seed}|${s2.id}`) })).sort((a, b) => a.k.localeCompare(b.k)).map((x) => x.s);
+  return Array.from({ length: Math.min(count, kept.length) }, (_, i) => order[i % order.length]);
 }
 /** A script with what making it would take: its lines, each clip's length, and the seconds and image calls for a set of locations. */
 export function scriptCost(script, areas = [""], { closing = closingLine() } = {}) {
@@ -1006,8 +1117,8 @@ export function judgeClip(seen, line, { profile = {}, say = [], move = null } = 
   return { passed: !kind, why, kind, faults: (seen?.faults || []).filter(Boolean), marks: (isCoach ? [] : L.notes).map((x) => `${x.on === "screen" ? "on a screen in the room" : "the maker's name on the equipment"}: ${x.text}`), lettering: L };
 }
 const WATCH_SCHEMA = { type: "OBJECT", properties: { spoken: { type: "STRING" }, lettering: { type: "ARRAY", items: { type: "OBJECT", properties: { text: { type: "STRING" }, on: { type: "STRING", enum: LETTERING_ON } }, required: ["text", "on"] } }, people: { type: "INTEGER" }, lips_match_speech: { type: "BOOLEAN" }, faults: { type: "ARRAY", items: { type: "STRING" } }, looks_real: { type: "INTEGER" }, did_move: { type: "BOOLEAN" } }, required: ["spoken", "lettering", "people", "lips_match_speech", "faults", "looks_real"] };
-const WATCH_QUESTION = "Watch and listen to this short video. spoken: transcribe exactly every word spoken, in order, with nothing added; an empty string if nobody speaks. lettering: every word, name, logo, number or letter visible anywhere in the picture at any point, one entry each, empty if none — text: what it says; on: what it is on: \"equipment\" (a maker's name, model or number printed on a machine, rack, weight, bench or mat), \"screen\" (the display of a machine, or a television or clock in the room), \"clothing\" (anything a person is wearing), \"sign\" (a sign, poster, board, or writing on a wall, door, window or mirror), \"overlay\" (a caption, subtitle, title, watermark or logo laid over the picture rather than part of the room), \"other\" (none of these, or you cannot tell). people: how many people are visible at any point. lips_match_speech: true only if the visible person's mouth moves in time with the spoken words. faults: every visible fault that would make a viewer think this is not real footage — warped hands or faces, objects that melt or pass through each other, impossible movement, a face that changes — each as a short phrase; empty if none. looks_real: 1 to 10, how convincingly this passes as phone footage shot in a real gym.";
-const HEAR_QUESTION = "Listen to this recording of one person speaking. Write down exactly every word that is spoken, in order. Keep every repeated word, stutter, false start and any extra words at the end exactly as they are said: do not tidy, correct or complete anything.";
+const WATCH_QUESTION = "Watch and listen to this short video. spoken: transcribe exactly every word spoken, in order, with nothing added; an empty string if nobody speaks. lettering: every word, name, logo, number or letter visible anywhere in the picture at any point, one entry each, empty if none — text: what it says; on: what it is on: \"equipment\" (a maker's name, model or number printed on a machine, rack, weight, bench or mat), \"screen\" (the display of a machine, or a television or clock in the room), \"clothing\" (anything a person is wearing), \"sign\" (a sign, poster, board, or writing on a wall, door, window or mirror), \"overlay\" (a caption, subtitle, title, watermark or logo laid over the picture rather than part of the room), \"other\" (none of these, or you cannot tell). people: how many people are visible at any point. lips_match_speech: true only if the visible person's mouth moves in time with the spoken words. faults: every visible fault that would make a viewer think this is not real footage — warped hands or faces, objects that melt or pass through each other, impossible movement, a face that changes — each as a short phrase; empty if none. looks_real: 1 to 10, how convincingly this passes as phone footage shot in a real gym. If the speech is Chinese, write spoken in Traditional Chinese characters as used in Taiwan, numbers as Arabic digits, still exactly as said — keep every repeated or extra word.";
+const HEAR_QUESTION = "Listen to this recording of one person speaking. Write down exactly every word that is spoken, in order. Keep every repeated word, stutter, false start and any extra words at the end exactly as they are said: do not tidy, correct or complete anything. If the speech is Chinese, write it in Traditional Chinese characters as used in Taiwan, numbers as Arabic digits.";
 /** The real models: a still from the gym's image model, a clip from Omni, a watching pass by the check model, a second listen by sound alone. */
 export function realModels(profile = {}) {
   return {
@@ -1083,7 +1194,15 @@ export function stillPrompt({ presenter, profile, spot, first, framing = FRAMING
  * The words the presenter is given to read: a word on the said-as list is written the way it sounds ("Boat Key" for
  * "Boat Quay"), capitalised as the line has it. The captions keep the word as written — software sets them from the script.
  */
-export const spokenLine = (line, said = []) => said.reduce((s, x) => s.replace(new RegExp(`(?<![A-Za-z])${x.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`, "gi"), (m) => (/^[A-Z]/.test(m) ? x.say.charAt(0).toUpperCase() + x.say.slice(1) : x.say.toLowerCase())), String(line));
+/** How the listed Chinese words of a line are said, for the video model: "上班" is said shàng bān — 班 in the first tone… */
+/**
+ * How a Chinese line is spoken (2026-11-21, the owner on Xinyi's videos: 飲食, 衣服, 加油 and 了解你的目標 "in a weird
+ * English accent … it needs to sound local"). "A natural Taiwanese accent" beside a voice described as having "a light
+ * accent" let the model put a foreign accent on some words; the presenter is now a native speaker from Taipei.
+ */
+export const NATIVE_ZH = "Mandarin Chinese as a native speaker from Taipei speaks it — every word pronounced the way people in Taipei say it, with no foreign or American accent and no English sounds";
+export const pronounce = (said = []) => said.filter((x) => x.pinyin).map((x) => `"${x.word}" is pronounced ${x.say}${x.note ? ` — ${x.note}` : ""}.`).join(" ");
+export const spokenLine = (line, said = []) => said.filter((x) => !x.pinyin).reduce((s, x) => s.replace(new RegExp(`(?<![A-Za-z])${x.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z])`, "gi"), (m) => (/^[A-Z]/.test(m) ? x.say.charAt(0).toUpperCase() + x.say.slice(1) : x.say.toLowerCase())), String(line));
 /**
  * What happens after the line (2026-11-16): two takes filled the time left over with speech nobody wrote ("So contribute
  * to me to test human self"), and four said a word or phrase twice. The presenter is told to stop and stay silent.
@@ -1092,7 +1211,9 @@ export const silentAfter = (presenter) => { const he = presenter.gender === "man
 export function clipPrompt({ presenter, profile, line, seconds, said = [] }) {
   if (presenter.coach) return coachClipPrompt({ coach: presenter.coach, profile, line, seconds, said });
   const she = presenter.gender === "man" ? "The man" : "The woman", pron = presenter.gender === "man" ? "His" : "Her", their = presenter.gender === "man" ? "his" : "her", voice = `${countryRules(profileCountry(profile)).demonym || "natural"} English`;
-  return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voice} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${pron} mouth forms exactly these words, once, in time with ${their} voice. ${silentAfter(presenter)} ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
+  const voiceZh = isZh(line) ? NATIVE_ZH : voice;
+  const tones = pronounce(said);
+  return `Bring this photograph to life as ${seconds} seconds of video. ${she} keeps looking into the camera and says, in a warm, natural ${voiceZh} voice, at an easy conversational pace: "${spokenLine(line, said)}" ${pron} mouth forms exactly these words, once, in time with ${their} voice.${tones ? ` Pronunciation: ${tones}` : ""} ${silentAfter(presenter)} ${pron} hands stay low and relaxed, with at most one small, slow gesture: no pointing, no counting on fingers, no hands near the face. No walking. Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. Keep ${their} face, hair, clothes and the room exactly as they are in the photograph. ${PHONE} ${NO_WORDS} Sound: ${their} voice, close and clear, over the quiet of an empty gym. No music.`;
 }
 
 // ── a real coach (2026-11-17) ────────────────────────────────────────────────
@@ -1117,8 +1238,10 @@ const coachUniform = (coach) => {
 };
 /** A talking clip of a coach, from a real frame (or from a re-made picture, or a move clip's last frame: `holding` says what the hands do). */
 export function coachClipPrompt({ coach, profile, line, seconds, said = [], holding = null, before = "" }) {
-  const voice = coach.voice ? `in this voice — ${norm(coach.voice).replace(/[.\s]+$/, "")} — at an easy, natural pace` : `in a warm, natural ${countryRules(profileCountry(profile)).demonym || "natural"} English voice, at an easy conversational pace`;
-  return `Bring this photograph to life as ${seconds} seconds of video. ${COACH_SAME} ${before ? `${before} ` : ""}The coach looks into the camera and says, ${voice}: "${spokenLine(line, said)}" The coach's mouth forms exactly these words, once, in time with the voice. ${COACH_QUIET} ${holding || "The coach's hands stay low and relaxed, with at most one small, slow gesture: no pointing, no hands near the face, nothing in front of the print on the coach's top."} No walking. ${STILL_CAMERA} Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. ${coachUniform(coach)} ${COACH_PHONE} Sound: the coach's voice, close and clear, over the quiet of an empty gym. No music.`;
+  const lang = isZh(line) ? `in ${NATIVE_ZH}, ` : "";
+  const voice = coach.voice ? `${lang}in this voice — ${norm(coach.voice).replace(/[.\s]+$/, "")} — at an easy, natural pace` : `${lang || `in a warm, natural ${countryRules(profileCountry(profile)).demonym || "natural"} English voice, `}at an easy conversational pace`;
+  const tones = pronounce(said);
+  return `Bring this photograph to life as ${seconds} seconds of video. ${COACH_SAME} ${before ? `${before} ` : ""}The coach looks into the camera and says, ${voice}: "${spokenLine(line, said)}" The coach's mouth forms exactly these words, once, in time with the voice.${tones ? ` Pronunciation: ${tones}` : ""} ${COACH_QUIET} ${holding || "The coach's hands stay low and relaxed, with at most one small, slow gesture: no pointing, no hands near the face, nothing in front of the print on the coach's top."} No walking. ${STILL_CAMERA} Exactly one person is in the room for the whole clip: nobody walks in, nobody appears in a doorway or a mirror. ${coachUniform(coach)} ${COACH_PHONE} Sound: the coach's voice, close and clear, over the quiet of an empty gym. No music.`;
 }
 /** A re-made picture of a coach in a pose the samples do not have: from two real pictures of them (the first also gives the room). */
 export function coachStillPrompt({ coach, pose, room = false }) {
@@ -1328,14 +1451,14 @@ export async function readKit({ gymDir, room = null, models, spent = null, log =
  * its own (`creative_defaults.caption_accent`, 2026-11-17: BFIT's corporate orange): then that word is in it.
  */
 export const CAPTION_ACCENT = "#FFD84A";
-const FONTS = `@font-face{font-family:Anton;src:url("file://${join(REPO_ROOT, "assets/fonts/anton/Anton-Regular.ttf")}")}@font-face{font-family:Mont;src:url("file://${join(REPO_ROOT, "assets/fonts/montserrat/Montserrat[wght].ttf")}");font-weight:100 900}`;
+const FONTS = `@font-face{font-family:NotoTC;src:url("file://${join(REPO_ROOT, "assets/fonts/notosanstc/NotoSansTC[wght].ttf")}");font-weight:100 900}@font-face{font-family:Anton;src:url("file://${join(REPO_ROOT, "assets/fonts/anton/Anton-Regular.ttf")}")}@font-face{font-family:Mont;src:url("file://${join(REPO_ROOT, "assets/fonts/montserrat/Montserrat[wght].ttf")}");font-weight:100 900}`;
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 /** A transparent 720 × 1280 PNG of the words. Meta's 9:16 live area is x 6–94%, y 14–65%: every block is laid inside it, and the page reports where each landed. */
 /** `low` (a coach's video): the block's BOTTOM sits on the edge of Meta's live area and it grows upward, so it never reaches the shirt's print, which a coach's pictures keep above 53% of the height. */
 export async function overlay(browser, out, inner, accent = CAPTION_ACCENT, low = false, scale = 1) {
   const html = `<!doctype html><meta charset="utf-8"><style>${FONTS}html,body{margin:0;width:${W}px;height:${H}px;background:transparent;overflow:hidden}
     .cap{position:absolute;left:8%;right:8%;${low ? `bottom:${Math.round((1 - LIVE.bottom) * 1000) / 10 + 0.4}%` : "top:54%"};text-align:center;font:400 58px/1.12 Anton;color:#fff;letter-spacing:1px;-webkit-text-stroke:3px rgba(0,0,0,.85);paint-order:stroke fill;text-shadow:0 4px 16px rgba(0,0,0,.55)}
-    .cap b{font-weight:400;color:${accent || CAPTION_ACCENT}}</style>${inner}`;
+    .cap b{font-weight:400;color:${accent || CAPTION_ACCENT}}.cap.zh{font-family:NotoTC;font-weight:900;font-size:52px;letter-spacing:2px}.cap.zh b{font-weight:900}</style>${inner}`;
   const page = join(browser.work, `${basename(out)}.html`); writeFileSync(page, html);
   const { cdp, sessionId } = browser;
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: scale, mobile: false }, sessionId);
@@ -1351,6 +1474,8 @@ export const LIVE = { left: 0.06, right: 0.94, top: 0.14, bottom: 0.65 };
 const inLive = (b) => b.left >= LIVE.left - 0.001 && b.right <= LIVE.right + 0.001 && b.top >= LIVE.top - 0.001 && b.bottom <= LIVE.bottom + 0.001;
 /** Quieter than this for this long is a pause; a sound shorter than MIN_VOICED is a click, not speech; a clip is cut this far before the first word and after the last. */
 export const SILENCE_DB = -30, SILENCE_MIN = 0.2, MIN_VOICED = 0.25, LEAD = 0.12, TAIL = 0.25;
+/** After a Chinese line's last word (2026-11-21, the owner on Xinyi's v10: "the 做 is cut off too early"): a Mandarin syllable's tail is soft and falls under the silence line sooner. */
+export const TAIL_ZH = 0.5;
 /** From ffmpeg's silence report and the file's length: where there is sound — `spans` [[a, b], …], each MIN_VOICED or longer — and the first and last of it. No sound found reads as the whole file. */
 export function speechFrom(report, duration) {
   const starts = [...String(report).matchAll(/silence_start: ([\d.]+)/g)].map((m) => Number(m[1])), ends = [...String(report).matchAll(/silence_end: ([\d.]+)/g)].map((m) => Number(m[1]));
@@ -1404,11 +1529,42 @@ export function speechOf(file) {
   return speechFrom(r.stderr || "", duration);
 }
 /** A line in caption chunks: up to `per` words, and never across the end of a sentence or a clause. Each { text (trailing commas and stops not shown), ends: it closes a clause }. */
+/**
+ * A caption's words: split on spaces, or — for Chinese — one Han character each, a run of Latin letters or digits as
+ * one, punctuation kept with the character before it. A Chinese block is up to `ZH_PER` characters and its words are
+ * joined with no space.
+ */
+export const ZH_PER = 11;
+/** Two-character words a caption block should not be cut through, and characters a block should not start with. */
+const ZH_WORDS = new Set("身體 自己 計畫 體態 雕塑 一點 準備 精神 重新 開始 飲食 運動 教練 課程 規劃 聯絡 連結 下方 現在 信義 健身 家庭 時間 生活 喜歡 力氣 沙發 努力 流汗 偷懶 目標 專屬 諮詢 節奏 重量 動作 變化 衣服 自信 改變 夥伴 朋友 上班 下班 開會 忙碌 我們 你們 一起 一堂 課表 一對 一聊 聊聊 沒關 關係 完全 從來 健身 房運 點擊 會跟 跟你 方連 雕塑 塑體 態計 大家 加油 有力 氣做 今天 從今 天開 這次 這一 不用 再等 一直 下個 個月 一步 第一 每個 每一 一路 陪著 陪你 看過 過來 參加 加入 留一 一點 給自 規劃 好的 開心 義路 基隆 路口 得更 更有 也有 後也 班後 報名 就報 工作 忙完 初步 了解 交叉 叉口 認識 點進 進連 變好 獨一 無二 美味 有效 進步 看得 得見 目標 達到".split(" "));
+const ZH_NO_START = new Set([..."的了著過們子得地嗎呢吧啊囉喔"]);
+/** Where to cut a run of caption words near `want`: the nearest point (up to three either way) that cuts no listed word and does not start on a particle. */
+function zhSplit(toks, want) {
+  const ok = (i) => i > 0 && i < toks.length && !ZH_NO_START.has(toks[i][0]) && !ZH_WORDS.has(toks[i - 1].slice(-1) + toks[i][0]);
+  for (let d = 0; d <= 3; d++) for (const i of [want - d, want + d]) if (i >= 2 && i <= toks.length - 2 && i <= ZH_PER && ok(i)) return i;
+  return Math.min(want, ZH_PER);
+}
+/** Chinese blocks: one clause each (to its comma or stop); a clause longer than `ZH_PER` is split into near-equal parts, so a block never ends on a single character. */
+function zhChunks(text) {
+  const toks = capTokens(text), clauses = []; let cur = [];
+  for (const w of toks) { cur.push(w); if (/[，。！？；：,.!?;:]$/.test(w)) { clauses.push(cur); cur = []; } }
+  if (cur.length) clauses.push(cur);
+  const out = [];
+  for (const c of clauses) {
+    let rest = c;
+    while (rest.length > ZH_PER) { const k = Math.ceil(rest.length / ZH_PER), at = zhSplit(rest, Math.ceil(rest.length / k)); out.push(rest.slice(0, at).join("")); rest = rest.slice(at); }
+    if (rest.length) out.push(rest.join(""));
+  }
+  return out.map((c) => ({ text: c.replace(/[.,;:，。、；：…]+$/, ""), ends: /[.,;:!?，。！？；：]$/.test(c) }));
+}
+export const capTokens = (text) => (isZh(text) ? String(text).replace(/\s+/g, "").match(/(?:[A-Za-z0-9]+|[\u3400-\u9fff\uf900-\ufaff]|[^\sA-Za-z0-9\u3400-\u9fff\uf900-\ufaff，。！？、；：,.!?;:]+)[，。！？、；：,.!?;:…]*/g) || [] : norm(text).split(" ").filter(Boolean));
+const capJoin = (ws, zh) => ws.join(zh ? "" : " ");
 export function captionChunks(text, per = 3) {
-  const out = []; let cur = [];
-  for (const w of norm(text).split(" ").filter(Boolean)) { cur.push(w); if (cur.length >= per || /[.,;:!?]$/.test(w)) { out.push(cur.join(" ")); cur = []; } }
-  if (cur.length) out.push(cur.join(" "));
-  return out.map((c) => ({ text: c.replace(/[.,;:]+$/, ""), ends: /[.,;:!?]$/.test(c) }));
+  if (isZh(text)) return zhChunks(text);
+  const zh = false, most = per, out = []; let cur = [];
+  for (const w of capTokens(text)) { cur.push(w); if (cur.length >= most || /[.,;:!?，。！？；：]$/.test(w)) { out.push(capJoin(cur, zh)); cur = []; } }
+  if (cur.length) out.push(capJoin(cur, zh));
+  return out.map((c) => ({ text: c.replace(/[.,;:，。、；：…]+$/, ""), ends: /[.,;:!?，。！？；：]$/.test(c) }));
 }
 /** A clause's end is tied to a pause when the two fall within this share of the line of each other. */
 export const SNAP = 0.15;
@@ -1445,11 +1601,11 @@ export function captions(text, spans, per = 3) {
  * (an estimate — the voice is measured by its pauses, not word by word). Each { i, word, from, to }.
  */
 export function captionWords(c) {
-  const ws = String(c.text).split(" ").filter(Boolean), total = ws.reduce((t, w) => t + w.length + 1, 0), r2 = (x) => Math.round(x * 100) / 100; let at = c.from;
+  const ws = capTokens(c.text), total = ws.reduce((t, w) => t + w.length + 1, 0), r2 = (x) => Math.round(x * 100) / 100; let at = c.from;
   return ws.map((w, i) => { const d = ((w.length + 1) / total) * (c.to - c.from), o = { i, word: w, from: r2(at), to: i === ws.length - 1 ? c.to : r2(at + d) }; at += d; return o; });
 }
 /** A caption block in capitals, the word at `lit` marked as the one being said. */
-export const capHtml = (text, lit) => `<div class="cap">${String(text).toUpperCase().split(" ").filter(Boolean).map((w, i) => (i === lit ? `<b>${esc(w)}</b>` : esc(w))).join(" ")}</div>`;
+export const capHtml = (text, lit) => { const zh = isZh(text); return `<div class="cap${zh ? " zh" : ""}">${capTokens(String(text).toUpperCase()).map((w, i) => (i === lit ? `<b>${esc(w)}</b>` : esc(w))).join(zh ? "" : " ")}</div>`; };
 /** How long the last clip is held after its last word, so the video does not end on a clipped syllable (there is no end card). */
 export const END_HOLD = 0.45;
 /** Cut the clips together — each { file, from, to }, its spoken part — at one size and rate, and lay the timed words over it all. The video ends on the last clip. */
@@ -1507,7 +1663,7 @@ export function videoNeeds({ gymDir, script, areas = [""], room = null, profile 
   // A re-made picture of a coach takes its room from the gym's own room photo when the batch has one (its words-free, cleaned photo): asked to keep the room of a coach's frame, the image model garbled the wall's slogan, and asked for no wall words it left the gym.
   const coachRoom = !!(coach && room && existsSync(room));
   if (coach) room = `coach:${coach.key}`;
-  const presenter = coach ? { gender: null, coach, room: coachRoom } : presenterOf(profile), said = filmedLines(script.lines, closing), where = existsSync(store) ? store : (coach ? null : legacy.find(hasStills)) || store;
+  const presenter = coach ? { gender: null, coach, room: coachRoom } : presenterOf(profile), said = spokenLines(script, closing), where = existsSync(store) ? store : (coach ? null : legacy.find(hasStills)) || store;
   const files = existsSync(where) ? readdirSync(where) : [], aside = asideOf(where), clips = []; let images = 0;
   // With exercises: the agent's pick for each cut, by the kit on file for the room (every kit until its photos are read).
   const kit = kind === "active" ? knownKit(gymDir, coach ? null : room) || [...KIT] : null, moves = kind === "active" ? movesFor(script, { kit, closing, clear: !!coach }) : said.map(() => null);
@@ -1592,7 +1748,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
   const own = !browser; if (own) browser = await launchBrowser();
   const within = (kind, n) => spent[kind] + n <= caps[kind];
   // The script as it is filmed: the closing line, when it is the whole last line, shares a cut with the line before it.
-  const said = filmedLines(script.lines, closing), joined = said.length < script.lines.length;
+  const said = spokenLines(script, closing), joined = said.length < script.lines.length;
   const label = (i) => (joined && i === said.length - 1 ? `lines ${i + 1} and ${i + 2} (one cut)` : `line ${i + 1}`);
   if (joined) log(`the closing line is filmed with line ${said.length} as one cut: Google's video model refuses it as a clip of its own`);
   const who = coach ? { coach: { id: coach.id, name: coach.name } } : {};
@@ -1672,7 +1828,7 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
       const say = saidIn(line, saidList), nameFor = (pic) => clipName(i, line, pic, area, perArea, saidNote(say));
       // A move cut is two clips — the move in silence, then the line from the move's last frame — unless a one-clip take of it already passed (that take stands: nothing on file is filmed again).
       const isMove = mv?.m.kind === "move", oneClip = isMove && [stills[i], altOf(stills[i])].some((pic) => takesOn(nameFor(pic)).some((f) => passedCheck(readJson(join(store, f.replace(/\.mp4$/, ".check.json"))), line, profile, say, mv) || !!ownerKeptClip(store, join(store, f))));
-      const split = isMove && !oneClip ? await moveFor(i) : null, two = !!split?.file, pic0 = two ? split.frame : stills[i], mvJ = two ? null : mv, seconds = two ? clipSeconds(line) : cutSeconds(line, mv);
+      const split = isMove && !oneClip ? await moveFor(i) : null, two = !!split?.file, pic0 = two ? split.frame : stills[i], mvJ = two ? null : mv, seconds = (two ? clipSeconds(line) : cutSeconds(line, mv)) + (script.link_on_screen && i === said.length - 1 ? LINK_EXTRA : 0);
       // Takes the owner set aside (Film this line again) are counted and never used: each makes room for a fresh one.
       const mine = (f) => [pic0, altOf(pic0)].some((pic) => f === `${nameFor(pic)}.mp4` || f.startsWith(`${nameFor(pic)}-take`));
       const limit = takes + [...aside].filter(mine).length;
@@ -1775,12 +1931,14 @@ export async function makePresenterVideos({ gymDir, outDir, script, areas, offer
         // A move filmed as its own clip plays first, whole; the line's clip follows from the frame the move ended on.
         const startAt = at; if (l.moveClip) { const md = Math.round(durationOf(l.moveClip.file) * 100) / 100; seq.push({ file: l.moveClip.file, from: 0, to: md }); at += md; }
         // Where he speaks, measured from the sound; the clip is kept from a breath before to a breath after, and the captions follow the voice inside it.
-        const sp = speechOf(l.file), from = Math.max(0, sp.start - (l.move?.m.kind === "move" && !l.moveClip ? MOVE_KEEP : LEAD)), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? END_HOLD : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); seq.push(cuts[i]); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
+        const sp = speechOf(l.file), from = Math.max(0, sp.start - (l.move?.m.kind === "move" && !l.moveClip ? MOVE_KEEP : LEAD)), to = Math.min(sp.duration, sp.end + (i === lines.length - 1 ? (script.link_on_screen ? LINK_HOLD : Math.max(END_HOLD, isZh(l.line || "") ? TAIL_ZH : 0)) : isZh(l.line || "") ? TAIL_ZH : TAIL)); cuts.push({ file: l.file, from: Math.round(from * 100) / 100, to: Math.round(to * 100) / 100 }); seq.push(cuts[i]); l.speech = { start: sp.start, end: sp.end, kept: [cuts[i].from, cuts[i].to] };
         // One picture of the block for each of its words, that word lit while it is said.
         for (const [k, c] of captions(l.line, sp.spans.map(([a, b]) => [at + a - from, at + b - from])).entries()) for (const w of captionWords(c)) {
           if (!(w.to > w.from)) continue;
           const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-${String(k).padStart(2, "0")}-${w.i}.png`), capHtml(c.text, w.i), captionAccentOf(profile) || CAPTION_ACCENT, !!coach); overlays.push({ png: o.png, from: w.from, to: w.to }); if (w.i === 0) blocks.push(...o.blocks);
         }
+        // The link shown once the voice ends (fallback A, `link_on_screen`), in the captions' place.
+        if (script.link_on_screen && i === lines.length - 1) { const o = await overlay(browser, join(dir, `cap-${slug(area)}-${i + 1}-link.png`), `<div class="cap zh"><b>${esc(LINK_TEXT_ZH)}</b></div>`, captionAccentOf(profile) || CAPTION_ACCENT, !!coach); overlays.push({ png: o.png, from: Math.round((at + sp.end - cuts[i].from + 0.1) * 100) / 100, to: Math.round((at + cuts[i].to - cuts[i].from) * 100) / 100 }); blocks.push(...o.blocks); }
         starts.push(Math.round(startAt * 100) / 100); at += cuts[i].to - cuts[i].from;
       }
       const outside = blocks.filter((b) => !inLive(b));

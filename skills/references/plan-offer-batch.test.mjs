@@ -1069,7 +1069,7 @@ test("B16 presenter videos in a batch (2026-11-12): a brief may ask for up to th
     const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "with-videos", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN", "ANG MO KIO"], videos: { presenter: 1 } };
     // The brief's own rules.
-    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 10, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 9", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 21, talking: 1 }, max_video_seconds: 9999 }).filter((e) => /video/.test(e)), ['videos: "talking" is not a kind of video (presenter, active, paper)', "videos.presenter must be a whole number from 0 to 20", `max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`]);
     assert.deepEqual(validateBrief(brief, { brandDir: dir }), [], "videos alone are a batch");
     // The models: a still is a small picture; a clip is real video with a tone for speech between two silences; the watching pass hears the line.
     const made = { image: 0, clip: [], watch: 0 }, said = new Map();
@@ -1168,7 +1168,7 @@ test("B17 presenter videos with exercises in a batch (2026-11-15): a brief asks 
     const LINES = ["People in {AREA}, this one is for you. If you have wanted to get stronger and never knew where to start, keep watching.", "Test Gym's 12 Week Total Body Reset is built for exactly that. A coach beside you, and a plan that fits your week.", "If you are ready to feel stronger every day, now is your time. Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "with-moves", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN"], videos: { active: 1 } };
     assert.deepEqual(validateBrief(brief, { brandDir: dir }), []);
-    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 6, active: 4 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 9 presenter videos in all, talking, with exercises and white paper together"]);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 12, active: 9 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 20 presenter videos in all, talking, with exercises and white paper together"]);
     const script = addScript(dir, { lines: LINES, offer: brief.offer }, { profile });
     const S = (i) => clipSeconds(fillLine(LINES[i], "BISHAN")), plan = videoPlan(dir, brief);
     assert.deepEqual([plan.kinds, plan.active, plan.count, plan.seconds, plan.images], [["active"], 1, 1, S(0) + S(1) + S(2) + 2 * MOVE_LEAD, 4]);
@@ -1206,7 +1206,7 @@ test("B18 white-paper videos in a batch (2026-11-15): the third count — a brie
     const SHEETS = ["Do your work clothes feel tight?", "Live near {AREA}?", "Join our 12 Week Total Body Reset", "You get a coach beside you", "And a plan that fits your week", "Feel strong for everyday things", "Click the link below and we'll be in touch!"];
     const brief = { ...BRIEF, batch_id: "white-paper", real: [], generated: 0, max_calls: 0, reference: "real/r1.png", locations: ["BISHAN"], videos: { paper: 1 } };
     assert.deepEqual(validateBrief(brief, { brandDir: dir }), []);
-    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 4, active: 3, paper: 3 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 9 presenter videos in all, talking, with exercises and white paper together"]);
+    assert.deepEqual(validateBrief({ ...brief, videos: { presenter: 8, active: 7, paper: 6 } }, { brandDir: dir }).filter((e) => /video/.test(e)), ["a batch makes at most 20 presenter videos in all, talking, with exercises and white paper together"]);
     assert.throws(() => videoPlan(dir, brief), /1 white-paper video asked for, but no white-paper script is ready for "12 Week Total Body Reset": nothing is written for this offer yet: press Draft sheets… there, or write your own \(Draft Scenes → Video scripts → White-paper scripts\)/);
     const script = addSheetScript(dir, { sheets: SHEETS, offer: brief.offer }, { profile });
     const plan = videoPlan(dir, brief);

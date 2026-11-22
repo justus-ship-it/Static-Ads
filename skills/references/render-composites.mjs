@@ -455,6 +455,7 @@ export function buildSpec({ image, images, faces, people = null, text, treatment
     const tallOf = layout.tall_type && !cjk && !face.script ? (S.tall_type?.[weight >= (S.tall_type.heavy_from ?? 700) ? "heavy" : "light"]) : null;
     if (tallOf && S.faces[tallOf] && faceId !== tallOf && !Object.values(S.tall_type).includes(faceId)) { faceId = tallOf; face = S.faces[faceId]; weight = Math.min(Math.max(weight, face.weights[0]), face.weights[1]); }
     const [w0, w1] = face.weights;
+    if (cjk && (tr.lead || "duration") === "location" && S.cjk_rules?.location_lead_min_weight) weight = Math.max(weight, S.cjk_rules.location_lead_min_weight);
     if (cjk) weight = Math.min(Math.max(weight, w0), w1);
     if (weight < w0 || weight > w1) {
       throw new Error(`style "${style}" asks ${face.family} ${face.style} at weight ${weight}, but that face only has ${w0 === w1 ? w0 : `${w0}-${w1}`}. The browser would fake it, so it is refused.`);
@@ -487,6 +488,8 @@ export function buildSpec({ image, images, faces, people = null, text, treatment
       min_px: face.script ? Math.max(g.min_px, S.script_rules.min_px) : cjk ? Math.max(g.min_px, S.cjk_rules?.min_px ?? 40) : g.min_px,
       script: !!face.script,
       cjk,
+      // Under a leading callout a CJK line is held to a share of the callout's size (cjk_rules.location_lead_ratio).
+      ...(cjk && (tr.lead || "duration") === "location" && g.block !== "location" && S.cjk_rules?.location_lead_ratio ? { of_lead: S.cjk_rules.location_lead_ratio } : {}),
     };
   };
   const groups = layout.groups.map((g) => ({

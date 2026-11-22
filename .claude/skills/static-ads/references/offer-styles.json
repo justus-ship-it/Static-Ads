@@ -397,6 +397,9 @@
   },
   "cjk_rules": {
     "min_px": 40,
-    "max_tracking_em": 0.12
+    "max_tracking_em": 0.12,
+    "location_lead_ratio": 0.72,
+    "location_lead_min_weight": 800,
+    "note": "location_lead_ratio: where the callout leads (the formula look), a CJK line other than the callout is set at most this share of the callout's size. A six-character offer at the callout's size runs the full width and covers the body (F45 Xinyi samples, 2026-11-20). location_lead_min_weight: in the same look a CJK line is set at least this heavy — a single-weight display face (Anton is 400 and heavy by design) would otherwise give its CJK stand-in a thin regular weight."
   }
 }

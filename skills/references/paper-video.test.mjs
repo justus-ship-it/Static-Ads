@@ -131,7 +131,7 @@ test("PP1 a white-paper script and its rules: six to nine sheets of two to eight
     assert.equal(sheetCost(own, ["BISHAN", "ANG MO KIO"]).seconds, 32);
     // The brief: a third count, three videos between all kinds.
     assert.deepEqual([videosProblems({ paper: 1 }), videoCount({ presenter: 1, active: 1, paper: 1 }), spokenCount({ presenter: 1, active: 1, paper: 1 }), paperCount({ paper: 2 }), videoKinds({ presenter: 1, active: 1, paper: 1 })], [[], 3, 2, 2, ["presenter", "active", "paper"]]);
-    assert.deepEqual([videosProblems({ presenter: 2, paper: 2 }), videosProblems({ presenter: 6, paper: 4 })], [[], ["a batch makes at most 9 presenter videos in all, talking, with exercises and white paper together"]]);
+    assert.deepEqual([videosProblems({ presenter: 2, paper: 2 }), videosProblems({ presenter: 12, paper: 9 })], [[], ["a batch makes at most 20 presenter videos in all, talking, with exercises and white paper together"]]);
     assert.deepEqual(videosProblems({ sheets: 1 }), ['videos: "sheets" is not a kind of video (presenter, active, paper)']);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
@@ -290,7 +290,7 @@ test("PP4 a white-paper video end to end: ONE picture of the presenter holding b
     const four = addSheetScript(g, { sheets: GOOD.map((s, i) => (i === 0 ? "No energy left after lunch?" : i === 1 ? "Sound like you?" : s)), offer: OFFER }, { profile });
     const f7 = fakes({ sheets: four.sheets, areas: ["BISHAN"], boxes: [SMALL, LOW] }), logs7 = [], r7 = await makePaperVideos({ ...base, script: four, areas: ["BISHAN"], models: f7.models, log: (m) => logs7.push(m) });
     assert.deepEqual([f7.calls.image.length, f7.calls.clip.length, r7.spent.seconds], [2, 0, 0]);
-    assert.match(r7.videos[0].failed, /^the presenter's picture could not be used: the paper is held too low: only \d+% of it is where words may sit on a Story or Reel\. Nothing was filmed\. Run again asks for a fresh picture$/);
+    assert.match(r7.videos[0].failed, /^the presenter's picture could not be used: the paper is held too low: only \d+% of it is where words may sit on a Story or Reel, and the cap of 2 image calls leaves none for another\. Nothing was filmed\. Run again asks for a fresh picture$/);
     assert.ok(logs7.some((m) => /the paper is too small in the picture \(1\d% of its width; at least 24%\)/.test(m)), logs7.join("\n"));
     assert.equal(paperNeeds({ gymDir: g, script: four, areas: ["BISHAN"], room, profile }).images, 1, "a picture is still to make");
     const f8 = fakes({ sheets: four.sheets, areas: ["BISHAN"] }), r8 = await makePaperVideos({ ...base, script: four, areas: ["BISHAN"], models: f8.models, caps: { seconds: 8, images: 2 } });
@@ -408,4 +408,31 @@ test("PP7 the edit a white-paper script needs, proposed by the agent (2026-11-19
     await assert.rejects(proposeSheetEdit({ brandDir: g, id: own.id, libraryDir: d, ask: never }), /what this script needs is yours to say, not the agent's: sheet 6 says places are limited/);
     assert.match(buildSheetEditPrompt({ profile, script: { offer: OFFER, sheets: GOOD }, problems: ["sheet 2 is 9 words"], facts: ["Only 10 places"] }).prompt, /THE FACTS the owner has typed as true of this programme \(said as they are; state no other\):\n- Only 10 places/);
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("PP8 Chinese sheets (2026-11-20, F45 Xinyi): a sheet is measured in characters, written in a pen hand that has Chinese, read back character for character; scarcity in Chinese stands on the owner's typed fact and its number", async () => {
+  const profile = { ...PROFILE_STARTER("f45-xinyi", "F45 Xinyi", "TW") }, offer = "六週雕塑體態計畫";
+  const sheets = ["我們在找10位", "想改變體態的人", "加入我們的", "六週雕塑體態計畫", "一對一諮詢", "教練每一步都陪你", "現在就報名，我們會跟你聯絡！"];
+  assert.deepEqual(sheetProblems(sheets, { offer, profile, facts: ["名額10位"] }), []);
+  assert.match(sheetProblems(sheets, { offer, profile, facts: [] }).join(" "), /places are limited/);
+  assert.match(sheetProblems(sheets, { offer, profile, facts: ["名額12位"] }).join(" "), /number you typed/);
+  assert.match(sheetProblems([...sheets.slice(0, 5), "教練每一步都陪你一起完成整整六個禮拜的訓練", sheets[6]], { offer, profile, facts: ["名額10位"] }).join(" "), /characters/);
+  assert.match(sheetProblems([...sheets.slice(0, 6), "Click the link below and we'll be in touch!"], { offer, profile, facts: ["名額10位"] }).join(" "), /closing line/);
+  assert.ok(sameWriting("我們在找十位", "我們在找10位") && sameWriting("參加我們的六週雕塑體態計劃", "參加我們的六週雕塑體態計畫") && !sameWriting("我們在找10", "我們在找10位"));
+  assert.ok(existsSync(join(PAPER_FONT, "../../iansui/Iansui-Regular.ttf")), "the Chinese pen font is in the repo");
+});
+
+test("PP9 a coach's paper held too low (2026-11-21, F45 Xinyi: 7 of 7 pictures had 21–47% of the paper in the live area): the next picture asks for the paper higher; the first keeps its prompt and name; three pictures a run", async () => {
+  const { BLANK_PER_RUN } = await import("./paper-video.mjs");
+  const coach = { id: "c1", name: "Coach", refs: ["a.jpg", "b.jpg"], wears: { top: "black tee" } };
+  const presenter = { gender: null, coach, room: false }, profile = PROFILE_STARTER("g", "G");
+  const base = blankPrompt({ presenter, profile }), high = blankPrompt({ presenter, profile, higher: true });
+  assert.match(base, /just BELOW the logo/, "the first picture keeps the owner's choice");
+  assert.doesNotMatch(base, /held HIGH/);
+  assert.match(high, /held HIGH/); assert.match(high, /collarbones/); assert.doesNotMatch(high, /just BELOW the logo/);
+  assert.equal(blankPrompt({ presenter: { gender: "woman", age: 30, look: "" }, profile, higher: true }), blankPrompt({ presenter: { gender: "woman", age: 30, look: "" }, profile }), "an invented presenter's prompt does not change");
+  assert.equal(BLANK_PER_RUN, 3);
+  const { videoImageCap } = await import("./plan-offer-batch.mjs");
+  assert.equal(videoImageCap({ images: 3, paper: 7 }), 19, "two more image calls for each white-paper video");
+  assert.equal(videoImageCap({ images: 3, paper: 0 }), 5);
 });

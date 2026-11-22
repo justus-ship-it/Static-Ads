@@ -56,18 +56,53 @@ const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } c
 const isMedia = (name) => [...MEDIA.video, ...MEDIA.sound].includes(extname(name).toLowerCase()) && !basename(name).startsWith(".");
 
 // ── the script ───────────────────────────────────────────────────────────────
-const NOTE = /[(\[]([^()\[\]]{2,120})[)\]]/g;
 const VOICE_NOTE = /voice\s*-?\s*over|\bv\.?o\.?\b/i, BROLL_NOTE = /\bshow\b|b-?\s?roll|footage of|video of|clips? of/i;
-/** The script as pasted → its lines: [{ n, text, notes[], voiceover, broll }]. A note in brackets is a direction, never said. */
+/** The directions in brackets of a piece of text, brackets inside brackets kept whole ("(B-Roll - spin; Recovery (plank at home))" is one note): { said, notes[] }. */
+export function pullNotes(raw) {
+  let said = "", depth = 0, cur = ""; const notes = [];
+  for (const ch of String(raw ?? "")) {
+    if (ch === "(" || ch === "[") { if (depth) cur += ch; depth++; continue; }
+    if ((ch === ")" || ch === "]") && depth) { depth--; if (depth) cur += ch; else { if (norm(cur).length >= 2) notes.push(norm(cur)); cur = ""; said += " "; } continue; }
+    if (depth) cur += ch; else said += ch;
+  }
+  if (depth && norm(cur)) said += ` ${cur}`;          // a bracket never closed: its words stay where they are
+  return { said: norm(said), notes };
+}
+/** What a B-roll note asks to be shown, item by item, in the owner's words: "B-Roll - Measuring Inbody, Working Out" → two items. */
+export function wantsOf(note) {
+  const body = norm(note).replace(/^(b-?\s?roll|broll|cutaways?|footage)\s*(of|over|with)?\s*[-–—:]*\s*/i, "").replace(/^show\s+(a\s+|some\s+)?(video|videos|footage|clips?|shots?)\s+(of\s+)?/i, "");
+  const items = []; let depth = 0, cur = "";
+  for (const ch of body) { if (ch === "(" || ch === "[") depth++; if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1); if ((ch === "," || ch === ";") && !depth) { items.push(cur); cur = ""; } else cur += ch; }
+  items.push(cur);
+  return items.map(norm).filter((x) => x.length >= 2).slice(0, 8);
+}
+/**
+ * The script as pasted → its lines: [{ n, text, notes[], para, voiceover, broll, wants[], group }]. A note in brackets
+ * is a direction, never said. **A note on a line of its own covers every line after it in its paragraph** (a
+ * paragraph ends at an empty line; a note that ends its paragraph covers the next one); a note inside a line is that
+ * line's alone. The lines one B-roll note covers are one `group` (g1, g2 …), and `wants` is what it asks to be shown.
+ */
 export function scriptLines(text) {
-  const out = []; let carry = [];
-  for (const raw of String(text || "").replace(/\r/g, "").split(/\n+/)) {
-    const notes = [...raw.matchAll(NOTE)].map((m) => norm(m[1])), said = norm(raw.replace(NOTE, " "));
-    if (!said) { carry.push(...notes); continue; }
-    const all = [...carry, ...notes]; carry = [];
-    out.push({ n: out.length + 1, text: said, notes: all, voiceover: all.some((x) => VOICE_NOTE.test(x)), broll: all.some((x) => BROLL_NOTE.test(x)) });
+  const out = []; let carry = [], para = 0, groups = 0;
+  for (const block of String(text || "").replace(/\r/g, "").split(/\n[ \t]*\n+/)) {
+    let head = carry; carry = []; let any = false; const ids = new Map();
+    for (const raw of block.split(/\n/)) {
+      const { said, notes } = pullNotes(raw);
+      if (!said) { head = [...head, ...notes]; continue; }
+      const all = [...head, ...notes], asks = all.filter((x) => BROLL_NOTE.test(x)), key = asks.join(" | ");
+      if (asks.length && !ids.has(key)) ids.set(key, `g${++groups}`);
+      out.push({ n: out.length + 1, text: said, notes: all, para, voiceover: all.some((x) => VOICE_NOTE.test(x)), broll: asks.length > 0, wants: asks.flatMap(wantsOf), group: asks.length ? ids.get(key) : null });
+      any = true;
+    }
+    if (any) para++; else carry = head;
   }
   return out;
+}
+/** The script's B-roll notes with the lines each covers: [{ id, note, items[], lines[n] }]. */
+export function brollGroups(lines) {
+  const by = new Map();
+  for (const l of lines) if (l.group) { if (!by.has(l.group)) by.set(l.group, { id: l.group, note: l.notes.filter((x) => BROLL_NOTE.test(x)).join("; "), items: l.wants, lines: [] }); by.get(l.group).lines.push(l.n); }
+  return [...by.values()];
 }
 /** What is wrong with a shoot as typed, in words. */
 export function shootProblems({ title, script, folder = null }) {
@@ -165,6 +200,7 @@ export async function editorModels() {
       return JSON.parse(out.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text || "{}");
     },
     look: (sheet) => callVision(sheet, LOOK_Q, LOOK_SCHEMA),
+    ask: (image, prompt, schema, opts) => callVision(image, prompt, schema, opts),      // the text call that matches the script's B-roll notes to the clips
     spans: (file) => { try { return PV.speechOf(file).spans.map((s) => s.map((x) => Math.round(x * 100) / 100)); } catch { return []; } },
   };
 }
@@ -196,23 +232,31 @@ export async function readShootFiles({ gymDir, id, models = null, max = Infinity
     catch (e) { shoot = readShoot(gymDir, id); const row = shoot.files.find((x) => x.path === f.path); if (row) row.error = String(e.message).slice(0, 300); log(`  could not be read: ${String(e.message).slice(0, 200)}`); }
     writeShoot(gymDir, shoot);
   }
-  return { read: done, left: shoot.files.filter((f) => !f.read).length, shoot };
+  // The script's B-roll notes are matched to what the clips show once every file is read (one text call; said in the log).
+  let matched = null;
+  if (m.ask && !shoot.files.some((f) => !f.read) && buildSheet(shoot).to_match) {
+    try { const r = await matchFootage({ gymDir, id, ask: m.ask }); matched = r; shoot = readShoot(gymDir, id); log(`footage matched to the script's notes (${r.calls} text call)`); }
+    catch (e) { log(`the footage could not be matched to the notes: ${String(e.message).slice(0, 200)}`); }
+  }
+  return { read: done, left: shoot.files.filter((f) => !f.read).length, shoot, matched };
 }
 /** What a file is, by rule, from its reading. */
 export function kindOf(read) {
   if (!read) return null;
-  const said = (read.phrases || []).filter((p) => p.kind !== "lyrics" && p.kind !== "countdown");
   if (!read.video) return "voice";
   if (read.music) return "montage";
+  if (read.to_camera === true) return "take";
+  if (read.to_camera === false) return "silent";       // footage, whatever is said in the room: B-roll is filmed with people talking around it
+  const said = (read.phrases || []).filter((p) => p.kind !== "lyrics" && p.kind !== "countdown");
   return said.some((p) => p.kind === "line") || said.length >= 2 ? "take" : "silent";
 }
-const kindWord = (k) => ({ voice: "a voice recording", montage: "a video with music", take: "takes to camera", silent: "a clip with no line" })[k] || "not read";
+const kindWord = (k) => ({ voice: "a voice recording", montage: "a video with music", take: "takes to camera", silent: "footage (nobody talks to the camera)" })[k] || "not read";
 
 // ── matching, by rule ────────────────────────────────────────────────────────
 const NUMBER = { zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10", eleven: "11", twelve: "12", twenty: "20", thirty: "30" };
 /** The words of a line as they are compared: small letters, no punctuation, a number as its digit, "a/b" as both words. */
 export const wordsOf = (s) => String(s ?? "").toLowerCase().replace(/[’‘]/g, "'").replace(/[\/–—-]/g, " ").replace(/[^a-z0-9' ]/g, " ").split(/\s+/).filter(Boolean).map((w) => NUMBER[w] || w.replace(/^'+|'+$/g, "")).filter(Boolean);
-const near = (a, b) => { if (a === b) return true; if (a.length < 4 || b.length < 4 || Math.abs(a.length - b.length) > 1) return false; let i = 0, j = 0, d = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; } else { if (++d > 1) return false; if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } } } return d + (a.length - i) + (b.length - j) <= 1; };
+export const near = (a, b) => { if (a === b) return true; if (a.length < 4 || b.length < 4 || Math.abs(a.length - b.length) > 1) return false; let i = 0, j = 0, d = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; } else { if (++d > 1) return false; if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } } } return d + (a.length - i) + (b.length - j) <= 1; };
 /** How a spoken run covers a script line: the longest in-order match. { hit, said (share of the line said), own (share of the run that is the line's), score } */
 export function cover(lineWords, runWords) {
   const n = lineWords.length, m = runWords.length; if (!n || !m) return { hit: 0, said: 0, own: 0, score: 0 };
@@ -236,14 +280,21 @@ function takesOf(lineWords, files, { need = MATCH.take, own = MATCH.own, skip = 
       }
       if (!best) break;
       const run = ps.slice(best.a, best.b + 1); run.forEach((p) => used.add(p.i));
-      out.push({ file: f.key, from: run[0].start, to: run.at(-1).end, spoken: run.map((p) => p.text).join(" "), said: Math.round(best.c.said * 100) / 100, own: Math.round(best.c.own * 100) / 100, complete: best.c.said >= MATCH.complete, sound_only: !f.read.video });
+      out.push({ file: f.key, from: run[0].start, to: run.at(-1).end, spoken: run.map((p) => p.text).join(" "), said: Math.round(best.c.said * 100) / 100, own: Math.round(best.c.own * 100) / 100, complete: best.c.said >= MATCH.complete, sound_only: !f.read.video, ...(f.read.video && f.read.to_camera === false ? { off_camera: true } : {}) });
     }
   }
   const order = new Map(files.map((f, i) => [f.key, i]));
   return out.sort((x, y) => order.get(x.file) - order.get(y.file) || x.from - y.from);
 }
 /** The pick among takes: the last complete one; with none complete, the one that says the most (the later of equals). */
-export const pickTake = (takes) => { if (!takes.length) return -1; let k = -1; takes.forEach((t, i) => { if (t.complete) k = i; }); if (k >= 0) return k; takes.forEach((t, i) => { if (k < 0 || t.said >= takes[k].said) k = i; }); return k; };
+export const pickTake = (takes) => {
+  if (!takes.length) return -1;
+  // Words heard in a clip where nobody talks to the camera (someone prompting behind it) are a take only when nothing else is.
+  const front = takes.some((t) => !t.off_camera), ok = (t) => !front || !t.off_camera; let k = -1;
+  takes.forEach((t, i) => { if (ok(t) && t.complete) k = i; }); if (k >= 0) return k;
+  takes.forEach((t, i) => { if (ok(t) && (k < 0 || t.said >= takes[k].said)) k = i; });
+  return k;
+};
 /**
  * A script line against the files: { takes, pick } when it was said in one go; { parts: [{ words, takes, pick }, …] }
  * when one sentence was filmed as two clips (tried when no single take is complete, taken when the two say clearly
@@ -289,10 +340,75 @@ export function differs(scriptText, spoken) {
   return { unsaid, added, same: !unsaid.length && !added.length };
 }
 
+// ── footage: the clips that go under a voice, or over a line where the script asks for B-roll ──
+/** The clips that can be footage: a video where nobody talks to the camera, or a video with music. */
+export const footagePool = (shoot) => (shoot.files || []).filter((f) => f.read?.video && ["silent", "montage"].includes(kindOf(f.read))).map((f) => ({ key: f.key, shows: f.read.shows || "", seconds: f.read.seconds, kind: kindOf(f.read) }));
+/** What the stored matching was made for: the notes' items and the clips with what they show. A change in either makes it stale. */
+export function footageKey(shoot) {
+  const groups = brollGroups(scriptLines(shoot.script)).filter((g) => g.items.length).map((g) => [g.id, g.items]);
+  return createHash("sha1").update(JSON.stringify([groups, footagePool(shoot).map((c) => [c.key, c.shows])])).digest("hex").slice(0, 16);
+}
+/**
+ * Clips shared between the things asked for, when a clip fits several ("working out" fits nearly every clip, "doing
+ * spin" only the bike): the thing with the fewest clips to choose from picks first, one clip a turn, round and round —
+ * so a narrow ask is never left empty by a wide one, and a wide ask in two notes gets some in each. A clip is used once.
+ */
+export function shareClips(asks) {
+  const taken = new Set(), order = [...asks].sort((a, b) => a.fits.length - b.fits.length);
+  for (let more = true; more; ) { more = false; for (const a of order) { const k = a.fits.find((x) => !taken.has(x)); if (k) { a.clips.push(k); taken.add(k); more = true; } } }
+  for (const a of asks) a.clips.sort((x, y) => a.fits.indexOf(x) - a.fits.indexOf(y));
+  return asks;
+}
+const FOOTAGE_SCHEMA = { type: "OBJECT", properties: { groups: { type: "ARRAY", items: { type: "OBJECT", properties: { group: { type: "STRING" }, items: { type: "ARRAY", items: { type: "OBJECT", properties: { item: { type: "INTEGER" }, clips: { type: "ARRAY", items: { type: "STRING" } } }, required: ["item", "clips"] } } }, required: ["group", "items"] } } }, required: ["groups"] };
+export function buildFootagePrompt(groups, clips) {
+  return [
+    "A short advert is being cut from a gym's own raw footage. In a few places the script asks for cutaway footage (B-roll) while the voice carries on, as a list of things to show, in the owner's own words:",
+    groups.map((g) => `${g.id.toUpperCase()}:\n${g.items.map((x, i) => `  ${i + 1}. ${x}`).join("\n")}`).join("\n"),
+    "These are the clips of footage on file, each with what it shows (written by someone who watched it):",
+    clips.map((c, i) => `C${i + 1} (${Math.round(c.seconds)} s${c.kind === "montage" ? ", an edited video with music" : ""}): ${c.shows || "not described"}`).join("\n"),
+    "For each thing to show, name the clips that show it. Read the owner's words the way a gym owner means them: an InBody is a body-composition scale a person stands on holding two handles; spin or spinning is an exercise bike; recovery is stretching, a plank, resting. Name EVERY clip that shows it; a clip may fit more than one thing, and is then named under each (the clips are shared out afterwards). A thing no clip shows gets no clip: never stretch a clip to fit something it does not show. Answer for every group and every numbered thing, with the clips by their C numbers.",
+  ].join("\n\n");
+}
+/**
+ * The script's B-roll notes matched to what the clips show (the owner's click, or the end of a listening run): ONE
+ * text call; the answer is checked in code — a clip that is not footage is ignored, a clip goes under one thing only —
+ * and kept on the shoot (`shoot.footage { key, groups: { g1: [{ item, clips[] }] } }`). A thing no clip shows is left
+ * with none and said: nothing is ever invented. Returns { groups, calls } (calls 0 when there is nothing to match).
+ */
+export async function matchFootage({ gymDir, id, ask = null, model = null, force = false }) {
+  const shoot = syncFiles(gymDir, readShoot(gymDir, id)), groups = brollGroups(scriptLines(shoot.script)).filter((g) => g.items.length), clips = footagePool(shoot), key = footageKey(shoot);
+  if (!groups.length) throw new Error("the script asks for no footage by name: write a note such as (B-roll - working out, the body scan) above the lines it goes over");
+  if (!clips.length) throw new Error("no clip of footage is on file yet: a clip where nobody talks to the camera counts as footage once it has been listened to");
+  if (!force && shoot.footage?.key === key) return { groups: shoot.footage.groups, calls: 0 };
+  const call = ask || (await import("./check-visual.mjs")).callVision, m = model || (await import("./draft-copy.mjs")).COPY_MODEL;
+  const answer = await call(null, buildFootagePrompt(groups, clips), FOOTAGE_SCHEMA, { model: m });
+  const fits = [];
+  for (const g of groups) {
+    const got = (answer?.groups || []).find((x) => String(x.group || "").toLowerCase() === g.id) || { items: [] };
+    g.items.forEach((item, i) => {
+      const named = (got.items || []).find((x) => x.item === i + 1)?.clips || [];
+      fits.push({ group: g.id, i, item, fits: [...new Set(named.map((c) => clips[Number(String(c).replace(/\D/g, "")) - 1]?.key).filter(Boolean))], clips: [] });
+    });
+  }
+  shareClips(fits);
+  const stored = Object.fromEntries(groups.map((g) => [g.id, fits.filter((x) => x.group === g.id).map((x) => ({ item: x.item, clips: x.clips, fits: x.fits }))]));
+  shoot.footage = { key, at: new Date().toISOString(), groups: stored };
+  writeShoot(gymDir, shoot);
+  return { groups: stored, calls: 1 };
+}
+
 // ── the cutting sheet ────────────────────────────────────────────────────────
 /**
  * The sheet a video is cut from, built fresh from the readings and the owner's choices (`shoot.choices[line]`:
- * `{ take: n | [n, n], pictures: [file keys], drop: true }`, and `shoot.choices.order`). Pure: no call, nothing written.
+ * `{ take: n | [n, n], pictures: [file keys], show: "take" | "footage", drop: true }`, and `shoot.choices.order`).
+ * Pure: no call, nothing written.
+ *
+ * **Footage** goes under a line whose take is sound only, and — where the script's B-roll note covers it — over a
+ * line said to camera too: her voice carries on and the picture is the footage (`cover`; the owner's ruling: cover
+ * completely, with a switch a line — `show`). Which clips: his own choice first; else the clips the note's words were
+ * matched to (`shoot.footage`, see `matchFootage`), in the order the note lists them, shared between the note's lines
+ * by their length; else, for a sound-only take with no note to go by, the footage clips in file order. A thing the
+ * note asks for that no clip shows is listed as missing. A line said to camera with no footage to put over it shows her.
  */
 export function buildSheet(shoot) {
   const files = shoot.files || [], read = files.filter((f) => f.read), lines = scriptLines(shoot.script), choices = shoot.choices || {};
@@ -304,7 +420,7 @@ export function buildSheet(shoot) {
       const pick = chosen(p.takes, Array.isArray(c.take) ? c.take[i] : i === 0 ? c.take : undefined), t = p.takes[pick] || null;
       return { text: p.text, takes: p.takes, pick, auto: pickTake(p.takes), ...(t ? { differs: differs(p.text, t.spoken) } : {}) };
     });
-    return { n: l.n, text: l.text, notes: l.notes, voiceover: l.voiceover, broll: l.broll, parts, split: parts.length > 1, drop: c.drop === true, choice: c };
+    return { n: l.n, text: l.text, notes: l.notes, voiceover: l.voiceover, broll: l.broll, group: l.group, parts, split: parts.length > 1, drop: c.drop === true, choice: c };
   });
   // A line nobody said as written takes the nearest thing that was said and that no other line uses, flagged.
   const picked = () => rows.flatMap((r) => (r.drop ? [] : r.parts.map((p) => p.takes[p.pick]))).filter(Boolean);
@@ -318,31 +434,61 @@ export function buildSheet(shoot) {
     const took = r.parts.map((p) => p.takes[p.pick]).filter(Boolean);
     r.missing = r.parts.some((p) => !p.takes.length); r.partial = !r.missing && took.some((t) => !t.complete);
     r.needs_picture = took.some((t) => t.sound_only); r.seconds = Math.round(took.reduce((t, x) => t + (x.to - x.from), 0) * 10) / 10;
+    r.cover = !r.missing && !r.needs_picture && r.broll;            // said to camera, with a B-roll note over it
     r.said_as_written = !r.missing && r.parts.every((p) => p.differs?.same);
-    r.state = r.drop ? "left out" : r.missing ? "no take" : r.partial ? "said differently" : "ready"; delete r.choice;
+    r.state = r.drop ? "left out" : r.missing ? "no take" : r.partial ? "said differently" : "ready";
   }
-  // Footage for the voice-over lines: the clips no line's take is in — silent clips first, in their order, then a montage — unless the owner chose.
+  // ── footage ──
   const usedBy = new Set(rows.flatMap((r) => (r.drop ? [] : r.parts.map((p) => p.takes[p.pick]?.file))).filter(Boolean));
-  const spare = read.filter((f) => f.read.video && !usedBy.has(f.key)), silent = spare.filter((f) => kinds[f.key] === "silent").map((f) => f.key), montage = spare.filter((f) => kinds[f.key] === "montage").map((f) => f.key);
-  const wanting = rows.filter((r) => r.needs_picture && !r.drop);
+  const isClip = (k) => read.some((f) => f.key === k && f.read.video);
+  const pool = footagePool(shoot).filter((c) => !usedBy.has(c.key)), silent = pool.filter((c) => c.kind === "silent").map((c) => c.key), montage = pool.filter((c) => c.kind === "montage").map((c) => c.key);
+  const wanting = rows.filter((r) => !r.drop && !r.missing && (r.needs_picture || (r.cover && r.choice.show !== "take")));
   // His own choices first: a clip he put under one line is not handed to another by the rule.
-  for (const r of wanting) { const own = (choices[r.n]?.pictures || []).filter((k) => read.some((f) => f.key === k && f.read.video)); if (own.length) { r.pictures = own; r.pictures_by = "you"; } }
-  const his = new Set(wanting.flatMap((r) => r.pictures || [])), pool = silent.filter((k) => !his.has(k));
-  for (const r of wanting) {
-    if (r.pictures) continue;
-    // A line that asks for other footage ("Show video of people working out") takes the montage; the rest share the silent clips in order.
-    if (r.broll && montage.length) { r.pictures = [montage[0]]; r.pictures_by = "rule"; continue; }
-    // The silent clips are shared in their order, a longer line taking more of them (a start: the owner swaps what goes under what).
-    const rest = wanting.filter((x) => !x.pictures && !(x.broll && montage.length)), total = rest.reduce((t, x) => t + Math.max(1, x.seconds), 0);
-    const share = rest.length === 1 ? pool.length : Math.max(1, Math.round((pool.length * Math.max(1, r.seconds)) / Math.max(1, total)));
-    r.pictures = pool.splice(0, share); if (!r.pictures.length && montage.length) r.pictures = [montage[0]];
-    r.pictures_by = "rule"; if (!r.pictures.length) r.state = r.state === "ready" ? "needs footage" : r.state;
+  for (const r of wanting) { const own = (r.choice.pictures || []).filter(isClip); if (own.length) { r.pictures = own; r.pictures_by = "you"; } }
+  const his = new Set(wanting.flatMap((r) => r.pictures || []));
+  // Shared in order between lines, a longer line taking more; a sound-only line never goes without (the clips come round again).
+  const share = (clips, list) => {
+    const total = list.reduce((t, x) => t + Math.max(1, x.seconds), 0); let at = 0;
+    list.forEach((r, i) => {
+      const left = clips.length - at, after = list.length - 1 - i;
+      let n = i === list.length - 1 ? left : Math.max(1, Math.round((clips.length * Math.max(1, r.seconds)) / Math.max(1, total)));
+      n = Math.max(0, Math.min(n, left - Math.min(after, Math.max(0, left - 1))));
+      r.pictures = clips.slice(at, at + n); at += n;
+      if (!r.pictures.length && r.needs_picture && clips.length) r.pictures = [clips[i % clips.length]];
+    });
+  };
+  const groups = brollGroups(lines), stored = shoot.footage?.key === footageKey(shoot) ? shoot.footage.groups : null, given = new Set(his);
+  const sheetGroups = groups.map((g) => {
+    const match = stored?.[g.id] || null, items = g.items.map((item, i) => ({ item, clips: (match?.[i]?.clips || []).filter((k) => pool.some((c) => c.key === k)) }));
+    const list = wanting.filter((r) => r.group === g.id && !r.pictures);
+    if (match) {
+      const clips = [...new Set(items.flatMap((x) => x.clips))].filter((k) => !given.has(k));
+      share(clips, list); list.forEach((r) => r.pictures.forEach((k) => given.add(k)));
+      for (const r of list) r.pictures_by = "notes";
+    }
+    return { id: g.id, note: g.note, items, lines: g.lines, matched: !!match, to_match: !match && g.items.length > 0, missing: match ? items.filter((x) => !x.clips.length).map((x) => x.item) : [] };
+  });
+  // A note with nothing to go by yet (not matched, or it names nothing): a sound-only line still needs a picture, so it
+  // takes the footage in file order — the video with music for a line that asks for other footage; a line said to camera waits.
+  const rest = wanting.filter((r) => !r.pictures && r.needs_picture), free = silent.filter((k) => !given.has(k));
+  const withMontage = rest.filter((r) => r.broll && montage.length); for (const r of withMontage) { r.pictures = [montage[0]]; r.pictures_by = "rule"; }
+  const plain = rest.filter((r) => !r.pictures); share(free, plain);
+  // A voice with every clip already given elsewhere still needs a picture: a clip comes round again rather than a black frame.
+  plain.forEach((r, i) => { r.pictures_by = "rule"; if (!r.pictures.length) r.pictures = montage.length ? [montage[0]] : silent.length ? [silent[i % silent.length]] : []; });
+  for (const r of rows) {
+    if (r.drop || r.missing) { r.show = null; continue; }
+    const has = (r.pictures || []).length > 0;
+    r.show = r.needs_picture ? "footage" : r.cover && r.choice.show !== "take" && has ? "footage" : "take";
+    if (r.cover && r.choice.show !== "take" && !has) { r.no_footage = true; delete r.pictures; }
+    if (r.needs_picture && !has) r.state = r.state === "ready" ? "needs footage" : r.state;
+    if (r.show === "take") delete r.pictures;
   }
+  for (const r of rows) delete r.choice;
   const order = Array.isArray(choices.order) && choices.order.length === rows.length && [...choices.order].sort((a, b) => a - b).every((n, i) => n === i + 1) ? choices.order : rows.map((r) => r.n);
   const inUse = new Set([...usedBy, ...rows.flatMap((r) => r.pictures || [])]);
   const live = rows.filter((r) => !r.drop);
   return {
-    lines: order.map((n) => rows.find((r) => r.n === n)), order,
+    lines: order.map((n) => rows.find((r) => r.n === n)), order, groups: sheetGroups, to_match: sheetGroups.filter((g) => g.to_match).length,
     files: files.map((f) => ({ key: f.key, name: f.name, source: f.source, read: !!f.read, kind: kinds[f.key] || null, seconds: f.read?.seconds ?? null, shows: f.read?.shows || null, frames: f.read?.frames || null, phrases: (f.read?.phrases || []).length, used: inUse.has(f.key), ...(f.error ? { error: f.error } : {}) })),
     unread: files.filter((f) => !f.read).length,
     counts: { lines: rows.length, ready: live.filter((r) => r.state === "ready").length, no_take: live.filter((r) => r.missing).length, differently: live.filter((r) => r.state === "said differently").length, needs_footage: live.filter((r) => r.state === "needs footage").length, left_out: rows.length - live.length, differ: live.filter((r) => !r.missing && !r.said_as_written).length },
@@ -350,8 +496,9 @@ export function buildSheet(shoot) {
   };
 }
 /** The owner's choice on one line (another take, the footage under a voice-over, left out or put back), or the order of the lines. */
-export function decideSheet(gymDir, id, { line = null, take, pictures, drop, order } = {}) {
+export function decideSheet(gymDir, id, { line = null, take, pictures, show, drop, order, tighten } = {}) {
   const shoot = readShoot(gymDir, id), sheet = buildSheet(shoot), choices = (shoot.choices = shoot.choices || {});
+  if (tighten !== undefined) { if (tighten === false) choices.tighten = false; else delete choices.tighten; }      // long pauses are tightened unless he says not to (stage 2 reads it)
   if (order != null) {
     if (!Array.isArray(order) || order.length !== sheet.lines.length || [...order].sort((a, b) => a - b).some((n, i) => n !== i + 1)) throw new Error("the order names every line once");
     choices.order = order;
@@ -368,6 +515,7 @@ export function decideSheet(gymDir, id, { line = null, take, pictures, drop, ord
       if (!Array.isArray(pictures) || pictures.length > 8 || pictures.some((k) => !shoot.files.some((f) => f.key === k && f.read?.video))) throw new Error("the footage for a line is clips of this shoot that have a picture, eight at most");
       if (pictures.length) c.pictures = pictures; else delete c.pictures;
     }
+    if (show !== undefined) { if (!["take", "footage"].includes(show)) throw new Error("a line shows the take or the footage"); if (show === "take") c.show = "take"; else delete c.show; }
     if (drop !== undefined) { if (drop === true) c.drop = true; else delete c.drop; }
     if (!Object.keys(c).length) delete choices[line];
   }
@@ -384,8 +532,9 @@ export function sheetText(shoot) {
       p.takes.forEach((t, i) => out.push(`   ${i === p.pick ? "▶" : " "} ${t.file} ${t.from.toFixed(1)}–${t.to.toFixed(1)} s · ${t.complete ? "complete" : t.instead ? "said instead" : `says ${Math.round(t.said * 100)}%`}${t.sound_only ? " · sound only" : ""} · "${t.spoken}"`));
       if (p.differs && !p.differs.same) out.push(`     differs: ${p.differs.unsaid.length ? `not said: ${p.differs.unsaid.join(" ")}` : ""}${p.differs.unsaid.length && p.differs.added.length ? " · " : ""}${p.differs.added.length ? `said as well: ${p.differs.added.join(" ")}` : ""}`);
     }
-    if (r.needs_picture) out.push(`   footage: ${r.pictures?.length ? r.pictures.join(", ") : "none to put under it"}`);
+    if (r.needs_picture || r.cover) out.push(`   ${r.show === "footage" ? `footage${r.cover ? " over it" : ""}: ${r.pictures.join(", ")}` : r.cover ? `shows the take${r.no_footage ? " (no footage for it)" : ""}` : "footage: none to put under it"}`);
   }
+  for (const g of s.groups) out.push(`\nB-roll over line${g.lines.length === 1 ? "" : "s"} ${g.lines.join(", ")} — ${g.to_match ? "not matched to the clips yet" : g.items.map((x) => `${x.item}: ${x.clips.join(", ") || "NO FOOTAGE OF THIS"}`).join(" · ") || g.note}`);
   const spare = s.files.filter((f) => f.read && !f.used);
   if (spare.length) out.push(`\nnot used: ${spare.map((f) => `${f.key} (${kindWord(f.kind)})`).join(", ")}`);
   return out.join("\n");

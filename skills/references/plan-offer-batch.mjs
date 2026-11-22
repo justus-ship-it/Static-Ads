@@ -47,7 +47,7 @@ import { cardsProblems, cardCount, pickCards } from "./cards.mjs";
 import { renderCard, loadCards } from "./render-cards.mjs";
 import { videosProblems, videoCount, spokenCount, paperCount, videoKinds, pickScripts, makePresenterVideos, videoNeeds, USD_PER_SECOND } from "./presenter-video.mjs";
 import { pickSheetScripts, paperNeeds, makePaperVideos } from "./paper-video.mjs";
-import { pickCoaches, coachForVideo } from "./coach-look.mjs";
+import { pickCoaches, coachForVideo, readCoaches } from "./coach-look.mjs";
 import { plainGemini } from "./gemini-busy.mjs";
 import { FOOTAGE_NO_RUN } from "./footage-video.mjs";
 import { generateVisuals, assess, makeCompositor, checkPicture } from "./generate-visuals.mjs";
@@ -111,6 +111,8 @@ export function validateBrief(brief, { brandDir = null, catalogue = loadCatalogu
   // Videos (2026-11-12): a presenter talking to camera — how many (each is one kept script, made once for every location), and the most seconds of video the run may ask for.
   errs.push(...videosProblems(brief.videos));
   if (brief.coach != null && !(typeof brief.coach === "string" && /^coach-[a-z0-9-]+$/.test(brief.coach))) errs.push("coach must be one of the gym's coaches (its id), or left out to share the videos between them");
+  // Which spoken script each spoken video films, in order (2026-11-21: Xinyi's talking v01 and its exercise twin v09 had been one script, and the owner asked for different words in each).
+  if (brief.video_scripts != null && !(Array.isArray(brief.video_scripts) && brief.video_scripts.length === spokenCount(brief.videos) && brief.video_scripts.every((x) => typeof x === "string" && /^v-[0-9a-f]{6,}$/.test(x)))) errs.push(`video_scripts must list one spoken script id for each of the ${spokenCount(brief.videos)} talking and exercise videos, in order`);
   if (brief.max_video_seconds != null && !(Number.isInteger(brief.max_video_seconds) && brief.max_video_seconds >= 0 && brief.max_video_seconds <= MAX_VIDEO_SECONDS)) errs.push(`max_video_seconds must be a whole number from 0 to ${MAX_VIDEO_SECONDS}`);
   // Cards (Phase 5): text-led ads with no photograph — how many of each kind. No image call.
   errs.push(...cardsProblems(brief.cards));
@@ -569,7 +571,7 @@ export async function renderBatchCards(browser, { brandDir, brief, profile, seed
 }
 
 /** The most seconds of video one batch may ask for, whatever its brief says (about US$63 at the day's price): nine videos, every take allowed (2026-11-16; it was 300 for three). */
-export const MAX_VIDEO_SECONDS = 900;
+export const MAX_VIDEO_SECONDS = 1500;
 export const VIDEO_SPEND = "video-spend.json";
 /** The photo of the room a batch's videos are filmed in: its reference, else its first real photo. */
 const roomOf = (brandDir, brief) => { const ref = brief.reference || brief.real?.[0] || null; return ref ? (existsSync(join(brandDir, "brand-assets", ref)) ? join(brandDir, "brand-assets", ref) : resolve(ref)) : null; };
@@ -606,7 +608,9 @@ export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id
   // The scripts in the order they are picked: the spoken ones — the first filmed talking, the rest with exercises — then
   // the white-paper ones, which have scripts of their own kind (sheets) (`videoKinds`).
   const room = roomOf(brandDir, brief), takes = brief.attempts ?? 2, kinds = videoKinds(brief.videos), ns = spokenCount(brief.videos), np = paperCount(brief.videos);
-  const scripts = [...(ns ? pickScripts(brandDir, { count: ns, offer: brief.offer, seed }) : []), ...(np ? pickSheetScripts(brandDir, { count: np, offer: brief.offer, seed }) : [])];
+  // Shared between the gym's coaches, a script may be filmed once by each of them (2026-11-20: F45 Xinyi's 20 videos from 8 spoken scripts and 5 sheet sets).
+  const reuse = !brief.coach && presentsOf(prof) === "coaches" ? Math.max(1, readCoaches(brandDir).coaches.length) : 1;
+  const scripts = [...(ns ? pickScripts(brandDir, { count: ns, offer: brief.offer, seed, reuse, pin: brief.video_scripts || null }) : []), ...(np ? pickSheetScripts(brandDir, { count: np, offer: brief.offer, seed, reuse }) : [])];
   const coaches = batchCoaches(brandDir, brief, prof, kinds.slice(0, scripts.length), seed);
   const needs = scripts.map((x, i) => (kinds[i] === "paper" ? paperNeeds({ gymDir: brandDir, script: x, areas: brief.locations, room, profile: prof, takes, coach: coaches[i] })
     : videoNeeds({ gymDir: brandDir, script: x, areas: brief.locations, room, profile: prof, legacy: videoFolders(brandDir, x.id, brief.batch_id), takes, kind: kinds[i], coach: coaches[i] })));
@@ -621,6 +625,9 @@ export function videoPlan(brandDir, brief, { seed = brief.seed || brief.batch_id
  * room, under the batch's cap on seconds of video. What a run spends is added to video-spend.json, and everything
  * already on disk is reused, so a re-run costs nothing. A video that is refused is a named failure of the batch.
  */
+/** The image calls a batch's videos may make in one run: a clean pass's pictures, two to spare, and two more for each
+ * white-paper video (a coach's picture whose paper comes back too low is made again higher: 2026-11-21). */
+export const videoImageCap = (plan) => (plan.images || 0) + 2 + 2 * (plan.paper || 0);
 export async function renderBatchVideos(browser, { brandDir, out, brief, profile, seed, audience = null, log = console.log, prog = null, models = null }) {
   const plan = videoPlan(brandDir, brief, { seed, profile }), room = roomOf(brandDir, brief);
   if (plan.reused) log(`· videos: ${plan.reused} s already filmed for ${plan.scripts.length === 1 ? "this script" : "these scripts"} are reused; ${plan.seconds} s to film`);
@@ -631,12 +638,12 @@ export async function renderBatchVideos(browser, { brandDir, out, brief, profile
     const id = `v${String(i + 1).padStart(2, "0")}`;
     const kind = plan.kinds[i], coach = plan.coaches[i] || null;
     log(`· ${id}: ${kind === "paper" ? "white-paper video" : `presenter video${kind === "active" ? " with exercises" : ""}`} from script ${script.id} (${brief.locations.length} location${brief.locations.length === 1 ? "" : "s"})${coach ? ` — ${coach.name} presents` : ""}`);
-    const shared = { gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, room, profile, ...(coach ? { coach } : {}), caps: { seconds: plan.allow, images: plan.images + 2 }, spent, takes: plan.takes, browser, ...(models ? { models } : {}),
+    const shared = { gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, room, profile, ...(coach ? { coach } : {}), caps: { seconds: plan.allow, images: videoImageCap(plan) }, spent, takes: plan.takes, browser, ...(models ? { models } : {}),
       log: (m) => log(`  ${m}`), onProgress: (p) => { save(); prog?.set({ stage: "videos", video: { id, script: script.id, ...p }, video_seconds: before.seconds + spent.seconds, video_max_seconds: plan.max_seconds }); } };
     // White paper: nobody speaks; the words are written on the sheets by software and each sheet is one clip (paper-video.mjs).
     // A script the maker refuses outright (its words break a rule) is a named failure of THIS video: the others are still made and the batch still ends in words.
     const make = async (fn) => { try { return await fn(); } catch (e) { if (!/^this script cannot be made: /.test(e.message)) throw e; return { videos: brief.locations.map((area) => ({ area, script_id: script.id, failed: `${e.message}. Nothing was filmed for it: put the script right on Draft Scenes, then Run again` })), tally: {} }; } };
-    const r = kind === "paper" ? await make(() => makePaperVideos(shared)) : await make(() => makePresenterVideos({ gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, audience, room, profile, kind, ...(coach ? { coach } : {}), caps: { seconds: plan.allow, images: plan.images + 2 }, spent, takes: plan.takes, browser, legacy: videoFolders(brandDir, script.id, brief.batch_id), ...(models ? { models } : {}),
+    const r = kind === "paper" ? await make(() => makePaperVideos(shared)) : await make(() => makePresenterVideos({ gymDir: brandDir, outDir: join(out, "videos"), script, areas: brief.locations, offer: brief.offer, audience, room, profile, kind, ...(coach ? { coach } : {}), caps: { seconds: plan.allow, images: videoImageCap(plan) }, spent, takes: plan.takes, browser, legacy: videoFolders(brandDir, script.id, brief.batch_id), ...(models ? { models } : {}),
       log: (m) => log(`  ${m}`), onProgress: (p) => { save(); prog?.set({ stage: "videos", video: { id, script: script.id, ...p }, video_seconds: before.seconds + spent.seconds, video_max_seconds: plan.max_seconds }); } }));
     save();
     for (const k of Object.keys(tally)) tally[k] += r.tally?.[k] || 0;
