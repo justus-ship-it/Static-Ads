@@ -185,3 +185,20 @@ test("T5 the shared library in presetFor (2026-10-07): the gym's default mode is
   r = presetFor(data, profile(), { audience: "LADIES" });
   assert.equal(r.preset.id, "a1b2c3d4e5f6", "no library given (the tests' plans): the suggestion as before");
 });
+
+test("T6 never a retargeting audience by default (2026-11-22, the owner; an offer had picked the engagers by one word of its name): a preset that includes the gym's own visitors, engagers or a list is passed over however well it matches, for a suggestion and for a choice that is gone; a lookalike, or a list that is only left out, is not retargeting; the owner's own choice of one stands", async () => {
+  const { presetFor, isRetargeting, BROAD: B } = await import("./meta-targeting.mjs");
+  const ca = (...names) => names.map((name, i) => ({ id: String(100000 + i), name }));
+  const st = (all, leads, cpl) => ({ adsets: all, spend: 1, leads, impressions: 1, cost_per_lead: cpl, genders: { men: 0, women: 0, all } });
+  const P = (id, name, spec, stats) => ({ id, name, source: "account", spec, summary: [], examples: [], stats });
+  const eng = P("aaaaaaaaaaaa", "Audience: Website-Visitors, sculpt-Engagers", { custom_audiences: ca("Website-Visitors_180D", "sculptsocietysg-Engagers") }, st(9, 40, 5));
+  const lal = P("bbbbbbbbbbbb", "Audience: Lookalike (SG, 3%) - Members", { custom_audiences: ca("Lookalike (SG, 3%) - Members-List") }, st(2, 10, 30));
+  const mix = P("cccccccccccc", "Mixed", { custom_audiences: ca("Lookalike (SG, 1%)", "Leads-List") }, st(8, 30, 6));
+  const out = P("dddddddddddd", "Fitness", { flexible_spec: [{ interests: [{ id: "6003", name: "Fitness" }] }], excluded_custom_audiences: ca("Members-List") }, st(1, 10, 40));
+  assert.deepEqual([eng, lal, mix, out, {}].map(isRetargeting), [true, false, true, false, false]);
+  const data = { presets: [eng, lal, mix, out] }, ask = (d, prof = {}) => presetFor(d, prof, { audience: null, offer: "12 Week Full Body Sculpt" });
+  assert.equal(ask(data).preset.id, lal.id);
+  assert.equal(ask({ presets: [eng, mix] }).preset.id, B, "nothing else to suggest: Broad");
+  assert.equal(presetFor(data, { targeting_defaults: { detailed_targeting: { callout_presets: { "ANYONE": eng.id } } } }, { audience: "Anyone", offer: "x" }).preset.id, eng.id, "the owner's own choice stands");
+  assert.equal(presetFor(data, { targeting_defaults: { detailed_targeting: { callout_presets: { "ANYONE": "eeeeeeeeeeee" } } } }, { audience: "Anyone", offer: "Sculpt" }).preset.id, lal.id, "a choice that is gone");
+});

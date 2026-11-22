@@ -449,7 +449,7 @@ export function buildReview(gymDir, { brandsDir = resolve(gymDir, ".."), now = n
   const dead = texts.filter((t) => !t.leads && (t.impressions || 0) >= 1000).length;
   // Where Meta differs from what the app sent, per campaign of this app's.
   const drift = [], outDir = join(gymDir, "outputs");
-  if (existsSync(outDir)) for (const id of readdirSync(outDir).sort()) for (const d of readJson(join(outDir, id, "results.json"))?.drift || []) drift.push({ batch: id, kind: d.kind, text: d.text, fixable: !!d.fixable });
+  if (existsSync(outDir)) for (const id of readdirSync(outDir).sort()) for (const d of readJson(join(outDir, id, "results.json"))?.drift || []) drift.push({ batch: id, kind: d.kind, callout: d.callout || null, back: !!d.back, text: d.text, fixable: !!d.fixable });
   const history = readJson(join(gymDir, "account-history.json")), u = (() => { try { return unreadCount(gymDir); } catch { return { pictures: 0, unread: 0 }; } })();
   let ledger = { gyms: [], entries: [], counts: {} }; try { ledger = ledgerAcross(brandsDir, { now }); } catch { /* one gym's files could not be read: the review goes on without the pooled ledger */ }
   const suggested = suggestBrief(gymDir, { rows: inScope(rows, "recent", { now }).length ? inScope(rows, "recent", { now }) : rows, every: rows, mix, next, insights: wins.suggestions.filter((s) => s.key), ledger: ledger.entries, currency, profile, now });

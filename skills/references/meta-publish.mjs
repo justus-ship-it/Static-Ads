@@ -27,8 +27,9 @@ import { parseArgs } from "util";
 import { metaConfig, graphClient, actId, scrubTokens, MetaError, WHOLE_UNIT_CURRENCIES, budgetUnits } from "./meta-api.mjs";
 export { WHOLE_UNIT_CURRENCIES, budgetUnits };
 import { calloutGender, pinFor, pinUsable, withPoint, titleCase, BID_STRATEGIES, BUDGET_LEVELS, GENDER_CHOICES } from "./client-config.mjs";
-import { presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
+import { readPresets as presetsOf, presetFor, livePresets, specForAdset, summarise, BROAD } from "./meta-targeting.mjs";
 import { readLibrary as readTargetingLibrary, libraryEntry, asPreset as libraryPreset } from "./targeting-library.mjs";
+import { changedByHand } from "./targeting-drift.mjs";
 import { textOptionsFor, MAX_OPTIONS, fillButton, ctaLabel, gymLanguage, ownCopies } from "./draft-copy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -645,11 +646,15 @@ export async function createPlan(plan, { client: given, batchDir, record, log = 
         had.facts = setFacts(set);
         if (had.key === key) { run.reused.adsets++; save(); log(`· ad set ${callout}: already made (${had.id}) — reused`); continue; }
         const { name, targeting, daily_budget, bid_strategy, bid_amount } = set.payload;
-        await client.post(had.id, { name, targeting, ...(daily_budget != null ? { daily_budget, bid_strategy } : {}), ...(bid_amount != null ? { bid_amount } : {}) });
-        Object.assign(had, { key, name, updated: new Date().toISOString() }); run.updated.adsets++; save(); log(`· ad set ${callout}: ${had.id} updated (targeting or budget changed)`);
+        // A change made by hand in Ads Manager is never overwritten (2026-11-22): the ad set keeps its targeting there until the owner chooses (Publish Ads or Review Data).
+        let live = null; try { live = (await client.get(had.id, { fields: "targeting" }))?.targeting || null; } catch { /* a read that fails leaves the update as it was */ }
+        const hand = changedByHand(had, live, presetsOf(resolve(batchDir, "..", "..")));
+        if (hand.length) { (run.kept_on_meta ||= []).push({ callout, parts: hand }); log(`· ad set ${callout}: its targeting was changed in Ads Manager (${hand.map((h) => `${h.meta}, the app sent ${h.app}`).join("; ")}) — left as it is there; choose on the Publish screen after a pull`); }
+        await client.post(had.id, { name, ...(hand.length ? {} : { targeting }), ...(daily_budget != null ? { daily_budget, bid_strategy } : {}), ...(bid_amount != null ? { bid_amount } : {}) });
+        Object.assign(had, { key: hand.length ? null : key, name, ...(hand.length ? {} : { targeting }), updated: new Date().toISOString() }); run.updated.adsets++; save(); log(`· ad set ${callout}: ${had.id} updated (targeting or budget changed)`);
       } else {
         const r = await client.post(`${account}/adsets`, { ...set.payload, campaign_id: rec.campaign.id });
-        rec.adsets[callout] = { id: r.id, key, name: set.payload.name, facts: setFacts(set), at: new Date().toISOString() }; run.made.adsets++; save();
+        rec.adsets[callout] = { id: r.id, key, name: set.payload.name, targeting: set.payload.targeting, facts: setFacts(set), at: new Date().toISOString() }; run.made.adsets++; save();
         log(`· ad set ${callout}: ${r.id}`);
       }
     } catch (e) { fail("adset", callout, e); }

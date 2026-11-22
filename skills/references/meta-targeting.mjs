@@ -265,6 +265,17 @@ export const DEFAULT_MODES = ["shared", "account", "broad"];
  * default for the callout's gender** (2026-10-07, the owner's rule: fitness ads target much the same people),
  * or the account's best suggestion, or Broad — then the suggestion when the shared library has nothing approved.
  */
+/**
+ * Does a preset reach people the gym already knows — website visitors, engagers, a customer or lead list? Any custom
+ * audience INCLUDED that is not a lookalike (a lookalike finds new people; excluding a list is not retargeting).
+ */
+export const isRetargeting = (preset) => (normaliseSpec(preset?.spec || {}).custom_audiences || []).some((a) => !/look-?\s?alike|\bLAL\b/i.test(String(a.name || "")));
+/**
+ * The account's suggestion for a default: never a retargeting audience (2026-11-22, the owner: "never default to a
+ * retargeting audience" — "12 Week Full Body Sculpt" had picked "sculptsocietysg … Engagers" by the word "sculpt").
+ * The owner can still pick one for an ad set, or for a callout on Targeting & budget.
+ */
+const suggestFrom = (data, opts) => { const live = new Map(livePresets(data).map((p) => [p.id, p])), r = rankPresets(data, opts).find((x) => live.has(x.id) && !isRetargeting(live.get(x.id))); return r ? { preset: live.get(r.id), why: r.why } : null; };
 export function presetFor(data, profile, { audience, offer, library = null } = {}) {
   const map = profile?.targeting_defaults?.detailed_targeting?.callout_presets || {};
   const key = Object.keys(map).find((k) => k.trim().toUpperCase() === String(audience || "").trim().toUpperCase());
@@ -272,7 +283,7 @@ export function presetFor(data, profile, { audience, offer, library = null } = {
   if (chosen && !["suggest", "shared", "broad"].includes(chosen)) {
     const p = livePresets(data).find((x) => x.id === chosen); if (p) return { preset: p, how: "the profile's choice" };
     const e = library && libraryEntry(library, chosen); if (e) return { preset: libraryPreset(e), how: `the profile's choice from the shared library: ${e.name}` };
-    const gone = rankPresets(data, { gender, words: `${offer || ""} ${audience || ""}` }), goneTop = gone[0] && livePresets(data).find((p) => p.id === gone[0].id);
+    const goneTop = suggestFrom(data, { gender, words: `${offer || ""} ${audience || ""}` })?.preset;
     return goneTop ? { preset: goneTop, how: "the profile's choice is gone; suggested instead" } : { preset: broadPreset(), how: "the profile's choice is gone, and there is nothing to suggest yet" };
   }
   if (chosen === "broad") return { preset: broadPreset(), how: "the profile's choice: Broad" };
@@ -280,10 +291,9 @@ export function presetFor(data, profile, { audience, offer, library = null } = {
   const mode = mode0 === "shared" && !library ? "account" : mode0; // no library given (the CLI's tests): the account's suggestion as before
   if (mode === "shared" && library) { const e = libraryDefault(library, gender); if (e) return { preset: libraryPreset(e), how: `the shared default for ${gender === "all" ? "everyone" : gender}: ${e.name}` }; }
   if (mode === "broad") return { preset: broadPreset(), how: "the gym's default: Broad" };
-  const ranked = rankPresets(data, { gender, words: `${offer || ""} ${audience || ""}` });
-  const top = ranked[0] && livePresets(data).find((p) => p.id === ranked[0].id);
+  const best = suggestFrom(data, { gender, words: `${offer || ""} ${audience || ""}` }), top = best?.preset;
   const why = mode === "shared" ? "nothing approved in the shared library yet; suggested from the account" : "suggested";
-  return top ? { preset: top, how: `${why}: ${ranked[0].why}` } : { preset: broadPreset(), how: mode === "shared" ? "nothing approved in the shared library yet, and nothing to suggest" : "nothing to suggest yet" };
+  return top ? { preset: top, how: `${why}: ${best.why}` } : { preset: broadPreset(), how: mode === "shared" ? "nothing approved in the shared library yet, and nothing to suggest" : "nothing to suggest yet" };
 }
 /** A preset's spec as it goes into an ad set's targeting (a copy, ids and names only). */
 export const specForAdset = (preset) => structuredClone(normaliseSpec(preset?.spec || {}));

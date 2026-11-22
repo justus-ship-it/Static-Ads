@@ -4910,3 +4910,36 @@ test("U74 another place for an ad set (2026-11-22: the point Sculpt Society's Bi
     await ev("DIRTY.profile = false; true");
   } finally { writeFileSync(pf, before); rmSync(join(g, "batches", id), { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); }
 });
+
+test("U75 targeting changed in Ads Manager, through the panel (2026-11-22): the Publish screen and Review Data say it with Keep Ads Manager's and Put the app's back; keeping saves the place with the gym's pins and points the campaign at it; putting back marks the next create; a wrong side, an ad set not in the last pull or a missing token is refused", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), before = readFileSync(pf, "utf-8"), id = "u75-drift", out = join(g, "outputs", id), folder = "101-c01-bishan-t1-navy";
+  const put = (f, o) => { mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, JSON.stringify(o)); };
+  try {
+    const p0 = JSON.parse(before); ((p0.targeting_defaults ||= {}).geo ||= {}).radius_pins = [{ label: "Sin Ming", place_key: "107327800879305", radius_km: 3, callouts: ["BISHAN"] }]; writeFileSync(pf, JSON.stringify(p0, null, 2));
+    put(join(g, "batches", id, "brief.json"), { batch_id: id, offer: "U75 Reset", locations: ["BISHAN"], audience: null, generated: 0, real: [] });
+    put(join(out, "batch.json"), { batch_id: id, made: "2026-11-22T01:00:00Z", ratio: "4x5", photos: [], failed: [], ads: [{ folder, file: `${folder}/4x5/c.png`, candidate: "c01", location: "BISHAN", photos: [], photo_files: [], treatment: "t1-bottom-stack", style: "s1", palette: "navy", ratio: "4x5", words: { location: "BISHAN", audience: null, offer: "U75 Reset", free: false } }] });
+    mkdirSync(join(out, folder, "4x5"), { recursive: true }); writeFileSync(join(out, folder, "4x5", "c.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 8]));
+    put(join(out, "publish.json"), { campaign: { id: "c75", name: "n" }, adsets: { BISHAN: { id: "s75", key: "k", name: "n", facts: { place_key: "107327800879305", pin: "Sin Ming", radius_km: 3, age_min: 25, age_max: 60, gender: "all" } } }, ads: { [folder]: { id: "a75", adset: "BISHAN" } }, superseded: [], runs: [{ started: "2026-11-22T01:00:00Z" }], images: {} });
+    const line = { kind: "adset_pin", callout: "BISHAN", meta: "the point", app: "Sin Ming", fixable: true, back: true, text: "ad set BISHAN's place on Meta: the point 1.3522, 103.8496 + 3 km; the app sent Sin Ming + 3 km" };
+    const live = { geo_locations: { custom_locations: [{ latitude: 1.352211, longitude: 103.849611, radius: 3, distance_unit: "kilometer" }], location_types: ["home", "recent"] }, age_min: 25, age_max: 60 };
+    const results = () => put(join(out, "results.json"), { pulled: "2026-11-22T02:00:00Z", currency: "SGD", campaign: { id: "c75", words: "live", all_time: { spend: 1, impressions: 10, reach: 9, clicks: 1, leads: 0, cost_per_lead: null, ctr: 1 }, last_7d: { spend: 1, impressions: 10, reach: 9, clicks: 1, leads: 0, cost_per_lead: null, ctr: 1 } }, adsets: { s75: { id: "s75", targeting: live } }, ads: {}, daily: [], drift: [line] });
+    results();
+    const T = async (body, extra = {}) => { const r = await call(`/api/client/${GYM}/batch/${id}/drift/take`, { method: "POST", body, ...extra }); return [r.status, await r.json()]; };
+    assert.equal((await T({ kind: "adset_pin", callout: "BISHAN", side: "both" }))[0], 400);
+    assert.match((await T({ kind: "adset_pin", callout: "NOWHERE" }))[1].error, /pull results again/);
+    assert.equal((await T({ kind: "adset_pin", callout: "BISHAN" }, { token: "wrong" }))[0], 403);
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u75${Math.random()}#/${GYM}/${hash}` }, sessionId); await loaded; await until(ready); };
+    await open(`publish/${id}`, "!!document.querySelector('[data-drift=\"adset_pin\"]')");
+    assert.deepEqual(await ev("[document.querySelector('[data-drift]').textContent, document.querySelector('[data-drift-back]').textContent]"), ["Keep Ads Manager’s", "Put the app’s back"]);
+    await ev("document.querySelector('[data-drift=\"adset_pin\"]').click(); true"); await until("!!PB.data && !document.querySelector('[data-drift]') && !!document.querySelector('[data-pin]')");
+    const prof = JSON.parse(readFileSync(pf, "utf-8")).targeting_defaults.geo.radius_pins, set = JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")).adsets.BISHAN;
+    assert.deepEqual([prof.length, prof[1].lat, prof[1].radius_km, prof[0].callouts, set.pin], [2, 1.352211, 3, ["BISHAN"], 1]);
+    results();
+    const rev = (await (await call(`/api/client/${GYM}/account-review`)).json()); const d = JSON.stringify(rev).includes("adset_pin"); assert.ok(d, "Review Data carries the line");
+    const [st, A] = await T({ kind: "adset_pin", callout: "BISHAN", side: "app" });
+    assert.deepEqual([st, A.drift], [200, []]); const rec = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")).adsets.BISHAN; assert.deepEqual([rec.key, !!rec.put_back, rec.targeting.geo_locations.custom_locations.length], [null, true, 1]);
+  } finally { writeFileSync(pf, before); rmSync(join(g, "batches", id), { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); }
+});

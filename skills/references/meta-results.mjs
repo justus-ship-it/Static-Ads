@@ -17,7 +17,8 @@ import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { metaConfig, graphClient, scrubTokens, actId, budgetFrom, budgetUnits, dateWindow } from "./meta-api.mjs";
 import { titleCase } from "./client-config.mjs";
-import { audienceLabel, summarise, adsetCountries, isAbroad } from "./meta-targeting.mjs";
+import { audienceLabel, summarise, adsetCountries, isAbroad, readPresets } from "./meta-targeting.mjs";
+import { targetingItems } from "./targeting-drift.mjs";
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
 const writeWhole = (p, text) => { writeFileSync(p + ".tmp", text); renameSync(p + ".tmp", p); };
@@ -61,7 +62,7 @@ export async function pullResults({ client, record, batchDir, now = new Date().t
   const assetFields = "ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions";
   const [campaign, adsets, ads, allTime, week, daily, bodyRows, titleRows] = await Promise.all([
     client.get(cid, { fields: "id,name,status,effective_status,daily_budget,updated_time" }),
-    client.list(`${cid}/adsets`, { fields: "id,name,status,effective_status,daily_budget" }),
+    client.list(`${cid}/adsets`, { fields: "id,name,status,effective_status,daily_budget,targeting" }),
     client.list(`${cid}/ads`, { fields: "id,name,status,effective_status,adset_id,updated_time" }),
     client.list(`${cid}/insights`, { level: "ad", fields, date_preset: "maximum" }),
     client.list(`${cid}/insights`, { level: "ad", fields, time_range: JSON.stringify(windows.last_7d) }),
@@ -79,12 +80,12 @@ export async function pullResults({ client, record, batchDir, now = new Date().t
     campaign: { id: campaign.id, name: campaign.name, status: campaign.status, effective_status: campaign.effective_status, words: statusWords(campaign.effective_status), daily_budget: budgetFrom(campaign.daily_budget, currency), all_time: finish(sum(Object.values(all))), last_7d: finish(sum(Object.values(last7))) },
     adsets: Object.fromEntries(adsets.map((s) => {
       const mine = ads.filter((a) => a.adset_id === s.id).map((a) => a.id);
-      return [s.id, { id: s.id, name: s.name, status: s.status, effective_status: s.effective_status, words: statusWords(s.effective_status), daily_budget: budgetFrom(s.daily_budget, currency), ads: mine.length, all_time: finish(sum(mine.map((id) => all[id] || EMPTY()))), last_7d: finish(sum(mine.map((id) => last7[id] || EMPTY()))) }];
+      return [s.id, { id: s.id, name: s.name, status: s.status, effective_status: s.effective_status, words: statusWords(s.effective_status), daily_budget: budgetFrom(s.daily_budget, currency), ...(s.targeting ? { targeting: s.targeting } : {}), ads: mine.length, all_time: finish(sum(mine.map((id) => all[id] || EMPTY()))), last_7d: finish(sum(mine.map((id) => last7[id] || EMPTY()))) }];
     })),
     ads: Object.fromEntries(ads.map((a) => [a.id, { id: a.id, name: a.name, adset_id: a.adset_id, status: a.status, effective_status: a.effective_status, words: statusWords(a.effective_status), updated: a.updated_time || null, all_time: all[a.id] || EMPTY(), last_7d: last7[a.id] || EMPTY() }])),
     daily: daily.map((r) => ({ date: r.date_start, ...(({ spend, leads }) => ({ spend, leads }))(metrics(r)) })),
     texts: { bodies: byText(bodyRows, "body_asset"), titles: byText(titleRows, "title_asset") },
-    drift: driftFrom({ record, campaign, adsets, ads, currency }),
+    drift: driftFrom({ record, campaign, adsets, ads, currency, presets: readPresets(resolve(batchDir, "..", "..")) }),
   };
   writeWhole(join(batchDir, "results.json"), JSON.stringify(out, null, 2) + "\n");
   return out;
@@ -110,7 +111,7 @@ function byText(rows, key) {
 /** Where Meta differs from what the app last sent (2026-10-11): an archived campaign or ad set, a name or budget changed in
  *  Ads Manager, ads gone or added by hand. The app's record is what it sent; the next create sends it again unless the
  *  setting here is changed to match. Read-only; in words, for the Publish Ads screen's On Facebook card and the CLI. */
-export function driftFrom({ record, campaign, adsets, ads, currency = "SGD" }) {
+export function driftFrom({ record, campaign, adsets, ads, currency = "SGD", presets = { presets: [] } }) {
   const items = [], rec = record || {};
   const say = (kind, text, extra = {}) => items.push({ kind, text, fixable: false, ...extra });
   const gone = (o) => [o?.status, o?.effective_status].map((x) => String(x || "").toUpperCase()).find((x) => x === "ARCHIVED" || x === "DELETED") || null;
@@ -129,6 +130,8 @@ export function driftFrom({ record, campaign, adsets, ads, currency = "SGD" }) {
     if (live.name && had.name && live.name !== had.name) say("adset_name", `ad set ${callout} is named "${live.name}" on Meta; the app sent "${had.name}" — the next create renames it back unless the ad set name here is changed to match`, { callout, meta: live.name, app: had.name, fixable: true });
     const appDaily = had.facts?.daily;
     if (appDaily != null && live.daily_budget != null && budgetFrom(live.daily_budget, currency) !== Number(appDaily)) say("adset_budget", `ad set ${callout}'s budget on Meta is ${money(live.daily_budget)} a day; the app's setting is ${currency} ${appDaily} — the next create puts ${currency} ${appDaily} back unless the budget here is changed`, { callout, meta: budgetFrom(live.daily_budget, currency), app: Number(appDaily), fixable: true });
+    // The place, ages, gender and detailed targeting changed by hand (2026-11-22; targeting-drift.mjs).
+    if (!g) for (const t of targetingItems(callout, had, live.targeting, presets)) items.push(t);
   }
   const recorded = new Set([...Object.values(rec.ads || {}), ...(rec.superseded || [])].map((a) => a.id).filter(Boolean));
   const liveIds = new Set((ads || []).map((a) => a.id));

@@ -573,7 +573,7 @@ export function addPinTo(profile, { label, lat, lng, place_key = "", place_name 
   if (key ? !/^\d{5,20}$/.test(key) : !(Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) throw new Error("a pin is a Meta place, or a point: its latitude and longitude, like 1.3522, 103.8496");
   if (!(R >= RADIUS_KM.min && R <= RADIUS_KM.max)) throw new Error(`the radius is ${RADIUS_KM.min} to ${RADIUS_KM.max} km`);
   const near = (a, b) => Number.isFinite(a) && Math.abs(a - b) < 0.00005;
-  let i = pins.findIndex((p) => (key ? String(p.place_key || "") === key && p.radius_km === R : !p.place_key && near(p.lat, lat) && near(p.lng, lng) && p.radius_km === R));
+  let i = pins.findIndex((p) => (key ? String(p.place_key || "") === key && p.radius_km === R : !p.place_key && near(p.lat, lat) && near(p.lng, lng) && p.radius_km === R) && (!Array.isArray(location_types) || !location_types.length || [...(p.location_types || ["home", "recent"])].sort().join() === [...location_types].sort().join()));
   if (i < 0) { pins.push({ label: String(label || place_name || callout || "").trim().slice(0, 40) || `${lat.toFixed(4)}, ${lng.toFixed(4)}`, postal_code: "", lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, radius_km: R, location_types: Array.isArray(location_types) && location_types.length ? location_types : ["home", "recent"], place_key: key, place_name: String(place_name || ""), callouts: [], source }); i = pins.length - 1; }
   if (always && callout) { const want = String(callout).trim().toUpperCase(); for (const p of pins) p.callouts = (p.callouts || []).filter((c) => String(c).trim().toUpperCase() !== want); pins[i].callouts.push(want); }
   return i;

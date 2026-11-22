@@ -170,7 +170,7 @@ test("AR4 the review, from what is on disk and with no call: an export's running
     assert.deepEqual(r.data.exports.map((e) => e.label), ["April campaign"]);
     assert.ok(r.tiring.some((x) => /Dark Wall Lady One has been seen 3\.6 times/.test(x)));
     assert.ok(r.pause.some((x) => /Gym Floor Squat — 6 leads at SGD 48\.33/.test(x)));
-    assert.deepEqual(r.drift, [{ batch: "2026-10-01-old", kind: "adset_budget", text: "ad set JURONG WEST's budget on Meta is SGD 120 a day; the app's setting is SGD 100", fixable: true }]);
+    assert.deepEqual(r.drift, [{ batch: "2026-10-01-old", kind: "adset_budget", callout: "JURONG WEST", back: false, text: "ad set JURONG WEST's budget on Meta is SGD 120 a day; the app's setting is SGD 100", fixable: true }]);
     // Portraits get their floor, then a step more: 122 leads well under the account's median.
     assert.equal(r.mix.changed, true); assert.deepEqual(r.mix.suggested, { workout: 70, "studio-portrait": 30 });
     // The next batch: the owner's last words, the suggested mix as photos, and the lean on what earns leads here.
