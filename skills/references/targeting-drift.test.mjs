@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canon, sentCanon, targetingDiff, targetingItems, changedByHand, takeTargeting, acknowledge } from "./targeting-drift.mjs";
 import { buildPlan, createPlan, freshRecord } from "./meta-publish.mjs";
-import { pullResults } from "./meta-results.mjs";
+import { pullResults, putBudgetBack, takeMetaValue } from "./meta-results.mjs";
 import { readPresets } from "./meta-targeting.mjs";
 import { PROFILE_STARTER } from "./client-config.mjs";
 
@@ -84,5 +84,51 @@ test("TD2 a create never overwrites a change made by hand: the record holds the 
     writeFileSync(join(out, "publish-settings.json"), JSON.stringify({ adsets: { BISHAN: { age_max: 55 } } })); posts.length = 0;
     await createPlan(plan(), { client: { ...client, get: async () => { throw new Error("down"); } }, batchDir: out, record: rec(), log: () => {} });
     assert.ok(posts.find(([p]) => p === "s1")[1].targeting);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("TD3 a budget changed by hand is left alone too (2026-11-23): a create that changes the budget here leaves Meta's as it is (the name still goes up), the run says so; the pull offers both choices; Put the app's back sends the app's on the next create; Use Meta's budget makes the two agree, so nothing is held back; a campaign budget the same way", async () => {
+  const d = mkdtempSync(join(tmpdir(), "td3-")), g = join(d, "brands", "testgym"), out = join(g, "outputs", "b1"); mkdirSync(join(out, "101-x", "4x5"), { recursive: true });
+  try {
+    const profile = { ...PROFILE_STARTER("testgym", "Test Gym", "SG"), website: "https://t.sg", meta_assets: { ad_account_id: "act_11111", page_id: "77777", lead_form_id: "40011", singapore_beneficiary_id: "11111", singapore_payer_id: "11111" } };
+    profile.targeting_defaults = { ...profile.targeting_defaults, geo: { countries: ["SG"], radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", place_name: "6 Sin Ming Road", radius_km: 3, location_types: ["home", "recent"], callouts: ["BISHAN"] }] }, demographics: { age_min: 25, age_max: 60 }, detailed_targeting: { default: "broad" } };
+    writeFileSync(join(g, "gym-profile.json"), JSON.stringify(profile)); writeFileSync(join(out, "101-x", "4x5", "c.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const kept = [{ folder: "101-x", file: "101-x/4x5/c.png", location: "BISHAN", words: { location: "BISHAN", audience: null, offer: "6 Week Reset" }, story: null }];
+    const settings = (o) => writeFileSync(join(out, "publish-settings.json"), JSON.stringify(o));
+    const plan = () => buildPlan({ profile, batch: { batch_id: "2026-11-22-b1" }, kept, presets: readPresets(g), settings: JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")) });
+    const live = { s1: {}, c1: {} }; let n = 0; const posts = [];
+    const client = { post: async (path, body) => { posts.push([path, body]); if (/campaigns$/.test(path)) { live.c1 = { ...body }; return { id: "c1" }; } if (/adsets$/.test(path)) { live.s1 = { ...body }; return { id: "s1" }; } if (live[path]) Object.assign(live[path], body); if (/adimages$/.test(path)) return { images: { x: { hash: "h" } } }; return { id: `id${++n}` }; },
+      get: async (id, q) => (live[id] && /budget|targeting/.test(q.fields) ? { targeting: live[id].targeting, daily_budget: live[id].daily_budget } : { id, name: "x", status: "PAUSED", effective_status: "PAUSED", ...(live[id] ? { daily_budget: live[id].daily_budget } : {}) }), adsetAds: async () => [],
+      list: async (p) => (/adsets$/.test(p) ? [{ id: "s1", name: live.s1.name, status: "PAUSED", effective_status: "PAUSED", daily_budget: live.s1.daily_budget, targeting: live.s1.targeting }] : []) };
+    const rp = join(out, "publish.json"), rec = () => ({ ...JSON.parse(readFileSync(rp, "utf-8")), path: rp }), run = () => createPlan(plan(), { client, batchDir: out, record: rec(), log: () => {} });
+    settings({ campaign: { level: "adset", daily: 100 } });
+    await createPlan(plan(), { client, batchDir: out, record: freshRecord(rp, { batch_id: "b1", account: "act_11111" }), log: () => {} });
+    assert.equal(rec().adsets.BISHAN.daily_budget, 10000, "what was sent is on the record");
+    // Raised to SGD 120 by hand; the owner then changes the budget here to 90 and the name.
+    live.s1.daily_budget = 12000; settings({ campaign: { level: "adset", daily: 100 }, adsets: { BISHAN: { daily: 90, name: "New name" } } });
+    posts.length = 0; let r = await run();
+    let up = posts.find(([p]) => p === "s1");
+    assert.deepEqual([up[1].name, "daily_budget" in up[1], live.s1.daily_budget, r.run.kept_on_meta[0].parts.map((h) => [h.kind, h.meta, h.app])], ["New name", false, 12000, [["adset_budget", "SGD 120 a day", "SGD 100 a day"]]]);
+    const pulled = await pullResults({ client, record: rec(), batchDir: out, currency: "SGD", timezone: "Asia/Singapore" });
+    const line = pulled.drift.find((x) => x.kind === "adset_budget");
+    assert.deepEqual([line.meta, line.fixable, line.back, /leaves Ads Manager's budget as it is/.test(line.text)], [120, true, true, true]);
+    // Put the app's back: the next create sends 90.
+    putBudgetBack(out, line, { currency: "SGD" });
+    posts.length = 0; r = await run();
+    assert.deepEqual([posts.find(([p]) => p === "s1")[1].daily_budget, live.s1.daily_budget, r.run.kept_on_meta, rec().adsets.BISHAN.daily_budget], [9000, 9000, undefined, 9000]);
+    // Raised again; Use Meta's budget: the settings take 150 and the next create holds nothing back.
+    live.s1.daily_budget = 15000; const p2 = await pullResults({ client, record: rec(), batchDir: out, currency: "SGD", timezone: "Asia/Singapore" });
+    takeMetaValue(out, p2.drift.find((x) => x.kind === "adset_budget"), { currency: "SGD" });
+    const s = JSON.parse(readFileSync(join(out, "publish-settings.json"), "utf-8")); s.adsets.BISHAN.name = "Third name"; settings(s);
+    posts.length = 0; r = await run();
+    assert.deepEqual([posts.find(([p]) => p === "s1")[1].daily_budget, r.run.kept_on_meta], [15000, undefined]);
+    // A campaign budget: raised by hand, then a different one asked here — left alone; put back — sent.
+    settings({ campaign: { level: "campaign", daily: 200 } }); const fresh = join(out, "pc.json");
+    await createPlan(plan(), { client, batchDir: out, record: freshRecord(fresh, { batch_id: "b1", account: "act_11111" }), log: () => {} });
+    const crec = () => ({ ...JSON.parse(readFileSync(fresh, "utf-8")), path: fresh });
+    live.c1.daily_budget = 25000; settings({ campaign: { level: "campaign", daily: 180, name: "Renamed" } }); posts.length = 0;
+    r = await createPlan(plan(), { client, batchDir: out, record: crec(), log: () => {} });
+    const cu = posts.find(([p]) => p === "c1");
+    assert.deepEqual([cu[1].name, "daily_budget" in cu[1], r.run.kept_on_meta[0].campaign, crec().campaign.daily_budget], ["Renamed", false, true, 20000]);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

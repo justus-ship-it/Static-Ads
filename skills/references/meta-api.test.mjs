@@ -664,7 +664,7 @@ test("M8 results: a pull reads the campaign's statuses and Meta's numbers per ad
     assert.deepEqual([tw.currency, tw.adsets.s2.daily_budget, tw.windows.last_7d], ["TWD", 2000, { since: "2026-09-13", until: "2026-09-19" }], "whole units for TWD; the window in the account's time zone");
     assert.deepEqual(tw.drift.map((d) => d.text), [
       'the campaign is named "renamed by hand" on Meta; the app sent "0913 …" — the next create renames it back unless the campaign name here is changed to match',
-      "ad set BISHAN's budget on Meta is TWD 2000 a day; the app's setting is TWD 50 — the next create puts TWD 50 back unless the budget here is changed",
+      "ad set BISHAN's budget on Meta is TWD 2000 a day; the app's setting is TWD 50. A create leaves Ads Manager's budget as it is until you choose",
       "1 ad in the campaign was not made by this app",
     ]);
     assert.deepEqual(tw.drift.map((d) => [d.kind, d.callout || null, d.meta ?? null, d.app ?? null, d.fixable]), [["campaign_name", null, "renamed by hand", "0913 …", true], ["adset_budget", "BISHAN", 2000, 50, true], ["ads_extra", null, null, null, false]]);

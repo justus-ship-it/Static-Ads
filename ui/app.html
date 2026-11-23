@@ -3951,14 +3951,14 @@ function pbJump(where){
 }
 /** Take Meta's figure for one line (2026-10-11): the setting and the record follow what Ads Manager holds, so the next create keeps it. */
 async function pbTakeMeta(batch, kind, callout, side){
-  try { const r = await api(`/api/client/${STATE.sel}/batch/${batch}/drift/take`, { method:'POST', body:{ kind, callout, ...(side ? { side } : {}) } }); PB.data = null; if (side === 'app') toast('Noted: the next create from this batch sends the app\u2019s targeting.', 'ok'); else toast('Kept: the campaign\u2019s settings now match Ads Manager.', 'ok'); await refreshProfile(); return render(); }
+  try { const r = await api(`/api/client/${STATE.sel}/batch/${batch}/drift/take`, { method:'POST', body:{ kind, callout, ...(side ? { side } : {}) } }); PB.data = null; if (side === 'app') toast(`Noted: the next create from this batch sends the app\u2019s ${/budget$/.test(kind)?'budget':'targeting'}.`, 'ok'); else toast('Kept: the campaign\u2019s settings now match Ads Manager.', 'ok'); await refreshProfile(); return render(); }
   catch(e){ toast(e.message, 'err'); }
 }
 /** The choices for one line where Meta differs: Meta's name or budget, or (a targeting changed by hand) whose version stands. */
 function driftButtons(d, batch){
   if (!d || typeof d !== 'object') return '';
   const call = (side) => `pbTakeMeta('${esc(batch)}','${esc(d.kind)}',${d.callout?`'${esc(d.callout)}'`:'null'}${side?`,'${side}'`:''})`, T = /^adset_(pin|ages|gender|detail|advantage)$/.test(d.kind);
-  return `${d.fixable?`<button class="sm" data-drift="${esc(d.kind)}" style="margin-left:6px" onclick="${call()}">${T?'Keep Ads Manager\u2019s':`Use Meta's ${/name$/.test(d.kind)?'name':'budget'}`}</button>`:''}${T&&d.back?`<button class="sm" data-drift-back="${esc(d.kind)}" style="margin-left:6px" title="All of this ad set's targeting goes back to the app's on the next create" onclick="${call('app')}">Put the app\u2019s back</button>`:''}`;
+  return `${d.fixable?`<button class="sm" data-drift="${esc(d.kind)}" style="margin-left:6px" onclick="${call()}">${T?'Keep Ads Manager\u2019s':`Use Meta's ${/name$/.test(d.kind)?'name':'budget'}`}</button>`:''}${d.back?`<button class="sm" data-drift-back="${esc(d.kind)}" style="margin-left:6px" title="${T?'All of this ad set\u2019s targeting':'The budget'} goes back to the app\u2019s on the next create" onclick="${call('app')}">Put the app\u2019s back</button>`:''}`;
 }
 async function pbPull(){ PB.busy = true; PB.error = null; paintPublish($('#view')); try { const ra = await api(`/api/client/${PB.gym}/batch/${PB.id}/results/pull`, { method:'POST', body:{} }); PB.results = ra.results; PB.texts = ra.texts || []; } catch(e){ PB.error = e.message; } PB.busy = false; paintPublish($('#view')); }
 function pbCreateConfirm(){

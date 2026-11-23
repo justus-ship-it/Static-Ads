@@ -120,7 +120,7 @@ export function driftFrom({ record, campaign, adsets, ads, currency = "SGD", pre
     const g = gone(campaign);
     if (g) say("campaign_gone", `the campaign is ${g.toLowerCase()} on Meta: the next create makes a new one, with its ad sets and ads`);
     if (campaign.name && rec.campaign.name && campaign.name !== rec.campaign.name) say("campaign_name", `the campaign is named "${campaign.name}" on Meta; the app sent "${rec.campaign.name}" — the next create renames it back unless the campaign name here is changed to match`, { meta: campaign.name, app: rec.campaign.name, fixable: true });
-    if (rec.campaign.daily_budget != null && campaign.daily_budget != null && Number(campaign.daily_budget) !== Number(rec.campaign.daily_budget)) say("campaign_budget", `the campaign's budget on Meta is ${money(campaign.daily_budget)} a day; the app sent ${money(rec.campaign.daily_budget)} — the next create puts it back unless the budget here is changed`, { meta: budgetFrom(campaign.daily_budget, currency), app: budgetFrom(rec.campaign.daily_budget, currency), fixable: true });
+    if (rec.campaign.daily_budget != null && campaign.daily_budget != null && Number(campaign.daily_budget) !== Number(rec.campaign.daily_budget)) say("campaign_budget", `the campaign's budget on Meta is ${money(campaign.daily_budget)} a day; the app sent ${money(rec.campaign.daily_budget)}. A create leaves Ads Manager's budget as it is until you choose`, { meta: budgetFrom(campaign.daily_budget, currency), app: budgetFrom(rec.campaign.daily_budget, currency), fixable: true, back: true });
   }
   for (const [callout, had] of Object.entries(rec.adsets || {})) {
     const live = (adsets || []).find((s) => s.id === had.id);
@@ -129,7 +129,7 @@ export function driftFrom({ record, campaign, adsets, ads, currency = "SGD", pre
     if (g) say("adset_gone", `ad set ${callout} is ${g.toLowerCase()} on Meta: the next create makes a new one and its ads again`, { callout });
     if (live.name && had.name && live.name !== had.name) say("adset_name", `ad set ${callout} is named "${live.name}" on Meta; the app sent "${had.name}" — the next create renames it back unless the ad set name here is changed to match`, { callout, meta: live.name, app: had.name, fixable: true });
     const appDaily = had.facts?.daily;
-    if (appDaily != null && live.daily_budget != null && budgetFrom(live.daily_budget, currency) !== Number(appDaily)) say("adset_budget", `ad set ${callout}'s budget on Meta is ${money(live.daily_budget)} a day; the app's setting is ${currency} ${appDaily} — the next create puts ${currency} ${appDaily} back unless the budget here is changed`, { callout, meta: budgetFrom(live.daily_budget, currency), app: Number(appDaily), fixable: true });
+    if (appDaily != null && live.daily_budget != null && budgetFrom(live.daily_budget, currency) !== Number(appDaily)) say("adset_budget", `ad set ${callout}'s budget on Meta is ${money(live.daily_budget)} a day; the app's setting is ${currency} ${appDaily}. A create leaves Ads Manager's budget as it is until you choose`, { callout, meta: budgetFrom(live.daily_budget, currency), app: Number(appDaily), fixable: true, back: true });
     // The place, ages, gender and detailed targeting changed by hand (2026-11-22; targeting-drift.mjs).
     if (!g) for (const t of targetingItems(callout, had, live.targeting, presets)) items.push(t);
   }
@@ -152,13 +152,25 @@ export function takeMetaValue(batchDir, item, { currency = "SGD" } = {}) {
   if (item.kind === "campaign_name") { if (typeof item.meta !== "string" || !item.meta) throw new Error("no name to take"); settings.campaign = { ...(settings.campaign || {}), name: item.meta }; if (rec?.campaign) rec.campaign.name = item.meta; }
   else if (item.kind === "campaign_budget") { if (!(Number(item.meta) > 0)) throw new Error("no budget to take"); settings.campaign = { ...(settings.campaign || {}), daily: Number(item.meta) }; if (rec?.campaign) rec.campaign.daily_budget = Math.round(Number(item.meta) * budgetUnits(currency)); }
   else if (item.kind === "adset_name") { if (!c || typeof item.meta !== "string" || !item.meta) throw new Error("no ad set name to take"); settings.adsets = { ...(settings.adsets || {}), [c]: { ...((settings.adsets || {})[c] || {}), name: item.meta } }; if (rec?.adsets?.[c]) rec.adsets[c].name = item.meta; }
-  else if (item.kind === "adset_budget") { if (!c || !(Number(item.meta) > 0)) throw new Error("no ad set budget to take"); settings.adsets = { ...(settings.adsets || {}), [c]: { ...((settings.adsets || {})[c] || {}), daily: Number(item.meta) } }; if (rec?.adsets?.[c]) rec.adsets[c].facts = { ...(rec.adsets[c].facts || {}), daily: Number(item.meta) }; }
+  else if (item.kind === "adset_budget") { if (!c || !(Number(item.meta) > 0)) throw new Error("no ad set budget to take"); settings.adsets = { ...(settings.adsets || {}), [c]: { ...((settings.adsets || {})[c] || {}), daily: Number(item.meta) } }; if (rec?.adsets?.[c]) { rec.adsets[c].facts = { ...(rec.adsets[c].facts || {}), daily: Number(item.meta) }; rec.adsets[c].daily_budget = Math.round(Number(item.meta) * budgetUnits(currency)); } }
   else throw new Error(`"${item.kind}" is not something to take from Meta`);
   settings.updated = new Date().toISOString();
   writeWhole(sp, JSON.stringify(settings, null, 2) + "\n");
   if (rec) writeWhole(rp, JSON.stringify(rec, null, 2) + "\n");
   if (results) { results.drift = (results.drift || []).filter((d) => !(d.kind === item.kind && (d.callout || null) === (c || null))); writeWhole(xp, JSON.stringify(results, null, 2) + "\n"); }
   return { settings, drift: results?.drift || [] };
+}
+
+/** Put the app's budget back (2026-11-23): Meta's budget is known and not wanted; the record of what was sent takes
+ *  Meta's figure, so the next create no longer sees a change made by hand and sends the app's own setting. */
+export function putBudgetBack(batchDir, item, { currency = "SGD" } = {}) {
+  if (!item?.back || !["campaign_budget", "adset_budget"].includes(item.kind) || !(Number(item.meta) > 0)) throw new Error("nothing to put back for that line");
+  const rp = join(batchDir, "publish.json"), xp = join(batchDir, "results.json"), rec = readJson(rp), results = readJson(xp), c = item.callout, raw = Math.round(Number(item.meta) * budgetUnits(currency)), at = new Date().toISOString();
+  if (item.kind === "campaign_budget") { if (!rec?.campaign) throw new Error("the campaign is not on the record"); Object.assign(rec.campaign, { daily_budget: raw, budget_back: at }); }
+  else { const had = rec?.adsets?.[c]; if (!had) throw new Error("that ad set is not on the record"); Object.assign(had, { daily_budget: raw, key: null, budget_back: at }); }
+  writeWhole(rp, JSON.stringify(rec, null, 2) + "\n");
+  if (results) { results.drift = (results.drift || []).filter((d) => !(d.kind === item.kind && (d.callout || null) === (c || null))); writeWhole(xp, JSON.stringify(results, null, 2) + "\n"); }
+  return { drift: results?.drift || [] };
 }
 
 /** Which copy wins (2026-10-11): the pulled per-text numbers tied back to the drafts that made them — each kept copy and

@@ -612,6 +612,16 @@ export async function createPlan(plan, { client: given, batchDir, record, log = 
     }
     if (rec.campaign?.id) {
       const want = { name: plan.campaign.name, ...(plan.campaign.daily_budget != null ? { daily_budget: plan.campaign.daily_budget, bid_strategy: plan.campaign.bid_strategy } : {}) };
+      // A budget changed by hand in Ads Manager is never overwritten (2026-11-23): left as it is there until the owner chooses.
+      if (want.daily_budget != null && rec.campaign.daily_budget != null && want.daily_budget !== rec.campaign.daily_budget) {
+        let liveBudget = null; try { liveBudget = (await client.get(rec.campaign.id, { fields: "daily_budget" }))?.daily_budget ?? null; } catch { /* a read that fails leaves the update as it was */ }
+        if (liveBudget != null && Number(liveBudget) !== Number(rec.campaign.daily_budget) && Number(liveBudget) !== Number(want.daily_budget)) {
+          const u = budgetUnits(plan.currency || "SGD");
+          (run.kept_on_meta ||= []).push({ campaign: true, parts: [{ kind: "campaign_budget", meta: Number(liveBudget) / u, app: want.daily_budget / u }] });
+          log(`· campaign: its budget was changed in Ads Manager (${plan.currency} ${Number(liveBudget) / u} a day, the app sent ${plan.currency} ${rec.campaign.daily_budget / u}) — left as it is there; choose on the Publish screen after a pull`);
+          delete want.daily_budget; delete want.bid_strategy;
+        }
+      }
       const changed = Object.entries(want).filter(([k, v]) => rec.campaign[k] !== v);
       if (changed.length) { await client.post(rec.campaign.id, Object.fromEntries(changed)); Object.assign(rec.campaign, Object.fromEntries(changed), { updated: new Date().toISOString() }); run.updated.campaign++; save(); log(`· campaign ${rec.campaign.id}: updated ${changed.map(([k]) => k).join(", ")}`); }
       else { run.reused.campaign++; log(`· campaign: already made (${rec.campaign.id}) — reused`); }
@@ -643,18 +653,24 @@ export async function createPlan(plan, { client: given, batchDir, record, log = 
         }
       }
       if (had?.id) {
+        const prevDaily = had.facts?.daily ?? null;
         had.facts = setFacts(set);
         if (had.key === key) { run.reused.adsets++; save(); log(`· ad set ${callout}: already made (${had.id}) — reused`); continue; }
         const { name, targeting, daily_budget, bid_strategy, bid_amount } = set.payload;
         // A change made by hand in Ads Manager is never overwritten (2026-11-22): the ad set keeps its targeting there until the owner chooses (Publish Ads or Review Data).
-        let live = null; try { live = (await client.get(had.id, { fields: "targeting" }))?.targeting || null; } catch { /* a read that fails leaves the update as it was */ }
+        let live = null, liveBudget = null; try { const got = await client.get(had.id, { fields: "targeting,daily_budget" }); live = got?.targeting || null; liveBudget = got?.daily_budget ?? null; } catch { /* a read that fails leaves the update as it was */ }
         const hand = changedByHand(had, live, presetsOf(resolve(batchDir, "..", "..")));
-        if (hand.length) { (run.kept_on_meta ||= []).push({ callout, parts: hand }); log(`· ad set ${callout}: its targeting was changed in Ads Manager (${hand.map((h) => `${h.meta}, the app sent ${h.app}`).join("; ")}) — left as it is there; choose on the Publish screen after a pull`); }
-        await client.post(had.id, { name, ...(hand.length ? {} : { targeting }), ...(daily_budget != null ? { daily_budget, bid_strategy } : {}), ...(bid_amount != null ? { bid_amount } : {}) });
-        Object.assign(had, { key: hand.length ? null : key, name, ...(hand.length ? {} : { targeting }), updated: new Date().toISOString() }); run.updated.adsets++; save(); log(`· ad set ${callout}: ${had.id} updated (targeting or budget changed)`);
+        // Its budget too (2026-11-23): what the app last sent (the record's, else its setting then) against Meta's now.
+        const u = budgetUnits(plan.currency || "SGD"), sentBudget = had.daily_budget ?? (prevDaily != null ? Math.round(prevDaily * u) : null);
+        const handBudget = daily_budget != null && liveBudget != null && sentBudget != null && Number(liveBudget) !== Number(sentBudget) && Number(liveBudget) !== Number(daily_budget);
+        if (handBudget) hand.push({ kind: "adset_budget", meta: `${plan.currency} ${Number(liveBudget) / u} a day`, app: `${plan.currency} ${sentBudget / u} a day` });
+        if (hand.length) { (run.kept_on_meta ||= []).push({ callout, parts: hand }); log(`· ad set ${callout}: changed in Ads Manager (${hand.map((h) => `${h.meta}, the app sent ${h.app}`).join("; ")}) — left as it is there; choose on the Publish screen after a pull`); }
+        const handTargeting = hand.some((h) => h.kind !== "adset_budget");
+        await client.post(had.id, { name, ...(handTargeting ? {} : { targeting }), ...(daily_budget != null && !handBudget ? { daily_budget, bid_strategy } : {}), ...(bid_amount != null ? { bid_amount } : {}) });
+        Object.assign(had, { key: hand.length ? null : key, name, ...(handTargeting ? {} : { targeting }), ...(handBudget ? { daily_budget: sentBudget } : daily_budget != null ? { daily_budget } : {}), updated: new Date().toISOString() }); run.updated.adsets++; save(); log(`· ad set ${callout}: ${had.id} updated (targeting or budget changed)`);
       } else {
         const r = await client.post(`${account}/adsets`, { ...set.payload, campaign_id: rec.campaign.id });
-        rec.adsets[callout] = { id: r.id, key, name: set.payload.name, targeting: set.payload.targeting, facts: setFacts(set), at: new Date().toISOString() }; run.made.adsets++; save();
+        rec.adsets[callout] = { id: r.id, key, name: set.payload.name, targeting: set.payload.targeting, ...(set.payload.daily_budget != null ? { daily_budget: set.payload.daily_budget } : {}), facts: setFacts(set), at: new Date().toISOString() }; run.made.adsets++; save();
         log(`· ad set ${callout}: ${r.id}`);
       }
     } catch (e) { fail("adset", callout, e); }

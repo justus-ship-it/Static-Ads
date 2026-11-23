@@ -4941,5 +4941,14 @@ test("U75 targeting changed in Ads Manager, through the panel (2026-11-22): the 
     const rev = (await (await call(`/api/client/${GYM}/account-review`)).json()); const d = JSON.stringify(rev).includes("adset_pin"); assert.ok(d, "Review Data carries the line");
     const [st, A] = await T({ kind: "adset_pin", callout: "BISHAN", side: "app" });
     assert.deepEqual([st, A.drift], [200, []]); const rec = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")).adsets.BISHAN; assert.deepEqual([rec.key, !!rec.put_back, rec.targeting.geo_locations.custom_locations.length], [null, true, 1]);
+    // A budget raised by hand (2026-11-23): both buttons on the page; Put the app's back marks the record; a name cannot be put back.
+    const budget = { kind: "adset_budget", callout: "BISHAN", meta: 120, app: 100, fixable: true, back: true, text: "ad set BISHAN's budget on Meta is SGD 120 a day; the app's setting is SGD 100. A create leaves Ads Manager's budget as it is until you choose" };
+    results(); { const xp = join(out, "results.json"), x = JSON.parse(readFileSync(xp, "utf-8")); x.drift = [budget, { kind: "adset_name", callout: "BISHAN", meta: "x", app: "n", fixable: true }]; writeFileSync(xp, JSON.stringify(x)); }
+    await open(`publish/${id}`, "!!document.querySelector('[data-drift-back=\"adset_budget\"]')");
+    assert.equal(await ev("document.querySelector('[data-drift=\"adset_budget\"]').textContent"), "Use Meta's budget");
+    assert.equal(await ev("document.querySelectorAll('[data-drift-back]').length"), 1, "a name has no Put the app's back");
+    assert.equal((await T({ kind: "adset_name", callout: "BISHAN", side: "app" }))[0], 400);
+    await ev("document.querySelector('[data-drift-back=\"adset_budget\"]').click(); true"); await until("!document.querySelector('[data-drift-back]') && !!PB.data");
+    const rb = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")).adsets.BISHAN; assert.deepEqual([rb.daily_budget, rb.key, !!rb.budget_back], [12000, null, true]);
   } finally { writeFileSync(pf, before); rmSync(join(g, "batches", id), { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); }
 });
