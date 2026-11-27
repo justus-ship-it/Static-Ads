@@ -67,7 +67,7 @@ import { correctName as correctTestimonialName, testimonialsView, testimonialAds
 /** Why a batch added or merged as it is cannot be run. */
 const noRunWhy = (brief) => (brief?.imported === MERGED ? MERGED_NO_RUN : FOOTAGE_NO_RUN);
 import { cutShoot, listCuts, hasWhisper } from "../skills/references/footage-cut.mjs";
-import { addFootageBatch } from "../skills/references/footage-video.mjs";
+import { addFootageBatch, holdVideo, heldVideos, dropHeld, addHeld, HELD_DIR, HELD_LIMITS, FOOTAGE_LIMITS, FOOTAGE_KINDS } from "../skills/references/footage-video.mjs";
 import { listShoots, readShoot as readFootageShoot, addShoot, editShoot, dropFile, syncFiles as syncFootage, buildSheet, decideSheet, matchFootage, scriptLines, MEDIA as FOOTAGE_MEDIA, USD_PER_FILE as FOOTAGE_USD_PER_FILE, SHOOT_LIMITS } from "../skills/references/footage-editor.mjs";
 import { validateBrief, sceneAudience, spreadFor, SPREAD_WISH, MAX_LOCATIONS, MAX_CALLS_CAP, MAX_PHOTOS, madeShape, batchMix, videoPlan, growOptions, growBatch } from "../skills/references/plan-offer-batch.mjs";
 import { ROOMS, libraryStatus, readLibrary, loadScenes, approveScenes, rejectScene, copyScenesFrom, isDraft, isRetired, AUDIENCES, SCENE_TAGS, SCENE_FORMATS, formatOf, mixProblems, allocateMix, mixName } from "../skills/references/scene-library.mjs";
@@ -1083,9 +1083,10 @@ const PREVIEW_LOOKS = [
 /** The formula family's preview: its three layouts, one style and pairing each. */
 const PREVIEW_FAMILIES = ["reference", "formula"];
 const FORMULA_PREVIEW = [
-  { id: "f1", label: "Callout / offer, left", treatment: "f1-callout-left", style: "fs1-heavy-italic", palette: "f-cream", photos: [0] },
-  { id: "f2", label: "Callout / offer, centred", treatment: "f2-callout-centre", style: "fs2-condensed", palette: "f-white-pink", photos: [1] },
-  { id: "f3", label: "Offer on a card", treatment: "f3-offer-card", style: "fs3-tall-sans", palette: "f-navy-red", photos: [0] },
+  // The layouts a new batch uses since 2026-11-24: the offer under the photo or beside the model, never on the model.
+  { id: "f1", label: "Offer under the photo, left", treatment: "f4-strip-left", style: "fs1-heavy-italic", palette: "f-cream", photos: [0] },
+  { id: "f2", label: "Offer under the photo, centred", treatment: "f5-strip-centre", style: "fs2-condensed", palette: "f-white-pink", photos: [1] },
+  { id: "f3", label: "Offer beside the model", treatment: "f6-offer-right", style: "fs3-tall-sans", palette: "f-navy-red", photos: [0] },
 ];
 let browserP = null, queue = Promise.resolve();
 const previews = new Map();
@@ -1342,6 +1343,7 @@ function allowedFile(rel) {
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === REFERENCES_DIR && parts.length === 4 && REFERENCE_NAME.test(parts[3])) base = join(BRANDS, parts[1], REFERENCES_DIR);
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "onboarding" && ["website", "instagram"].includes(parts[3]) && (IMAGE_EXT.has(ext) || (ext === ".svg" && parts[3] === "website" && parts[4] === "logos"))) base = join(BRANDS, parts[1], "onboarding", parts[3]);
   else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === "footage" && parts.length === 6 && ((parts[4] === "frames" && IMAGE_EXT.has(ext)) || (parts[4] === "cuts" && /^cut-\d+\.(mp4|jpg)$/.test(parts[5])))) base = join(BRANDS, parts[1], "footage"); // a shoot's frame sheets and its finished cuts (never the raw footage)
+  else if (parts[0] === "brands" && okSlug(parts[1]) && parts[2] === HELD_DIR && parts.length === 4 && /^u-[0-9a-f]{10}\.jpg$/.test(parts[3])) base = join(BRANDS, parts[1], HELD_DIR); // a waiting video's poster frame (2026-11-24); the video itself is not served until it is an ad
   else if (parts[0] === "swipe" && parts.length >= 3 && (ext === ".html" || IMAGE_EXT.has(ext))) base = SWIPE;
   if (!base) return null;
   const abs = parts[0] === "brands" ? join(base, ...parts.slice(parts[2] === "onboarding" ? 4 : 3)) : join(SWIPE, ...parts.slice(1));
@@ -2175,6 +2177,45 @@ const server = createServer(async (req, res) => {
         try { recordUse(dir, offer); } catch {}
         return json(res, 200, { ok: true, batch: r.batch_id, ads: r.ads });
       } catch (e) { return json(res, /^no such shoot/.test(e.message) ? 404 : 400, { error: e.message }); }
+    }
+    // ── Finished videos added from the page (2026-11-24) ──
+    // The owner drops finished videos — the gym's own cuts, or members' testimonials — on Generate Creatives; before, they
+    // went in by hand. GET /videos/held — the videos waiting, each with what stops it from being an ad of either kind, the
+    // words to start from (the last batch's, his to change) and the areas the gym has used; PUT /videos/held/{name} — one
+    // file, raw bytes (told by its first bytes; a MOV re-wrapped as MP4, nothing re-encoded; the same content never twice);
+    // DELETE /videos/held/{id} — off the list, to _trash; POST /videos/add { ids, kind, offer, locations, audience?,
+    // titles?, consent? } — the ticked videos as ONE new batch of ads (footage-video.mjs → addHeld). No model, no spend.
+    const hvm = p.match(/^\/api\/client\/([^/]+)\/videos\/(held|add)(?:\/([^/]{1,200}))?$/);
+    if (hvm) {
+      const [, gym, what, last] = hvm;
+      if (!okSlug(gym) || !existsSync(join(brandDir(gym), "gym-profile.json"))) return json(res, 400, { error: "bad gym" });
+      const dir = brandDir(gym);
+      const view = (extra = {}) => { const words = listBatches(gym)[0]?.words || {};
+        return { videos: heldVideos(dir).map(({ file, ...v }) => ({ ...v, poster: v.poster ? `/files/brands/${gym}/${HELD_DIR}/${v.poster}` : null })), ffmpeg: hasFfmpeg(), kinds: FOOTAGE_KINDS,
+          limits: { videos: FOOTAGE_LIMITS.videos, mb: Math.round(HELD_LIMITS.bytes / 1048576), seconds: FOOTAGE_LIMITS.seconds, width: { real: FOOTAGE_LIMITS.long_side, testimonial: FOOTAGE_LIMITS.testimonial_long_side } },
+          words: { offer: words.offer || "", locations: words.locations || [], audience: words.audience || "" }, used_locations: usedLocations(gym), ...extra }; };
+      try {
+        if (what === "held" && !last && req.method === "GET") return json(res, 200, view());
+        if (what === "held" && last && req.method === "PUT") {
+          if (!hasFfmpeg()) return json(res, 409, { error: "adding videos needs ffmpeg on this Mac: run `brew install ffmpeg` once in Terminal" });
+          let buf; try { buf = await readRaw(req, HELD_LIMITS.bytes); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
+          let name = last; try { name = decodeURIComponent(String(req.headers["x-original-name"] || last)); } catch {}
+          const r = holdVideo(dir, name, buf);
+          return json(res, 200, view({ held: r.video.id, already: r.already }));
+        }
+        if (what === "held" && last && req.method === "DELETE") { dropHeld(dir, last); return json(res, 200, view()); }
+        if (what === "add" && !last && req.method === "POST") {
+          const body = await readBody(req), str = (v) => (typeof v === "string" ? v.trim() : "");
+          const offer = str(body.offer), locations = (Array.isArray(body.locations) ? body.locations : []).map(str).filter(Boolean), audience = str(body.audience) || null, kind = FOOTAGE_KINDS.includes(body.kind) ? body.kind : null;
+          if (!kind) return json(res, 400, { error: "say what these videos are: the gym's own videos, or members' testimonials" });
+          if (!offer || !locations.length) return json(res, 400, { error: "say the offer and the area these adverts are for: they are your words, never filled in" });
+          const r = addHeld({ brandDir: dir, ids: Array.isArray(body.ids) ? body.ids.map(String) : [], kind, offer, locations, audience, titles: body.titles && typeof body.titles === "object" ? body.titles : {}, consent: kind === "testimonial" ? { by: str(body.consent?.by) } : null });
+          try { recordUse(dir, offer); } catch {}
+          try { savePicks(gym, r.batch_id, {}); } catch {}
+          return json(res, 200, { ok: true, batch: r.batch_id, ads: r.ads, videos: r.videos, kind });
+        }
+        return json(res, 405, { error: "method not allowed" });
+      } catch (e) { return json(res, 400, { error: e.message }); }
     }
     const ftm = p.match(/^\/api\/client\/([^/]+)\/footage(?:\/([a-z0-9][a-z0-9-]{2,60})(?:\/file\/([^/]{1,160}))?)?$/);
     if (ftm) {

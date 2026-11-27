@@ -19,7 +19,7 @@ import { launchBrowser, loadCatalogue, renderComposite } from "./render-composit
 import { fitLayouts } from "./check-visual.mjs";
 import { assignVariants } from "./assign-variants.mjs";
 import { cropImage } from "./clean-photo.mjs";
-import { ageTargets, ageBand, spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, growBatch, growOptions, madeLooks, madeShape, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
+import { ageTargets, ageBand, spreadFor, scenePool, SPREAD_WISH, validateBrief, sceneAudience, planVisuals, primaryLayouts, loadScenes, adFolders, resolveSelections, runBatch, growBatch, growOptions, madeLooks, madeLayouts, madeShape, slug, sceneProblems, sceneWarnings, CHECKS_VERSION, loadRulings, withRulings, MAX_CALLS_CAP } from "./plan-offer-batch.mjs";
 const sceneProblemsOf = (s) => sceneProblems(s).join("; ");
 import { poseProblem } from "./visual-prompts.mjs";
 import { rejectScene } from "./scene-library.mjs";
@@ -891,17 +891,27 @@ test("B11 a formula batch at 4:5 (2026-11-10); every new batch is 4:5 and a squa
     const r = await runBatch({ brandDir: dir, brief, deps, log: (m) => logs.push(m) });
     assert.deepEqual([...new Set(calls)], ["4:5"], "every photo is asked for at the feed shape");
     assert.deepEqual([r.batch.ratio, r.batch.look, r.batch.ads.length, r.batch.failed.length], ["4x5", "formula", 3 * 2, 0], logs.join(" | "));
-    assert.ok(r.batch.ads.every((a) => /^f[123]-/.test(a.treatment) && /^fs[123]-/.test(a.style) && /^f-/.test(a.palette) && a.ratio === "4x5" && /\/4x5\/c\d\d-jurong-west_4x5_v1\.png$/.test(a.file)), JSON.stringify(r.batch.ads.map((a) => [a.treatment, a.style, a.palette, a.file])));
+    // (Since 2026-11-24 a new formula batch uses the layouts whose words keep off the model, f4–f7; these photos fill the middle of the frame, so each takes the two strip looks.)
+    assert.ok(r.batch.ads.every((a) => /^f[45]-strip-/.test(a.treatment) && /^fs[123]-/.test(a.style) && /^f-/.test(a.palette) && a.ratio === "4x5" && /\/4x5\/c\d\d-jurong-west_4x5_v1\.png$/.test(a.file)), JSON.stringify(r.batch.ads.map((a) => [a.treatment, a.style, a.palette, a.file])));
     const png = readFileSync(join(r.out, r.batch.ads[0].file));
     assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1080, 1350]);
-    assert.ok(r.batch.photos.every((p) => /^f[123]-/.test(p.primary) && Object.keys(p.fit).every((k) => /^f[123]-/.test(k))), "each photo is made for, and fitted against, the family's own layouts only");
+    assert.ok(r.batch.photos.every((p) => (p.primary === null || /^f[4567]-/.test(p.primary)) && Object.keys(p.fit).every((k) => /^f[1-7]-/.test(k))), "each photo is made for a layout of the new set, and fitted against the family's own layouts only");
+    assert.ok(r.batch.ads.every((a) => a.body_cover === 0), "no word on the model: " + JSON.stringify(r.batch.ads.map((a) => a.body_cover)));
+    // A batch made with the family's first three layouts keeps exactly that set on any later run (the owner: the existing look stays).
+    const oldOut = join(dir, "outputs", "formula-old"); mkdirSync(oldOut, { recursive: true });
+    writeFileSync(join(oldOut, "visuals.json"), JSON.stringify({ visuals: [{ id: "g01", treatment: "f1-callout-left" }] })); writeFileSync(join(oldOut, "progress.json"), JSON.stringify({ stage: "stopped", ratio: "4x5" }));
+    assert.deepEqual(madeLayouts(oldOut), ["f1-callout-left"]);
+    const ro = await runBatch({ brandDir: dir, brief: { ...brief, batch_id: "formula-old" }, deps, log: () => {} });
+    assert.deepEqual([ro.batch.ads.length, ro.batch.ads.every((a) => /^f[123]-/.test(a.treatment)), ro.batch.photos.every((p) => /^f[123]-/.test(p.primary))], [6, true, true], JSON.stringify(ro.batch.ads.map((a) => a.treatment)));
+    const ro2 = await runBatch({ brandDir: dir, brief: { ...brief, batch_id: "formula-old", offer: "8 Week Body Reset" }, renderOnly: true, deps, log: () => {} });
+    assert.deepEqual(ro2.batch.ads.map((a) => [a.folder, a.treatment, a.style, a.palette]), ro.batch.ads.map((a) => [a.folder, a.treatment, a.style, a.palette]), "new words on it: the same looks");
     assert.ok(new Set(r.batch.ads.filter((a) => a.photos[0] === "g01").map((a) => a.treatment)).size === 2, "two looks of a photo never share a layout");
     // The gym's Ad defaults stand in for a brief that names neither.
     const pf = join(dir, "gym-profile.json"), profile = JSON.parse(readFileSync(pf, "utf-8"));
     writeFileSync(pf, JSON.stringify({ ...profile, creative_defaults: { look: "formula", ratio: "4x5" } }));
     const { look, ratio, ...plain } = brief;
     const r2 = await runBatch({ brandDir: dir, brief: { ...plain, batch_id: "formula-default" }, deps, log: () => {} });
-    assert.deepEqual([r2.batch.ratio, r2.batch.look, r2.batch.ads.every((a) => /^f[123]-/.test(a.treatment))], ["4x5", "formula", true]);
+    assert.deepEqual([r2.batch.ratio, r2.batch.look, r2.batch.ads.every((a) => /^f[4567]-/.test(a.treatment))], ["4x5", "formula", true]);
     // A brief may still ask for the reference set — at 4:5 like every feed ad (the owner's rule, 2026-11-10: 4:5 and 9:16 only).
     const r3 = await runBatch({ brandDir: dir, brief: { ...plain, batch_id: "reference-again", look: "reference" }, deps, log: () => {} });
     assert.deepEqual([r3.batch.ratio, r3.batch.look, r3.batch.ads.every((a) => /^t\d-/.test(a.treatment) && /\/4x5\/c\d\d-jurong-west_4x5_v1\.png$/.test(a.file))], ["4x5", "reference", true]);

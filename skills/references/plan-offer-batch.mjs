@@ -475,7 +475,7 @@ export function growBatch({ brandDir, brief, add, outDir = null, scenesPath = nu
   // An advert for anyone leans toward women across the whole batch: the new photos make up what the ones it has are short of.
   const womenHave = old.filter((v) => whoIn(v.scene) === "women").length;
   const womenTarget = audience === "any" ? Math.max(0, Math.min(n, Math.round(WOMEN_SHARE * (old.length + n)) - womenHave)) : null;
-  const extra = planVisuals({ count: n, scenes, audience, seed, catalogue, ratio, exclude: excludeFromProfile(profile.creative, { ratio, catalogue }), ages: ageTargets({ range: brief.age_range, count: n, seed }), mix: add, lean: brief.lean || [], womenTarget })
+  const extra = planVisuals({ count: n, scenes, audience, seed, catalogue, ratio, exclude: excludeFromProfile(profile.creative, { ratio, catalogue, made: old.map((v) => v.treatment) }), ages: ageTargets({ range: brief.age_range, count: n, seed }), mix: add, lean: brief.lean || [], womenTarget })
     .map((v, i) => ({ ...v, id: `g${String(old.length + i + 1).padStart(2, "0")}` }));
   const mix = {}; for (const v of [...old, ...extra]) mix[v.format || "workout"] = (mix[v.format || "workout"] || 0) + 1;
   const spendPath = join(out, "spend.json"), spent = existsSync(spendPath) ? JSON.parse(readFileSync(spendPath, "utf-8")).image_calls : JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).image_calls ?? 0;
@@ -489,6 +489,14 @@ export function growBatch({ brandDir, brief, add, outDir = null, scenesPath = nu
   return { brief: next, added: extra, spent, calls: next.max_calls - spent, total };
 }
 /** The looks a batch has already made, from its batch.json: one per photo ad's candidate whose photos are all still in the batch. */
+/** The layouts a batch's photos and ads already use (its photo plan and its record): what `excludeFromProfile({ made })` reads. */
+export function madeLayouts(outDir) {
+  const read = (f) => { try { return JSON.parse(readFileSync(join(outDir, f), "utf-8")); } catch { return null; } };
+  const plan = read("visuals.json"), batch = read("batch.json");
+  const planned = Array.isArray(plan) ? plan : Array.isArray(plan?.visuals) ? plan.visuals : [];
+  return [...new Set([...planned.map((v) => v?.treatment), ...(batch?.ads || []).map((a) => a?.treatment)].filter((t) => typeof t === "string"))];
+}
+
 export function madeLooks(old, photos) {
   const ids = new Set(photos.map((p) => p.id)), seen = new Map();
   for (const a of old?.ads || []) if (a.photos?.length && !a.card && !a.video && a.photos.every((id) => ids.has(id)) && !seen.has(a.candidate)) seen.set(a.candidate, { id: a.candidate, visual: a.photos[0], images: a.photos, treatment: a.treatment, style: a.style, palette: a.palette });
@@ -740,7 +748,9 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
   const mix = batchMix(brief, profile), format = mixName(mix) || brief.format || "workout";
   const made = madeShape(out);
   const ratio = made || brief.ratio || profile.creative_defaults?.ratio || CREATIVE_DEFAULTS.ratio;
-  const exclude = excludeFromProfile(profile.creative, { ratio, catalogue });
+  const exclude = excludeFromProfile(profile.creative, { ratio, catalogue, made: madeLayouts(out) });
+  // A formula batch made before its words kept off the model keeps the layouts — and the rules — it was made with.
+  const keepsOld = look === "formula" && madeLayouts(out).some((id) => (catalogue.treatments.feed_default_off || []).includes(id));
   if (made && brief.ratio && brief.ratio !== made) log(`· this batch was made at ${made.replace("x", ":")} and keeps that shape (the brief asked for ${brief.ratio.replace("x", ":")})`);
   mkdirSync(out, { recursive: true });
   const at = (p) => (existsSync(join(brandDir, "brand-assets", p)) ? join(brandDir, "brand-assets", p) : resolve(p));
@@ -890,7 +900,7 @@ export async function runBatch({ brandDir, brief, outDir = null, dryRun = false,
         visuals: todo, text: texts[0], photography, brandNames, outDir: visualsDir, ratio, shotGuide: deps.shotGuide !== undefined ? deps.shotGuide : readShotGuide(),
         refs: reference ? [at(reference)] : [], roomRefs: Object.fromEntries(Object.entries(profile.creative_defaults?.room_references || {}).filter(([, p]) => typeof p === "string" && existsSync(at(p))).map(([k, p]) => [k, at(p)])), maxCalls: left, attempts: plan.attempts,
         // On the feed shape of the reference family the words keep off the model: a photo that misses its own layout is kept for a place that fits, not made again.
-        layoutRetry: !(ratio === "4x5" && look !== "formula"),
+        layoutRetry: !(ratio === "4x5" && (look !== "formula" || !keepsOld)),
         // The gym's image model (creative_defaults.image_model, Pro by default); tests inject their own.
         generate: deps.generate || ((p, parts, o) => generateImage(p, parts, { ...o, model: imageModelFor(profile) })), check, ...(deps.checkRef ? { checkRef: deps.checkRef } : {}), ...(deps.compositor !== undefined ? { compositor: deps.compositor } : {}), log,
         onProgress: (e) => {

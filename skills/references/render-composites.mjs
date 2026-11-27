@@ -149,7 +149,8 @@ export function loadCatalogue({ look = "reference" } = {}) {
   const withStories = (map) => { for (const [id, v] of Object.entries(T.stories_treatments || {})) Object.defineProperty(map, id, { value: v, enumerable: false }); return map; };
   return {
     look,
-    treatments: { ...T, treatments: withStories(family(T.treatments, F.treatments)) },
+    // Each family names the layouts a new feed-shape batch leaves out (feed_default_off): the reference set's are in its own file, the formula family's in its own.
+    treatments: { ...T, treatments: withStories(family(T.treatments, F.treatments)), ...(look === "formula" ? { feed_default_off: F.feed_default_off || [] } : {}) },
     palettes: { ...P, palettes: family(P.palettes, F.palettes) },
     styles: { ...S, styles: family(S.styles, F.styles) },
   };
@@ -520,12 +521,15 @@ export function buildSpec({ image, images, faces, people = null, text, treatment
     // The people in a single photo ([ymin, xmin, ymax, xmax], 0–1000, from the visual check) and how much of the person
     // below the face the words may cover (the reference family, one photo under the words: the catalogue's body_cover).
     people: validPeople(people),
-    body_cover_max: tr.family !== "formula" && ((ratio === "4x5" && !layout.background?.type) || layout.no_touch === true) && typeof T.body_cover?.max === "number" ? T.body_cover.max : null,
+    // The formula family's first three layouts (f1–f3) are outside the rule and keep the look they were made with; its
+    // newer ones ask for it themselves (no_touch, 2026-11-24).
+    body_cover_max: ((tr.family !== "formula" && ratio === "4x5" && !layout.background?.type) || layout.no_touch === true) && typeof T.body_cover?.max === "number" ? T.body_cover.max : null,
     background: layout.background || { type: "single" },
     images: photos.slice(0, layout.background?.type === "panels" ? need : undefined).map(imageDataUrl),
     // Where each photo is cropped: one [fx, fy] for a single photo, or one per photo for a collage or
     // panels ad (each photo's own crop from its visual check). Unset photos crop at the centre.
-    focus: validFocus(focus)[0] || [0.5, 0.5],
+    // A photo over a strip whose own top carries words (the formula family's callout) is shown from its top edge down unless a crop is given: only what falls below is cut.
+    focus: validFocus(focus)[0] || (layout.background?.type === "split" && layout.groups.some((g) => g.region[1] + g.region[3] <= (layout.background.photo_y_pct || 0) + layout.background.photo_h_pct) ? [0.5, 0] : [0.5, 0.5]),
     focus_images: validFocus(focus),
     text,
     debug, // review overlay only; drawn after measurement, never affects layout or checks

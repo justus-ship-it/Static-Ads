@@ -134,11 +134,13 @@ export function floatedAreaBoxes(treatment, ratio, faces, catalogue = loadCatalo
   return placedRegions(L, pctFaces, (T.safe_area?.[ratio] || [5, 5, 90, 90])[1]).map(([x, y, w, h]) => [y * 10, x * 10, (y + h) * 10, (x + w) * 10]);
 }
 /** A layout's text areas once its side columns are fitted to the people (avoidRegion): boxes on the ad, 0–1000. `people` is their box on the ad, same scale. */
-export function avoidedAreaBoxes(treatment, ratio, people, catalogue = loadCatalogue()) {
-  const T = catalogue.treatments, L = layoutFor(T.treatments[treatment], ratio, T);
+export function avoidedAreaBoxes(treatment, ratio, people, catalogue = loadCatalogue(), faces = []) {
+  const T = catalogue.treatments, L = layoutFor(T.treatments[treatment], ratio, T), m = 0.04;
+  // A layout may fit one group beside the people and float another clear of the faces (the formula family's side looks: the callout across the top).
+  const pctFaces = (faces || []).map(([y0, x0, y1, x1]) => { const w = (x1 - x0) / 10, h = (y1 - y0) / 10; return { x: Math.max(0, x0 / 10 - m * w), y: Math.max(0, y0 / 10 - m * h), w: w * (1 + 2 * m), h: h * (1 + 2 * m) }; });
   const c = people ? [Math.max(0, people[0]), Math.max(0, people[1]), Math.min(1000, people[2]), Math.min(1000, people[3])] : null;
   const zone = c && c[2] > c[0] && c[3] > c[1] ? [{ x: c[1] / 10, y: c[0] / 10, w: (c[3] - c[1]) / 10, h: (c[2] - c[0]) / 10 }] : [];
-  return placedFor(L, [], (T.safe_area?.[ratio] || [5, 5, 90, 90])[1], zone).map(([x, y, w, h]) => [y * 10, x * 10, (y + h) * 10, (x + w) * 10]);
+  return placedFor(L, pctFaces, (T.safe_area?.[ratio] || [5, 5, 90, 90])[1], zone).map(([x, y, w, h]) => [y * 10, x * 10, (y + h) * 10, (x + w) * 10]);
 }
 const valid = (b) => Array.isArray(b) && b.length === 4 && b[2] > b[0] && b[3] > b[1];
 /** How much of the people's box a photo over a panel may leave out of its window (a single full-frame photo: a tenth). */
@@ -205,12 +207,13 @@ const clip1000 = ([y0, x0, y1, x1]) => [Math.max(0, y0), Math.max(0, x0), Math.m
  * Prefers, in order: no face cut off, little of the people cut off, the layout's placement rule
  * met, no face under a text area, the crop nearest the centre.
  */
-export function bestCrop({ imageSize: [iw, ih], canvas: [W, H], people, faces = [], areas: areasIn, rule }) {
+export function bestCrop({ imageSize: [iw, ih], canvas: [W, H], people, faces = [], areas: areasIn, rule, keepTop = false }) {
   const s = Math.max(W / iw, H / ih), visW = W / s, visH = H / s, roomX = iw - visW, roomY = ih - visH;
   const steps = (room) => (room > 1 ? Array.from({ length: 41 }, (_, i) => i / 40) : [0.5]);
   const onAd = (fx, fy) => ([y0, x0, y1, x1]) => [((y0 / 1000) * ih - fy * roomY) / visH * 1000, ((x0 / 1000) * iw - fx * roomX) / visW * 1000, ((y1 / 1000) * ih - fy * roomY) / visH * 1000, ((x1 / 1000) * iw - fx * roomX) / visW * 1000];
   let best = null;
-  for (const fx of steps(roomX)) for (const fy of steps(roomY)) {
+  // keepTop: the photo is shown from its top edge down (a photo over a strip whose own top carries the callout): only what falls below is cut.
+  for (const fx of steps(roomX)) for (const fy of keepTop ? [0] : steps(roomY)) {
     const m = onAd(fx, fy), P = people && m(people), F = faces.map(m);
     const areas = typeof areasIn === "function" ? areasIn(F, P) : areasIn; // a floating layout's areas depend on where the faces land; a fitted column's on where the people do
     const cut = P ? 1 - area(clip1000(P)) / area(P) : 0;
@@ -252,15 +255,19 @@ export function judgeVisual(answer, { treatment, ratio = "1x1", expectPeople = t
   // of the frame — against only the words that sit on it (an area line across the top), in that window's own scale.
   const split = kind === "split" ? layout.background.photo_h_pct : null;
   // A layout whose groups float is judged where the renderer will really put them for these faces.
-  const areas = split ? textAreaBoxes(treatment, ratio, catalogue).filter((a) => a[2] <= split * 10 + 1).map(([y0, x0, y1, x1]) => [(y0 * 100) / split, x0, (y1 * 100) / split, x1])
-    : layout.groups.some((g) => g.avoid) ? (F, P) => avoidedAreaBoxes(treatment, ratio, P, catalogue)
+  // (Words on the photo of a split — the formula family's callout — float clear of the faces as on any photo: the faces, in
+  // the window's scale, are put back on the canvas's, and the areas that come back into the window's.)
+  const onPhoto = (boxes) => boxes.filter((a) => a[2] <= split * 10 + 1).map(([y0, x0, y1, x1]) => [(y0 * 100) / split, x0, (y1 * 100) / split, x1]);
+  const still = split ? onPhoto(textAreaBoxes(treatment, ratio, catalogue)) : null;
+  const areas = split ? (still.length && layout.groups.some((g) => g.float) ? (F) => onPhoto(floatedAreaBoxes(treatment, ratio, F.map(([y0, x0, y1, x1]) => [(y0 * split) / 100, x0, (y1 * split) / 100, x1]), catalogue)) : still)
+    : layout.groups.some((g) => g.avoid) ? (F, P) => avoidedAreaBoxes(treatment, ratio, P, catalogue, F)
     : layout.groups.some((g) => g.float) ? (F) => floatedAreaBoxes(treatment, ratio, F, catalogue) : textAreaBoxes(treatment, ratio, catalogue);
   const faces = (answer.face_boxes || []).filter(valid);
   const people = valid(answer.people_box) ? answer.people_box : null;
-  const rule = kind === "panels" ? "circle" : kind === "collage" ? "none" : split ? (areas.length ? "subject-area" : "none") : describeSubjectArea(layout, { canvas: catalogue.treatments.canvas[ratio], covered: coveredSpans(ratio, catalogue.treatments) }) ? "subject-area" : "none";
+  const rule = kind === "panels" ? "circle" : kind === "collage" ? "none" : split ? (still.length ? "subject-area" : "none") : describeSubjectArea(layout, { canvas: catalogue.treatments.canvas[ratio], covered: coveredSpans(ratio, catalogue.treatments) }) ? "subject-area" : "none";
   // A single photo is judged at its best crop (a square photo in a square ad has only one).
   const [CW, CH] = catalogue.treatments.canvas[ratio], shown = split ? [CW, Math.round((CH * split) / 100)] : [CW, CH];
-  const crop = kind === "single" || split ? bestCrop({ imageSize: size || shown, canvas: shown, people, faces, areas, rule }) : null;
+  const crop = kind === "single" || split ? bestCrop({ imageSize: size || shown, canvas: shown, people, faces, areas, rule, keepTop: !!split && still.length > 0 }) : null;
   const under = crop ? crop.under : 0;
   const facesUnderArea = crop ? crop.facesUnder : 0;
   // Placement is judged for the layout the photo was composed for; the batch's fit stage judges every
@@ -405,7 +412,7 @@ export function fitLayouts(answer, { ratio = "1x1", imageSize: size = null, expe
   const placementOnly = { ...answer, text_items: [], excluded_items: [] };
   return Object.fromEntries(Object.keys(catalogue.treatments.treatments).map((id) => {
     // On the feed shape a look is open to a photo only where its words keep off the model (the catalogue's body_cover; the reference family).
-    const T = catalogue.treatments, bodyMax = ratio === "4x5" && T.treatments[id].family !== "formula" && typeof T.body_cover?.max === "number" ? T.body_cover.max : null;
+    const T = catalogue.treatments, bodyMax = ((ratio === "4x5" && T.treatments[id].family !== "formula") || layoutFor(T.treatments[id], ratio, T)?.no_touch === true) && typeof T.body_cover?.max === "number" ? T.body_cover.max : null;
     const j = judgeVisual(placementOnly, { treatment: id, ratio, expectPeople, maxPeople, imageSize: size, bodyMax, catalogue });
     return [id, { ok: j.ok, focus: j.focus, rule: j.placement.rule, failures: j.failures }];
   }));

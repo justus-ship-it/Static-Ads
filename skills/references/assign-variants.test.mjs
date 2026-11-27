@@ -237,10 +237,11 @@ test("AW the words' weight (2026-11-11): when a gym's results favour larger word
   const only = assignVariants({ visuals, perVisual: 1, text: {}, seed: "aw", catalogue: ref, ratio: "4x5", words: 1, allowed: Object.fromEntries(visuals.map((v) => [v.id, [least]])) });
   assert.ok(only.candidates.every((c) => c.treatment === least));
   // The formula family: its layouts give the words the same room, so the weight goes by the styles' measured cover.
-  const fm = loadCatalogue({ look: "formula" }), FT = fm.treatments, fl = Object.keys(FT.treatments), styles = Object.keys(fm.styles.styles);
+  // (Its first three layouts: the ones of 2026-11-24, whose offer sits under or beside the photo, are left out here.)
+  const fm = loadCatalogue({ look: "formula" }), FT = fm.treatments, fl = FT.feed_default_off, later = Object.keys(FT.treatments).filter((la) => !fl.includes(la)), styles = Object.keys(fm.styles.styles);
   assert.equal(new Set(fl.map((la) => layoutWordsArea(FT.treatments[la], "4x5", FT))).size, 1, "the same room in all three");
   const four = Array.from({ length: styles.length + 1 }, (_, i) => ({ id: "p" + (i + 1) }));
-  const fr = (words, measured) => assignVariants({ visuals: four, perVisual: 1, text: {}, seed: "aw", catalogue: fm, ratio: "4x5", words, measured });
+  const fr = (words, measured) => assignVariants({ visuals: four, perVisual: 1, text: {}, seed: "aw", catalogue: fm, ratio: "4x5", words, measured, exclude: { layouts: later } });
   const big = styles[1], small = styles[0], measured = { layouts: {}, styles: Object.fromEntries(styles.map((st) => [st, st === big ? 0.24 : st === small ? 0.11 : 0.17])) };
   assert.deepEqual([uses(fr(1, measured), "style")[big], uses(fr(-1, measured), "style")[small]], [2, 2], JSON.stringify([uses(fr(1, measured), "style"), uses(fr(-1, measured), "style")]));
   assert.deepEqual(fr(1, null).candidates, fr(0, null).candidates, "nothing measured yet, and the same room in every layout: no weight to give");

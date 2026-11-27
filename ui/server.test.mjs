@@ -11,7 +11,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync, symlinkSync, cpSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync, symlinkSync, cpSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -4951,4 +4951,65 @@ test("U75 targeting changed in Ads Manager, through the panel (2026-11-22): the 
     await ev("document.querySelector('[data-drift-back=\"adset_budget\"]').click(); true"); await until("!document.querySelector('[data-drift-back]') && !!PB.data");
     const rb = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")).adsets.BISHAN; assert.deepEqual([rb.daily_budget, rb.key, !!rb.budget_back], [12000, null, true]);
   } finally { writeFileSync(pf, before); rmSync(join(g, "batches", id), { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); }
+});
+
+test("U76 Add finished videos, from the page (2026-11-24): a dropped file is kept once, told by its first bytes, and says what stops it from being an ad; the dialog on Generate Creatives lists the videos waiting, ticks the ones that can go, takes the offer and the area as the owner's words, and adds them as one new batch that opens on Pick Ads; a testimonial is not added without the owner's word on consent; the whole country, no offer and a wrong token are refused", async () => {
+  const g = join(brands, GYM), held = join(g, "video-uploads"), tmp = mkdtempSync(join(tmpdir(), "u76-"));
+  const made = () => readdirSync(join(g, "batches")).filter((id) => /-(videos|testimonials)-u76-/.test(id));
+  const clip = (file, { w = 1080, h = 1920, seconds = 4 } = {}) => execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `testsrc=size=${w}x${h}:rate=10:duration=${seconds}`, "-f", "lavfi", "-i", `sine=frequency=300:duration=${seconds}`, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", file]);
+  const put = async (name, body, token = panel.token) => { const r = await fetch(`${panel.url}/api/client/${GYM}/videos/held/${encodeURIComponent(name)}`, { method: "PUT", headers: { "content-type": "application/octet-stream", ...(token ? { "x-panel-token": token } : {}), "x-original-name": encodeURIComponent(name) }, body }); return [r.status, await r.json()]; };
+  try {
+    const good = join(tmp, "Coach intro.mp4"), wide = join(tmp, "wide.mp4"), small = join(tmp, "member.mp4"); clip(good); clip(wide, { w: 1920, h: 1080 }); clip(small, { w: 720, h: 1280, seconds: 5 });
+    const first = await (await call(`/api/client/${GYM}/videos/held`)).json();
+    assert.deepEqual([first.videos, first.limits.videos, first.kinds, first.ffmpeg], [[], 12, ["real", "testimonial"], true]);
+    assert.equal((await put("Coach intro.mp4", readFileSync(good), "wrong"))[0], 403);
+    assert.match((await put("notes.mp4", Buffer.from("words, not a video file, whatever it is called")))[1].error, /an MP4 or a MOV file/);
+    const [s1, a] = await put("Coach intro.mp4", readFileSync(good)); assert.deepEqual([s1, a.already, a.videos.length, a.videos[0].problems.real], [200, false, 1, []]);
+    assert.equal((await put("Coach intro copy.mp4", readFileSync(good)))[1].already, true);
+    const [, b] = await put("wide.mp4", readFileSync(wide)); assert.match(b.videos.find((v) => v.id === b.held).problems.real.join("; "), /a video ad here is 9:16/);
+    const [, c] = await put("member.mp4", readFileSync(small)); assert.equal(c.videos.length, 3);
+    assert.equal((await fetch(`${panel.url}${a.videos[0].poster}`)).status, 200, "a waiting video's poster frame is served");
+    assert.equal((await fetch(`${panel.url}/files/brands/${GYM}/video-uploads/${a.held}.mp4`)).status, 404, "the video itself is not, until it is an ad");
+    const add = async (body, extra = {}) => { const r = await call(`/api/client/${GYM}/videos/add`, { method: "POST", body, ...extra }); return [r.status, await r.json()]; };
+    assert.equal((await add({ ids: [a.held], kind: "real", offer: "U76 Reset", locations: ["BISHAN"] }, { token: "wrong" }))[0], 403);
+    assert.match((await add({ ids: [a.held], kind: "real", offer: "", locations: ["BISHAN"] }))[1].error, /say the offer and the area/);
+    assert.match((await add({ ids: [a.held], kind: "real", offer: "U76 Reset", locations: ["SINGAPORE"] }))[1].error, /whole country/);
+    assert.match((await add({ ids: [c.held], kind: "testimonial", offer: "U76 Reset", locations: ["BISHAN"] }))[1].error, /say who confirmed that each person agreed/);
+    assert.match((await add({ ids: [a.held], kind: "film", offer: "U76 Reset", locations: ["BISHAN"] }))[1].error, /say what these videos are/);
+    assert.deepEqual(made(), [], "nothing was written by a refusal");
+    // The dialog.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u76${Math.random()}#/${GYM}/batch` }, sessionId); await loaded;
+    await until("!!document.querySelector('#avOpen')");
+    await ev("document.querySelector('#avOpen').click(); true"); await until("document.querySelectorAll('#avList [data-av]').length === 3");
+    assert.deepEqual(await ev("[...document.querySelectorAll('#avList [data-av]')].map(r => [r.dataset.usable, r.querySelector('input[type=checkbox]').checked, r.querySelector('input[type=checkbox]').disabled, !!r.querySelector('[data-av-why]')])"),
+      [["1", true, false, false], ["0", false, true, true], ["0", false, true, true]], "the upright 1080 video is ticked; the wide one and the small one say why they cannot go as the gym's own video");
+    assert.match(await ev("document.querySelector('#avGo').textContent"), /Add 1 video as ads/);
+    // The words start from the gym's last batch and are the owner's to change; with no offer the button says why.
+    await ev("(() => { const o = document.querySelector('#avOffer'); o.value = ''; o.dispatchEvent(new Event('input')); })(); true");
+    assert.deepEqual(await ev("[document.querySelector('#avGo').disabled, document.querySelector('#avWhy').textContent]"), [true, "Type the offer these adverts are for."]);
+    await ev("(() => { const o = document.querySelector('#avOffer'); o.value = 'U76 Reset'; o.dispatchEvent(new Event('input')); })(); true");
+    // Testimonials: the small one may go, and nothing goes without the word on consent.
+    await ev("document.querySelector('input[name=avKind][value=testimonial]').click(); true"); await until("!!document.querySelector('#avConsent')");
+    assert.deepEqual(await ev("[[...document.querySelectorAll('#avList [data-av]')].map(r => r.dataset.usable).join(''), document.querySelector('#avGo').disabled, /who confirmed/.test(document.querySelector('#avWhy').textContent)]"), ["101", true, true]);
+    await ev("document.querySelector('input[name=avKind][value=real]').click(); true"); await until("!document.querySelector('#avConsent')");
+    // An area: the gym's used ones as chips, or typed.
+    await ev("(() => { for (const b of document.querySelectorAll('#avAreas .chip.sel')) b.click(); })(); true");
+    await until("document.querySelector('#avGo').disabled"); assert.equal(await ev("document.querySelector('#avWhy').textContent"), "Pick or type the area around the gym.");
+    await ev("(() => { const o = document.querySelector('#avArea'); o.value = 'u76 town'; o.dispatchEvent(new Event('input')); })(); true");
+    await ev("(() => { const t = document.querySelector('#avList [data-av-title]'); t.value = 'The coach says hello'; t.dispatchEvent(new Event('input')); })(); true");
+    assert.equal(await ev("document.querySelector('#avGo').disabled"), false);
+    await ev("document.querySelector('#avGo').click(); true"); await until("STATE.tab === 'review' && /-videos-u76-reset$/.test(STATE.batch || '')");
+    const id = made()[0], batch = JSON.parse(readFileSync(join(g, "outputs", id, "batch.json"), "utf-8"));
+    assert.deepEqual([made().length, batch.imported, batch.ads.map((x) => [x.folder, x.video.kind, x.video.title, x.words.offer, x.words.location])], [1, "real-footage", [["101-v01-u76-town-real-video", "real", "The coach says hello", "U76 Reset", "U76 TOWN"]]]);
+    const left = await (await call(`/api/client/${GYM}/videos/held`)).json(); assert.deepEqual(left.videos.map((v) => v.name).sort(), ["member.mp4", "wide.mp4"], "the one added no longer waits");
+    // Taken off the list.
+    const gone = await (await call(`/api/client/${GYM}/videos/held/${b.held}`, { method: "DELETE" })).json(); assert.deepEqual(gone.videos.map((v) => v.name), ["member.mp4"]);
+    assert.ok(readdirSync(join(held, "_trash")).some((n) => n.startsWith(b.held)), "to _trash, never deleted");
+    // A testimonial through the route, with the owner's word.
+    const [st, T] = await add({ ids: [c.held], kind: "testimonial", offer: "U76 Reset", locations: ["BISHAN"], consent: { by: "The owner, in writing" } });
+    assert.deepEqual([st, T.kind, T.videos, /-testimonials-u76-reset$/.test(T.batch)], [200, "testimonial", 1, true]);
+  } finally { rmSync(tmp, { recursive: true, force: true }); rmSync(held, { recursive: true, force: true }); for (const id of existsSync(join(g, "batches")) ? made() : []) { rmSync(join(g, "batches", id), { recursive: true, force: true }); rmSync(join(g, "outputs", id), { recursive: true, force: true }); } }
 });

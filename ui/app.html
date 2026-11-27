@@ -390,6 +390,8 @@ const WAITS = [
   [/PUT/, /\/coaches\/sample\//, 'Saving the coach video as it is and pulling still frames from it. A large video takes a few seconds.'],
   [/POST/, /\/footage\/[^/]+\/match$/, 'The agent is matching your B-roll notes to what each clip shows. A few seconds.'],
   [/POST/, /\/footage\/[^/]+\/ad$/, 'Adding the cut to this gym’s ads, as it is.'],
+  [/PUT/, /\/videos\/held\//, 'Saving the video as it is and checking its shape, length and sound. A large video takes a few seconds.'],
+  [/POST/, /\/videos\/add$/, 'Adding the videos as ads: each file goes into a new batch as it is, with a poster frame.'], [/GET/, /\/videos\/held$/, null],
   [/PUT/, /\/footage\/[^/]+\/file\//, 'Adding the file to the shoot, as it is. A large clip takes a few seconds.'], [/GET/, /\/footage(\/[^/]+)?$/, null], [/PUT/, /\/footage\/[^/]+$/, 'Saving your choice and laying the cutting sheet out again.'], [/POST/, /\/footage$/, 'Creating the shoot and listing its files.'],
   [/GET/, /\/coaches$/, null],
   [/POST/, /\/coaches\/coach\/[\w.-]+\/sound$/, 'Filming one test line with Google’s video model, for you to listen to. This takes a minute or two.'],
@@ -1753,7 +1755,7 @@ function paintBatch(v){
       </div>
     </div>
   </div>
-  <h2 style="margin-top:8px">Campaigns</h2>
+  <div class="row" style="margin-top:8px;align-items:center"><h2 style="margin:0;flex:1">Campaigns</h2><button id="avOpen" title="Videos you already have — the gym's own finished videos, or members' testimonials — added as ads as they are. Nothing is generated." onclick="avOpen()">Add finished videos…</button></div>
   <div id="bList"></div>
   <div id="runbox"></div>
   <div id="bModal"></div>`;
@@ -2619,6 +2621,85 @@ async function viewExports(v, seq=VIEW_SEQ){
         <div class="hint">${esc(b.id)} · ${b.ads} ads · ${r.kept||0} kept${r.excluded?`, ${r.excluded} excluded`:''}${r.unreviewed?`, ${r.unreviewed} to review`:''}${b.imported==='merged'?'':` · ${b.stories} Stories versions`}</div>
         ${b.imported==='merged'?`<div class="hint" data-merged-from="${esc(b.id)}">Merged from ${(b.merged_from||[]).map(esc).join(' + ')}</div>`:''}${b.merged_into?`<div class="hint" data-merged-into="${esc(b.id)}" style="color:var(--warn)">Its kept ads are in the merged batch <b>${esc(b.merged_into)}</b>: publish that one.</div>`:''}</div>
       <button class="sm" onclick="openReview('${esc(b.id)}')">Pick ads</button><button class="sm ${b.merged_into?'':'primary'}" onclick="openPublish('${esc(b.id)}')">Open →</button></div></div>`; }).join('') : '<div class="empty">No campaign has ads yet. Create one first.</div>'}`;
+}
+
+// ── Add finished videos (2026-11-24) ─────────────────────────────────────────
+// Videos the owner already has — the gym's own finished videos, or members' testimonials — dropped here and added as ads
+// as they are (before, they went in by hand). Drop the files; each is checked as it lands (upright 9:16, large enough,
+// with sound, 3–240 s) and one that fails says why while the others can still go; say what they are, the offer and the
+// area (his words: the last batch's to start from, never the whole country), and for testimonials who confirmed that the
+// people agreed; one click makes ONE new batch and opens Pick Ads on it. No model is called and nothing is spent.
+const AV = { data: null, kind: 'real', off: new Set(), titles: {}, areas: null, area: '', offer: null, aud: null, consent: '', busy: false, error: '', notes: [] };
+const avKindName = { real: 'The gym’s own videos', testimonial: 'Member testimonials' };
+const avUsable = (v) => !(v.problems?.[AV.kind]||[]).length;
+const avPicked = () => (AV.data?.videos||[]).filter(v => avUsable(v) && !AV.off.has(v.id));
+const avAreas = () => [...new Set([...(AV.areas||[]), ...(AV.area.trim() ? [AV.area.trim().toUpperCase()] : [])])];
+async function avOpen(){
+  Object.assign(AV, { data: null, off: new Set(), titles: {}, areas: null, area: '', offer: null, aud: null, error: '', notes: [], busy: false });
+  $('#gModal').innerHTML = `<div class="modal"><div class="card" id="avCard" style="max-width:760px;width:94vw"><h3>Add finished videos</h3><p class="hint">Loading…</p></div></div>`;
+  try { AV.data = await api(`/api/client/${STATE.sel}/videos/held`); } catch(e){ AV.error = e.message; AV.data = { videos: [], words: {}, used_locations: [], limits: { videos: 12, mb: 600, seconds: [3, 240], width: { real: 1080, testimonial: 720 } }, ffmpeg: true }; }
+  avPaint();
+}
+function avPaint(){
+  const box = $('#avCard'); if (!box || !AV.data) return;
+  const D = AV.data, L = D.limits;
+  if (AV.offer == null) AV.offer = D.words.offer || '';
+  if (AV.aud == null) AV.aud = D.words.audience || '';
+  if (AV.areas == null) AV.areas = new Set((D.words.locations||[]).slice(0, 1));
+  const picked = avPicked(), over = picked.length > L.videos, areas = avAreas(), known = AV.known = [...new Set([...(D.used_locations||[]), ...(D.words.locations||[]), ...AV.areas])];
+  const mm = (s) => `${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,'0')}`;
+  const why = !D.videos.length ? 'Drop the videos first.' : !picked.length ? 'None of the videos here can be added as they are: see why beside each.' : over ? `A batch takes ${L.videos} videos at most and ${picked.length} are ticked: untick some and add them as a second batch.` : !AV.offer.trim() ? 'Type the offer these adverts are for.' : !areas.length ? 'Pick or type the area around the gym.' : AV.kind === 'testimonial' && AV.consent.trim().length < 3 ? 'Say who confirmed that the people in the videos agreed to appear in an advert.' : '';
+  box.innerHTML = `<h3>Add finished videos</h3>
+    <p class="hint">Videos you already have, added as ads <b>as they are</b>: nothing is generated, cut or re-encoded, and nothing is spent. They go into a new batch, onto <b>Pick Ads</b> and then <b>Publish Ads</b> like any video.</p>
+    ${D.ffmpeg ? `<div class="drop" id="avDrop" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="event.preventDefault();this.classList.remove('over');avFiles(event.dataTransfer.files)">Drop the videos here, or <label class="lnk">choose files<input type="file" id="avFile" multiple accept=".mp4,.mov,.m4v,video/*" hidden onchange="avFiles(this.files)"></label>
+      <div style="font-size:12px;margin-top:6px;color:var(--faint)">MP4 or MOV, upright 9:16, up to ${L.mb} MB each · ${L.seconds[0]}–${L.seconds[1]} seconds · with sound · a MOV is re-wrapped as MP4, picture and sound untouched</div></div>` : '<p class="hint" style="color:var(--warn)">Adding videos needs ffmpeg on this Mac: run <code>brew install ffmpeg</code> once in Terminal.</p>'}
+    <div id="avMsgs">${AV.notes.map(([n,t,c])=>`<div class="amsg ${c}">${esc(n)}: ${esc(t)}</div>`).join('')}</div>
+    <div style="margin-top:12px"><label>What are they?</label><div class="row" style="gap:14px;flex-wrap:wrap">${(D.kinds||['real','testimonial']).map(k=>`<label style="font-weight:400;display:flex;gap:6px;align-items:center"><input type="radio" name="avKind" value="${k}" style="width:auto" ${AV.kind===k?'checked':''} onchange="AV.kind='${k}';avPaint()">${avKindName[k]}</label>`).join('')}</div>
+      <div class="hint" style="margin-top:4px">${AV.kind==='testimonial' ? `A member speaking about the gym. Taken from ${L.width.testimonial} px wide (a download of the gym’s own post). Each gets copy of its own on Publish Ads.` : `A finished video of the gym’s own: a coach’s cut, a tour, a class. At least ${L.width.real} px wide.`}</div></div>
+    <div id="avList" style="margin-top:10px">${D.videos.length ? D.videos.map(v=>{ const bad = v.problems?.[AV.kind]||[], on = !bad.length && !AV.off.has(v.id);
+      return `<div class="row" data-av="${esc(v.id)}" data-usable="${bad.length?0:1}" style="gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)">
+        <input type="checkbox" style="width:auto;margin-top:6px" ${on?'checked':''} ${bad.length?'disabled':''} onchange="this.checked?AV.off.delete('${esc(v.id)}'):AV.off.add('${esc(v.id)}');avPaint()">
+        ${v.poster?`<img src="${esc(v.poster)}" alt="" style="width:46px;height:82px;object-fit:cover;border-radius:6px;background:#000">`:'<div style="width:46px;height:82px;border-radius:6px;background:var(--surface-2)"></div>'}
+        <div style="flex:1;min-width:0"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.name)}</div>
+          <div class="hint">${mm(v.seconds)} · ${v.w}×${v.h} · ${Math.max(1, Math.round(v.bytes/1048576))} MB${v.rewrapped?' · re-wrapped as MP4':''}${(v.was_in||[]).length?` · already an ad in ${esc(v.was_in.at(-1))}`:''}</div>
+          ${bad.length ? `<div class="hint" data-av-why style="color:var(--err)">Cannot be added as it is: ${esc(bad.join('; '))}.</div>` : `<input data-av-title placeholder="A name for it (optional): ${esc(v.name.replace(/\.[a-z0-9]{2,4}$/i,''))}" value="${esc(AV.titles[v.id]||'')}" oninput="AV.titles['${esc(v.id)}']=this.value" style="margin-top:4px">`}</div>
+        <button class="sm" data-av-remove onclick="avRemove('${esc(v.id)}')">Remove</button></div>`; }).join('') : '<div class="hint">No video is waiting here yet.</div>'}</div>
+    <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label for="avOffer">Offer <span class="n">· your words</span></label><input id="avOffer" value="${esc(AV.offer)}" placeholder="6 Week Full Body Transformation" oninput="AV.offer=this.value;avGate()"></div>
+      <div><label for="avAud">Audience callout <span class="n">· optional</span></label><input id="avAud" value="${esc(AV.aud)}" placeholder="LADIES" oninput="AV.aud=this.value"></div></div>
+    <div style="margin-top:8px"><label>Area <span class="n">· the place around the gym, never the whole country · one ad set each</span></label>
+      <div class="row" id="avAreas" style="gap:6px;flex-wrap:wrap">${known.map((a,i)=>`<button class="chip ${AV.areas.has(a)?'sel':''}" data-av-area="${esc(a)}" onclick="avArea(${i})">${esc(a)}</button>`).join('')}<input id="avArea" value="${esc(AV.area)}" placeholder="${known.length?'or another area':'BISHAN'}" style="width:170px" oninput="AV.area=this.value;avGate()"></div></div>
+    ${AV.kind==='testimonial' ? `<div style="margin-top:8px"><label for="avConsent">Who confirmed that each person agreed to appear in an advert, and how?</label><input id="avConsent" value="${esc(AV.consent)}" placeholder="The gym’s owner, in writing, 20 Nov" oninput="AV.consent=this.value;avGate()"><div class="hint">A testimonial shows a real person: nothing is added without this. It is kept on each video.</div></div>` : ''}
+    <p class="hint" id="avWhy" style="color:${AV.error?'var(--err)':'var(--dim)'};min-height:18px;margin:10px 0 0">${esc(AV.error || why)}</p>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Close</button><button class="primary" id="avGo" ${why||AV.busy?'disabled':''} onclick="avRun()">${AV.busy?'Adding…':`Add ${picked.length?picked.length+' ':''}video${picked.length===1?'':'s'} as ads`}</button></div>`;
+}
+// The button and its reason follow what is typed without repainting the fields (the cursor stays where it is).
+function avGate(){ const D = AV.data; if (!D) return; const picked = avPicked(), L = D.limits;
+  const why = !D.videos.length ? 'Drop the videos first.' : !picked.length ? 'None of the videos here can be added as they are: see why beside each.' : picked.length > L.videos ? `A batch takes ${L.videos} videos at most and ${picked.length} are ticked: untick some and add them as a second batch.` : !AV.offer.trim() ? 'Type the offer these adverts are for.' : !avAreas().length ? 'Pick or type the area around the gym.' : AV.kind === 'testimonial' && AV.consent.trim().length < 3 ? 'Say who confirmed that the people in the videos agreed to appear in an advert.' : '';
+  AV.error = ''; const w = $('#avWhy'), go = $('#avGo'); if (w){ w.textContent = why; w.style.color = 'var(--dim)'; } if (go) go.disabled = !!why || AV.busy; }
+async function avFiles(files){
+  for (const f of [...files]) {
+    if (!/\.(mp4|mov|m4v)$/i.test(f.name)) { AV.notes.push([f.name, 'a video here is an MP4 or a MOV file', 'err']); avPaint(); continue; }
+    const note = [f.name, `uploading ${Math.max(1, Math.round(f.size/1048576))} MB and checking it…`, '']; AV.notes.push(note); avPaint();
+    try {
+      const r = await panelFetch(`/api/client/${STATE.sel}/videos/held/${slugify(f.name.replace(/\.[^.]+$/,'')).slice(0,48) || 'video'}.${f.name.split('.').pop().toLowerCase()}`, { method:'PUT', headers:{ 'content-type': f.type || 'application/octet-stream', 'x-original-name': encodeURIComponent(f.name) }, body: await f.arrayBuffer() });
+      const j = await r.json().catch(()=>({ error:'bad response' })); if (!r.ok) throw new Error(j.error || r.statusText);
+      AV.data = j; const v = j.videos.find(x => x.id === j.held), bad = v?.problems?.[AV.kind]||[];
+      note[1] = j.already ? 'already waiting here' : bad.length ? `here, but it cannot be added as it is: ${bad.join('; ')}` : 'ready to add'; note[2] = bad.length ? 'err' : 'ok';
+    } catch(e){ note[1] = e.message; note[2] = 'err'; }
+    avPaint();
+  }
+}
+function avArea(i){ const a = (AV.known||[])[i]; if (a == null) return; AV.areas.has(a) ? AV.areas.delete(a) : AV.areas.add(a); avPaint(); }
+async function avRemove(id){ try { AV.data = await api(`/api/client/${STATE.sel}/videos/held/${id}`, { method:'DELETE' }); AV.off.delete(id); delete AV.titles[id]; AV.error = ''; } catch(e){ AV.error = e.message; } avPaint(); }
+async function avRun(){
+  if (AV.busy) return; const picked = avPicked(); AV.busy = true; AV.error = ''; avPaint();
+  try {
+    const r = await api(`/api/client/${STATE.sel}/videos/add`, { method:'POST', body:{ ids: picked.map(v=>v.id), kind: AV.kind, offer: AV.offer, locations: avAreas(), audience: AV.aud, titles: AV.titles, ...(AV.kind==='testimonial' ? { consent:{ by: AV.consent } } : {}) } });
+    $('#gModal').innerHTML = ''; AV.busy = false;
+    toast(r.kind === 'testimonial' ? `${r.videos} testimonial${r.videos===1?'':'s'} added. Pick them here; then read them and draft their copy on Publish Ads.` : `${r.videos} video${r.videos===1?'':'s'} added as ads: pick them here, then publish.`, 'ok');
+    B.gym = null; openReview(r.batch);
+  } catch(e){ AV.busy = false; AV.error = e.message; avPaint(); }
 }
 
 // ── Merge batches (2026-11-22) ───────────────────────────────────────────────

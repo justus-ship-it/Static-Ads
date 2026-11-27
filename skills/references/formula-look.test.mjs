@@ -11,7 +11,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { launchBrowser, loadCatalogue, renderComposite, validateLayout, layoutFor, floatRegion, placedRegions, LOOKS } from "./render-composites.mjs";
 import { judgeVisual, fitLayouts, floatedAreaBoxes, textAreaBoxes } from "./check-visual.mjs";
-import { assignVariants, lumFit, WEAK_NATURAL, GENTLE_SCRIM } from "./assign-variants.mjs";
+import { assignVariants, excludeFromProfile, lumFit, WEAK_NATURAL, GENTLE_SCRIM } from "./assign-variants.mjs";
 import { catalogueFor, validateProfile, PROFILE_STARTER, FEED_RATIOS, CREATIVE_DEFAULTS } from "./client-config.mjs";
 import { buildVisualPrompt } from "./visual-prompts.mjs";
 import { storiesFile, cropWindow } from "./make-stories.mjs";
@@ -21,6 +21,8 @@ const DARK = svg(1080, 1350, `<rect width="100%" height="100%" fill="#2e3238"/><
 const DARK_916 = svg(1080, 1920, `<rect width="100%" height="100%" fill="#2e3238"/><rect x="380" y="560" width="320" height="1200" fill="#3d444d"/>`);
 const WORDS = { location: "JURONG WEST", audience: null, offer: "42 Day Beginner's Body Reset" };
 const FORMULA = loadCatalogue({ look: "formula" }), REF = loadCatalogue();
+// The formula family's layouts since 2026-11-24, whose words keep off the model (F7); f1–f3 are the look it began with.
+const NEW = ["f4-strip-left", "f5-strip-centre", "f6-offer-right", "f7-offer-left"];
 
 let browser;
 before(async () => { browser = await launchBrowser(); });
@@ -29,7 +31,7 @@ after(async () => { await browser?.close(); });
 test("F1 two families, one catalogue: a batch's loops see its own family only, a lookup by id finds either; the formula's three layouts are valid at 1:1, 4:5 and 9:16 with a floating callout and block, plain type and the callout as the lead line; 4:5 is a canvas with a 5% margin; a gym's look and feed shape are Ad defaults", () => {
   assert.deepEqual(LOOKS, ["reference", "formula"]);
   assert.deepEqual([Object.keys(REF.treatments.treatments).length, Object.keys(REF.styles.styles).length, Object.keys(REF.palettes.palettes).length, REF.look], [8, 9, 10, "reference"], "the reference set is what it was");
-  assert.deepEqual([Object.keys(FORMULA.treatments.treatments), Object.keys(FORMULA.styles.styles), Object.keys(FORMULA.palettes.palettes).length, FORMULA.look], [["f1-callout-left", "f2-callout-centre", "f3-offer-card"], ["fs1-heavy-italic", "fs2-condensed", "fs3-tall-sans"], 12, "formula"]);
+  assert.deepEqual([Object.keys(FORMULA.treatments.treatments), Object.keys(FORMULA.styles.styles), Object.keys(FORMULA.palettes.palettes).length, FORMULA.look], [["f1-callout-left", "f2-callout-centre", "f3-offer-card", ...NEW], ["fs1-heavy-italic", "fs2-condensed", "fs3-tall-sans"], 12, "formula"]);
   assert.ok(REF.treatments.treatments["f1-callout-left"] && REF.styles.styles["fs1-heavy-italic"] && REF.palettes.palettes["f-cream"], "the reference catalogue still answers for a formula id");
   assert.ok(FORMULA.treatments.treatments["t1-bottom-stack"] && FORMULA.styles.styles["s1-heavy-sans"] && FORMULA.palettes.palettes["white-on-dark"], "and the formula catalogue for a reference id (the checks render with a fixed reference look)");
   assert.ok(!("f1-callout-left" in { ...REF.treatments.treatments }), "a spread or a clone carries the family alone");
@@ -41,6 +43,8 @@ test("F1 two families, one catalogue: a batch's loops see its own family only, a
     for (const ratio of ["1x1", "4x5", "9x16"]) {
       const L = layoutFor(tr, ratio, T);
       assert.deepEqual(validateLayout(L, id, T.canvas[ratio], T.safe_area[ratio]), [], `${id} ${ratio}`);
+      // (The layouts of 2026-11-24 keep the offer off the model at 4:5 — on a strip, or fitted beside the people — so their lower block does not float there: F7.)
+      if (NEW.includes(id) && ratio === "4x5") { assert.deepEqual(L.groups.map((g) => [g.id, g.stack.map((s) => s.block).join("+"), g.float?.edge || null]), [["top", "location+audience", "top"], ["bottom", "duration+offer_name", null]], id); continue; }
       assert.deepEqual(L.groups.map((g) => [g.id, g.stack.map((s) => s.block).join("+"), !!g.float, g.float.edge || null]), [["top", "location+audience", true, "top"], ["bottom", "duration+offer_name", true, null]], `${id} ${ratio}`);
     }
   }
@@ -134,7 +138,7 @@ test("F4 the fit stage judges a floating layout where the renderer will put it: 
   // (The reference family's fixed block on a photo, at the foot: T5 at this shape. T1 sets its words on a panel under the photo since 2026-11-17.)
   const t = judgeVisual({ ...answer, face_boxes: [[800, 400, 900, 600]] }, { treatment: "t5-offer-band", ratio: "4x5", imageSize: [1080, 1350], catalogue: REF });
   assert.equal(t.placement.faces_under_text_area, 1, "a fixed block has the face under it");
-  assert.deepEqual(Object.keys(fitLayouts(answer, { ratio: "4x5", imageSize: [1080, 1350], catalogue: FORMULA })), ["f1-callout-left", "f2-callout-centre", "f3-offer-card"]);
+  assert.deepEqual(Object.keys(fitLayouts(answer, { ratio: "4x5", imageSize: [1080, 1350], catalogue: FORMULA })), ["f1-callout-left", "f2-callout-centre", "f3-offer-card", ...NEW]);
   assert.equal(Object.keys(fitLayouts(answer, { ratio: "4x5", imageSize: [1080, 1350], catalogue: REF })).length, 8);
 });
 
@@ -155,7 +159,7 @@ test("F5 pairings matched to the backdrop: a pairing's weakest line against the 
   const card = layoutFor(FORMULA.treatments.treatments["f3-offer-card"], "4x5", FORMULA.treatments);
   assert.equal(lumFit(stat(0.03, 0.85), card, P["f-cream"]).weak, false, "lines on the card are judged on the card, not the photo");
   const photoStats = [dark, bright].map((s) => ({ overall: s, layouts: Object.fromEntries(Object.keys(FORMULA.treatments.treatments).map((id) => [id, s])) }));
-  const plan = assignVariants({ visuals: [{ id: "g01" }, { id: "g02" }], perVisual: 3, text: { location: "JURONG WEST", audience: null }, seed: "s", photoStats, catalogue: FORMULA, ratio: "4x5" });
+  const plan = assignVariants({ visuals: [{ id: "g01" }, { id: "g02" }], perVisual: 3, text: { location: "JURONG WEST", audience: null }, seed: "s", photoStats, catalogue: FORMULA, ratio: "4x5", exclude: { layouts: NEW } });
   assert.equal(plan.candidates.length, 6);
   assert.ok(plan.candidates.every((c) => /^f[123]-/.test(c.treatment) && /^fs[123]-/.test(c.style) && /^f-/.test(c.palette)), JSON.stringify(plan.candidates));
   const lumOfFill = (id, block) => parseInt(P[id].blocks[block].fill.slice(1, 3), 16);
@@ -186,4 +190,67 @@ test("F6 no band where a soft scrim will do (2026-11-11, the black bars on Juron
   const fit = lumFit(dark, layoutFor(T["f1-callout-left"], "4x5", FORMULA.treatments), P["f-white-black"]);
   assert.deepEqual([fit.weak, fit.contrast < 1.6, fit.with_scrim >= 3], [true, true, true], JSON.stringify(fit));
   assert.equal(lumFit(dark, layoutFor(T["f1-callout-left"], "4x5", FORMULA.treatments), P["f-cream"]).weak, false, "light type on that photo is the look to take");
+});
+
+test("F7 the formula look keeps its words off the model (2026-11-24, Jurong West: the offer sat over 24–58% of the person on all 29 single-photo ads): a new 4:5 batch leaves the first three layouts out and uses four whose offer sits on a strip under the photo or low beside the model; a batch made with the first three keeps exactly that set; a strip photo is shown from its top and refused when too much of the people would be cut; a side look is open only to a photo with a free side; the finished ad is held to the 3% rule, and the first three render as they always did", async () => {
+  const T = FORMULA.treatments, OLD = ["f1-callout-left", "f2-callout-centre", "f3-offer-card"];
+  // Which layouts a batch plans with.
+  assert.deepEqual(T.feed_default_off, OLD);
+  assert.deepEqual(excludeFromProfile({}, { ratio: "4x5", catalogue: FORMULA }).layouts, OLD, "a new batch: the first three are left out");
+  assert.deepEqual(excludeFromProfile({}, { ratio: "4x5", catalogue: FORMULA, made: ["f4-strip-left", "video-presenter"] }).layouts, OLD);
+  assert.deepEqual(excludeFromProfile({}, { ratio: "4x5", catalogue: FORMULA, made: ["f3-offer-card", "f1-callout-left"] }).layouts, NEW, "a batch made with the first three keeps them, and takes none that came after");
+  assert.deepEqual(excludeFromProfile({ include_layouts: ["f3-offer-card"] }, { ratio: "4x5", catalogue: FORMULA }).layouts, OLD.slice(0, 2), "a gym may ask for one back");
+  assert.deepEqual(excludeFromProfile({}, { ratio: "4x5", catalogue: REF, made: ["t4-centred-stack"] }).layouts, ["t4-centred-stack", "t7-collage", "t8-panels-band"], "the reference family is as it was");
+  for (const id of NEW) { const L = layoutFor(T.treatments[id], "4x5", T); assert.equal(L.no_touch, true, id); }
+  assert.deepEqual(NEW.map((id) => layoutFor(T.treatments[id], "4x5", T).background?.type || "single"), ["split", "split", "single", "single"]);
+  assert.deepEqual(NEW.slice(2).map((id) => layoutFor(T.treatments[id], "4x5", T).groups.map((g) => !!g.avoid)), [[false, true], [false, true]], "the offer's column is fitted beside the people; the callout floats above the heads");
+
+  // A waist-up portrait that fills the width: the strip takes it, shown from its top; no side look does.
+  const full = { people_box: [220, 180, 1000, 820], face_boxes: [[240, 400, 420, 600]], people_count: 1, text_items: [], excluded_items: [] };
+  const fit = fitLayouts(full, { ratio: "4x5", imageSize: [1080, 1350], catalogue: FORMULA });
+  assert.deepEqual(NEW.map((id) => fit[id].ok), [true, true, false, false], JSON.stringify(fit));
+  assert.deepEqual([fit["f4-strip-left"].focus, fit["f1-callout-left"].ok], [[0.5, 0], true], "the photo is kept from its top edge; the first layouts fit as before");
+  assert.match(fit["f6-offer-right"].failures.join("; "), /the words would sit over \d+% of the model \(3% at most\)/);
+  // People low in the frame: the strip would cut too much of them.
+  const low = fitLayouts({ ...full, people_box: [560, 100, 1000, 900], face_boxes: [[580, 400, 680, 520]] }, { ratio: "4x5", imageSize: [1080, 1350], catalogue: FORMULA });
+  assert.match(low["f4-strip-left"].failures.join("; "), /cuts off \d+% of the people/);
+  // The model in the left half: the offer goes low on the right, and only there.
+  const left = { people_box: [240, 60, 1000, 470], face_boxes: [[260, 190, 400, 340]], people_count: 1, text_items: [], excluded_items: [] };
+  const sf = fitLayouts(left, { ratio: "4x5", imageSize: [1080, 1350], catalogue: FORMULA });
+  assert.deepEqual([sf["f6-offer-right"].ok, sf["f7-offer-left"].ok], [true, false], JSON.stringify([sf["f6-offer-right"], sf["f7-offer-left"]]));
+
+  // Rendered: the strip.
+  const body = (x, w) => svg(1080, 1350, `<rect width="100%" height="100%" fill="#2e3238"/><rect x="${x}" y="300" width="${w}" height="1050" fill="#6a7684"/>`);
+  let r = await renderComposite(browser, { image: body(190, 700), faces: [full.face_boxes], people: [full.people_box], ...WORDS, treatment: "f4-strip-left", style: "fs2-condensed", palette: "f-cream", ratio: "4x5", focus: fit["f4-strip-left"].focus, catalogue: FORMULA });
+  assert.equal(r.ok, true, JSON.stringify(r.failures));
+  const [, H] = r.report.canvas, at = Object.fromEntries(r.report.blocks.map((b) => [b.block, b.rect]));
+  assert.deepEqual([r.spec.body_cover_max, r.body_cover, r.report.background.type], [0.03, 0, "split"]);
+  assert.ok(at.location.y + at.location.h < 0.2 * H && at.duration.y >= 0.72 * H && at.offer_name.y >= 0.72 * H, "the callout on the photo's top, the duration and offer on the strip under it");
+  // With no crop given the photo is still shown from its top (the Create preview).
+  r = await renderComposite(browser, { image: body(190, 700), faces: [full.face_boxes], people: [full.people_box], ...WORDS, treatment: "f5-strip-centre", style: "fs1-heavy-italic", palette: "f-navy", ratio: "4x5", catalogue: FORMULA });
+  assert.deepEqual([r.ok, r.spec.focus, r.body_cover], [true, [0.5, 0], 0], JSON.stringify(r.failures));
+  // Rendered: beside the model, the column fitted to the free side.
+  r = await renderComposite(browser, { image: body(70, 480), faces: [[[260, 190, 400, 340]]], people: [[240, 60, 1000, 560]], ...WORDS, treatment: "f6-offer-right", style: "fs2-condensed", palette: "f-cream", ratio: "4x5", catalogue: FORMULA });
+  assert.deepEqual([r.ok, r.body_cover, r.report.groups.map((g) => g.avoided || null)], [true, 0, [null, "narrowed"]], JSON.stringify(r.failures));
+  // … and the same look on a photo with no free side fails on the finished ad, as the fit said it would.
+  r = await renderComposite(browser, { image: body(190, 700), faces: [full.face_boxes], people: [full.people_box], ...WORDS, treatment: "f6-offer-right", style: "fs2-condensed", palette: "f-cream", ratio: "4x5", catalogue: FORMULA });
+  assert.equal(r.ok, false); assert.match(r.failures.join("; "), /the words cover \d+% of the person below the face \(3% at most\)/);
+  // The first three are outside the rule: an ad made with them renders as it always did.
+  r = await renderComposite(browser, { image: body(190, 700), faces: [full.face_boxes], people: [full.people_box], ...WORDS, treatment: "f1-callout-left", style: "fs2-condensed", palette: "f-cream", ratio: "4x5", catalogue: FORMULA });
+  assert.deepEqual([r.ok, r.spec.body_cover_max, r.body_cover > 0.2], [true, null, true], JSON.stringify([r.failures, r.body_cover]));
+
+  // The pairing is matched to the photo only where its lines sit on the photo: the strip's lines are on the strip.
+  const stat = (top, bottom) => ({ hue: 0, strength: 0.02, lum: (top + bottom) / 2, cells: [...Array(16).fill({ hue: 0, strength: 0.02, lum: top }), ...Array(16).fill({ hue: 0, strength: 0.02, lum: bottom })] });
+  const P = FORMULA.palettes.palettes, strip = layoutFor(T.treatments["f4-strip-left"], "4x5", T);
+  assert.deepEqual([lumFit(stat(0.03, 0.85), strip, P["f-cream"]).weak, lumFit(stat(0.85, 0.03), strip, P["f-cream"]).weak], [false, true], "cream on a dark top reads whatever is under the strip; on a bright top it does not");
+  // The photo is asked for the place its words will take.
+  const ask = (treatment) => buildVisualPrompt({ scene: "A woman stands at ease holding a kettlebell.", treatment, ratio: "4x5", people: 1, catalogue: FORMULA });
+  const text = (p) => (typeof p === "string" ? p : p.prompt);
+  assert.match(text(ask("f4-strip-left")), /upper three quarters of this photo, with the offer on a plain strip under it/);
+  assert.match(text(ask("f6-offer-right")), /The people stand wholly in the left half of the frame/);
+  assert.match(text(ask("f7-offer-left")), /The people stand wholly in the right half of the frame/);
+  // Words beside the model count toward the side share when looks are picked.
+  const plan = assignVariants({ visuals: [{ id: "g01" }, { id: "g02" }, { id: "g03" }], perVisual: 1, text: { location: "JURONG WEST", audience: null }, seed: "f7", catalogue: FORMULA, ratio: "4x5", exclude: excludeFromProfile({}, { ratio: "4x5", catalogue: FORMULA }), allowed: { g01: NEW, g02: NEW.slice(0, 2), g03: NEW.slice(0, 2) } });
+  assert.ok(plan.candidates.every((c) => NEW.includes(c.treatment)), JSON.stringify(plan.candidates.map((c) => c.treatment)));
+  assert.match(plan.candidates.find((c) => c.visual === "g01").treatment, /^f[67]-/, "the photo with a free side takes the side look");
 });

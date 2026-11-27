@@ -22,7 +22,7 @@
  *      footage-video.mjs --brand-dir brands/{gym} --batch {id} --set-words --offer "…" [--audience x]
  *      list.json: [{ "file": "/abs/video.mp4", "title": "…", "words": ["line", …], "poster_at": 1.5 }]
  */
-import { existsSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, statSync, renameSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
@@ -62,13 +62,20 @@ export function footageProblems({ batchId, offer, locations, audience = null, vi
   (videos || []).forEach((v, i) => {
     const n = `video ${i + 1}`, f = facts[i];
     if (!f) return errs.push(`${n}: the file is not there (${v.file})`);
-    if (!f.video) return errs.push(`${n}: the file has no picture`);
-    if (!f.sound) errs.push(`${n}: the file has no sound track`);
-    if (f.h * 9 !== f.w * 16) errs.push(`${n}: it is ${f.w}×${f.h}; a video ad here is 9:16 (1080×1920)`);
-    else if (f.w < least) errs.push(`${n}: it is ${f.w}×${f.h}, smaller than ${least}×${Math.round(least * 16 / 9)}`);
-    if (f.seconds < FOOTAGE_LIMITS.seconds[0] || f.seconds > FOOTAGE_LIMITS.seconds[1]) errs.push(`${n}: it runs ${f.seconds} s; between ${FOOTAGE_LIMITS.seconds[0]} and ${FOOTAGE_LIMITS.seconds[1]} s is taken`);
+    for (const e of fileProblems(f, kind)) errs.push(`${n}: ${e}`);
     if (v.words != null && (!Array.isArray(v.words) || v.words.some((w) => typeof w !== "string"))) errs.push(`${n}: its words are a list of lines`);
   });
+  return errs;
+}
+
+/** What stops ONE video file from being an ad, from its probe: upright 9:16, large enough for its kind, with sound, of a length Meta's placements take. */
+export function fileProblems(f, kind = FOOTAGE_KIND) {
+  const least = kind === "testimonial" ? FOOTAGE_LIMITS.testimonial_long_side : FOOTAGE_LIMITS.long_side, errs = [];
+  if (!f?.video) return ["the file has no picture"];
+  if (!f.sound) errs.push("the file has no sound track");
+  if (f.h * 9 !== f.w * 16) errs.push(`it is ${f.w}×${f.h}; a video ad here is 9:16 (1080×1920)`);
+  else if (f.w < least) errs.push(`it is ${f.w}×${f.h}, smaller than ${least}×${Math.round(least * 16 / 9)}`);
+  if (f.seconds < FOOTAGE_LIMITS.seconds[0] || f.seconds > FOOTAGE_LIMITS.seconds[1]) errs.push(`it runs ${f.seconds} s; between ${FOOTAGE_LIMITS.seconds[0]} and ${FOOTAGE_LIMITS.seconds[1]} s is taken`);
   return errs;
 }
 
@@ -104,6 +111,111 @@ export function addFootageBatch({ brandDir, batchId, offer, locations, audience 
   writeFileSync(join(out, "batch.json"), JSON.stringify({ batch_id: batchId, made, imported: FOOTAGE, ratio: "4x5", image_calls: 0, image_calls_this_run: 0, photos: [], videos: { [what]: videos.length }, video_seconds: seconds, failed: [], ads }, null, 2) + "\n");
   writeFileSync(join(out, "progress.json"), JSON.stringify({ batch_id: batchId, run: "import", started: made, stage: "done", calls: 0, ads: ads.length, failed: 0, error: null, photos: {}, updated: made, image_calls: 0 }, null, 2) + "\n");
   return { batch_id: batchId, ads: ads.length, dir: out };
+}
+
+// ── Finished videos dropped on the page (2026-11-24) ─────────────────────────────────────────────────────────────────
+// Aether's real-footage videos and Sculpt Society's testimonials both went in by hand; now the owner drops the files on
+// Generate Creatives. A dropped file waits in the gym's holding folder (brands/{gym}/video-uploads/, never committed)
+// until he says what the videos are and whose words they carry; then `addHeld` makes the batch with `addFootageBatch`,
+// as the CLI always did. A file is told by its first bytes, kept once by its content, and never re-encoded: a MOV (what
+// an iPhone exports) is re-wrapped as an MP4 — the same picture and sound in another container — and one that cannot be
+// is refused in words. The holding copy is a staging copy: once its batch has the video it is removed; a video taken off
+// the list by hand goes to `_trash`. No model is called and nothing is spent.
+export const HELD_DIR = "video-uploads";
+export const HELD_LIMITS = { bytes: 600 * 1024 * 1024, waiting: 24 };
+const heldDir = (gymDir) => join(resolve(gymDir), HELD_DIR), heldIndex = (gymDir) => join(heldDir(gymDir), "index.json");
+const readHeld = (gymDir) => { try { const j = JSON.parse(readFileSync(heldIndex(gymDir), "utf-8")); return Array.isArray(j.videos) ? j : { videos: [] }; } catch { return { videos: [] }; } };
+const writeHeld = (gymDir, data) => { mkdirSync(heldDir(gymDir), { recursive: true }); writeFileSync(heldIndex(gymDir), JSON.stringify(data, null, 2) + "\n"); };
+
+/** What a file is by its first bytes: "mp4", "mov", or null. The name's ending is not trusted. */
+export function videoContainer(buf) {
+  if (!buf || buf.length < 12) return null;
+  const box = buf.subarray(4, 8).toString("latin1"), brand = buf.subarray(8, 12).toString("latin1");
+  if (box === "ftyp") return brand === "qt  " ? "mov" : "mp4";
+  return ["moov", "mdat", "wide", "free", "skip"].includes(box) ? "mov" : null; // a QuickTime file from before the ftyp box
+}
+
+/** The videos waiting in a gym's holding folder: each with its probe and, per kind, what stops it from being an ad (nothing: it can be added). */
+export function heldVideos(gymDir) {
+  return readHeld(gymDir).videos.filter((v) => !v.added_to && !v.removed && existsSync(join(heldDir(gymDir), `${v.id}.mp4`))).map((v) => ({
+    id: v.id, name: v.name, file: join(heldDir(gymDir), `${v.id}.mp4`), poster: existsSync(join(heldDir(gymDir), `${v.id}.jpg`)) ? `${v.id}.jpg` : null,
+    seconds: v.facts.seconds, w: v.facts.w, h: v.facts.h, bytes: v.bytes, sound: v.facts.sound, rewrapped: !!v.rewrapped, added: v.added, was_in: v.was_in || [],
+    problems: Object.fromEntries(FOOTAGE_KINDS.map((k) => [k, fileProblems(v.facts, k)])),
+  }));
+}
+
+/**
+ * Keep a dropped video in the gym's holding folder. `bytes` are the file as it came; `name` what it was called.
+ * Returns { video, already } — `already` when the same content is waiting there. Throws in words for a file that is
+ * not a video, one with no picture, or a MOV whose picture or sound an MP4 cannot hold without re-encoding.
+ */
+export function holdVideo(gymDir, name, bytes, { now = new Date() } = {}) {
+  if (!existsSync(join(resolve(gymDir), "gym-profile.json"))) throw new Error(`no gym at ${gymDir}`);
+  const kind = videoContainer(bytes);
+  if (!kind) throw new Error("a video here is an MP4 or a MOV file: this file is neither");
+  if (bytes.length > HELD_LIMITS.bytes) throw new Error(`the file is over ${Math.round(HELD_LIMITS.bytes / 1048576)} MB`);
+  const dir = heldDir(gymDir), sha = createHash("sha256").update(bytes).digest("hex"), id = `u-${sha.slice(0, 10)}`, data = readHeld(gymDir);
+  const said = String(name || "video").replace(/[\\/\u0000-\u001f]/g, " ").trim().slice(0, 160) || "video";
+  const waiting = () => heldVideos(gymDir).find((v) => v.id === id);
+  if (waiting()) return { video: waiting(), already: true };
+  if (heldVideos(gymDir).length >= HELD_LIMITS.waiting) throw new Error(`${HELD_LIMITS.waiting} videos are waiting here already: add them as ads or remove some first`);
+  mkdirSync(dir, { recursive: true });
+  const src = join(dir, `${id}.src.${kind}`), out = join(dir, `${id}.mp4`), poster = join(dir, `${id}.jpg`), clean = () => { for (const f of [src, out, poster]) rmSync(f, { force: true }); };
+  writeFileSync(src, bytes);
+  try {
+    let facts;
+    try { facts = probeVideo(src); } catch { throw new Error("the file could not be read as a video"); }
+    if (!facts.video) throw new Error("the file has no picture");
+    if (kind === "mov") {
+      // The same picture and sound in an MP4 container: nothing is re-encoded. HEVC is tagged the way players expect it.
+      try { execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-tag:v:0", "hvc1", "-movflags", "+faststart", out], { stdio: ["ignore", "ignore", "pipe"] }); }
+      catch { try { execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", out], { stdio: ["ignore", "ignore", "pipe"] }); } catch { throw new Error("this MOV's picture or sound cannot be kept in an MP4 without re-encoding it: export it as an MP4 (H.264) and drop that file"); } }
+      const after = probeVideo(out);
+      if (!after.video || after.w !== facts.w || after.h !== facts.h || (facts.sound && !after.sound)) throw new Error("this MOV did not come through as an MP4 unchanged: export it as an MP4 (H.264) and drop that file");
+      facts = { ...after, bytes: undefined }; rmSync(src, { force: true });
+    } else renameSync(src, out);
+    const at = Math.min(1, Math.max(0, facts.seconds / 2));
+    try { execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-ss", String(at), "-i", out, "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", poster]); } catch {}
+    const was = data.videos.find((v) => v.id === id), rest = data.videos.filter((v) => v.id !== id);
+    const entry = { id, name: said, sha, bytes: statSync(out).size, rewrapped: kind === "mov", added: now.toISOString(), facts: { seconds: facts.seconds, video: true, sound: facts.sound, w: facts.w, h: facts.h }, ...(was?.added_to ? { was_in: [...(was.was_in || []), was.added_to] } : was?.was_in ? { was_in: was.was_in } : {}) };
+    writeHeld(gymDir, { videos: [...rest, entry] });
+    return { video: waiting(), already: false };
+  } catch (e) { clean(); throw e; }
+}
+
+/** Take a waiting video off the list: the file goes to the holding folder's `_trash`, never deleted. */
+export function dropHeld(gymDir, id, { now = new Date() } = {}) {
+  const data = readHeld(gymDir), v = data.videos.find((x) => x.id === id && !x.added_to && !x.removed);
+  if (!v) throw new Error("that video is not waiting here");
+  const dir = heldDir(gymDir), trash = join(dir, "_trash"); mkdirSync(trash, { recursive: true });
+  for (const ext of ["mp4", "jpg"]) if (existsSync(join(dir, `${id}.${ext}`))) renameSync(join(dir, `${id}.${ext}`), join(trash, `${id}-${now.getTime()}.${ext}`));
+  v.removed = now.toISOString(); writeHeld(gymDir, data);
+  return heldVideos(gymDir);
+}
+
+const titleOf = (name) => String(name).replace(/\.[a-z0-9]{2,4}$/i, "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Video";
+
+/**
+ * The waiting videos the owner ticked, added as ads: ONE new batch (addFootageBatch), named for the day and the offer.
+ * `ids` in the order they go in; `titles` { id: title } (else the file's own name); `kind` real | testimonial (a
+ * testimonial needs `consent.by`). Every refusal is addFootageBatch's own, with nothing written. Once the batch has
+ * them the holding copies are removed. Returns { batch_id, ads, dir, videos }.
+ */
+export function addHeld({ brandDir, ids, kind = FOOTAGE_KIND, offer, locations, audience = null, titles = {}, consent = null, batchId = null, now = new Date(), log = () => {} }) {
+  const dir = resolve(brandDir), waiting = heldVideos(dir);
+  if (!Array.isArray(ids) || !ids.length) throw new Error("tick at least one video to add");
+  if (new Set(ids).size !== ids.length) throw new Error("a video is ticked twice");
+  const picked = ids.map((id) => waiting.find((v) => v.id === id));
+  if (picked.some((v) => !v)) throw new Error("a ticked video is not waiting here any more: look at the list again");
+  const day = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10), word = kind === "testimonial" ? "testimonials" : "videos";
+  let id = batchId;
+  if (!id) { const base = `${day}-${word}-${slug(offer || "").slice(0, 40).replace(/-$/, "") || "ads"}`; id = base; for (let k = 2; existsSync(join(dir, "batches", id)) || existsSync(join(dir, "outputs", id)); k++) id = `${base}-${k}`; }
+  const r = addFootageBatch({ brandDir: dir, batchId: id, offer, locations, audience, kind, consent, now, log,
+    videos: picked.map((v) => ({ file: v.file, title: (typeof titles?.[v.id] === "string" && titles[v.id].trim().slice(0, 80)) || titleOf(v.name), poster_at: Math.min(1.5, v.seconds / 2), source: `upload:${v.name}` })) });
+  const data = readHeld(dir);
+  for (const v of picked) { const e = data.videos.find((x) => x.id === v.id); if (e) { e.added_to = id; e.added_on = now.toISOString(); } for (const ext of ["mp4", "jpg"]) rmSync(join(heldDir(dir), `${v.id}.${ext}`), { force: true }); }
+  writeHeld(dir, data);
+  return { ...r, videos: picked.length };
 }
 
 /**

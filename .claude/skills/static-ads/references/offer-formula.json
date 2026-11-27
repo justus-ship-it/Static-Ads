@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "The formula family (2026-11-10): the look of F45 Jurong West's own running ads, as a second family beside the reference set. The area callout across the top, the duration and the offer low in the frame, plain filled type with a soft shadow and no outline, colour pairings chosen to sit on a plain backdrop, no logo and no brand colour. A batch uses one family (brief.look, else creative_defaults.look): 'reference' is offer-treatments / offer-styles / offer-palettes, 'formula' is this file. Same schema as those files; every entry carries family 'formula'. Both groups float clear of faces (float: { edge?, min_h_pct, gap_pct }): the lower block starts below the lowest face under it if at least min_h_pct of the canvas is left, else it moves above the heads; the callout (edge 'top') is cut short above a face. The lower block's scrim is 'local': full strength behind the block, fading above and below, so a plain backdrop is never tinted to the frame's edge. No contrast stroke: a line that a scrim cannot rescue gets a band. Contrast is judged at the large-text level (3:1): every line is display type, 40 px or more.",
+  "note": "The formula family (2026-11-10): the look of F45 Jurong West's own running ads, as a second family beside the reference set. The area callout across the top, the duration and the offer low in the frame, plain filled type with a soft shadow and no outline, colour pairings chosen to sit on a plain backdrop, no logo and no brand colour. A batch uses one family (brief.look, else creative_defaults.look): 'reference' is offer-treatments / offer-styles / offer-palettes, 'formula' is this file. Same schema as those files; every entry carries family 'formula'. Both groups float clear of faces (float: { edge?, min_h_pct, gap_pct }): the lower block starts below the lowest face under it if at least min_h_pct of the canvas is left, else it moves above the heads; the callout (edge 'top') is cut short above a face. The lower block's scrim is 'local': full strength behind the block, fading above and below, so a plain backdrop is never tinted to the frame's edge. No contrast stroke: a line that a scrim cannot rescue gets a band. Contrast is judged at the large-text level (3:1): every line is display type, 40 px or more. Since 2026-11-24 a new 4:5 batch uses f4-f7 (the offer on a strip under the photo, or low beside the model: the words never on the model, no_touch) and leaves f1-f3 out (feed_default_off); at 1:1 and 9:16 f4-f7 carry f1's or f2's geometry.",
   "treatments": {
     "f1-callout-left": {
       "family": "formula",
@@ -799,6 +799,1054 @@
         ]
       },
       "hierarchy": "the location callout is the lead line; the duration and the offer sit under it in size"
+    },
+    "f4-strip-left": {
+      "family": "formula",
+      "number": 204,
+      "name": "Callout on the photo, offer under it, left",
+      "seen_in": [
+        "F45 Jurong West's own look, with the offer moved off the model (2026-11-24): the area across the top of the photo, the duration and the offer on a plain strip under it"
+      ],
+      "why": "The offer never sits on the model: the photo on top with the area across it, the duration and offer on a plain strip under the photo, ranged left.",
+      "visual_hint": "The advert shows the upper three quarters of this photo, with the offer on a plain strip under it: the head, the face and the action are all in the upper three quarters, and what falls below is cut away. The top fifth of the frame is plain backdrop with nothing in it: the top of the head sits about a quarter of the way down the frame, never higher. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "One or two people framed from the waist or the hips up, or in a seated, kneeling or crouching version of the movement, filling the upper three quarters of the frame, with a clear band of backdrop above the head; eye-level camera.",
+      "pose_fit": [
+        "upright",
+        "compact",
+        "low"
+      ],
+      "lead": "location",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                15
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 8,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                64,
+                90,
+                31
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 16
+              },
+              "float": {
+                "min_h_pct": 17,
+                "gap_pct": 2.5
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "4x5": {
+          "note": "The words keep off the model (2026-11-24, the owner on Jurong West's look: 'Yes to all'; he saw it on nine of his own ads). The photo fills the top 72% of the frame, kept from its top, with the area callout on its plain backdrop above the head; the duration and offer sit on a plain strip under the photo in the pairing's own band colour. no_touch: the finished ad fails if the words sit on more than body_cover.max of the person below the face.",
+          "no_touch": true,
+          "background": {
+            "type": "split",
+            "photo_h_pct": 72
+          },
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                12
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 6,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                73.5,
+                90,
+                21.5
+              ],
+              "anchor": "center",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "none",
+                "fade_pct": 8
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 0.9,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 2.3,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "9x16": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                6,
+                14.5,
+                88,
+                9
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 12
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 5,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                6,
+                46,
+                88,
+                18.5
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 12
+              },
+              "float": {
+                "min_h_pct": 10.5,
+                "gap_pct": 2
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 3,
+        "stroke_min": 2.2,
+        "scrim_max_alpha": 0.6,
+        "scrim_by_type": true,
+        "sample_percentile": 85,
+        "chain": [
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "the location callout is the lead line; the duration and the offer sit under it in size",
+      "visual_hint_clear": "The advert shows the upper three quarters of this photo, with the offer on a plain strip under it: the head, the face and the action are all in the upper three quarters, and what falls below is cut away. The top fifth of the frame is plain backdrop with nothing in it: the top of the head sits about a quarter of the way down the frame, never higher.",
+      "visual_framing_clear": "One or two people framed from the waist or the hips up, or in a seated, kneeling or crouching version of the movement, filling the upper three quarters of the frame, with a clear band of backdrop above the head; eye-level camera."
+    },
+    "f5-strip-centre": {
+      "family": "formula",
+      "number": 205,
+      "name": "Callout on the photo, offer under it, centred",
+      "seen_in": [
+        "F45 Jurong West's own look, with the offer moved off the model (2026-11-24): the area across the top of the photo, the duration and the offer on a plain strip under it"
+      ],
+      "why": "The same, centred: the area centred across the top of the photo, the duration and offer centred on the strip under it.",
+      "visual_hint": "The advert shows the upper three quarters of this photo, with the offer on a plain strip under it: the head, the face and the action are all in the upper three quarters, and what falls below is cut away. The top fifth of the frame is plain backdrop with nothing in it: the top of the head sits about a quarter of the way down the frame, never higher. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "One or two people framed from the waist or the hips up, or in a seated, kneeling or crouching version of the movement, filling the upper three quarters of the frame, with a clear band of backdrop above the head; eye-level camera.",
+      "pose_fit": [
+        "upright",
+        "compact",
+        "low"
+      ],
+      "lead": "location",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                15
+              ],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 8,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                64,
+                90,
+                31
+              ],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 16
+              },
+              "float": {
+                "min_h_pct": 17,
+                "gap_pct": 2.5
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "4x5": {
+          "note": "The words keep off the model (2026-11-24, the owner on Jurong West's look: 'Yes to all'; he saw it on nine of his own ads). The photo fills the top 72% of the frame, kept from its top, with the area callout on its plain backdrop above the head; the duration and offer sit on a plain strip under the photo in the pairing's own band colour. no_touch: the finished ad fails if the words sit on more than body_cover.max of the person below the face.",
+          "no_touch": true,
+          "background": {
+            "type": "split",
+            "photo_h_pct": 72
+          },
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                12
+              ],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 6,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                73.5,
+                90,
+                21.5
+              ],
+              "anchor": "center",
+              "align": "center",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "none",
+                "fade_pct": 8
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 0.9,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 2.3,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "9x16": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                6,
+                14.5,
+                88,
+                9
+              ],
+              "anchor": "top",
+              "align": "center",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 12
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 5,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                6,
+                46,
+                88,
+                18.5
+              ],
+              "anchor": "bottom",
+              "align": "center",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 12
+              },
+              "float": {
+                "min_h_pct": 10.5,
+                "gap_pct": 2
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 3,
+        "stroke_min": 2.2,
+        "scrim_max_alpha": 0.6,
+        "scrim_by_type": true,
+        "sample_percentile": 85,
+        "chain": [
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "the location callout is the lead line; the duration and the offer sit under it in size",
+      "visual_hint_clear": "The advert shows the upper three quarters of this photo, with the offer on a plain strip under it: the head, the face and the action are all in the upper three quarters, and what falls below is cut away. The top fifth of the frame is plain backdrop with nothing in it: the top of the head sits about a quarter of the way down the frame, never higher.",
+      "visual_framing_clear": "One or two people framed from the waist or the hips up, or in a seated, kneeling or crouching version of the movement, filling the upper three quarters of the frame, with a clear band of backdrop above the head; eye-level camera."
+    },
+    "f6-offer-right": {
+      "family": "formula",
+      "number": 206,
+      "name": "Callout across the top, offer beside the model, right",
+      "seen_in": [
+        "F45 Jurong West's own look, with the offer moved off the model (2026-11-24): the area across the top, the duration and the offer low in the frame beside the model"
+      ],
+      "why": "The model on the left, the duration and offer low on the right in the space beside them, never on them.",
+      "visual_hint": "The people stand wholly in the left half of the frame; the right half shows only the room or the backdrop \u2014 wall, floor, equipment \u2014 with nobody and no part of anybody in it. The top fifth of the frame is plain backdrop with nothing in it: the top of the head sits about a quarter of the way down the frame, never higher. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "The people on the left, close enough to fill most of the frame's height below the band of backdrop above their heads, turned or leaning toward the centre if they like, but every arm, hand, leg and piece of kit they hold stays in the left half. The right half is empty of people.",
+      "pose_fit": [
+        "upright",
+        "compact",
+        "low"
+      ],
+      "lead": "location",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                15
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 8,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                64,
+                90,
+                31
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 16
+              },
+              "float": {
+                "min_h_pct": 17,
+                "gap_pct": 2.5
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "4x5": {
+          "note": "The words keep off the model (2026-11-24): the area callout across the top on the plain backdrop above the head, the duration and offer low in the frame in a column fitted to the band the people leave free beside them (avoid) \u2014 where that band is under 30% of the width the look is not open to the photo. Tall, condensed letters in the column (tall_type); a line that needs help on its backdrop takes its own rim, never a haze or a box (contrast.rim). no_touch: the finished ad fails if the words sit on more than body_cover.max of the person below the face.",
+          "no_touch": true,
+          "contrast": {
+            "rim": true
+          },
+          "tall_type": true,
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                13.5
+              ],
+              "anchor": "top",
+              "align": "right",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "none",
+                "fade_pct": 8
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 7,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                50,
+                44,
+                45,
+                51
+              ],
+              "anchor": "bottom",
+              "align": "right",
+              "gap_pct": 0.7,
+              "scrim": {
+                "direction": "none",
+                "fade_pct": 8
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 2.6,
+                  "max_lines": 4,
+                  "min_px": 30
+                }
+              ],
+              "avoid": {
+                "min_w_pct": 30,
+                "gap_pct": 2
+              }
+            }
+          ],
+          "clear_zones": []
+        },
+        "9x16": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                6,
+                14.5,
+                88,
+                9
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 12
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 5,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                6,
+                46,
+                88,
+                18.5
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 12
+              },
+              "float": {
+                "min_h_pct": 10.5,
+                "gap_pct": 2
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 3,
+        "stroke_min": 2.2,
+        "scrim_max_alpha": 0.6,
+        "scrim_by_type": true,
+        "sample_percentile": 85,
+        "chain": [
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "the location callout is the lead line; the duration and the offer sit under it in size",
+      "visual_hint_clear": "The people stand wholly in the left half of the frame; the right half shows only the room or the backdrop \u2014 wall, floor, equipment \u2014 with nobody and no part of anybody in it. The top fifth of the frame is plain backdrop with nothing in it: the top of the head sits about a quarter of the way down the frame, never higher.",
+      "visual_framing_clear": "The people on the left, close enough to fill most of the frame's height below the band of backdrop above their heads, turned or leaning toward the centre if they like, but every arm, hand, leg and piece of kit they hold stays in the left half. The right half is empty of people."
+    },
+    "f7-offer-left": {
+      "family": "formula",
+      "number": 207,
+      "name": "Callout across the top, offer beside the model, left",
+      "seen_in": [
+        "F45 Jurong West's own look, with the offer moved off the model (2026-11-24): the area across the top, the duration and the offer low in the frame beside the model"
+      ],
+      "why": "The model on the right, the duration and offer low on the left in the space beside them, never on them.",
+      "visual_hint": "The people stand wholly in the right half of the frame; the left half shows only the room or the backdrop \u2014 wall, floor, equipment \u2014 with nobody and no part of anybody in it. The top fifth of the frame is plain backdrop with nothing in it: the top of the head sits about a quarter of the way down the frame, never higher. No text, letters, signage, logos or watermarks anywhere.",
+      "visual_framing": "The people on the right, close enough to fill most of the frame's height below the band of backdrop above their heads, turned or leaning toward the centre if they like, but every arm, hand, leg and piece of kit they hold stays in the right half. The left half is empty of people.",
+      "pose_fit": [
+        "upright",
+        "compact",
+        "low"
+      ],
+      "lead": "location",
+      "layouts": {
+        "1x1": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                15
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 16
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 8,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                64,
+                90,
+                31
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 16
+              },
+              "float": {
+                "min_h_pct": 17,
+                "gap_pct": 2.5
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        },
+        "4x5": {
+          "note": "The words keep off the model (2026-11-24): the area callout across the top on the plain backdrop above the head, the duration and offer low in the frame in a column fitted to the band the people leave free beside them (avoid) \u2014 where that band is under 30% of the width the look is not open to the photo. Tall, condensed letters in the column (tall_type); a line that needs help on its backdrop takes its own rim, never a haze or a box (contrast.rim). no_touch: the finished ad fails if the words sit on more than body_cover.max of the person below the face.",
+          "no_touch": true,
+          "contrast": {
+            "rim": true
+          },
+          "tall_type": true,
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                5,
+                5,
+                90,
+                13.5
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "none",
+                "fade_pct": 8
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 7,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                5,
+                44,
+                45,
+                51
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.7,
+              "scrim": {
+                "direction": "none",
+                "fade_pct": 8
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 2.6,
+                  "max_lines": 4,
+                  "min_px": 30
+                }
+              ],
+              "avoid": {
+                "min_w_pct": 30,
+                "gap_pct": 2
+              }
+            }
+          ],
+          "clear_zones": []
+        },
+        "9x16": {
+          "groups": [
+            {
+              "id": "top",
+              "region": [
+                6,
+                14.5,
+                88,
+                9
+              ],
+              "anchor": "top",
+              "align": "left",
+              "gap_pct": 0.6,
+              "scrim": {
+                "direction": "top",
+                "fade_pct": 12
+              },
+              "stack": [
+                {
+                  "block": "location",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 44
+                },
+                {
+                  "block": "audience",
+                  "share": 0.42,
+                  "max_lines": 1,
+                  "min_px": 26,
+                  "optional": true
+                }
+              ],
+              "float": {
+                "edge": "top",
+                "min_h_pct": 5,
+                "gap_pct": 1.5
+              }
+            },
+            {
+              "id": "bottom",
+              "region": [
+                6,
+                46,
+                88,
+                18.5
+              ],
+              "anchor": "bottom",
+              "align": "left",
+              "gap_pct": 0.5,
+              "scrim": {
+                "direction": "local",
+                "fade_pct": 12
+              },
+              "float": {
+                "min_h_pct": 10.5,
+                "gap_pct": 2
+              },
+              "stack": [
+                {
+                  "block": "duration",
+                  "share": 1,
+                  "max_lines": 1,
+                  "min_px": 40
+                },
+                {
+                  "block": "offer_name",
+                  "share": 1.9,
+                  "max_lines": 2,
+                  "min_px": 34
+                }
+              ]
+            }
+          ],
+          "clear_zones": []
+        }
+      },
+      "contrast": {
+        "target": 3,
+        "stroke_min": 2.2,
+        "scrim_max_alpha": 0.6,
+        "scrim_by_type": true,
+        "sample_percentile": 85,
+        "chain": [
+          "scrim",
+          "band"
+        ]
+      },
+      "hierarchy": "the location callout is the lead line; the duration and the offer sit under it in size",
+      "visual_hint_clear": "The people stand wholly in the right half of the frame; the left half shows only the room or the backdrop \u2014 wall, floor, equipment \u2014 with nobody and no part of anybody in it. The top fifth of the frame is plain backdrop with nothing in it: the top of the head sits about a quarter of the way down the frame, never higher.",
+      "visual_framing_clear": "The people on the right, close enough to fill most of the frame's height below the band of backdrop above their heads, turned or leaning toward the centre if they like, but every arm, hand, leg and piece of kit they hold stays in the right half. The left half is empty of people."
     }
   },
   "styles": {
@@ -1287,5 +2335,11 @@
       "scrim": "#FFFFFF",
       "divider": "#111111"
     }
-  }
+  },
+  "feed_default_off": [
+    "f1-callout-left",
+    "f2-callout-centre",
+    "f3-offer-card"
+  ],
+  "feed_default_off_note": "The family's first three layouts set the duration and offer over the model's torso and legs (measured on Jurong West's 29 single-photo ads, 2026-11-24: 24-58% of the person below the face). A new feed-shape (4:5) batch leaves them out and uses f4-f7, whose words keep off the model. Their geometry is untouched and they are found by id, so a batch made with them keeps them and re-renders exactly as it was (the owner: the existing look stays, only future batches change): assign-variants excludeFromProfile({ made })."
 }

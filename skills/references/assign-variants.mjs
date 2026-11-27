@@ -154,6 +154,8 @@ export function lumFit(stat, layout, palette, { target = 3 } = {}) {
   layout.groups.forEach((g, gi) => {
     const cells = stat.cells.slice(gi * 16, gi * 16 + 16).map((c) => c.lum);
     if (!cells.length) return;
+    // A group on the plain strip under a split photo is set on the pairing's own band colour, not on the photo.
+    const bg = layout.background; if (bg?.type === "split" && g.region[1] >= (bg.photo_y_pct || 0) + bg.photo_h_pct - 0.01) return;
     const fifth = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(0.2 * (xs.length - 1))];
     for (const it of g.stack) {
       if (it.block === "divider" || !palette.blocks[it.block] || (g.band?.blocks || []).includes(it.block)) continue;
@@ -167,10 +169,17 @@ export function lumFit(stat, layout, palette, { target = 3 } = {}) {
 }
 
 /** A client's switched-off looks, from gym-profile.json → creative (validated by client-config.mjs). */
-export function excludeFromProfile(creative = {}, { ratio = null, catalogue = null } = {}) {
+export function excludeFromProfile(creative = {}, { ratio = null, catalogue = null, made = null } = {}) {
   // The feed shape's default set (2026-11-17): the layouts whose words run across the people are left out of a new 4:5
-  // batch of the reference family unless the gym asks for them (creative.include_layouts).
-  const off = ratio === "4x5" && catalogue && catalogue.look !== "formula" ? (catalogue.treatments.feed_default_off || []).filter((id) => catalogue.treatments.treatments[id] && !(creative.include_layouts || []).includes(id)) : [];
+  // batch unless the gym asks for them (creative.include_layouts). Each family names its own (feed_default_off): the
+  // reference set's centred stack, collage and circles; the formula family's first three, which set the offer over the
+  // model (2026-11-24).
+  const all = catalogue ? Object.keys(catalogue.treatments.treatments) : [], listed = catalogue ? (catalogue.treatments.feed_default_off || []).filter((id) => catalogue.treatments.treatments[id]) : [];
+  let off = ratio === "4x5" ? listed.filter((id) => !(creative.include_layouts || []).includes(id)) : [];
+  // A formula batch made with those first three keeps the set it was made with (`made`: the layouts its ads already
+  // use) — the owner's word: the existing look stays, only future batches change — so a later run of it plans, fits
+  // and renders exactly as before and never takes a layout that came after.
+  if (catalogue?.look === "formula" && listed.length && (made || []).some((id) => listed.includes(id))) off = all.filter((id) => !listed.includes(id));
   return { layouts: [...new Set([...(creative.exclude_layouts || []), ...off])], styles: creative.exclude_styles || [], palettes: creative.exclude_palettes || [] };
 }
 
