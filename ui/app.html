@@ -390,6 +390,7 @@ const WAITS = [
   [/PUT/, /\/coaches\/sample\//, 'Saving the coach video as it is and pulling still frames from it. A large video takes a few seconds.'],
   [/POST/, /\/footage\/[^/]+\/match$/, 'The agent is matching your B-roll notes to what each clip shows. A few seconds.'],
   [/POST/, /\/footage\/[^/]+\/ad$/, 'Adding the cut to this gym’s ads, as it is.'],
+  [/POST/, /\/lead-forms\/whatsapp(-checked)?$/, 'Saving.'],
   [/PUT/, /\/videos\/held\//, 'Saving the video as it is and checking its shape, length and sound. A large video takes a few seconds.'],
   [/POST/, /\/videos\/add$/, 'Adding the videos as ads: each file goes into a new batch as it is, with a poster frame.'], [/GET/, /\/videos\/held$/, null],
   [/PUT/, /\/footage\/[^/]+\/file\//, 'Adding the file to the shoot, as it is. A large clip takes a few seconds.'], [/GET/, /\/footage(\/[^/]+)?$/, null], [/PUT/, /\/footage\/[^/]+$/, 'Saving your choice and laying the cutting sheet out again.'], [/POST/, /\/footage$/, 'Creating the shoot and listing its files.'],
@@ -3813,11 +3814,12 @@ function paintPublish(v){
   ${copyCard(D, P, sw)}
   <div class="card"><div class="row"><h3 style="margin:0">Destination and identity</h3><div class="spacer"></div><button class="sm" onclick="pbLoadLink()" ${PB.busy?'disabled':''}>${PB.link?'Reload the lists':'Load the Page\'s forms and Instagram accounts'}</button></div>
     <div class="grid" style="margin-top:10px">
-      <div><label>Instant form ${pbFormConfirmed()?'<span class="pill on" id="pbFormOk">confirmed for this campaign</span>':'<span class="pill warn" id="pbFormOk">not confirmed yet</span>'} <span class="n">· <a href="#" onclick="pbFormChoose();return false">choose and confirm…</a> · <a href="#" onclick="pbNewForm();return false">new form from the template…</a></span></label>${PB.link?`<select onchange="pbSet('destination.lead_form_id',this.value||null)">${(PB.link.chosen?.forms||[]).map(f=>`<option value="${esc(f.id)}" ${f.id===P.lead_form_id?'selected':''}>${esc(f.name)} · ${(f.status||'').toLowerCase()}${f.leads_count!=null?` · ${f.leads_count} leads`:''}</option>`).join('')}</select>`:`<div class="mono">${esc(P.lead_form_id||'none')}</div><div class="hint">${esc(D.lead_form_name || (P.lead_form_id && P.lead_form_id===STATE.profile?.meta_assets?.lead_form_id ? STATE.profile?.meta_assets?.labels?.form : '') || (P.lead_form_id ? 'this campaign\'s form' : 'the profile\'s form'))}</div>`}</div>
+      <div><label>Instant form ${pbFormConfirmed()?'<span class="pill on" id="pbFormOk">confirmed for this campaign</span>':'<span class="pill warn" id="pbFormOk">not confirmed yet</span>'} <span class="n">· <a href="#" onclick="pbFormChoose();return false">choose and confirm…</a> · <a href="#" onclick="pbNewForm();return false">new form from the template…</a></span>${(()=>{ const w = PB.data.form_whatsapp; return w?.whatsapp && w.made_here ? (w.checked?.number ? ` <span class="pill on" id="pbWa">WhatsApp ${esc(w.checked.number)} · checked</span>` : ` <span class="pill warn" id="pbWa">WhatsApp number not checked</span>`) : ''; })()}</label>${PB.link?`<select onchange="pbSet('destination.lead_form_id',this.value||null)">${(PB.link.chosen?.forms||[]).map(f=>`<option value="${esc(f.id)}" ${f.id===P.lead_form_id?'selected':''}>${esc(f.name)} · ${(f.status||'').toLowerCase()}${f.leads_count!=null?` · ${f.leads_count} leads`:''}</option>`).join('')}</select>`:`<div class="mono">${esc(P.lead_form_id||'none')}</div><div class="hint">${esc(D.lead_form_name || (P.lead_form_id && P.lead_form_id===STATE.profile?.meta_assets?.lead_form_id ? STATE.profile?.meta_assets?.labels?.form : '') || (P.lead_form_id ? 'this campaign\'s form' : 'the profile\'s form'))}</div>`}</div>
       <div><label>Facebook Page</label><div class="mono">${esc(P.page_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.page||'')}</div></div>
       <div><label>Instagram account</label>${PB.link?`<select onchange="pbSet('destination.instagram_user_id',this.value)"><option value="" ${!P.instagram_user_id?'selected':''}>none · a Page-backed identity</option>${igList(PB.link).map(x=>`<option value="${esc(x.id)}" ${x.id===P.instagram_user_id?'selected':''}>@${esc(x.username||x.id)}</option>`).join('')}</select>`:`<div class="mono">${esc(P.instagram_user_id||'none')}</div><div class="hint">${esc(STATE.profile?.meta_assets?.labels?.instagram||'')}</div>`}</div>
       <div><label>Link</label><div class="mono">${esc(P.website||'none')}</div></div>
     </div></div>
+  ${swapCard(D)}
   ${publishedCard(D.published, P)}
   ${readinessBlock(D.readiness, P)}
   <div class="card"><div class="row"><div><b>${P.counts.adsets} ad set${P.counts.adsets===1?'':'s'}, ${P.counts.ads} ads, ${money(P.budget.per_day_total,cur)} a day, all paused.</b><div class="hint">${P.ready?(D.readiness?.to_check?'Ready to create once the checks above are yours to make.':'Ready to create.'):'Fix the problems above first.'}${S.updated?` Settings saved ${esc(S.updated.slice(0,16).replace('T',' '))}.`:''}</div></div><div class="spacer"></div>
@@ -4026,7 +4028,7 @@ function readinessBlock(R, P){
   return `<div class="msg warn"><b>Before you create, ${open.length} thing${open.length===1?'':'s'} to check:</b><ul style="margin:4px 0 0 18px">${open.map(c=>`<li>${esc(c.text)}${c.where?` — <a href="#" onclick="pbJump('${c.where}');return false">${esc(label[c.where]||c.where)}</a>`:''}</li>`).join('')}</ul>${R.checks.some(c=>c.ok===true)?`<div class="hint" style="margin-top:6px">Fine: ${R.checks.filter(c=>c.ok===true).map(c=>esc(c.text)).join(' · ')}.</div>`:''}</div>`;
 }
 function pbJump(where){
-  const re = { destination:/^Destination and identity/, targeting:/^Ad sets/, copy:/^Copy\b/, headlines:/^Headlines\b/, ads:/^Ads ·/ }[where] || /./;
+  const re = { swap:/^The ads on Facebook use another form/, destination:/^Destination and identity/, targeting:/^Ad sets/, copy:/^Copy\b/, headlines:/^Headlines\b/, ads:/^Ads ·/ }[where] || /./;
   const h = [...document.querySelectorAll('#view h2, #view h3')].find(x=>re.test(x.textContent.trim()));
   (h?.closest('.card') || h)?.scrollIntoView({ behavior:'smooth', block:'start' });
 }
@@ -4049,9 +4051,46 @@ function pbCreateConfirm(){
     <p class="hint">In ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account: the campaign, ${P.counts.adsets} ad set${P.counts.adsets===1?'':'s'} and ${P.counts.ads} ad${P.counts.ads===1?'':'s'} as shown on this screen — every object <b>paused</b>. Nothing runs or spends until you switch it on in Ads Manager. Made already: ${made} ad${made===1?'':'s'}, reused.${P.counts.videos?` <span id="pbCreateVideo">${P.counts.videos} of the ads ${P.counts.videos===1?'is a video':'are videos'}: each is uploaded to the ad account and Meta takes a minute or two to process it before its ad can be made, so this run takes longer.</span>`:''}</p>
     <div class="summary"><b>${esc(P.campaign.name)}</b> · ${money(P.budget.per_day_total,cur)} a day once switched on${P.words.placeholders.length?' · <span style="color:var(--warn)">placeholder words</span>':''}</div>
     <div class="summary" id="pbCreateForm" style="margin-top:-4px">Leads go to the form <b>${esc(PB.data.lead_form_name || P.lead_form_id || 'none')}</b> ${pbFormConfirmed() ? '<span class="pill on">confirmed</span>' : `<span class="pill warn">not confirmed yet</span> <a href="#" onclick="bClose();pbFormChoose();return false">choose and confirm it first</a>`}</div>
+    ${PB.data.form_swap?.ads ? `<div class="summary" id="pbCreateSwap" style="margin-top:-4px;border-color:var(--err)"><b>${PB.data.form_swap.ads} ad${PB.data.form_swap.ads===1?'':'s'} on Facebook differ${PB.data.form_swap.ads===1?'s':''} from this campaign only by ${PB.data.form_swap.ads===1?'its':'their'} lead form.</b> Creating would make ${PB.data.form_swap.ads===1?'it':'them'} again as new paused ads beside the old ones. <a href="#" onclick="bClose();pbJump('swap');return false">Change the form on the ads instead</a>: each keeps its id, its results and whether it is on.</div>` : ''}
     ${pbRoomBlock()}
     <div class="row"><label for="pbFirst" style="margin:0">Only the first</label><input id="pbFirst" type="number" min="1" max="${P.counts.ads}" placeholder="all" style="width:80px"><span class="hint" style="margin:0">ads this run (leave empty for all ${P.counts.ads})</span></div>
     <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" onclick="pbCreateGo()">Yes, create them paused</button></div></div></div>`;
+}
+// ── Another lead form on the ads already on Facebook (2026-11-27) ───────────────
+// Aether's 49 running ads pointed at a form whose WhatsApp button opened the wrong number. A form cannot be edited, so a
+// new one was made — and a create would have answered with 49 new paused ads beside the old ones. This changes the form
+// where the ads are: the server says which ads differ from the campaign by their form alone (form_swap), the owner tries
+// ONE ad first, looks at it in Ads Manager, then does the rest. Each ad keeps its id, its results and whether it is on;
+// nothing is made or archived. Both presses are his, each behind a confirmation that says what it does.
+const pbFormLabel = (f) => f ? (f.name || (PB.link?.chosen?.forms||[]).find(x=>String(x.id)===String(f.id))?.name || `form ${f.id}`) : 'none';
+function swapCard(D){
+  const W = D.form_swap; if (!W || (!W.ads && !W.changed)) return '';
+  const n = (k, w='ad') => `${k} ${w}${k===1?'':'s'}`, busy = PB.busy || (STATE.run && !STATE.run.done);
+  if (!W.ads) return `<div class="card" id="pbSwap" data-left="0"><b>Every ad on Facebook uses this campaign's form.</b> <span class="hint" id="pbSwapDone">${n(W.changed)} had ${W.changed===1?'its':'their'} form changed in place${W.last?.finished?` (${esc(W.last.finished.slice(0,16).replace('T',' '))})`:''}: each kept its id, its results and whether it is on. Pull results in a day to see the leads arrive on <b>${esc(pbFormLabel(W.to))}</b>.</span></div>`;
+  return `<div class="card" id="pbSwap" data-left="${W.ads}" style="border-color:var(--warn)"><h3 style="margin:0 0 6px">The ads on Facebook use another form</h3>
+    <div>${n(W.ads)} of this campaign ${W.ads===1?'is':'are'} on Facebook with the form <b>${W.from.map(pbFormLabel).map(esc).join(', ')}</b>. This campaign's form is now <b id="pbSwapTo">${esc(pbFormLabel(W.to))}</b>.${W.changed?` <span id="pbSwapSome">${n(W.changed)} already changed.</span>`:''}</div>
+    <p class="hint" style="margin:6px 0 10px">Change it where the ads are: each ad keeps its id, its results and whether it is on or paused; it is given the same words, pictures and video with the new form. Nothing new is made and nothing is archived. Facebook reviews an edited ad again and the ad set's learning starts over, as with any change of form.</p>
+    ${W.last?.error?`<p class="hint" id="pbSwapErr" style="color:var(--err)">The last run stopped at ${esc(W.last.error.what||'an ad')}: ${esc(W.last.error.message||'')} — what it had changed is kept. Press again to go on.</p>`:''}
+    ${W.other?`<p class="hint" style="color:var(--warn)">${n(W.other)} differ${W.other===1?'s':''} in other ways too (words or pictures) and ${W.other===1?'is':'are'} left alone here.</p>`:''}
+    <div class="row" style="gap:8px;flex-wrap:wrap">${W.changed ? '' : `<button class="primary" id="pbSwapOne" ${busy?'disabled':''} onclick="pbSwapAsk(true)">Change it on one ad first…</button>`}
+      <button class="${W.changed?'primary':''}" id="pbSwapAll" ${busy?'disabled':''} onclick="pbSwapAsk(false)">${W.changed?`Change it on the other ${W.ads}…`:`Change it on all ${W.ads}…`}</button>
+      ${W.changed?`<span class="hint" style="margin:0">Look at the changed ad in Ads Manager first: its form should read ${esc(pbFormLabel(W.to))}.</span>`:''}</div></div>`;
+}
+function pbSwapAsk(one){
+  const W = PB.data?.form_swap; if (!W?.ads) return;
+  const f = one ? W.first : null, k = one ? 1 : W.ads;
+  $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card" id="pbSwapCard">
+    <h2>${one?'Change the form on one ad?':`Change the form on ${k===1?'the ad':`${W.changed?'the other':'all'} ${k} ads`}?`}</h2>
+    <div class="summary">From <b>${W.from.map(pbFormLabel).map(esc).join(', ')}</b> to <b>${esc(pbFormLabel(W.to))}</b></div>
+    ${f ? `<p id="pbSwapWhich">The ad: <b>${esc(f.name||f.folder)}</b>${f.video?' (a video)':''} — ${f.leads == null ? 'its numbers are not on file (Pull results from Meta first if you want one with no leads picked)' : f.leads === 0 ? 'no leads so far, the least spent' : `${f.leads} lead${f.leads===1?'':'s'} so far`}.</p>` : ''}
+    <p class="hint">In ${esc(STATE.profile?.display_name||STATE.sel)}'s ad account, ${k===1?'this ad is':'each of these ads is'} given a new creative: the same words, pictures and video, pointing at the new form. ${k===1?'It keeps':'They keep'} ${k===1?'its':'their'} id and results and stay${k===1?'s':''} <b>on or paused as ${k===1?'it is':'they are'}</b>: this never switches an ad on or off. Nothing is archived and no new ad is made. Facebook reviews an edited ad again, so expect a dip while it does.${one?' Then look at this ad in Ads Manager, and change the rest.':''}</p>
+    <div class="row" style="margin-top:12px"><button onclick="bClose()">Cancel</button><div class="spacer"></div><button class="primary" id="pbSwapGo" onclick="pbSwapGo(${one?'true':'false'})">Yes, change the form</button></div></div></div>`;
+}
+function pbSwapGo(one){
+  const W = PB.data?.form_swap; bClose(); if (!W?.ads) return;
+  const only = one && W.first ? [W.first.folder] : null;
+  run({ kind:'batch-form-swap', gym:PB.gym, batch:PB.id, confirm:{ to: W.to.id, ads: only ? 1 : W.ads, ...(only ? { only } : {}) } }, async()=>{ PB.data = null; if (STATE.tab==='publish' && STATE.batch===PB.id) viewPublish($('#view')); });
+  paintPublish($('#view'));
 }
 /** A full ad set, said before anything is uploaded (2026-11-18): Meta allows 50 ads in an ad set and counts paused ones,
  *  and an ad made again is a new ad beside its old one. The archive is the owner's tick; it can never be undone. */
@@ -4117,7 +4156,7 @@ async function pbFormChoose(){
   const pick = P.lead_form_id && (live.some(f=>f.id===P.lead_form_id) || !live.length) ? P.lead_form_id : (live[0]?.id || '');
   const row = (f) => `<label class="formrow"><input type="radio" name="pbForm" value="${esc(f.id)}" ${f.id===pick?'checked':''} style="width:auto;margin:3px 0 0"><span style="flex:1;min-width:0"><b>${esc(f.name)}</b>
       ${f.id===P.lead_form_id?'<span class="pill navy">this campaign\'s now</span>':''}${f.id===D?.default_form_id?' <span class="pill">the gym\'s default</span>':''}${made.has(f.id)?' <span class="pill">made here</span>':''}
-      ${f.names===true?' <span class="pill on">names this offer</span>':f.names===false?' <span class="pill warn">does not name this offer</span>':''}
+      ${f.names===true?' <span class="pill on">names this offer</span>':f.names===false?' <span class="pill warn">does not name this offer</span>':''}${waMark(f)}
       <span class="hint" style="display:block;margin:2px 0 0">${esc((f.status||'').toLowerCase())}${f.leads_count!=null?` · ${f.leads_count} lead${f.leads_count===1?'':'s'} so far`:''}${f.created_time?` · made ${esc(f.created_time.slice(0,10))}`:''}${f.question_count!=null?` · ${f.question_count} questions`:''}</span></span></label>`;
   $('#bModal').innerHTML = `<div class="modal" onclick="if(event.target===this)bClose()"><div class="card" style="max-width:720px">
     <h2>Which lead form do these ads use?</h2>
@@ -4889,9 +4928,12 @@ async function viewLeadForms(v, seq=VIEW_SEQ){
 }
 function paintLeadForms(v){
   const D = LF.data, t = D.record?.template, made = new Set((D.record?.created||[]).map(x=>x.id));
-  const row = f => `<tr><td><b>${esc(f.name)}</b>${f.id===t?.source?.id?' <span class="pill on">template</span>':''}${f.id===D.default_form_id?' <span class="pill navy">default</span>':''}${made.has(f.id)?' <span class="pill">made here</span>':''}</td><td>${esc((f.created_time||'').slice(0,10))}</td><td>${f.question_count??''}</td><td>${f.leads_count??''}</td><td>${esc((f.status||'').toLowerCase())}</td><td class="row" style="gap:6px;justify-content:flex-end">${f.id===t?.source?.id?'':`<button class="sm" onclick="lfTemplate('${esc(f.id)}')">Use as template</button>`}${f.id===D.default_form_id?'':`<button class="sm" onclick="lfDefault('${esc(f.id)}','${esc(f.name)}')">Make default</button>`}</td></tr>`;
+  const row = f => `<tr><td><b>${esc(f.name)}</b>${f.id===t?.source?.id?' <span class="pill on">template</span>':''}${f.id===D.default_form_id?' <span class="pill navy">default</span>':''}${made.has(f.id)?' <span class="pill">made here</span>':''}${waMark(f)}</td><td>${esc((f.created_time||'').slice(0,10))}</td><td>${f.question_count??''}</td><td>${f.leads_count??''}</td><td>${esc((f.status||'').toLowerCase())}</td><td class="row" style="gap:6px;justify-content:flex-end">${f.id===t?.source?.id?'':`<button class="sm" onclick="lfTemplate('${esc(f.id)}')">Use as template</button>`}${f.id===D.default_form_id?'':`<button class="sm" onclick="lfDefault('${esc(f.id)}','${esc(f.name)}')">Make default</button>`}</td></tr>`;
   v.innerHTML = `<h1>Lead forms</h1><p class="sub">The instant forms on ${esc(D.page_name||'the gym\'s Page')}. Pick one as the <b>template</b>: a new form for a new offer is that form with the offer and the district swapped, and nothing else rewritten — Meta does not let a form be edited once made, only archived, so the version number stays in the name. The <b>default</b> form is the one every campaign made here points to unless its Publish Ads screen picks another.</p>
   ${D.reason?`<div class="msg warn">${esc(D.reason)}</div>`:''}
+  <div class="card" id="lfWaCard"><h3 style="margin:0 0 4px">WhatsApp number for this gym's forms</h3>
+    <p class="hint" style="margin:0 0 8px">Where a form ends on a <b>Chat on WhatsApp</b> button, this is the number it must open. The app sends it with every such form it makes, and refuses a form whose thank-you text names another number. Without one Meta picks a number by itself. Meta never shows which number a button really opens, so a form made here stays “not checked” until you have looked at it in Ads Manager.</p>
+    <div class="row" style="gap:8px"><input id="lfWa" value="${esc(D.whatsapp||'')}" placeholder="+65 8000 1234" style="max-width:220px"><button class="primary" id="lfWaSave" onclick="lfWaSave()">Save</button>${D.whatsapp?`<span class="pill on" id="lfWaSet">${esc(D.whatsapp)}</span>`:'<span class="pill warn" id="lfWaSet">none set</span>'}</div></div>
   <div class="card"><div class="row"><h3 style="margin:0">Forms on the Page · ${(D.forms||[]).length}</h3><div class="spacer"></div><button class="sm" onclick="viewLeadForms($('#view'))">Reload</button><button class="sm primary" onclick="lfNew()" ${t?'':'disabled'} title="${t?'':'choose a template first'}">New form from the template…</button></div>
     ${(D.forms||[]).length?`<table class="tbl" style="margin-top:10px"><thead><tr><th>Form</th><th>Created</th><th>Questions</th><th>Leads</th><th>Status</th><th></th></tr></thead><tbody>${D.forms.map(row).join('')}</tbody></table>`:'<p class="hint">No forms yet on this Page.</p>'}</div>
   ${t?`<div class="card"><h3>Template · ${esc(t.source.name)}</h3><p class="hint" style="margin-top:4px">Read from the Page ${esc((t.set||'').slice(0,10))} · ${t.source.leads_count??0} leads · offer phrase: <b>${esc(t.phrases?.offer||'none found')}</b> · district: <b>${esc(t.phrases?.district||'none found')}</b></p>
@@ -4900,6 +4942,38 @@ function paintLeadForms(v){
     ${t.spec.thank_you_page?`<p class="hint">Thank-you page: <b>${esc(t.spec.thank_you_page.title)}</b> — ${esc(t.spec.thank_you_page.body||'')} · button ${esc(t.spec.thank_you_page.button_type)}${t.spec.thank_you_page.button_text?` "${esc(t.spec.thank_you_page.button_text)}"`:''}</p>`:''}
     ${t.spec.privacy_policy?`<p class="hint">Privacy policy: ${esc(t.spec.privacy_policy.url)}</p>`:''}</div>`:'<div class="card"><p class="hint">No template yet: press Use as template on one of the forms above (the one your best ads ran on).</p></div>'}
   ${(D.record?.created||[]).length?`<div class="card"><h3>Made here</h3><table class="tbl" style="margin-top:8px"><thead><tr><th>Form</th><th>Made</th><th>Offer</th><th>Questions</th></tr></thead><tbody>${D.record.created.map(x=>`<tr><td><b>${esc(x.name)}</b> <span class="mono hint">${esc(x.id)}</span></td><td>${esc(x.created.slice(0,10))}</td><td>${esc(x.offer||'')}</td><td>${x.questions}</td></tr>`).join('')}</tbody></table></div>`:''}`;
+}
+// ── The number behind a form's WhatsApp button (2026-11-27) ─────────────────────
+// Aether's leads tapped "Complete Registration" and WhatsApp opened to the wrong number: the app had made the form with a
+// WhatsApp button and no number, and Meta chose one. Each gym now has ONE WhatsApp number for its lead forms (sent with
+// every such form the app makes), and — because Meta never shows which number a button really opens — a form made here
+// stays "not checked" until the owner has looked at it in Ads Manager and ticked it.
+function waMark(f){
+  const w = f?.whatsapp_state; if (!w?.whatsapp || !w.made_here) return '';
+  if (w.checked?.number) return ` <span class="pill on" data-wa="ok" title="You looked at this form in Ads Manager">WhatsApp ${esc(w.checked.number)} · checked</span>`;
+  return ` <span class="pill warn" data-wa="${w.sent?'sent':'unknown'}" title="Meta does not show which number a WhatsApp button opens">${w.sent?`WhatsApp ${esc(w.sent)} sent · not checked`:'WhatsApp number chosen by Meta · not checked'}</span> <button class="sm" type="button" data-wa-check="${esc(f.id)}" onclick="event.preventDefault();event.stopPropagation();waCheck('${esc(f.id)}')">I checked it…</button>`;
+}
+function waCheck(id){
+  const D = LF.data, f = (D?.forms||[]).find(x=>x.id===id), gym = D?.whatsapp || '';
+  $('#gModal').innerHTML = `<div class="modal" style="z-index:60" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card" id="waCard" style="max-width:560px"><h3>Which number does its WhatsApp button open?</h3>
+    <p class="hint">Meta does not show this through the app. In Ads Manager → Forms library, open <b>${esc(f?.name||id)}</b> and look at <b>Additional action → Chat on WhatsApp</b>: the number in the box under “Add WhatsApp Business app account”.</p>
+    <label for="waSaw">The number it shows</label><input id="waSaw" value="${esc(gym)}" placeholder="+65 8000 1234">
+    <div class="hint">${gym?`This gym's WhatsApp number for lead forms is <b>${esc(gym)}</b>. A form that shows another number opens the wrong chat: it is not ticked.`:'Set this gym’s WhatsApp number for lead forms first (Library → Lead forms).'}</div>
+    <p class="hint" id="waWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="waGo" onclick="waCheckGo('${esc(id)}')">It shows this number</button></div></div></div>`;
+}
+async function waCheckGo(id){
+  try { await api(`/api/client/${LF.gym||STATE.sel}/lead-forms/whatsapp-checked`, { method:'POST', body:{ id, number: $('#waSaw').value } }); }
+  catch(e){ $('#waWhy').textContent = e.message; return; }
+  $('#gModal').innerHTML = ''; toast('Noted: you checked this form’s WhatsApp number.', 'ok');
+  try { LF.data = await api(`/api/client/${LF.gym||STATE.sel}/lead-forms`); } catch(e){}
+  if (STATE.tab === 'leadforms') paintLeadForms($('#view'));
+  else if (STATE.tab === 'publish' && PB.data) { const open = !!document.querySelector('#pbFormList'); PB.data = null; await viewPublish($('#view')); if (open) pbFormChoose(); }
+}
+async function lfWaSave(){
+  try { const r = await api(`/api/client/${STATE.sel}/lead-forms/whatsapp`, { method:'POST', body:{ number: $('#lfWa').value } }); LF.data.whatsapp = r.whatsapp; toast(r.whatsapp ? `Saved: forms with a WhatsApp button are tied to ${r.whatsapp}.` : 'Cleared.', 'ok'); await refreshProfile(); }
+  catch(e){ toast(e.message, 'err'); return; }
+  paintLeadForms($('#view'));
 }
 async function lfReload(){ try { LF.data = await api(`/api/client/${LF.gym||STATE.sel}/lead-forms`); } catch(e){ toast(e.message,'err'); } if (STATE.tab==='leadforms') paintLeadForms($('#view')); }
 async function lfTemplate(id){ try { await api(`/api/client/${STATE.sel}/lead-forms/template`, { method:'POST', body:{ id } }); toast('Template set.'); } catch(e){ toast(e.message,'err'); } await lfReload(); }
@@ -5229,7 +5303,8 @@ function partsPublish(){
     part(PUB_PARTS[3], pbFormConfirmed() || !!rec?.done, { text: P.lead_form_id
       ? `Leads from these ads go to the form "${PB.data.lead_form_name || P.lead_form_id}". Check it is the right form for this offer — or pick another, or make a new one — and confirm it.`
       : "These ads have no lead form yet. Pick one of the Page's forms, or make a new one for this offer.", label:'Choose the lead form…', go:()=>pbFormChoose() }),
-    part(PUB_PARTS[4], !!rec?.done, { text: made ? `${made} of ${plur(P.counts.ads,'ad')} ${made===1?'is':'are'} on Facebook. Continue: nothing is made twice.` : `This makes 1 campaign, ${plur(P.counts.adsets,'ad set')} and ${plur(P.counts.ads,'ad')} in the gym's ad account, every one paused.${toCheck?` ${plur(toCheck,'thing')} to check first ${toCheck===1?'is':'are'} listed above the button.`:''} You confirm first.`, label: made ? 'Continue creating…' : 'Create on Facebook, paused…', go:()=>pbCreateConfirm() }),
+    ...(D.form_swap?.ads ? [part(PUB_PARTS[4], false, { text:`${plur(D.form_swap.ads,'ad')} on Facebook still use${D.form_swap.ads===1?'s':''} another form than this campaign's. Change it where the ads are: each keeps its id, its results and whether it is on.${D.form_swap.changed?' One is changed already: look at it in Ads Manager, then change the rest.':' Try one ad first.'}`, label: D.form_swap.changed ? `Change it on the other ${D.form_swap.ads}…` : 'Change it on one ad first…', go:()=>pbSwapAsk(!D.form_swap.changed) })] : [
+    part(PUB_PARTS[4], !!rec?.done, { text: made ? `${made} of ${plur(P.counts.ads,'ad')} ${made===1?'is':'are'} on Facebook. Continue: nothing is made twice.` : `This makes 1 campaign, ${plur(P.counts.adsets,'ad set')} and ${plur(P.counts.ads,'ad')} in the gym's ad account, every one paused.${toCheck?` ${plur(toCheck,'thing')} to check first ${toCheck===1?'is':'are'} listed above the button.`:''} You confirm first.`, label: made ? 'Continue creating…' : 'Create on Facebook, paused…', go:()=>pbCreateConfirm() })]),
     part(PUB_PARTS[5], live > 0, { text:'Everything was made paused. Look it over in Ads Manager and switch the campaign on there when you are ready: this app never switches an ad on. Then press Pull results from Meta below and this ticks.', ...(url ? { label:'Open Ads Manager ↗', go:()=>window.open(url, '_blank', 'noopener') } : {}) }),
   ], after: { text:`${plur(live,'ad')} ${live===1?'is':'are'} live. Come back in a few days to read what they did: the cycle starts again there.`, label:'Review Data →', go:()=>go('results') } };
 }

@@ -131,8 +131,58 @@ export function proposeForm(template, { offer, oldOffer = null, callout = null, 
   return { spec, changed, swapped: pairs.filter(([a, b]) => a && b != null && a !== b).map(([from, to]) => ({ from, to })) };
 }
 
-/** What Meta would refuse or the rules forbid — checked before the owner's click, so a refusal names the part. */
-export function formProblems(spec) {
+// ── The number behind a WhatsApp button (2026-11-27) ─────────────────────────────────────────────────────────────────
+// Aether's leads tapped "Complete Registration" and WhatsApp opened to the wrong number. The app had copied a template
+// whose button is WHATSAPP and sent no number with it — the API does not return the number of a form made in Ads Manager,
+// so the template never carried one — and Meta filled in one of its own (the phone on the Page). Now a gym has ONE
+// WhatsApp number for its lead forms (the profile's `meta_assets.lead_form_whatsapp`); a form with a WhatsApp button is
+// not made without it, it is sent with the button (`business_phone_number` + `country_code`: tested on Aether's Page,
+// Meta took them and gave them back), and a number named in the thank-you text must be that number. What Meta gives
+// back is only what it was sent — a form whose number was picked by hand reads back nothing — so which number the
+// button really opens is the owner's to look at in Ads Manager, and his tick (`whatsapp_checked`) is kept on the form.
+/** A phone number as "+6580001234" (digits after a plus), or null when it is not one. */
+export const normPhone = (s) => { const t = String(s ?? "").trim(), d = t.replace(/\D/g, ""); return /^\+?[\d\s()-]+$/.test(t) && d.length >= 8 && d.length <= 15 ? `+${d}` : null; };
+/** The gym's WhatsApp number for its lead forms, normalised, or null. */
+export const whatsappFor = (profile) => normPhone(profile?.meta_assets?.lead_form_whatsapp);
+/** Every phone number a text names, as digits (7 or more, spaces and dashes aside). */
+export const numbersIn = (text) => [...String(text ?? "").matchAll(/\+?\d[\d\s-]{5,}\d/g)].map((m) => m[0].replace(/\D/g, "")).filter((d) => d.length >= 7);
+const isWhatsapp = (spec) => String(spec?.thank_you_page?.button_type || "").toUpperCase() === "WHATSAPP";
+/** The form with its WhatsApp button tied to the gym's number (a form with another button is left as it is). */
+export function withWhatsapp(spec, number) {
+  if (!isWhatsapp(spec) || !normPhone(number)) return spec;
+  const n = normPhone(number);
+  return { ...spec, thank_you_page: { ...spec.thank_you_page, business_phone_number: n, country_code: spec.thank_you_page.country_code || countryCodeFor(n) || undefined } };
+}
+/** What is wrong with a form's WhatsApp button for a gym whose number is `number` (null: none set). Nothing for another button. */
+export function whatsappProblems(spec, number) {
+  if (!isWhatsapp(spec)) return [];
+  const n = normPhone(number), ty = spec.thank_you_page, p = [];
+  if (!n) return ["this form's button opens WhatsApp, and Meta picks the number itself when none is sent with it (Aether's forms opened the wrong number that way): set this gym's WhatsApp number for lead forms first, on Library → Lead forms"];
+  if (normPhone(ty.business_phone_number) !== n) p.push(`the WhatsApp button must be tied to this gym's number for lead forms (${n})${ty.business_phone_number ? `: it says ${ty.business_phone_number}` : ""}`);
+  if (!countryCodeFor(n) && !/^[A-Z]{2}$/.test(String(ty.country_code || ""))) p.push("the WhatsApp number needs its country (a two-letter country code)");
+  for (const d of numbersIn(`${ty.title || ""} ${ty.body || ""}`)) if (!n.slice(1).endsWith(d)) p.push(`the thank-you text names the number ${d}, but this gym's WhatsApp number for lead forms is ${n}: the text and the button must be the same number`);
+  return p;
+}
+/** What is known of a form's WhatsApp button from the gym's own file: was it made here, with which number, and has the owner checked it. */
+export function whatsappOf(data, id) {
+  const made = (data?.created || []).find((f) => String(f.id) === String(id)) || null, seen = data?.seen?.[String(id)] || null;
+  const button = made?.button || seen?.button || (made && String(made.from_template || "") === String(data?.template?.source?.id || "-") ? data.template?.spec?.thank_you_page?.button_type : null) || null;
+  if (String(button || "").toUpperCase() !== "WHATSAPP") return { whatsapp: false, made_here: !!made };
+  return { whatsapp: true, made_here: !!made, sent: normPhone(made?.whatsapp) || normPhone(seen?.number) || null, checked: made?.whatsapp_checked || null };
+}
+/** The owner's word that he looked at the form in Ads Manager and its WhatsApp button opens `number` (ok: false takes it back). Only a form made here. */
+export function markWhatsappChecked(gymDir, id, { number, ok = true, now = new Date() } = {}) {
+  const data = readLeadForms(gymDir), made = (data.created || []).find((f) => String(f.id) === String(id));
+  if (!made) throw new Error("only a form this app made is ticked here: a form made in Ads Manager is yours already");
+  if (ok && !normPhone(number)) throw new Error("say which number the form's WhatsApp button shows in Ads Manager");
+  if (ok) made.whatsapp_checked = { number: normPhone(number), on: now.toISOString() }; else delete made.whatsapp_checked;
+  writeLeadForms(gymDir, data);
+  return whatsappOf(data, id);
+}
+
+/** What Meta would refuse or the rules forbid — checked before the owner's click, so a refusal names the part.
+ *  `whatsapp` (when given, even as null) is the gym's WhatsApp number for lead forms: a form with a WhatsApp button is held to it. */
+export function formProblems(spec, opts = {}) {
   const p = [], L = FORM_LIMITS;
   const name = String(spec?.name || "").trim();
   if (!name) p.push("the form needs a name"); else if (name.length > L.name) p.push(`the name is ${name.length} characters; Meta takes ${L.name}`);
@@ -176,6 +226,7 @@ export function formProblems(spec) {
     if (bt === "CALL_BUSINESS" && !/^\+?[\d\s()-]{6,}$/.test(String(ty.business_phone_number || ""))) p.push("a call button needs the business's phone number (with its country code)");
     else if (bt === "CALL_BUSINESS" && !/^[A-Z]{2}$/.test(String(ty.country_code || countryCodeFor(ty.business_phone_number) || ""))) p.push("a call button needs the number's country (a two-letter country code: Meta refuses the page without one)");
   }
+  if ("whatsapp" in opts) p.push(...whatsappProblems(spec, opts.whatsapp));
   if (spec?.question_page_custom_headline && String(spec.question_page_custom_headline).length > L.headline) p.push(`the headline is over ${L.headline} characters`);
   if (spec?.follow_up_action_url && !/^https?:\/\/\S+$/i.test(String(spec.follow_up_action_url))) p.push("the follow-up address must be a web address");
   return p;
@@ -186,7 +237,7 @@ export function createPayload(spec) {
   const body = { name: String(spec.name).trim(), questions: spec.questions.map(questionSpec), privacy_policy: spec.privacy_policy };
   if (spec.locale) body.locale = spec.locale;
   if (spec.context_card) body.context_card = spec.context_card;
-  if (spec.thank_you_page) body.thank_you_page = { ...spec.thank_you_page, ...(spec.thank_you_page.button_type === "CALL_BUSINESS" && spec.thank_you_page.business_phone_number ? { country_code: spec.thank_you_page.country_code || countryCodeFor(spec.thank_you_page.business_phone_number) } : {}) };
+  if (spec.thank_you_page) body.thank_you_page = { ...spec.thank_you_page, ...(["CALL_BUSINESS", "WHATSAPP"].includes(spec.thank_you_page.button_type) && spec.thank_you_page.business_phone_number ? { country_code: spec.thank_you_page.country_code || countryCodeFor(spec.thank_you_page.business_phone_number) } : {}) };
   if (spec.follow_up_action_url) body.follow_up_action_url = spec.follow_up_action_url;
   if (spec.question_page_custom_headline) body.question_page_custom_headline = spec.question_page_custom_headline;
   if (spec.block_display_for_non_targeted_viewer != null) body.block_display_for_non_targeted_viewer = !!spec.block_display_for_non_targeted_viewer;
@@ -196,12 +247,14 @@ export function createPayload(spec) {
 }
 
 /** Create the form on the Page (the owner's action) and record it. Refuses a spec with problems before any call. */
-export async function createForm(client, pageId, spec, { gymDir = null, offer = null, templateId = null, now = new Date() } = {}) {
-  const problems = formProblems(spec);
+export async function createForm(client, pageId, spec, { gymDir = null, offer = null, templateId = null, now = new Date(), ...opts } = {}) {
+  const problems = formProblems(spec, "whatsapp" in opts ? { whatsapp: opts.whatsapp } : {});
   if (problems.length) throw new Error(`the form is not ready: ${problems.join("; ")}`);
   const r = await client.createLeadForm(pageId, createPayload(spec));
   if (!r?.id) throw new Error("Meta answered without a form id");
-  const made = { id: String(r.id), name: spec.name, created: now.toISOString(), page_id: String(pageId), offer: offer || null, from_template: templateId || null, questions: spec.questions.length };
+  const made = { id: String(r.id), name: spec.name, created: now.toISOString(), page_id: String(pageId), offer: offer || null, from_template: templateId || null, questions: spec.questions.length,
+    // What the thank-you button is, and for a WhatsApp button the number sent with it (the owner's check of it in Ads Manager is kept beside it later).
+    button: spec.thank_you_page?.button_type || null, ...(isWhatsapp(spec) ? { whatsapp: normPhone(spec.thank_you_page.business_phone_number) } : {}) };
   if (gymDir) { const data = readLeadForms(gymDir); data.created = [made, ...(data.created || [])]; writeLeadForms(gymDir, data); }
   return made;
 }

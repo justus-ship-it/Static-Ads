@@ -716,10 +716,7 @@ export async function createPlan(plan, { client: given, batchDir, record, log = 
     const key = creativeKey(ad.creative, hashes), had = rec.ads[ad.folder];
     if (had?.id && had.key === key && !had.archived) { had.facts = adFacts(ad); run.reused.ads++; save(); continue; }
     if (had?.id) { rec.superseded.push({ folder: ad.folder, ...had, why: "the creative changed (words, images, form or identity)", at: new Date().toISOString() }); delete rec.ads[ad.folder]; run.superseded++; save(); log(`· ad ${ad.folder}: ${had.id} no longer matches the plan — making a new creative and ad`); }
-    const spec = structuredClone(ad.creative);
-    if (up) { spec.object_story_spec.video_data.video_id = up.id; spec.object_story_spec.video_data.image_hash = hashes.square; }
-    else if (spec.asset_feed_spec) { spec.asset_feed_spec.images[0].hash = hashes.square; spec.asset_feed_spec.images[1].hash = hashes.story; }
-    else spec.object_story_spec.link_data.image_hash = hashes.square;
+    const spec = filledSpec(ad, hashes, up ? up.id : null);
     let creative;
     try { creative = await postCreative(client, account, spec, log); run.made.creatives++; } catch (e) { fail("creative", ad.folder, e); }
     try {
@@ -733,6 +730,87 @@ export async function createPlan(plan, { client: given, batchDir, record, log = 
   rec.done = Object.keys(rec.ads).length >= plan.ads.length ? run.finished : null;
   save();
   return { run, campaign: rec.campaign, adsets: rec.adsets, ads: Object.keys(rec.ads).length, of: plan.ads.length, url: adsManagerUrl(account, rec.campaign.id) };
+}
+
+/** An ad's creative as it is posted: the plan's, with its media as Meta knows it (image hashes, the video's id). */
+function filledSpec(ad, hashes, videoId = null) {
+  const spec = structuredClone(ad.creative);
+  if (videoId) { spec.object_story_spec.video_data.video_id = videoId; spec.object_story_spec.video_data.image_hash = hashes.square; }
+  // (An ad with several texts and no Stories version lists ONE image under both placement labels: before 2026-11-27 its
+  // second, missing image was written to, and a create of such an ad stopped with "Cannot set properties of undefined".)
+  else if (spec.asset_feed_spec) { spec.asset_feed_spec.images[0].hash = hashes.square; if (spec.asset_feed_spec.images[1]) spec.asset_feed_spec.images[1].hash = hashes.story; }
+  else spec.object_story_spec.link_data.image_hash = hashes.square;
+  return spec;
+}
+
+// ── Another lead form on ads already on Meta, in place (2026-11-27) ─────────────────────────────────────────────────
+// Aether's 49 running ads pointed at a form whose WhatsApp button opened the wrong number. A form cannot be edited, so
+// the owner made a new one — and a create would have answered a changed form the only way it knew: 49 NEW paused ads
+// beside the old ones (an ad set of 50), the old ones archived for good, every ad's history left behind. This changes
+// the form where the ad is: for each ad whose ONLY difference from the campaign's plan is its lead form, a new creative
+// is made — the plan's own, the same words, pictures, video and identity, with the new form — and the ad is given it.
+// The ad keeps its id, its place in its ad set, its results and its status (on stays on: no status is ever sent);
+// nothing is archived and nothing new is added. Meta reviews an edited ad again and its ad set's learning restarts: no
+// way of changing a form avoids that. The old creative stays on Meta, unused. An ad that differs in any other way (its
+// words, a picture) is not touched here: that is a remake, the create's business.
+const withForm = (creative, from, to) => JSON.parse(JSON.stringify(creative).split(`"lead_gen_form_id":${JSON.stringify(String(from))}`).join(`"lead_gen_form_id":${JSON.stringify(String(to))}`));
+
+/**
+ * What a form change comes to for a campaign already on Meta, from the files alone (no Meta call, nothing written):
+ * `swap` — the ads on Meta that differ from the plan by their form alone, each with the form it has now; `same` — the
+ * ones already on the plan's form; `other` — the ones that differ in another way too (a create makes them again);
+ * `missing` — plan ads not on Meta yet. `first` is the ad to try on its own: one with no lead and the least spend
+ * when the campaign's numbers are given (`stats { ad id: { leads, spend } }`), else the last of them.
+ */
+export function formSwapPreview(plan, record, { stats = null } = {}) {
+  const rec = record || {}, to = String(plan.lead_form_id || ""), out = { to, from: [], swap: [], same: [], other: [], missing: [], first: null };
+  for (const ad of plan.ads) {
+    const had = rec.ads?.[ad.folder];
+    if (!had?.id || had.archived) { out.missing.push(ad.folder); continue; }
+    const hashes = had.hashes || {};
+    if (had.key === creativeKey(ad.creative, hashes)) { out.same.push(ad.folder); continue; }
+    const from = String(had.facts?.form_id || "");
+    if (to && from && from !== to && had.key === creativeKey(withForm(ad.creative, to, from), hashes)) {
+      const s = stats?.[had.id] || null;
+      out.swap.push({ folder: ad.folder, ad_id: had.id, adset: ad.adset, name: ad.name, from, video: !!ad.video, leads: s ? s.leads ?? 0 : null, spend: s ? s.spend ?? 0 : null });
+    } else out.other.push({ folder: ad.folder, ad_id: had.id, why: "its words, pictures or identity changed as well as its form" });
+  }
+  out.from = [...new Set(out.swap.map((x) => x.from))];
+  const quiet = out.swap.filter((x) => x.leads === 0).sort((a, b) => (a.spend ?? 0) - (b.spend ?? 0));
+  out.first = (quiet[0] || out.swap.at(-1) || null)?.folder || null;
+  return out;
+}
+
+/**
+ * Give the ads their new form, in place. `only` — the folders to do in this run (the owner's one ad first), else every
+ * ad the preview lists. Each ad is recorded as it lands (`publish.json`: its new creative and key, the swap under
+ * `swaps`), so a run that stops is continued by the next, and a later create finds every swapped ad as the plan has
+ * it and remakes nothing. A refusal stops the run in words with what was done kept. Never sends a status.
+ */
+export async function swapForm(plan, { client: given, batchDir, record, only = null, log = console.log, wait = (ms) => new Promise((r) => setTimeout(r, ms)), waits = TRANSIENT_WAITS }) {
+  if (!plan.ready) throw new Error(`the plan has problems: ${plan.problems.join("; ")}`);
+  const again = async (what, fn) => { for (let i = 0; ; i++) { try { return await fn(); } catch (e) { if (!isTransient(e) || i >= waits.length) throw e; log(`  Meta answered with a temporary error on ${what} (${scrubTokens(e.message)}): trying again in ${Math.round(waits[i] / 1000)} s`); await wait(waits[i]); } } };
+  const client = { ...given, post: (...a) => again(String(a[0]), () => given.post(...a)) };
+  const rec = record, account = plan.account, save = () => writeWhole(rec.path, JSON.stringify({ ...rec, path: undefined }, null, 2) + "\n");
+  const pre = formSwapPreview(plan, rec), todo = pre.swap.filter((x) => !only || only.includes(x.folder));
+  if (only) { const unknown = only.filter((f) => !pre.swap.some((x) => x.folder === f)); if (unknown.length) throw new Error(`${unknown.join(", ")}: not an ad whose form alone differs from the plan (it may be changed already, or differ in another way)`); }
+  if (!todo.length) throw new Error(pre.same.length ? "every ad on Facebook already uses this campaign's form" : "no ad on Facebook differs from the plan by its form alone");
+  const run = { started: new Date().toISOString(), to: pre.to, from: pre.from, of: todo.length, swapped: 0, finished: null, error: null };
+  (rec.form_swaps ||= []).push(run); save();
+  for (const x of todo) {
+    const ad = plan.ads.find((a) => a.folder === x.folder), had = rec.ads[x.folder];
+    let creative;
+    try { creative = await postCreative(client, account, filledSpec(ad, had.hashes || {}, ad.video ? had.video_id : null), log); }
+    catch (e) { run.error = { step: "creative", what: x.folder, message: scrubTokens(e.message), at: new Date().toISOString() }; save(); throw e; }
+    try { await client.post(had.id, { creative: { creative_id: creative.id } }); }
+    catch (e) { rec.orphan_creatives = [...(rec.orphan_creatives || []), { folder: x.folder, creative_id: creative.id }]; run.error = { step: "ad", what: x.folder, message: scrubTokens(e.message), at: new Date().toISOString() }; save(); throw e; }
+    const at = new Date().toISOString();
+    Object.assign(had, { swaps: [...(had.swaps || []), { at, from_form: x.from, to_form: pre.to, from_creative: had.creative_id, to_creative: creative.id }], creative_id: creative.id, key: creativeKey(ad.creative, had.hashes || {}), facts: { ...(had.facts || {}), form_id: pre.to }, enhancements: creative.enhancements, ...(creative.opt_out_refused ? { opt_out_refused: creative.opt_out_refused } : {}) });
+    run.swapped++; save();
+    log(`· ad ${x.folder}: ${had.id} now uses form ${pre.to} (creative ${creative.id}; it had ${x.from})`);
+  }
+  run.finished = new Date().toISOString(); save();
+  return { run, swapped: run.swapped, left: pre.swap.length - run.swapped, same: pre.same.length, other: pre.other.length, url: adsManagerUrl(account, rec.campaign?.id) };
 }
 
 /** Does a form's name name the offer? The whole offer, or the offer without its leading duration ("6 Week …", "六週…"),
@@ -751,7 +829,7 @@ export function namesOffer(formName, offer) {
 /** Before you create (2026-10-11): what is not a problem for the plan but is usually a mistake, each said in words with where
  *  to fix it — the form that does not name the offer, an ad set pinned on a pin for another callout, no copy or headline
  *  kept, ads without a Stories version. The owner's call: none of these stops the create. */
-export function publishReadiness(plan, { formName = null } = {}) {
+export function publishReadiness(plan, { formName = null, formWhatsapp = null } = {}) {
   const checks = [];
   const check = (ok, text, where = null) => checks.push({ ok, text, where });
   const offer = plan.offer || null;
@@ -759,6 +837,14 @@ export function publishReadiness(plan, { formName = null } = {}) {
     if (!formName) check(null, `the form ${plan.lead_form_id}'s name is not known here: check it is the one for "${offer}"`, "destination");
     else if (namesOffer(formName, offer)) check(true, `the form "${formName}" names the offer`, "destination");
     else check(false, `the form "${formName}" does not name the offer "${offer}": pick the form for this offer, or make one from the template`, "destination");
+    // A WhatsApp button on a form this app made (2026-11-27): Meta never shows which number it opens, and one made
+    // before the number was sent with it took a number Meta chose. The owner looks in Ads Manager and ticks it.
+    const w = formWhatsapp;
+    if (w?.whatsapp && w.made_here) {
+      if (w.checked?.number) check(true, `you checked the form's WhatsApp button in Ads Manager: ${w.checked.number}`, "destination");
+      else if (w.sent) check(false, `the form's WhatsApp button was set to ${w.sent} through the API, and Meta does not show which number it really opens: look at the form in Ads Manager (Forms library → the form → Chat on WhatsApp), then tick it on Choose the lead form`, "destination");
+      else check(false, "this form was made here before a WhatsApp number was sent with it: its button opens a number Meta chose, which may be the wrong one (Aether's was). Look at it in Ads Manager and tick it on Choose the lead form, or use a form whose number you know", "destination");
+    }
   }
   for (const a of plan.adsets || []) {
     const p = a.pin; if (!p) continue;
@@ -822,9 +908,9 @@ export const adsManagerUrl = (account, campaignId) => `https://adsmanager.facebo
 // ── CLI ──────────────────────────────────────────────────────────────────────
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
-  const { values: v } = parseArgs({ options: { gym: { type: "string" }, "brand-dir": { type: "string" }, batch: { type: "string" }, ad: { type: "string" }, "test-one": { type: "boolean", default: false }, create: { type: "boolean", default: false }, first: { type: "string" }, "archive-replaced": { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false } } });
-  if (!v.gym || !v.batch || !(v["test-one"] ? v.ad : v.create)) { console.error("Usage: meta-publish.mjs --gym <slug> --batch <id> (--create [--first N] | --ad <folder> --test-one) [--dry-run] [--brand-dir <dir>]"); process.exit(1); }
-  if (v.create) {
+  const { values: v } = parseArgs({ options: { gym: { type: "string" }, "brand-dir": { type: "string" }, batch: { type: "string" }, ad: { type: "string" }, "test-one": { type: "boolean", default: false }, create: { type: "boolean", default: false }, first: { type: "string" }, "archive-replaced": { type: "boolean", default: false }, "swap-form": { type: "boolean", default: false }, only: { type: "string" }, "dry-run": { type: "boolean", default: false } } });
+  if (!v.gym || !v.batch || !(v["test-one"] ? v.ad : v.create || v["swap-form"])) { console.error("Usage: meta-publish.mjs --gym <slug> --batch <id> (--create [--first N] | --swap-form [--only folder,folder] | --ad <folder> --test-one) [--dry-run] [--brand-dir <dir>]"); process.exit(1); }
+  if (v.create || v["swap-form"]) {
     try {
       const brandDir = v["brand-dir"] ? resolve(v["brand-dir"]) : join(REPO_ROOT, "brands", v.gym), out = join(brandDir, "outputs", v.batch);
       const profile = JSON.parse(readFileSync(join(brandDir, "gym-profile.json"), "utf-8"));
@@ -847,6 +933,14 @@ if (isMain) {
       const path = join(out, "publish.json");
       const record = existsSync(path) ? { ...JSON.parse(readFileSync(path, "utf-8")), path } : freshRecord(path, { batch_id: v.batch, account: plan.account });
       if (record.account !== plan.account) throw new Error(`this batch was published to ${record.account}; the profile now says ${plan.account}`);
+      // --swap-form: the campaign's form on the ads already on Meta, in place — nothing created, archived or switched.
+      if (v["swap-form"]) {
+        const only = v.only ? v.only.split(",").map((x) => x.trim()).filter(Boolean) : null, pre = formSwapPreview(plan, record);
+        console.log(`form swap: ${pre.swap.length} ad(s) on Meta use another form (${pre.from.join(", ") || "none"}) than this campaign's (${pre.to}); ${pre.same.length} already use it; ${pre.other.length} differ in other ways and are left alone${only ? ` · this run: ${only.join(", ")}` : ""}`);
+        const r = await swapForm(plan, { client, batchDir: out, record, only });
+        console.log(`\ndone: ${r.swapped} ad(s) now use form ${pre.to}; ${r.left} still to change. Each kept its id and its status; Meta reviews an edited ad again.\n${r.url}\nrecord: ${path}`);
+        process.exit(0);
+      }
       { const room = remakePreview(plan, record, out, { first }); for (const [c, x] of Object.entries(room.by_adset)) if (x.over) console.log(`room: the ad set ${c} holds ${x.have} ads as far as the record knows and this run adds ${x.adds}; Meta allows ${ADSET_MAX_ADS}${v["archive-replaced"] ? ` — the ${x.replaced} old ad(s) being replaced are archived first if it is still full` : " — without --archive-replaced the run stops before anything is uploaded"}`); }
       const r = await createPlan(plan, { client, batchDir: out, record, first, archiveReplaced: v["archive-replaced"] });
       const m = r.run.made, u = r.run.reused;

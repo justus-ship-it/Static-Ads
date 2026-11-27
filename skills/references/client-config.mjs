@@ -677,6 +677,9 @@ export function validateProfile(profile, { gymDir = null } = {}) {
     const v = profile.meta_assets?.[k];
     if (v != null && v !== "" && !re.test(String(v))) errors.push(`Meta ${k.replace(/_/g, " ")} "${v}" is not an id (digits${k === "ad_account_id" ? ", optionally after act_" : ""})`);
   }
+  // The gym's WhatsApp number for its lead forms (2026-11-27): a phone number with its country code. A form with a
+  // WhatsApp button is tied to it; without one Meta picks a number by itself (Aether's opened the wrong one).
+  { const w = profile.meta_assets?.lead_form_whatsapp; if (w != null && w !== "") { const d = String(w).replace(/\D/g, ""); if (!/^\+[\d\s()-]+$/.test(String(w).trim()) || d.length < 8 || d.length > 15) errors.push(`the WhatsApp number for lead forms "${w}" must be a phone number with its country code, like +65 8000 1234`); } }
   // Publishing defaults: the budget's level and bid strategy, every pin, the callout → gender map.
   const b = profile.campaign_defaults?.budget;
   if (isObj(b)) {

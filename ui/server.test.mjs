@@ -5013,3 +5013,120 @@ test("U76 Add finished videos, from the page (2026-11-24): a dropped file is kep
     assert.deepEqual([st, T.kind, T.videos, /-testimonials-u76-reset$/.test(T.batch)], [200, "testimonial", 1, true]);
   } finally { rmSync(tmp, { recursive: true, force: true }); rmSync(held, { recursive: true, force: true }); for (const id of existsSync(join(g, "batches")) ? made() : []) { rmSync(join(g, "batches", id), { recursive: true, force: true }); rmSync(join(g, "outputs", id), { recursive: true, force: true }); } }
 });
+
+test("U77 another lead form on the ads already on Facebook, from the panel (2026-11-27): when the campaign's form is changed after its ads were created, the Publish Ads screen says how many ads still use the old form and offers to change it where they are — one ad first, then the rest, each behind a confirmation; the run is taken only when the form and the ads confirmed are what is true now; each ad keeps its id and no new ad is made; afterwards a create has nothing to make again", async () => {
+  const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id);
+  await linkTestGym();
+  rmSync(join(out, "publish.json"), { force: true }); rmSync(join(out, "publish-settings.json"), { force: true }); rmSync(join(out, "results.json"), { force: true });
+  const graph = await fakeGraph(), main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  try {
+    const view = async () => (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json();
+    let v = await view(); const plan = v.plan, oldForm = plan.lead_form_id, n = plan.counts.ads;
+    assert.equal(v.form_swap, null, "not on Facebook yet: nothing to change");
+    const made = await runAndWait({ kind: "batch-publish", gym: GYM, batch: BRIEF.batch_id, confirm: { ads: n, adsets: plan.counts.adsets, per_day: plan.budget.per_day_total } });
+    assert.equal(made.code, 0, made.lines.join("\n"));
+    const ids = Object.fromEntries(Object.entries(JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")).ads).map(([f, a]) => [f, a.id]));
+    v = await view(); assert.deepEqual([v.form_swap.ads, v.form_swap.same, v.form_swap.changed], [0, n, 0]);
+    // The campaign's form is changed (Choose the lead form → Use this form).
+    let r = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { destination: { lead_form_id: "400100000077", form_confirmed: "400100000077" } } });
+    assert.equal(r.status, 200);
+    v = await view(); const W = v.form_swap;
+    assert.deepEqual([W.ads, W.same, W.other, W.to.id, W.from.map((f) => f.id), !!W.first?.folder, W.numbers], [n, 0, 0, "400100000077", [oldForm], true, false]);
+    // Refusals: no confirmation, another form, another number of ads, an ad that is not one of them.
+    const ask = (confirm) => call("/api/run", { method: "POST", body: { kind: "batch-form-swap", gym: GYM, batch: BRIEF.batch_id, ...(confirm ? { confirm } : {}) } });
+    for (const [c, why] of [[null, /form is not the one that was confirmed/], [{ to: oldForm, ads: n }, /form is not the one that was confirmed/], [{ to: W.to.id, ads: n + 1 }, /ads to change are not what was confirmed/], [{ to: W.to.id, ads: 1, only: ["no-such-ad"] }, /no longer differs by its form alone/]]) { r = await ask(c); assert.equal(r.status, 409); assert.match((await r.json()).error, why); }
+    // The page: the card, and one ad first.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const until = async (ready, ms = 30000) => { const t0 = Date.now(); while (Date.now() - t0 < ms && !(await ev(ready))) await new Promise((x) => setTimeout(x, 150)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u77${Math.random()}#/${GYM}/publish/${BRIEF.batch_id}` }, sessionId); await loaded;
+    await until("!!PB.data && !!document.querySelector('#pbSwap')");
+    assert.deepEqual(await ev("[document.querySelector('#pbSwap').dataset.left, document.querySelector('#pbSwapOne').textContent, document.querySelector('#pbSwapAll').textContent, document.querySelector('#pbSwapOne').disabled]"), [String(n), "Change it on one ad first…", `Change it on all ${n}…`, false]);
+    assert.match(await ev("document.querySelector('#pbSwap').textContent"), /each ad keeps its id, its results and whether it is on or paused/);
+    // The step indicator's one button is the swap, not a create that would make every ad again.
+    assert.match(await ev("JSON.stringify(partsPublish())"), /Change it on one ad first…/); assert.doesNotMatch(await ev("JSON.stringify(partsPublish())"), /Continue creating…/);
+    await ev("pbCreateConfirm(); true"); assert.match(await ev("document.querySelector('#pbCreateSwap')?.textContent || ''"), /differ.* only by .* lead form.*Change the form on the ads instead/); await ev("bClose(); true");
+    await ev("document.querySelector('#pbSwapOne').click(); true"); await until("!!document.querySelector('#pbSwapCard')");
+    const said = await ev("document.querySelector('#pbSwapCard').textContent");
+    assert.match(said, /Change the form on one ad\?/); assert.match(said, /never switches an ad on or off/); assert.match(said, /Nothing is archived and no new ad is made/); assert.match(said, /its numbers are not on file/);
+    const before = graph.calls.length;
+    await ev("document.querySelector('#pbSwapGo').click(); true");
+    await until("!!PB.data && PB.data.form_swap && PB.data.form_swap.changed === 1 && !(STATE.run && !STATE.run.done)", 60000);
+    let rec = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8")), since = graph.calls.slice(before);
+    const swapped = Object.entries(rec.ads).filter(([, a]) => (a.swaps || []).length);
+    assert.deepEqual([swapped.length, swapped[0][1].id, swapped[0][1].facts.form_id, swapped[0][1].swaps[0].from_form, since.filter((c) => c === "act_111000000001/adcreatives").length, since.filter((c) => c === "act_111000000001/ads").length, since.includes(swapped[0][1].id)], [1, ids[swapped[0][0]], "400100000077", oldForm, 1, 0, true], "one new creative, no new ad, the ad itself updated");
+    assert.deepEqual(Object.fromEntries(Object.entries(rec.ads).map(([f, a]) => [f, a.id])), ids, "every ad keeps its id");
+    assert.deepEqual(await ev("[document.querySelector('#pbSwap').dataset.left, !!document.querySelector('#pbSwapOne'), document.querySelector('#pbSwapAll').textContent, /already changed/.test(document.querySelector('#pbSwapSome')?.textContent || '')]"), [String(n - 1), false, `Change it on the other ${n - 1}…`, true]);
+    // The rest, through the run.
+    const rest = await runAndWait({ kind: "batch-form-swap", gym: GYM, batch: BRIEF.batch_id, confirm: { to: W.to.id, ads: n - 1 } });
+    assert.equal(rest.code, 0, rest.lines.join("\n")); assert.match(rest.lines[0], /meta-publish\.mjs --gym testgym --brand-dir \S+ --batch ref-batch --swap-form$/);
+    v = await view(); rec = JSON.parse(readFileSync(join(out, "publish.json"), "utf-8"));
+    assert.deepEqual([v.form_swap.ads, v.form_swap.same, v.form_swap.changed, v.room.same, Object.keys(rec.ads).length, rec.superseded.length, Object.values(rec.ads).every((a) => a.facts.form_id === "400100000077")], [0, n, n, n, n, 0, true], "every ad on the new form; a create has nothing to make again");
+    r = await ask({ to: W.to.id, ads: 0 }); assert.equal(r.status, 409); assert.match((await r.json()).error, /nothing to change/);
+    const reload = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u77b${Math.random()}#/${GYM}/publish/${BRIEF.batch_id}` }, sessionId); await reload;
+    await until("!!PB.data && !!document.querySelector('#pbSwapDone')");
+    assert.match(await ev("document.querySelector('#pbSwap').textContent"), /Every ad on Facebook uses this campaign's form/);
+    assert.ok(!readFileSync(join(out, "publish.json"), "utf-8").includes(META_TOKEN));
+  } finally { await panel.stop(); panel = main; graph.server.close(); rmSync(join(out, "publish.json"), { force: true }); rmSync(join(out, "publish-settings.json"), { force: true }); }
+});
+
+test("U78 the number behind a form's WhatsApp button, through the panel (2026-11-27): a gym's WhatsApp number for lead forms is saved on Library → Lead forms (a thing that is not a phone number is refused); a form with a WhatsApp button is proposed tied to it and not created without it; one the app made is recorded with the number it sent and stays 'not checked' — said among the create's checks — until the owner ticks it for the gym's own number; a form that shows another number is never ticked", async () => {
+  const g = join(brands, GYM), pf = join(g, "gym-profile.json"), lfFile = join(g, "lead-forms.json"), out = join(g, "outputs", BRIEF.batch_id);
+  await linkTestGym();
+  const profWas = readFileSync(pf, "utf-8"), lfWas = existsSync(lfFile) ? readFileSync(lfFile, "utf-8") : null;
+  rmSync(join(out, "publish.json"), { force: true }); rmSync(join(out, "publish-settings.json"), { force: true });
+  const graph = await fakeGraph(), main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  try {
+    const P = async (action, body) => { const r = await call(`/api/client/${GYM}/lead-forms/${action}`, { method: "POST", body }); return [r.status, await r.json()]; };
+    // A template whose thank-you button opens WhatsApp, as a form read from a Page gives it: no number.
+    writeFileSync(lfFile, JSON.stringify({ schema: 1, created: [], template: { source: { id: "400100000001", name: "0714 form" }, phrases: { offer: "12 Week Reset", district: null }, set: "2026-11-27T00:00:00Z",
+      spec: { name: "0714 12 Week Reset", questions: [{ type: "FULL_NAME" }, { type: "PHONE" }], privacy_policy: { url: "https://testgym.sg/privacy" }, thank_you_page: { title: "ONE LAST STEP!", body: "Send us a message on WhatsApp (+65 8000 1234)", button_type: "WHATSAPP", button_text: "Complete Registration" } } } }, null, 2));
+    // No number for the gym yet: the proposal says so, and nothing is created.
+    let [st, r] = await P("propose", { offer: "U78 Reset" });
+    assert.equal(st, 200); assert.match(r.problems.join("; "), /set this gym's WhatsApp number for lead forms first/);
+    const posts = () => graph.calls.filter((c) => c === "770000000007/leadgen_forms").length, before = posts();
+    [st, r] = await P("create", { spec: r.spec, offer: "U78 Reset" }); assert.equal(st, 400); assert.match(r.error, /Meta picks the number itself when none is sent/);
+    // The gym's number.
+    [st, r] = await P("whatsapp", { number: "ring us" }); assert.equal(st, 400); assert.match(r.error, /phone number with its country code/);
+    [st, r] = await P("whatsapp", { number: "+65 8000 1234" }); assert.deepEqual([st, r.whatsapp, JSON.parse(readFileSync(pf, "utf-8")).meta_assets.lead_form_whatsapp], [200, "+65 8000 1234", "+65 8000 1234"]);
+    // Now the proposal carries it, and the form is made with it.
+    [st, r] = await P("propose", { offer: "U78 Reset" });
+    assert.deepEqual([r.problems, r.spec.thank_you_page.business_phone_number, r.spec.thank_you_page.country_code, r.whatsapp], [[], "+6580001234", "SG", "+65 8000 1234"]);
+    const wrongText = { ...r.spec, thank_you_page: { ...r.spec.thank_you_page, body: "WhatsApp us on +65 8000 5678" } };
+    let [s2, r2] = await P("create", { spec: wrongText, offer: "U78 Reset" }); assert.equal(s2, 400); assert.match(r2.error, /the thank-you text names the number 6580005678/);
+    [s2, r2] = await P("create", { spec: { ...r.spec, thank_you_page: { ...r.spec.thank_you_page, business_phone_number: undefined, country_code: undefined } }, offer: "U78 Reset" });
+    assert.equal(s2, 200, JSON.stringify(r2)); assert.equal(posts() - before, 1, "one form made");
+    const made = JSON.parse(readFileSync(lfFile, "utf-8")).created[0];
+    assert.deepEqual([made.id, made.button, made.whatsapp, made.whatsapp_checked], ["400100000009", "WHATSAPP", "+6580001234", undefined], "the number is sent even when the page left it out, and kept on the record");
+    // The campaign uses that form: the create's checks say its number is not checked.
+    await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`, { method: "PUT", body: { destination: { lead_form_id: made.id, form_confirmed: made.id } } });
+    const view = async () => (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/publish`)).json(), wa = (v) => v.readiness.checks.filter((c) => /WhatsApp/.test(c.text));
+    let v = await view();
+    assert.deepEqual([v.form_whatsapp, v.whatsapp, wa(v).map((c) => [c.ok, /was set to \+6580001234 through the API/.test(c.text)])], [{ whatsapp: true, made_here: true, sent: "+6580001234", checked: null }, "+65 8000 1234", [[false, true]]]);
+    // The tick: never for another number, never for a form the app did not make.
+    [st, r] = await P("whatsapp-checked", { id: made.id, number: "+65 8000 5678" }); assert.equal(st, 400); assert.match(r.error, /the form shows \+6580005678, and this gym's WhatsApp number for lead forms is \+6580001234: it opens the wrong chat/);
+    [st, r] = await P("whatsapp-checked", { id: "400100000001", number: "+65 8000 1234" }); assert.equal(st, 400); assert.match(r.error, /only a form this app made is ticked here/);
+    // The pages: the number's card on Lead forms, the mark on the Publish screen, and the tick's dialog.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 150)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const go = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u78${Math.random()}#/${GYM}/${hash}` }, sessionId); await loaded; await until(ready); };
+    await go("leadforms", "!!document.querySelector('#lfWaCard')");
+    assert.deepEqual(await ev("[document.querySelector('#lfWa').value, document.querySelector('#lfWaSet').textContent]"), ["+65 8000 1234", "+65 8000 1234"]);
+    assert.match(await ev("waMark({ id: '1', whatsapp_state: { whatsapp: true, made_here: true, sent: '+6580001234', checked: null } })"), /WhatsApp \+6580001234 sent · not checked.*I checked it…/s);
+    assert.match(await ev("waMark({ id: '1', whatsapp_state: { whatsapp: true, made_here: true, sent: null, checked: null } })"), /WhatsApp number chosen by Meta · not checked/);
+    assert.equal(await ev("waMark({ id: '1', whatsapp_state: { whatsapp: true, made_here: false, sent: null, checked: null } }) + waMark({ id: '2', whatsapp_state: { whatsapp: false, made_here: true } })"), "", "a form made in Ads Manager, or with another button, carries no mark");
+    await go(`publish/${BRIEF.batch_id}`, "!!PB.data && !!document.querySelector('#pbWa')");
+    assert.equal(await ev("document.querySelector('#pbWa').textContent"), "WhatsApp number not checked");
+    await ev(`(async () => { LF.data = await api('/api/client/${GYM}/lead-forms'); LF.gym = '${GYM}'; waCheck('${made.id}'); })()`); await until("!!document.querySelector('#waCard')");
+    assert.match(await ev("document.querySelector('#waCard').textContent"), /Additional action → Chat on WhatsApp/); assert.equal(await ev("document.querySelector('#waSaw').value"), "+65 8000 1234");
+    await ev("(() => { const i = document.querySelector('#waSaw'); i.value = '+65 8000 5678'; document.querySelector('#waGo').click(); })(); true"); await until("/opens the wrong chat/.test(document.querySelector('#waWhy')?.textContent || '')");
+    await ev("(() => { const i = document.querySelector('#waSaw'); i.value = '+65 8000 1234'; document.querySelector('#waGo').click(); })(); true");
+    await until("!document.querySelector('#waCard') && !!PB.data && /checked/.test(document.querySelector('#pbWa')?.textContent || '') && !/not checked/.test(document.querySelector('#pbWa').textContent)");
+    v = await view();
+    assert.deepEqual([v.form_whatsapp.checked.number, wa(v).map((c) => [c.ok, c.text])], ["+6580001234", [[true, "you checked the form's WhatsApp button in Ads Manager: +6580001234"]]]);
+    assert.equal(JSON.parse(readFileSync(lfFile, "utf-8")).created[0].whatsapp_checked.number, "+6580001234");
+  } finally { await panel.stop(); panel = main; graph.server.close(); writeFileSync(pf, profWas); if (lfWas == null) rmSync(lfFile, { force: true }); else writeFileSync(lfFile, lfWas); rmSync(join(out, "publish-settings.json"), { force: true }); }
+});

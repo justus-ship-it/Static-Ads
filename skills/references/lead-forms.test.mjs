@@ -11,7 +11,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readForms, templateFrom, nextName, proposeForm, formProblems, createPayload, createForm, readLeadForms, questionSpec, FORM_LIMITS } from "./lead-forms.mjs";
+import { readForms, templateFrom, nextName, proposeForm, formProblems, createPayload, createForm, readLeadForms, writeLeadForms, questionSpec, FORM_LIMITS, normPhone, whatsappFor, numbersIn, withWhatsapp, whatsappProblems, whatsappOf, markWhatsappChecked } from "./lead-forms.mjs";
+import { validateProfile } from "./client-config.mjs";
+import { publishReadiness } from "./meta-publish.mjs";
 
 // F45 Xinyi's July form, as the Page answers it (read 2026-10-07; ids shortened).
 const XINYI = {
@@ -94,9 +96,62 @@ test("LF3 the rules in code and creation: no name, no questions, too many, an un
     assert.equal(c.posts.length, 0, "nothing sent for a spec with problems");
     const made = await createForm(c, "105", ok, { gymDir: dir, offer: "X", templateId: "7001", now: new Date("2026-10-07T12:00:00Z") });
     assert.deepEqual([c.posts[0].page, c.posts[0].body.name, c.posts[0].body.questions.length, c.posts[0].body.privacy_policy.url], ["105", ok.name, 7, "https://f45training.com/privacy"]);
-    assert.deepEqual(made, { id: "7777", name: ok.name, created: "2026-10-07T12:00:00.000Z", page_id: "105", offer: "X", from_template: "7001", questions: 7 });
+    assert.deepEqual(made, { id: "7777", name: ok.name, created: "2026-10-07T12:00:00.000Z", page_id: "105", offer: "X", from_template: "7001", questions: 7, button: "CALL_BUSINESS" });
     assert.deepEqual(readLeadForms(dir).created, [made]);
     assert.deepEqual(JSON.parse(readFileSync(join(dir, "lead-forms.json"), "utf-8")).created[0].id, "7777");
     await assert.rejects(createForm(client({ create: () => ({}) }), "105", ok), /without a form id/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("LF4 the number behind a WhatsApp button (2026-11-27, Aether: the app made the form with a WhatsApp button and no number, Meta chose one, and leads opened the wrong chat): a gym has one WhatsApp number for its lead forms; a form with such a button is not made without it, carries it with its country, and its thank-you text may name no other number; what the app made is recorded with the number it sent; Meta never shows which number a button opens, so a form made here stays unchecked until the owner ticks it — only for the gym's own number — and the create's checks say so", async () => {
+  // The number itself.
+  assert.deepEqual([normPhone("+65 8000 1234"), normPhone("6580001234"), normPhone("+65-8000-1234"), normPhone("call us"), normPhone("12345"), normPhone("")], ["+6580001234", "+6580001234", "+6580001234", null, null, null]);
+  assert.deepEqual([whatsappFor({ meta_assets: { lead_form_whatsapp: "+65 8000 1234" } }), whatsappFor({ meta_assets: {} }), whatsappFor(null)], ["+6580001234", null, null]);
+  assert.deepEqual(numbersIn("Send us a message on WhatsApp (+65 8000 1234), or call 6580 0056 78. Room 12."), ["6580001234", "6580005678"]);
+  const profile = (w) => ({ schema_version: 3, gym: "aether", display_name: "Aether", meta_assets: { lead_form_whatsapp: w } });
+  assert.deepEqual(validateProfile(profile("+65 8000 1234")).errors.filter((e) => /WhatsApp/.test(e)), []);
+  for (const bad of ["8000 1234 maybe", "80001234", "+65 12"]) assert.match(validateProfile(profile(bad)).errors.join("; "), /WhatsApp number for lead forms .* must be a phone number with its country code/, bad);
+  // A form with a WhatsApp button, as the template gives it: no number.
+  const base = { name: "1127 6 Week Full Body Transformation", questions: [{ type: "FULL_NAME" }, { type: "PHONE" }], privacy_policy: { url: "https://example.sg/privacy" },
+    thank_you_page: { title: "ONE LAST STEP!", body: "Send us a message on WhatsApp for us to complete your registration (+65 8000 1234)", button_type: "WHATSAPP", button_text: "Complete Registration" } };
+  assert.deepEqual(formProblems(base), [], "with no gym number in the question, the form is as it always was");
+  assert.match(formProblems(base, { whatsapp: null }).join("; "), /Meta picks the number itself when none is sent .* set this gym's WhatsApp number for lead forms first/);
+  assert.match(formProblems(base, { whatsapp: "+6580001234" }).join("; "), /the WhatsApp button must be tied to this gym's number for lead forms \(\+6580001234\)/);
+  const tied = withWhatsapp(base, "+65 8000 1234");
+  assert.deepEqual([tied.thank_you_page.business_phone_number, tied.thank_you_page.country_code, formProblems(tied, { whatsapp: "+6580001234" })], ["+6580001234", "SG", []]);
+  assert.deepEqual(createPayload(tied).thank_you_page, { ...base.thank_you_page, business_phone_number: "+6580001234", country_code: "SG" });
+  // The text and the button must be the same number.
+  const other = withWhatsapp({ ...base, thank_you_page: { ...base.thank_you_page, body: "Message us on WhatsApp (+65 8000 5678)" } }, "+6580001234");
+  assert.match(whatsappProblems(other, "+6580001234").join("; "), /the thank-you text names the number 6580005678, but this gym's WhatsApp number for lead forms is \+6580001234/);
+  assert.deepEqual(whatsappProblems(withWhatsapp({ ...base, thank_you_page: { ...base.thank_you_page, body: "WhatsApp us on 8000 1234" } }, "+6580001234"), "+6580001234"), [], "the number without its country code is the same number");
+  // Another button is not this rule's business.
+  const call = { ...base, thank_you_page: { title: "Thanks", body: "", button_type: "CALL_BUSINESS", business_phone_number: "+6561234567" } };
+  assert.deepEqual([withWhatsapp(call, "+6580001234"), whatsappProblems(call, null)], [call, []]);
+  // Made through the client: refused without the gym's number, recorded with it.
+  const dir = mkdtempSync(join(tmpdir(), "leadforms-wa-")), sent = [], c = { createLeadForm: async (page, body) => { sent.push(body); return { id: "9100" + sent.length }; } };
+  try {
+    await assert.rejects(createForm(c, "105", base, { gymDir: dir, whatsapp: null }), /set this gym's WhatsApp number for lead forms first/);
+    assert.equal(sent.length, 0, "nothing was sent");
+    const made = await createForm(c, "105", tied, { gymDir: dir, whatsapp: "+6580001234", templateId: "7001" });
+    assert.deepEqual([made.button, made.whatsapp, sent[0].thank_you_page.business_phone_number, sent[0].thank_you_page.country_code], ["WHATSAPP", "+6580001234", "+6580001234", "SG"]);
+    // What is known of each form's button. One made before today carries no button on its record: its template says it.
+    const data = readLeadForms(dir); data.template = { source: { id: "7001" }, spec: { thank_you_page: { button_type: "WHATSAPP" } } };
+    data.created.push({ id: "8000", name: "1122 old form", from_template: "7001", questions: 14 }); data.seen = { "7700": { name: "V2 by hand", button: "WHATSAPP", number: null }, "7800": { name: "A call form", button: "CALL_BUSINESS", number: "+6561234567" } };
+    writeLeadForms(dir, data);
+    assert.deepEqual(whatsappOf(data, made.id), { whatsapp: true, made_here: true, sent: "+6580001234", checked: null });
+    assert.deepEqual(whatsappOf(data, "8000"), { whatsapp: true, made_here: true, sent: null, checked: null }, "made here before the number was sent");
+    assert.deepEqual([whatsappOf(data, "7700"), whatsappOf(data, "7800"), whatsappOf(data, "0000")], [{ whatsapp: true, made_here: false, sent: null, checked: null }, { whatsapp: false, made_here: false }, { whatsapp: false, made_here: false }]);
+    // The create's checks: open until he ticks it; a form made in Ads Manager is his already.
+    const plan = { ready: true, problems: [], lead_form_id: made.id, offer: "6 Week Full Body Transformation", adsets: [], ads: [], copy: {} }, lines = (w) => publishReadiness(plan, { formName: "1127 6 Week Full Body Transformation", formWhatsapp: w }).checks.filter((x) => /WhatsApp/.test(x.text));
+    assert.deepEqual(lines(whatsappOf(data, made.id)).map((x) => [x.ok, /was set to \+6580001234 through the API, and Meta does not show which number it really opens/.test(x.text), x.where]), [[false, true, "destination"]]);
+    assert.deepEqual(lines(whatsappOf(data, "8000")).map((x) => [x.ok, /made here before a WhatsApp number was sent with it/.test(x.text)]), [[false, true]]);
+    assert.deepEqual([lines(whatsappOf(data, "7700")), lines(null)], [[], []]);
+    // His tick.
+    assert.throws(() => markWhatsappChecked(dir, "7700", { number: "+6580001234" }), /only a form this app made is ticked here/);
+    assert.throws(() => markWhatsappChecked(dir, made.id, { number: "soon" }), /say which number/);
+    const ticked = markWhatsappChecked(dir, made.id, { number: "+65 8000 1234", now: new Date("2026-11-27T10:00:00Z") });
+    assert.deepEqual(ticked.checked, { number: "+6580001234", on: "2026-11-27T10:00:00.000Z" });
+    assert.deepEqual(lines(ticked).map((x) => [x.ok, x.text]), [[true, "you checked the form's WhatsApp button in Ads Manager: +6580001234"]]);
+    assert.equal(markWhatsappChecked(dir, made.id, { ok: false }).checked, null, "and taken back");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

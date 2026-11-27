@@ -1109,3 +1109,63 @@ test("M19 a full ad set (2026-11-18): Meta allows 50 ads in an ad set and counts
     rmSync(d, { recursive: true, force: true });
   }
 });
+
+test("M20 another lead form on ads already on Meta, in place (2026-11-27, Aether: 49 running ads on a form whose WhatsApp button opened the wrong number): the ads that differ from the plan by their form alone are named with the form they have; each gets a new creative — the same words, pictures and identity with the new form — and keeps its id, with no status sent and nothing new made; one ad first, then the rest; the record follows, so a create afterwards remakes nothing; an ad that differs in another way is left alone; a refusal stops with what was done kept", async () => {
+  const { buildPlan, createPlan, freshRecord, remakePreview, formSwapPreview, swapForm } = await import("./meta-publish.mjs");
+  const d = mkdtempSync(join(tmpdir(), "meta-swap-"));
+  try {
+    const W = { location: "BOAT QUAY", audience: null, offer: "6 Week Full Body Transformation" }, files = ["a", "b", "c"].map((x, i) => { const f = join(d, `10${i + 1}-${x}`, "4x5"); mkdirSync(f, { recursive: true }); writeFileSync(join(f, `${x}.png`), Buffer.from([0x89, 0x50, 0x4e, 0x47, i])); return `10${i + 1}-${x}/4x5/${x}.png`; });
+    const kept = files.map((file, i) => ({ folder: `10${i + 1}-c-boat-quay`, file, location: "BOAT QUAY", words: W, story: null }));
+    const profile = { display_name: "Aether Athletics", gym_abbr: "AET", website: "https://example.sg", locale: { country: "SG", currency: "SGD" },
+      meta_assets: { ad_account_id: "act_222", page_id: "77", instagram_user_id: "88", lead_form_id: "5001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+      campaign_defaults: { budget: { level: "adset", amount: 50, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ label: "Boat Quay", lat: 1.287, lng: 103.849, radius_km: 3, callouts: ["BOAT QUAY"] }] }, demographics: { age_min: 25, age_max: 60 } } };
+    const batch = { batch_id: "2026-11-22-merged" }, // (Two kept copies and no Stories version: each ad's creative lists one image under both placements — the shape whose create stopped on a missing second image until the same day.)
+      copies = [{ id: "c1", message: "Six weeks, {AREA}. Tap {BUTTON}." }, { id: "c2", message: "Stronger in six weeks, {AREA}." }],
+      plan = (form, kept2 = copies) => buildPlan({ profile, batch, kept, presets: { presets: [] }, copies: kept2, settings: { destination: { lead_form_id: form } } });
+    let n = 0; const posted = [], edits = [];
+    Object.assign(answers, {
+      "act_222/adimages": (q) => ({ images: { [q.get("name")]: { hash: "h-" + q.get("bytes") } } }),
+      "act_222/campaigns": () => ({ id: "c" + ++n }), "act_222/adsets": () => ({ id: "s" + ++n }),
+      "act_222/adcreatives": (q) => { posted.push(String(q.get("object_story_spec") || "") + String(q.get("asset_feed_spec") || "")); return { id: "cr" + ++n }; },
+      "act_222/ads": () => ({ id: "ad" + ++n }),
+      "c1": () => ({ id: "c1", status: "ACTIVE", effective_status: "ACTIVE" }), "s2": () => ({ id: "s2", status: "ACTIVE", effective_status: "ACTIVE" }),
+    });
+    const path = join(d, "publish.json"), rec = freshRecord(path, { batch_id: batch.batch_id, account: "act_222" });
+    await createPlan(plan("5001"), { client: client(), batchDir: d, record: rec, log: () => {} });
+    assert.equal(plan("5001").ads[0].creative.asset_feed_spec.images.length, 1, "one image under both placements");
+    const ids = Object.fromEntries(Object.entries(rec.ads).map(([f, a]) => [f, a.id])), before = structuredClone(rec.ads);
+    for (const id of Object.values(ids)) answers[id] = (q) => { edits.push([id, q.get("creative"), q.get("status")]); return { success: true }; };
+    // Nothing to do while the campaign's form is the ads' own.
+    assert.deepEqual([formSwapPreview(plan("5001"), rec).swap.length, formSwapPreview(plan("5001"), rec).same.length], [0, 3]);
+    await assert.rejects(swapForm(plan("5001"), { client: client(), batchDir: d, record: rec, log: () => {} }), /every ad on Facebook already uses this campaign's form/);
+    // The campaign's form is changed: every ad differs by its form alone. The one to try first has no lead and the least spend.
+    const pre = formSwapPreview(plan("9002"), rec, { stats: { [ids["101-c-boat-quay"]]: { leads: 3, spend: 40 }, [ids["102-c-boat-quay"]]: { leads: 0, spend: 9 }, [ids["103-c-boat-quay"]]: { leads: 0, spend: 2 } } });
+    assert.deepEqual([pre.to, pre.from, pre.swap.map((x) => [x.folder, x.ad_id, x.from, x.leads]), pre.same, pre.other, pre.first], ["9002", ["5001"], [["101-c-boat-quay", ids["101-c-boat-quay"], "5001", 3], ["102-c-boat-quay", ids["102-c-boat-quay"], "5001", 0], ["103-c-boat-quay", ids["103-c-boat-quay"], "5001", 0]], [], [], "103-c-boat-quay"]);
+    assert.equal(formSwapPreview(plan("9002"), rec).first, "103-c-boat-quay", "with no numbers on file: the last of them");
+    assert.equal(remakePreview(plan("9002"), rec, d).remade.length, 3, "(a create would have made all three again as new ads)");
+    // One ad first.
+    const made = posted.length, r1 = await swapForm(plan("9002"), { client: client(), batchDir: d, record: rec, only: ["103-c-boat-quay"], log: () => {} });
+    assert.deepEqual([r1.swapped, r1.left, posted.length - made, edits.length], [1, 2, 1, 1]);
+    assert.ok(posted.at(-1).includes('"lead_gen_form_id":"9002"') && !posted.at(-1).includes("5001"), "the new creative names the new form");
+    const a3 = rec.ads["103-c-boat-quay"], was3 = before["103-c-boat-quay"];
+    assert.deepEqual([a3.id, a3.creative_id !== was3.creative_id, edits[0][0], JSON.parse(edits[0][1]).creative_id, edits[0][2]], [was3.id, true, was3.id, a3.creative_id, null], "the ad keeps its id and is given the new creative; no status is sent");
+    assert.deepEqual([a3.facts.form_id, a3.swaps.length, a3.swaps[0].from_form, a3.swaps[0].to_form, a3.swaps[0].from_creative, a3.hashes], ["9002", 1, "5001", "9002", was3.creative_id, was3.hashes]);
+    assert.deepEqual([rec.ads["101-c-boat-quay"].creative_id, Object.keys(rec.ads).length, rec.superseded.length], [before["101-c-boat-quay"].creative_id, 3, 0], "the others are as they were; nothing set aside");
+    assert.deepEqual(JSON.parse(readFileSync(path, "utf-8")).form_swaps.map((x) => [x.to, x.from, x.of, x.swapped, !!x.finished]), [["9002", ["5001"], 1, 1, true]]);
+    await assert.rejects(swapForm(plan("9002"), { client: client(), batchDir: d, record: rec, only: ["103-c-boat-quay"], log: () => {} }), /not an ad whose form alone differs/);
+    // An ad whose words changed as well is not this run's: it is named, and left alone.
+    const mixed = formSwapPreview(plan("9002", [{ id: "c9", message: "Other words beside the ad, {AREA}." }, copies[1]]), rec);
+    assert.deepEqual([mixed.swap.length, mixed.other.length, mixed.same.length], [0, 3, 0]);
+    // A refusal from Meta on the second ad: the first of this run is kept, the record says where it stopped.
+    const hookWas = errorHook; errorHook = (p) => (p === ids["102-c-boat-quay"] ? { status: 400, error: { message: "The ad cannot be edited right now", code: 100, type: "OAuthException" } } : null);
+    const stopped = await swapForm(plan("9002"), { client: client(), batchDir: d, record: rec, log: () => {} }).then(() => null, (e) => e);
+    errorHook = hookWas;
+    assert.ok(stopped, "the run stops"); assert.deepEqual([rec.ads["101-c-boat-quay"].facts.form_id, rec.ads["102-c-boat-quay"].facts.form_id, rec.form_swaps.at(-1).swapped, rec.form_swaps.at(-1).error.step, rec.form_swaps.at(-1).error.what, (rec.orphan_creatives || []).length], ["9002", "5001", 1, "ad", "102-c-boat-quay", 1]);
+    // The rest, and afterwards a create finds every ad as the plan has it.
+    const r3 = await swapForm(plan("9002"), { client: client(), batchDir: d, record: rec, log: () => {} });
+    assert.deepEqual([r3.swapped, r3.left, formSwapPreview(plan("9002"), rec).same.length, remakePreview(plan("9002"), rec, d).same, remakePreview(plan("9002"), rec, d).remade.length], [1, 0, 3, 3, 0]);
+    const ads = posted.length, r4 = await createPlan(plan("9002"), { client: client(), batchDir: d, record: rec, log: () => {} });
+    assert.deepEqual([r4.run.made.ads, r4.run.made.creatives, r4.run.superseded, r4.run.reused.ads, posted.length - ads, Object.values(rec.ads).map((a) => a.id)], [0, 0, 0, 3, 0, Object.values(ids)]);
+    assert.ok(edits.every((e) => e[2] === null), "no status was ever sent to an ad");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

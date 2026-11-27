@@ -37,8 +37,8 @@ import {
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
-import { buildPlan, keptAds, CTA_TYPES, findIdentity, setIdentity, regulatedFor, hasIdentity, findPin, publishReadiness, remakePreview, ADSET_MAX_ADS } from "../skills/references/meta-publish.mjs";
-import { readForms, templateFrom, proposeForm, formProblems, createForm, readLeadForms, writeLeadForms } from "../skills/references/lead-forms.mjs";
+import { buildPlan, keptAds, CTA_TYPES, findIdentity, setIdentity, regulatedFor, hasIdentity, findPin, publishReadiness, remakePreview, ADSET_MAX_ADS, formSwapPreview } from "../skills/references/meta-publish.mjs";
+import { readForms, templateFrom, proposeForm, formProblems, createForm, readLeadForms, writeLeadForms, withWhatsapp, whatsappFor, whatsappOf, markWhatsappChecked, normPhone } from "../skills/references/lead-forms.mjs";
 import { runImport, importProposal, applyImport, readImport, STEPS as IMPORT_STEPS, HISTORY_TOP } from "../skills/references/import-gym.mjs";
 import { TARGETING_LIBRARY_DIR, readLibrary as readTargetingLibrary, seedDrafts as seedTargetingDrafts, liveEntries as liveTargeting, approveEntry as approveTargeting, retireEntry as retireTargeting, restoreEntry as restoreTargeting, addEntry as addTargeting, asPreset as libraryPreset } from "../skills/references/targeting-library.mjs";
 /** The shared targeting library, the curated drafts seeded the first time it is read. */
@@ -205,6 +205,9 @@ const RUNNABLE = {
   // Publishing (E3): the plan on disk is created on Meta, every object paused. The confirmation names what
   // the plan holds now (ad sets, ads, the day's budget) so what is created is what was read; `first` limits a run.
   "batch-publish": { label: "Create on Facebook (paused)", needsBrief: true, spends: "publish", argv: ({ gym, batch, confirm }) => [PUBLISH_SCRIPT, "--gym", gym, "--brand-dir", brandDir(gym), "--batch", batch, "--create", ...(confirm.first ? ["--first", String(confirm.first)] : []), ...(confirm.archive ? ["--archive-replaced"] : [])] },
+  // Another lead form on the ads already on Facebook, in place (2026-11-27): each ad keeps its id and its status and is
+  // given the same creative with the campaign's form. The confirmation names the form and the ads as the files say now.
+  "batch-form-swap": { label: "Change the form on the ads on Facebook", needsBrief: true, spends: "form-swap", argv: ({ gym, batch, confirm }) => [PUBLISH_SCRIPT, "--gym", gym, "--brand-dir", brandDir(gym), "--batch", batch, "--swap-form", ...(confirm.only ? ["--only", confirm.only.join(",")] : [])] },
   "batch-stories-rerender": { label: "Re-render Stories versions (free)", needsBrief: true, argv: ({ gym, batch }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--render-only"] },
   // A scene refresh (text calls only): the audience, the count and the direction — words and/or an
   // uploaded reference image — each checked for shape before it becomes an argument.
@@ -1010,8 +1013,9 @@ function videoTake(gym, id, { ad: folder, line, action } = {}) {
 /** A lead form's name as this gym knows it (2026-10-11): one made here, the profile's default, or one the import read — no call. */
 function formNameFor(dir, profile, id) {
   if (!id) return null;
-  const made = (readLeadForms(dir).created || []).find((f) => String(f.id) === String(id));
+  const forms = readLeadForms(dir), made = (forms.created || []).find((f) => String(f.id) === String(id));
   if (made?.name) return made.name;
+  if (forms.seen?.[String(id)]?.name) return forms.seen[String(id)].name;
   if (String(profile?.meta_assets?.lead_form_id || "") === String(id) && profile?.meta_assets?.labels?.form) return profile.meta_assets.labels.form;
   const read = (readJsonFile(join(dir, "onboarding", "meta", "forms.json"))?.forms || []).find((f) => String(f.id) === String(id));
   return read?.name || null;
@@ -1222,8 +1226,20 @@ async function singaporeIdentityFor(gym) {
 // Every run is started as the leader of its own process group, so Stop ends the run and everything it started
 // (its headless Chrome and that browser's helpers) with one signal; a run that ignores it is killed after 4 s.
 // Creating on Meta is never stopped part-way: an object made between a call and its record would be made twice.
-const UNSTOPPABLE = new Set(["batch-publish"]);
+const UNSTOPPABLE = new Set(["batch-publish", "batch-form-swap"]);
 /** The room in each ad set for what a create would add (from the files alone: no Meta call); null before a batch is on Meta. */
+/** What changing the campaign's form comes to for the ads already on Facebook (meta-publish formSwapPreview), from the
+ *  files alone: null when the campaign is not on Facebook. The ads' numbers, when a pull is on file, pick the ad to try first. */
+function formSwapFor(dir, profile, plan, out) {
+  const record = readJsonFile(join(out, "publish.json"));
+  if (!record?.campaign?.id || !plan?.ready) return null;
+  const res = readJsonFile(join(out, "results.json")), stats = res?.ads ? Object.fromEntries(Object.entries(res.ads).map(([id, a]) => [id, { leads: a.all_time?.leads ?? 0, spend: a.all_time?.spend ?? 0 }])) : null;
+  const pre = formSwapPreview(plan, record, { stats }), first = pre.swap.find((x) => x.folder === pre.first) || null, last = (record.form_swaps || []).at(-1) || null;
+  return { ads: pre.swap.length, same: pre.same.length, other: pre.other.length, to: { id: pre.to, name: formNameFor(dir, profile, pre.to) }, from: pre.from.map((id) => ({ id, name: formNameFor(dir, profile, id) })),
+    first: first ? { folder: first.folder, name: first.name, leads: first.leads, spend: first.spend, video: first.video } : null, numbers: !!stats, pulled: res?.pulled || null,
+    last: last ? { swapped: last.swapped, of: last.of, finished: last.finished || null, error: last.error ? { what: last.error.what, message: last.error.message } : null } : null,
+    changed: Object.values(record.ads || {}).filter((a) => (a.swaps || []).length).length };
+}
 function roomFor(plan, out, first = null) {
   const rec = readJsonFile(join(out, "publish.json"));
   if (!rec?.campaign?.id) return null;
@@ -1461,18 +1477,26 @@ const server = createServer(async (req, res) => {
     }
     // ── Instant forms built here (2026-10-07): the Page's forms, the gym's template, a proposal for an offer, creation
     //    on the Page (the owner's click), the gym's default form. Nothing is sent to Meta but the create.
-    const lf = p.match(/^\/api\/client\/([^/]+)\/lead-forms(?:\/(template|propose|create|default))?$/);
+    const lf = p.match(/^\/api\/client\/([^/]+)\/lead-forms(?:\/(template|propose|create|default|whatsapp|whatsapp-checked))?$/);
     if (lf) {
       const gym = lf[1], action = lf[2] || null;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
       const dir = brandDir(gym), pf = join(dir, "gym-profile.json"), profile = readJsonFile(pf) || {};
       const pageId = profile.meta_assets?.page_id || null, cfg = metaConfig({ gym });
-      const data = readLeadForms(dir), base = { page_id: pageId, page_name: profile.meta_assets?.labels?.page || null, record: data, default_form_id: profile.meta_assets?.lead_form_id || null, district: profile.creative_defaults?.locations?.[0] || null };
+      const data = readLeadForms(dir), whatsapp = whatsappFor(profile), base = { page_id: pageId, page_name: profile.meta_assets?.labels?.page || null, record: data, default_form_id: profile.meta_assets?.lead_form_id || null, district: profile.creative_defaults?.locations?.[0] || null, whatsapp: profile.meta_assets?.lead_form_whatsapp || null };
       const client = () => graphClient({ config: cfg });
       if (!action && req.method === "GET") {
         if (!cfg.token) return json(res, 200, { ...base, configured: false, forms: [], reason: "the Meta link is not set up yet (Meta link page)" });
         if (!pageId) return json(res, 200, { ...base, configured: true, forms: [], reason: "pick the gym's Facebook Page on the Meta link page first" });
-        try { return json(res, 200, { ...base, configured: true, forms: await readForms(client(), pageId) }); }
+        try {
+          const forms = await readForms(client(), pageId);
+          // What was just read is remembered (names, each form's button and the number the API was given for it), so the
+          // Publish screen can name a form made in Ads Manager and say what is known of its WhatsApp button without a call.
+          const seen = Object.fromEntries(forms.map((f) => [String(f.id), { name: f.name || null, status: f.status || null, button: f.thank_you_page?.button_type || null, number: f.thank_you_page?.business_phone_number || null }]));
+          if (JSON.stringify(seen) !== JSON.stringify(data.seen || null)) { data.seen = seen; writeLeadForms(dir, data); }
+          // Each form's WhatsApp button as far as it can be known: made here or not, the number sent with it, the owner's check.
+          return json(res, 200, { ...base, record: data, configured: true, forms: forms.map((f) => ({ ...f, whatsapp_state: whatsappOf(data, f.id) })) });
+        }
         catch (e) { return json(res, 502, { error: `the Page's forms could not be read: ${scrubTokens(e.message)}` }); }
       }
       if (action === "template" && req.method === "POST") {
@@ -1494,19 +1518,43 @@ const server = createServer(async (req, res) => {
         for (const k of ["offer", "old_offer", "callout", "old_district", "name"]) if (str(k) === undefined) return json(res, 400, { error: `${k} must be text (up to 300 characters)` });
         try {
           const r = proposeForm(data.template, { offer: str("offer"), oldOffer: str("old_offer"), callout: str("callout"), oldDistrict: str("old_district"), name: str("name") });
-          return json(res, 200, { ...r, problems: formProblems(r.spec) });
+          // A WhatsApp button is tied to the gym's own number for lead forms, and held to it.
+          r.spec = withWhatsapp(r.spec, whatsapp);
+          return json(res, 200, { ...r, whatsapp: base.whatsapp, problems: formProblems(r.spec, { whatsapp }) });
         } catch (e) { return json(res, 400, { error: e.message }); }
       }
       if (action === "create" && req.method === "POST") {
         const body = await readBody(req);
         if (!isPlainObject(body.spec)) return json(res, 400, { error: "spec must be the form as proposed" });
-        const problems = formProblems(body.spec);
+        const spec = withWhatsapp(body.spec, whatsapp), problems = formProblems(spec, { whatsapp });
         if (problems.length) return json(res, 400, { error: `the form is not ready: ${problems.join("; ")}`, problems });
         if (!cfg.token || !pageId) return json(res, 409, { error: "the Meta link and the gym's Page are needed first (Meta link page)" });
         try {
-          const made = await createForm(client(), pageId, body.spec, { gymDir: dir, offer: typeof body.offer === "string" ? body.offer.slice(0, 300) : null, templateId: data.template?.source?.id || null });
+          const made = await createForm(client(), pageId, spec, { gymDir: dir, offer: typeof body.offer === "string" ? body.offer.slice(0, 300) : null, templateId: data.template?.source?.id || null, whatsapp });
           return json(res, 200, { made });
         } catch (e) { return json(res, 502, { error: `the form was not created: ${scrubTokens(e.message)}` }); }
+      }
+      // The gym's WhatsApp number for its lead forms (an empty one clears it), and the owner's tick on a form made here:
+      // "I looked at it in Ads Manager and its WhatsApp button opens this number" (ok: false takes it back).
+      if (action === "whatsapp" && req.method === "POST") {
+        const body = await readBody(req), typed = typeof body.number === "string" ? body.number.trim() : "";
+        if (typed && !normPhone(typed)) return json(res, 400, { error: "a WhatsApp number is a phone number with its country code, like +65 8000 1234" });
+        (profile.meta_assets ||= {}).lead_form_whatsapp = typed ? (typed.startsWith("+") ? typed : `+${typed}`) : "";
+        const errors = validateProfile(profile).errors || [];
+        if (errors.length) return json(res, 400, { error: errors.join("; ") });
+        writeWhole(pf, JSON.stringify(profile, null, 2) + "\n");
+        return json(res, 200, { whatsapp: profile.meta_assets.lead_form_whatsapp || null });
+      }
+      if (action === "whatsapp-checked" && req.method === "POST") {
+        const body = await readBody(req);
+        if (!/^\d{5,20}$/.test(String(body.id || ""))) return json(res, 400, { error: "id must be a form id" });
+        const saw = typeof body.number === "string" && body.number.trim() ? normPhone(body.number) : whatsapp;
+        if (body.ok !== false && !whatsapp) return json(res, 400, { error: "set this gym's WhatsApp number for lead forms first (Library → Lead forms)" });
+        if (body.ok !== false && !saw) return json(res, 400, { error: "say the number the form shows in Ads Manager, with its country code" });
+        // A form that shows another number opens the wrong chat: it is never ticked.
+        if (body.ok !== false && saw !== whatsapp) return json(res, 400, { error: `the form shows ${saw}, and this gym's WhatsApp number for lead forms is ${whatsapp}: it opens the wrong chat. Do not use it: make a new form` });
+        try { return json(res, 200, { id: String(body.id), whatsapp_state: markWhatsappChecked(dir, String(body.id), { number: saw, ok: body.ok !== false }) }); }
+        catch (e) { return json(res, 400, { error: e.message }); }
       }
       if (action === "default" && req.method === "POST") {
         const body = await readBody(req);
@@ -2503,9 +2551,10 @@ const server = createServer(async (req, res) => {
         const library = targetingLibrary();
         try { plan = buildPlan({ profile, batch, kept, presets, settings, copies: keptCopies(out), headlines: keptCopies(out, "headline"), own: ownCopies(out), library }); } catch (e) { return json(res, 400, { error: e.message }); }
         const lead_form_name = formNameFor(dir, profile, plan.lead_form_id);
-        const readiness = publishReadiness(plan, { formName: lead_form_name });
+        const form_whatsapp = plan.lead_form_id ? whatsappOf(readLeadForms(dir), plan.lead_form_id) : null;
+        const readiness = publishReadiness(plan, { formName: lead_form_name, formWhatsapp: form_whatsapp });
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, readiness, lead_form_name, settings, settings_version: settingsVersion(settingsPath), thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account", retargeting: isRetargeting(p) }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")), room: roomFor(plan, out),
+        return json(res, 200, { plan, readiness, lead_form_name, form_whatsapp, whatsapp: profile.meta_assets?.lead_form_whatsapp || null, form_swap: formSwapFor(dir, profile, plan, out), settings, settings_version: settingsVersion(settingsPath), thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account", retargeting: isRetargeting(p) }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")), room: roomFor(plan, out),
           // Testimonial videos and their own copy (2026-11-22): each video with what was read of it and its drafts; null for a batch with none.
           testimonials: (() => { const all = testimonialAds(out); if (!all.length) return null; const unread = all.filter((a) => !readTestimonialReadings(out).videos[a.id]?.reading).length; return { videos: testimonialsView(out), unread, per_video: TESTIMONIAL_COPIES, usd_read: Math.round(unread * TESTIMONIAL_USD * 100) / 100 }; })() });
       }
@@ -2885,7 +2934,7 @@ const server = createServer(async (req, res) => {
         const brief = readJsonFile(briefPath(body.gym, body.batch));
         if (!brief) return json(res, 404, { error: `no brief for batch ${body.batch}` });
         // Videos added as they are (footage-video.mjs): nothing to plan, run, re-render or make Stories of. Publishing is as for any batch.
-        if (brief.imported && kind !== "batch-publish") return json(res, 409, { error: noRunWhy(brief) });
+        if (brief.imported && !["batch-publish", "batch-form-swap"].includes(kind)) return json(res, 409, { error: noRunWhy(brief) });
         // A batch that went into a merged one is published as part of it, never a second time by itself.
         if (kind === "batch-publish" && mergedInto(brandDir(body.gym), brief)) return json(res, 409, { error: `this batch was merged into ${mergedInto(brandDir(body.gym), brief)}: publish that one. To publish this one by itself, undo the merge first` });
         // A directed batch: the scenes its plan drafted are approved by this confirmation — only when
@@ -2935,6 +2984,22 @@ const server = createServer(async (req, res) => {
             archive = true;
           }
           body.confirm = { first: c.first ?? null, archive };
+        } else if (spec.spends === "form-swap") {
+          // What was confirmed must be what is true now: the form the ads are given, and which ads.
+          const c = body.confirm || {}, dir = brandDir(body.gym), out = join(dir, "outputs", body.batch), profile = readJsonFile(join(dir, "gym-profile.json")) || {};
+          if (!metaConfig({ gym: body.gym }).token) return json(res, 409, { error: "the Meta link is not set up yet (Meta link page)" });
+          let plan;
+          try { plan = buildPlan({ library: targetingLibrary(), profile, batch: readJsonFile(join(out, "batch.json")), kept: keptAds(out), presets: readPresets(dir), settings: readJsonFile(join(out, "publish-settings.json")) || {}, copies: keptCopies(out), headlines: keptCopies(out, "headline"), own: ownCopies(out) }); }
+          catch (e) { return json(res, 400, { error: e.message }); }
+          if (!plan.ready) return json(res, 409, { error: `the plan has problems: ${plan.problems.join("; ")}` });
+          const record = readJsonFile(join(out, "publish.json"));
+          if (!record?.campaign?.id) return json(res, 409, { error: "this campaign is not on Facebook yet: there is no ad to change" });
+          const pre = formSwapPreview(plan, record), only = Array.isArray(c.only) && c.only.length ? c.only.map(String) : null;
+          if (!pre.swap.length) return json(res, 409, { error: "no ad on Facebook differs from this campaign by its form alone: nothing to change" });
+          if (String(c.to || "") !== pre.to) return json(res, 409, { error: "the campaign's form is not the one that was confirmed: read the Publish Ads screen again and confirm" });
+          if (only && only.some((f) => !pre.swap.some((x) => x.folder === f))) return json(res, 409, { error: "an ad that was confirmed no longer differs by its form alone: read the Publish Ads screen again and confirm" });
+          if (c.ads !== (only ? only.length : pre.swap.length)) return json(res, 409, { error: `the ads to change are not what was confirmed (${only ? only.length : pre.swap.length} now): read the Publish Ads screen again and confirm` });
+          body.confirm = { only };
         } else if (spec.spends) {
           const c = body.confirm || {};
           const agreed = c.offer === brief.offer && JSON.stringify(c.locations) === JSON.stringify(brief.locations) && (c.audience ?? null) === (brief.audience ?? null) && c.max_calls === (brief.max_calls ?? brief.generated ?? 0);
