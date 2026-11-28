@@ -1051,7 +1051,7 @@ test("M19 a full ad set (2026-11-18): Meta allows 50 ads in an ad set and counts
     // The first create: the ad set is made in this run, so nothing is counted.
     const r1 = await createPlan(plan(), { client: client(), batchDir: d, record: rec, log: () => {} });
     assert.deepEqual([r1.ads, rec.ads["101-c-bishan"].id, rec.ads["102-c-bishan"].id, asked()], [2, "ad4", "ad6", false]);
-    assert.deepEqual([remakePreview(plan(), rec, d).same, remakePreview(plan(), rec, d).remade, remakePreview(plan(), rec, d).by_adset.BISHAN], [2, [], { have: 2, adds: 0, after: 2, over: false, replaced: 0, short: 0 }]);
+    assert.deepEqual([remakePreview(plan(), rec, d).same, remakePreview(plan(), rec, d).remade, remakePreview(plan(), rec, d).by_adset.BISHAN], [2, [], { have: 2, adds: 0, after: 2, over: false, replaced: 0, short: 0, taken_out: 0, removed: 0, short_after: 0 }]);
     // Nothing to add: a re-run asks Meta nothing about the room.
     await createPlan(plan(), { client: client(), batchDir: d, record: rec, log: () => {} });
     assert.equal(asked(), false);
@@ -1059,7 +1059,7 @@ test("M19 a full ad set (2026-11-18): Meta allows 50 ads in an ad set and counts
     // One image changes: that ad is made again, a new ad beside the old. From the files alone the ad set has room…
     writeFileSync(A, Buffer.from([0x89, 0x50, 0x4e, 0x47, 9]));
     const p1 = remakePreview(plan(), rec, d);
-    assert.deepEqual([p1.same, p1.remade, p1.by_adset.BISHAN, p1.archive], [1, [{ folder: "101-c-bishan", adset: "BISHAN", old_id: "ad4", why: "its image changed" }], { have: 2, adds: 1, after: 3, over: false, replaced: 0, short: 0 }, 0]);
+    assert.deepEqual([p1.same, p1.remade, p1.by_adset.BISHAN, p1.archive], [1, [{ folder: "101-c-bishan", adset: "BISHAN", old_id: "ad4", why: "its image changed" }], { have: 2, adds: 1, after: 3, over: false, replaced: 0, short: 0, taken_out: 0, removed: 0, short_after: 0 }, 0]);
     // …but Meta holds 50 there (others made by hand): the run stops before anything is uploaded, and says what to do.
     answers["s2/ads"] = () => ({ data: held });
     held = [{ id: "ad4", status: "PAUSED", effective_status: "PAUSED" }, { id: "ad6", status: "PAUSED", effective_status: "PAUSED" }, ...others(48), { id: "gone", status: "ARCHIVED", effective_status: "ARCHIVED" }];
@@ -1069,7 +1069,7 @@ test("M19 a full ad set (2026-11-18): Meta allows 50 ads in an ad set and counts
     assert.deepEqual([seen, saved.error.step, saved.error.what, saved.adsets.BISHAN.on_meta.ads, saved.ads["101-c-bishan"].id, saved.superseded.length], [[], "room", "BISHAN", 50, "ad4", 0], "an archived ad on Meta is not counted");
     // The record now knows Meta's count, so the screen can offer the tick.
     const p2 = remakePreview(plan(), rec, d);
-    assert.deepEqual([p2.by_adset.BISHAN, p2.archive, p2.short], [{ have: 50, adds: 1, after: 51, over: true, replaced: 1, short: 0 }, 1, 0]);
+    assert.deepEqual([p2.by_adset.BISHAN, p2.archive, p2.short], [{ have: 50, adds: 1, after: 51, over: true, replaced: 1, short: 0, taken_out: 0, removed: 0, short_after: 0 }, 1, 0]);
     // An old ad that is switched on is never archived: refused, with the tick or without.
     held[0].status = "ACTIVE";
     await assert.rejects(createPlan(plan(), { client: client(), batchDir: d, record: rec, archiveReplaced: true, log: () => {} }), /None of the new ads replaces an old one that could be archived: archive 1 ad of this ad set in Ads Manager, or exclude some ads on Pick Ads\. Nothing was uploaded\./);
@@ -1167,5 +1167,69 @@ test("M20 another lead form on ads already on Meta, in place (2026-11-27, Aether
     const ads = posted.length, r4 = await createPlan(plan("9002"), { client: client(), batchDir: d, record: rec, log: () => {} });
     assert.deepEqual([r4.run.made.ads, r4.run.made.creatives, r4.run.superseded, r4.run.reused.ads, posted.length - ads, Object.values(rec.ads).map((a) => a.id)], [0, 0, 0, 3, 0, Object.values(ids)]);
     assert.ok(edits.every((e) => e[2] === null), "no status was ever sent to an ad");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test("M21 the ads the owner took out of a full ad set (2026-11-28, more ads for a merged batch whose ad set held 49 of 50): an ad made earlier and since excluded on Pick Ads still sits in the ad set and counts; the room says how many were taken out; without the owner's second tick the run stops in words with nothing uploaded; with it the taken-out ads that are PAUSED are archived first, each noted on the record, and the new ads made — one still switched on is never archived, and when too few are paused the run stops and says so; an ad set with room archives nothing", async () => {
+  const { buildPlan, createPlan, freshRecord, remakePreview } = await import("./meta-publish.mjs");
+  const d = mkdtempSync(join(tmpdir(), "meta-out-"));
+  try {
+    const W = { location: "BISHAN", audience: "MEN WANTED", offer: "12 Week Total Body Reset" };
+    const ad = (no, byte) => { mkdirSync(join(d, `${no}-x`, "4x5"), { recursive: true }); writeFileSync(join(d, `${no}-x`, "4x5", "a.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, byte])); return { folder: `${no}-c-bishan`, file: `${no}-x/4x5/a.png`, location: "BISHAN", words: W, story: null }; };
+    const K = Object.fromEntries([101, 102, 103, 104, 105, 106].map((no, i) => [no, ad(no, 20 + i)]));
+    const profile = { display_name: "Sculpt Society", gym_abbr: "SCS", website: "https://sculptsociety.com.sg", locale: { country: "SG", currency: "SGD" },
+      meta_assets: { ad_account_id: "act_111", page_id: "77", instagram_user_id: "88", lead_form_id: "4001", singapore_beneficiary_id: "4260400000000001", singapore_payer_id: "4260400000000001" },
+      campaign_defaults: { budget: { level: "adset", amount: 50, currency: "SGD" } }, targeting_defaults: { geo: { radius_pins: [{ label: "Sin Ming", place_key: "107327800879305", radius_km: 5, callouts: ["BISHAN"] }] }, demographics: { age_min: 25, age_max: 60 } } };
+    const batch = { batch_id: "2026-11-22-merged" }, plan = (...nos) => buildPlan({ profile, batch, kept: nos.map((n) => K[n]), presets: { presets: [] } });
+    let n = 0; const seen = []; let held = null;
+    const others = (k) => Array.from({ length: k }, (_, i) => ({ id: "x" + i, status: "ACTIVE", effective_status: "ACTIVE" }));
+    const archive = (id) => (q) => { if (q.get("status")) seen.push(["archive", id, q.get("status")]); return { success: true }; };
+    Object.assign(answers, {
+      "act_111/adimages": (q) => { seen.push(["adimages"]); return { images: { [q.get("name")]: { hash: "h-" + q.get("bytes") } } }; },
+      "act_111/campaigns": () => ({ id: "c" + ++n }), "act_111/adsets": () => ({ id: "s" + ++n }),
+      "act_111/adcreatives": () => { seen.push(["adcreatives"]); return { id: "cr" + ++n }; },
+      "act_111/ads": () => { seen.push(["ads"]); return { id: "ad" + ++n }; },
+      "c1": () => ({ id: "c1", status: "ACTIVE", effective_status: "ACTIVE" }), "s2": () => ({ id: "s2", status: "ACTIVE", effective_status: "ACTIVE" }),
+      "ad4": archive("ad4"), "ad6": archive("ad6"), "ad8": archive("ad8"),
+      "s2/ads": () => ({ data: held }),
+    });
+    const path = join(d, "publish.json"), rec = freshRecord(path, { batch_id: batch.batch_id, account: "act_111" });
+    // Three ads are made; the owner switches them on in Ads Manager.
+    await createPlan(plan(101, 102, 103), { client: client(), batchDir: d, record: rec, log: () => {} });
+    assert.deepEqual([rec.ads["101-c-bishan"].id, rec.ads["102-c-bishan"].id, rec.ads["103-c-bishan"].id], ["ad4", "ad6", "ad8"]);
+    // Two are taken out on Pick Ads and two new ones added. They are named, and from the files alone there is room…
+    const next = () => plan(103, 104, 105), p1 = remakePreview(next(), rec, d);
+    assert.deepEqual([p1.removed, p1.fresh.length, p1.same, p1.by_adset.BISHAN, p1.archive_removed], [[{ folder: "101-c-bishan", adset: "BISHAN", ad_id: "ad4" }, { folder: "102-c-bishan", adset: "BISHAN", ad_id: "ad6" }], 2, 1, { have: 3, adds: 2, after: 5, over: false, replaced: 0, short: 0, taken_out: 2, removed: 0, short_after: 0 }, 0]);
+    // …but Meta holds 50 there. Both taken-out ads are paused; without the tick nothing is uploaded and the run says which tick.
+    const on = (id, status) => ({ id, status, effective_status: status });
+    held = [on("ad4", "PAUSED"), on("ad6", "PAUSED"), on("ad8", "ACTIVE"), ...others(47)]; seen.length = 0;
+    await assert.rejects(createPlan(next(), { client: client(), batchDir: d, record: rec, log: () => {} }), /the ad set BISHAN holds 50 ads on Meta and this run adds 2 \(2 new\): Meta allows 50 in an ad set, paused ones included\. Nothing was uploaded\. Press Continue creating and tick "Archive the ads you took out" \(2 paused ads\); an archived ad can never be turned on again\./);
+    let saved = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([seen, saved.error.step, saved.adsets.BISHAN.on_meta.ads], [[], "room", 50]);
+    const p2 = remakePreview(next(), rec, d);
+    assert.deepEqual([p2.by_adset.BISHAN, p2.archive, p2.archive_removed, p2.short, p2.short_after], [{ have: 50, adds: 2, after: 52, over: true, replaced: 0, short: 2, taken_out: 2, removed: 2, short_after: 0 }, 0, 2, 2, 0]);
+    // The other tick (the old ads these replace) is not this one.
+    await assert.rejects(createPlan(next(), { client: client(), batchDir: d, record: rec, archiveReplaced: true, log: () => {} }), /tick "Archive the ads you took out" \(2 paused ads\)/);
+    // One of them is still switched on: it is never archived, so even with the tick the run stops and says so.
+    held[1] = on("ad6", "ACTIVE"); seen.length = 0;
+    await assert.rejects(createPlan(next(), { client: client(), batchDir: d, record: rec, archiveRemoved: true, log: () => {} }), /2 ads you took out on Pick Ads are still in it, 1 of them switched on: archiving the 1 ad that is paused would still leave it 1 over\. Pause the ones still on \(Review Data → Pause on Meta, or Ads Manager\), or exclude some of the new ads on Pick Ads\. Nothing was uploaded\./);
+    assert.deepEqual([seen, JSON.parse(readFileSync(path, "utf-8")).ads["101-c-bishan"].archived], [[], undefined]);
+    // Both paused, and the tick: the two are archived, then the new ads are made. The ad that stays is not touched.
+    held[1] = on("ad6", "PAUSED"); seen.length = 0; const log = [];
+    const r = await createPlan(next(), { client: client(), batchDir: d, record: rec, archiveRemoved: true, log: (m) => log.push(m) });
+    saved = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([seen, r.run.archived, r.run.archived_removed, r.run.made.ads, saved.error, !!saved.done], [[["archive", "ad4", "ARCHIVED"], ["archive", "ad6", "ARCHIVED"], ["adimages"], ["adcreatives"], ["ads"], ["adimages"], ["adcreatives"], ["ads"]], 2, 2, 2, null, true]);
+    assert.deepEqual([saved.ads["101-c-bishan"].archived, saved.ads["102-c-bishan"].archived, /you took this ad out on Pick Ads, it was paused, and the ad set held 50 of Meta's 50 ads/.test(saved.ads["101-c-bishan"].archived_why), saved.ads["103-c-bishan"].id, saved.ads["103-c-bishan"].archived], [new Date().toISOString().slice(0, 10), new Date().toISOString().slice(0, 10), true, "ad8", undefined]);
+    assert.ok(log.some((l) => /ad 101-c-bishan: ad4 archived to make room \(you took it out, and it was paused\)/.test(l)), log.join("\n"));
+    // An archived ad is no longer one taken out, and no longer counts.
+    const p3 = remakePreview(next(), rec, d);
+    assert.deepEqual([p3.removed, p3.same, p3.fresh.length], [[], 3, 0]);
+    // Kept again later, an archived ad is made again as a new ad (it can never be turned on).
+    assert.deepEqual(remakePreview(plan(101, 103, 104, 105), rec, d).remade.map((x) => x.folder), ["101-c-bishan"]);
+    // An ad set with room: the tick archives nothing.
+    held = [on("ad8", "PAUSED"), on(saved.ads["104-c-bishan"].id, "PAUSED"), on(saved.ads["105-c-bishan"].id, "PAUSED"), ...others(10)]; seen.length = 0;
+    const r2 = await createPlan(plan(104, 105, 106), { client: client(), batchDir: d, record: rec, archiveRemoved: true, log: () => {} });
+    saved = JSON.parse(readFileSync(path, "utf-8"));
+    assert.deepEqual([seen.map((c) => c[0]), r2.run.archived, saved.ads["103-c-bishan"].archived, saved.ads["103-c-bishan"].id], [["adimages", "adcreatives", "ads"], undefined, undefined, "ad8"]);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

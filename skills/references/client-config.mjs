@@ -374,6 +374,35 @@ export function wordingSuggestions(before = [], after = [], profile = {}) {
   }
   return out.slice(0, 3);
 }
+/**
+ * The same offer for an edit to WRITTEN ad words (2026-11-28: a copy, a headline, a card's statement or timeline). An
+ * edit that swaps a phrase for a phrase is offered back as a rule, where `before` and `after` are the text's fields
+ * (each may run over several lines: lines are paired only where their number did not change). Never for a swap that
+ * touches what is fixed on an ad — a placeholder ({AREA}, {BUTTON}), an area the ad names, or the offer's own words —
+ * and never for one small word ("in" for "near"): as a rule it would flag nearly every sentence the gym writes.
+ */
+export function adWordSuggestions(before = [], after = [], profile = {}, { offer = "", areas = [] } = {}) {
+  const lines = (s) => String(s ?? "").split(/\n/).map((l) => l.trim()).filter(Boolean), A = [], B = [];
+  for (let i = 0; i < Math.min(before.length, after.length); i++) {
+    if (before[i] == null || after[i] == null) continue;
+    const a = lines(before[i]), b = lines(after[i]);
+    if (a.length && a.length === b.length) { A.push(...a); B.push(...b); }
+  }
+  const offerWords = new Set((String(offer).toLowerCase().match(/[a-z0-9']+/g) || []).filter((w) => w.length >= 4)), offerHan = String(offer).replace(/[^\u3400-\u9fff]/g, "");
+  const fixed = (text) => {
+    const low = String(text).toLowerCase(), han = String(text).replace(/[^\u3400-\u9fff]/g, "");
+    if (/[{}]/.test(text)) return true;
+    // An area, spacing and signs aside (the words of a swap are joined without them: "Boat Quay&CBD").
+    const squash = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]/g, ""), sq = squash(text);
+    if (areas.some((x) => { const k = squash(x); return k.length >= 2 && (sq.includes(k) || (sq.length >= 3 && k.includes(sq))); })) return true;
+    if ((low.match(/[a-z0-9']+/g) || []).some((w) => offerWords.has(w))) return true;
+    for (let i = 0; i + 2 <= han.length; i++) if (offerHan.includes(han.slice(i, i + 2))) return true;
+    return false;
+  };
+  // A phrase worth a rule: two words or more, one word of five letters or more, or two Chinese characters.
+  const phrase = (text) => { const w = String(text).match(/[A-Za-z0-9']+/g) || []; return /[\u3400-\u9fff]/.test(text) ? String(text).replace(/[^\u3400-\u9fff]/g, "").length >= 2 : w.length >= 2 || (w[0] || "").length >= 5; };
+  return wordingSuggestions(A, B, profile).filter((r) => phrase(r.avoid) && !fixed(r.avoid) && !fixed(r.say));
+}
 /** Add a rule to a profile (in place). Throws in words when the line is not a rule, or the list would break one. */
 export function addSayInstead(profile, { avoid, say, spoken = false }) {
   const line = sayLine({ avoid: String(avoid ?? "").trim(), say: String(say ?? "").trim(), spoken: spoken === true });

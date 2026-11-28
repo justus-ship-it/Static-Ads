@@ -399,7 +399,7 @@ const WAITS = [
   [/GET/, /\/pins$/, 'Reading the pins this ad account has used.'],
   [/POST/, /\/wording$/, 'Saving the rule for this gym.'],
   [/POST/, /\/testimonials\/read$/, 'The agent is listening to each testimonial and looking at its frames. About a minute.'], [/POST/, /\/testimonials\/draft$/, 'The agent is drafting copy and headlines for each testimonial and checking every one against what is said in the video. About a minute.'],
-  [/POST/, /\/batches\/merge$/, 'Copying the kept ads of the batches into one new batch. Nothing is generated.'], [/POST/, /\/batches\/unmerge$/, 'Setting the merged batch aside and freeing the batches it came from.'],
+  [/POST/, /\/batches\/merge$/, 'Copying the kept ads of the batches into one new batch. Nothing is generated.'], [/POST/, /\/batches\/unmerge$/, 'Setting the merged batch aside and freeing the batches it came from.'], [/POST/, /\/add-ads$/, 'Copying the other batch\'s ads into this one. Nothing is generated.'],
   [/POST/, /\/video\/draft$/, 'The agent is drafting video scripts and checking each one against the rules. About half a minute.'],
   [/POST/, /\/video\/script\/[\w-]+\/propose$/, 'The agent is reading the script aloud and writing the edit it needs, for you to approve. A few seconds.'],
   [/POST/, /\/video\/facts\/suggest$/, 'The agent is reading your sample scripts for facts to tick. About half a minute.'],
@@ -1834,7 +1834,7 @@ function paintList(){
   box.innerHTML = bs.length ? `<div class="camps">${bs.map(b=>{ const r = b.review; return `<div class="camp">${b.thumb?`<img src="${esc(b.thumb)}" alt="">`:'<div class="noimg"></div>'}<div style="flex:1;min-width:0">
       <div class="t">${esc(b.words.offer)}${b.words.audience?` · ${esc(b.words.audience)}`:''}</div>
       <div class="d">${esc(b.id)} · ${esc(b.words.locations.join(' / '))}${b.ads?` · ${b.ads} ads${b.stories?` · ${b.stories} Stories`:''}`:b.running?'':b.failed?` · <span class="pill warn">${b.failed.stage==='failed'?'stopped on an error':'did not finish'} · ${b.failed.image_calls} call${b.failed.image_calls===1?'':'s'} used</span>`:b.stopped?` · <span class="pill warn">stopped · ${b.stopped.image_calls} call${b.stopped.image_calls===1?'':'s'} used</span>`:' · planned'}${b.image_calls!=null?` · ${b.image_calls} call${b.image_calls===1?'':'s'}`:''}${r?.unreviewed?` · ${r.unreviewed} to review`:''}${b.published?` · <span class="pill ${b.published.status==='live'?'on':''}">on Facebook · ${esc(b.published.status)}${b.published.leads!=null?` · ${b.published.leads} leads${b.published.cost_per_lead!=null?` at ${b.published.cost_per_lead}`:''}`:''}</span>`:''}</div>
-      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button>${b.imported?`<span class="hint" data-imported="${esc(b.id)}">${b.imported==='merged'?`Merged from ${(b.merged_from||[]).map(esc).join(' + ')}, as they are: nothing to generate or run again.`:'Real footage, added as it is: nothing to generate or run again.'}</span>`:''}${b.imported==='merged'&&!b.published?`<button class="sm" data-unmerge="${esc(b.id)}" onclick="mgUndo('${esc(b.id)}')">Undo the merge…</button>`:''}${b.imported&&b.imported!=='merged'?`<button class="sm" data-fwords="${esc(b.id)}" onclick="bFootageWords('${esc(b.id)}')">Change the offer name…</button>`:''}${b.merged_into?`<span class="pill" data-merged-into="${esc(b.id)}" title="Its kept ads are in the merged batch; publish that one.">merged into ${esc(b.merged_into)}</span>`:''}<button class="sm" ${b.imported?'hidden':''} onclick="bWords('${esc(b.id)}')">Change words</button><button class="sm" ${b.imported?'hidden':''} data-grow="${esc(b.id)}" onclick="bGrow('${esc(b.id)}')" title="More photos for this batch. The ads it has keep their looks, numbers and your picks.">Add photos…</button>${b.left||b.videos?`<button class="sm" data-again="${esc(b.id)}" onclick="bRunAgain('${esc(b.id)}')" title="${b.left?`${b.left} not finished last time. `:''}Makes only what is missing; everything already made is reused.">Run again…</button>`:''}`:`${b.stopped||b.failed?`<button class="sm primary" onclick="bRunAgain('${esc(b.id)}')">Run again…</button><button class="sm" onclick="openGenerating('${esc(b.id)}')">Open</button>`:''}<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
+      <div class="row">${b.running?`<button class="sm primary" onclick="openGenerating('${esc(b.id)}')">Generating… →</button>`:b.ads?`<button class="sm primary" onclick="openReview('${esc(b.id)}')">Review</button>${b.imported?`<span class="hint" data-imported="${esc(b.id)}">${b.imported==='merged'?`Merged from ${(b.merged_from||[]).map(esc).join(' + ')}, as they are: nothing to generate or run again.`:'Real footage, added as it is: nothing to generate or run again.'}</span>`:''}${b.imported==='merged'?`<button class="sm" data-addads="${esc(b.id)}" onclick="aaOpen('${esc(b.id)}')" title="The ads of another finished batch join this one, numbered on. Nothing that is here moves.">Add ads from another batch…</button>`:''}${b.imported==='merged'&&!b.published?`<button class="sm" data-unmerge="${esc(b.id)}" onclick="mgUndo('${esc(b.id)}')">Undo the merge…</button>`:''}${b.imported&&b.imported!=='merged'?`<button class="sm" data-fwords="${esc(b.id)}" onclick="bFootageWords('${esc(b.id)}')">Change the offer name…</button>`:''}${b.merged_into?`<span class="pill" data-merged-into="${esc(b.id)}" title="Its kept ads are in the merged batch; publish that one.">merged into ${esc(b.merged_into)}</span>`:''}<button class="sm" ${b.imported?'hidden':''} onclick="bWords('${esc(b.id)}')">Change words</button><button class="sm" ${b.imported?'hidden':''} data-grow="${esc(b.id)}" onclick="bGrow('${esc(b.id)}')" title="More photos for this batch. The ads it has keep their looks, numbers and your picks.">Add photos…</button>${b.left||b.videos?`<button class="sm" data-again="${esc(b.id)}" onclick="bRunAgain('${esc(b.id)}')" title="${b.left?`${b.left} not finished last time. `:''}Makes only what is missing; everything already made is reused.">Run again…</button>`:''}`:`${b.stopped||b.failed?`<button class="sm primary" onclick="bRunAgain('${esc(b.id)}')">Run again…</button><button class="sm" onclick="openGenerating('${esc(b.id)}')">Open</button>`:''}<button class="sm" onclick="bDiscard('${esc(b.id)}')">Discard</button>`}</div>
     </div></div>`; }).join('')}</div>` : '<div class="hint">No campaigns yet. Fill in the brief above and press Generate.</div>';
 }
 
@@ -2749,6 +2749,53 @@ async function mgRun(){
     $('#gModal').innerHTML = ''; MG.busy = false; await loadSetup(); toast(`Merged: ${r.ads} ads in ${r.batch_id}. The batches it came from are as they were.`, 'ok'); openPublish(r.batch_id);
   } catch(e){ MG.busy = false; MG.error = e.message; MG.plan = null; if ($('#mgCard')) { mgPaint(); mgPlan(); } }
 }
+// ── More ads for a merged batch (2026-11-28) ─────────────────────────────────
+// The ads of other finished batches join a merged batch: numbered on from its last ad, with your Keeps. Nothing that
+// is in the batch moves — on Facebook, the next create makes only the new ads, in the same campaign and ad set.
+const AA = { id: null, batches: [], picked: new Set(), plan: null, busy: false, error: null };
+async function aaOpen(id){
+  Object.assign(AA, { id, picked: new Set(), plan: null, busy: false, error: null });
+  try { AA.batches = (await api(`/api/client/${STATE.sel}/batch-setup`)).batches || []; } catch(e){ toast(e.message, 'err'); return; }
+  aaPaint();
+}
+function aaPaint(){
+  const bs = AA.batches.filter(b => b.ads && b.id !== AA.id), P = AA.plan, n = (k, w='ad') => `${k} ${w}${k===1?'':'s'}`;
+  const row = (b) => { const ok = mgCan(b), r = b.review||{}, why = b.published ? 'on Facebook already' : b.imported === 'merged' ? 'a merged batch itself' : b.running ? 'being made right now' : '';
+    return `<label class="mgrow" data-aa="${esc(b.id)}" style="display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-weight:400;color:var(--text);${ok?'':'opacity:.55'}">
+      <input type="checkbox" style="width:auto;margin:0" ${AA.picked.has(b.id)?'checked':''} ${ok?'':'disabled'} onchange="aaTick('${esc(b.id)}', this.checked)">
+      ${b.thumb?`<img src="${esc(b.thumb)}" alt="" style="width:40px;height:40px;border-radius:6px;object-fit:cover">`:''}
+      <span style="flex:1"><b>${esc(b.words.offer)}</b> · ${esc((b.words.locations||[]).join(' / '))}<br><span class="hint">${esc(b.id)} · ${b.ads} ads · ${r.kept||0} kept${r.excluded?`, ${r.excluded} excluded`:''}${r.unreviewed?`, ${r.unreviewed} to review`:''}${why?` · <b>${why}</b>`:''}${b.merged_into===AA.id?' · some of its ads are here already':b.merged_into?` · already in ${esc(b.merged_into)}`:''}</span></span></label>`; };
+  const sum = !P ? `<p class="hint" id="aaSum" style="margin:10px 0 0">${!AA.picked.size ? 'Tick the batch whose ads to add.' : AA.busy ? 'Working out what adding comes to…' : ''}</p>`
+    : `<div id="aaSum" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px">
+        <b>${n(P.adds)} added</b> to the ${P.was} here · ${[P.images && n(P.images, 'image'), P.videos && n(P.videos, 'video'), P.cards && n(P.cards, 'card')].filter(Boolean).join(', ')}
+        ${Object.entries(P.by_location).filter(([,x])=>x.adds).map(([l,x])=>`<div class="hint" data-aa-area="${esc(l)}" style="margin-top:4px${x.after>50?';color:var(--warn)':''}"><b>${esc(l)}</b>: ${x.have} now + ${x.adds} = ${x.after}${(P.new_locations||[]).includes(l)?' · a new ad set':''}</div>`).join('')}
+        ${P.sources.map(x=>`<div class="hint" data-aa-src="${esc(x.id)}">From ${esc(x.id)}: ${x.ads} of ${x.of} ads${x.left.excluded?` · the ${x.left.excluded} you excluded stay behind`:''}${x.already?` · ${x.already} already here`:''}</div>`).join('')}
+        ${(P.notes||[]).map(m=>`<div class="hint" data-aa-note style="margin-top:4px">· ${esc(m)}</div>`).join('')}
+        ${(P.problems||[]).map(m=>`<div class="hint" data-aa-problem style="margin-top:4px;color:var(--err)">${esc(m.charAt(0).toUpperCase()+m.slice(1))}.</div>`).join('')}</div>`;
+  $('#gModal').innerHTML = `<div class="modal" onclick="if(event.target===this)$('#gModal').innerHTML=''"><div class="card" id="aaCard" style="max-width:720px">
+    <h3>Add ads from another batch</h3>
+    <p class="hint">The ads you have not excluded in each batch you tick <b>join this batch</b>, numbered on from its last ad, with your Keeps. Nothing that is here moves: its ads, your picks, the copy, the settings${P && P.on_meta ? ', and what is on Facebook. <b>Create on Facebook then makes only the new ads</b>, paused, in the same campaign' : ''}. Nothing is generated and it costs nothing.</p>
+    <div style="max-height:300px;overflow:auto">${bs.map(row).join('') || '<p class="hint">No other batch has ads yet.</p>'}</div>
+    ${sum}
+    <p class="hint" id="aaWhy" style="color:var(--err);min-height:18px;margin:6px 0 0">${esc(AA.error||'')}</p>
+    <div class="row" style="margin-top:8px"><div class="spacer"></div><button onclick="$('#gModal').innerHTML=''">Cancel</button><button class="primary" id="aaGo" ${P && P.ready && !AA.busy ? '' : 'disabled'} onclick="aaRun()">${P && P.ready ? `Add ${n(P.adds)} to this batch` : 'Add'}</button></div></div></div>`;
+}
+function aaTick(id, on){ if (on) AA.picked.add(id); else AA.picked.delete(id); AA.plan = null; AA.error = null; if (AA.picked.size) aaPlan(); else aaPaint(); }
+async function aaPlan(){
+  AA.busy = true; aaPaint(); const asked = [...AA.picked].join('|');
+  try { const p = await api(`/api/client/${STATE.sel}/batch/${AA.id}/add-ads`, { method:'POST', body:{ sources:[...AA.picked], dry:true } }); if (asked === [...AA.picked].join('|')) AA.plan = p; }
+  catch(e){ AA.error = e.message; }
+  AA.busy = false; if ($('#aaCard')) aaPaint();
+}
+async function aaRun(){
+  const P = AA.plan; if (!P || !P.ready || AA.busy) return; AA.busy = true; aaPaint();
+  try {
+    const r = await api(`/api/client/${STATE.sel}/batch/${AA.id}/add-ads`, { method:'POST', body:{ sources:[...AA.picked], confirm:{ adds: P.adds } } });
+    $('#gModal').innerHTML = ''; AA.busy = false; if (B.gym === STATE.sel) await loadSetup();
+    toast(`Added ${r.adds} ad${r.adds===1?'':'s'}: ${r.ads} in ${r.batch_id} now. Nothing that was there moved.`, 'ok');
+    if (STATE.tab === 'publish' && STATE.batch === AA.id) { PB.data = null; viewPublish($('#view')); } else openPublish(AA.id);
+  } catch(e){ AA.busy = false; AA.error = e.message; AA.plan = null; if ($('#aaCard')) { aaPaint(); aaPlan(); } }
+}
 async function mgUndo(id){
   const b = (B.setup?.batches||[]).find(x => x.id === id);
   if (!confirm(`Undo the merge ${id}? The merged batch is set aside in outputs/_discarded (not deleted), with its picks, copy and settings. The batches it was made from (${(b?.merged_from||[]).join(', ')}) are as they were, and can be published by themselves or merged again.`)) return;
@@ -3434,8 +3481,26 @@ function ruleOffer(list, at = 0){
     <p class="hint">Your edit swapped one phrase for another${list.length>1?` (${at+1} of ${list.length})`:''}. As a rule, every script, sheet and copy drafted for this gym is written this way, and one that says the old phrase is flagged for an edit.</p>
     <div class="grid"><div><label for="ruleAvoid">Never say</label><input id="ruleAvoid" value="${esc(r.avoid)}"></div><div><label for="ruleSay">Say instead</label><input id="ruleSay" value="${esc(r.say)}"></div></div>
     <label style="display:flex;align-items:center;gap:8px;font-weight:500;color:var(--text);margin-top:8px"><input type="checkbox" id="ruleSpoken" style="width:auto;margin:0"> Only for words said aloud <span class="hint" style="font-weight:400">· a video script, not a sheet or written copy</span></label>
+    ${ruleTouchesLine(r)}
     <p class="hint" id="ruleWhy" style="color:var(--err);min-height:18px;margin:6px 0 0"></p>
     <div class="row" style="margin-top:8px"><div class="spacer"></div><button id="ruleNo" onclick="ruleNext(${at})">Not a rule</button><button class="primary" id="ruleGo" onclick="ruleKeep(${at})">Make it a rule</button></div></div></div>`;
+}
+/** What the rule would touch, said before it is made one: the kept scripts and sheets that say the old phrase. */
+function ruleTouchesLine(r){
+  const T = r.touches; if (!T) return '';
+  const n = (k, w) => `${k} ${w}${k===1?'':'s'}`, parts = [T.scripts && n(T.scripts, 'kept video script'), T.sheets && n(T.sheets, 'kept white-paper script')].filter(Boolean);
+  return `<p class="hint" id="ruleTouches" style="margin:8px 0 0">${parts.length ? `<b>${parts.join(' and ')}</b> ${T.scripts + T.sheets === 1 ? 'says' : 'say'} the old phrase: as a rule, ${T.scripts + T.sheets === 1 ? 'it' : 'each'} would read “needs an edit” and is not filmed until it has one (Propose an edit… writes it).` : 'No kept video script or white-paper script says the old phrase.'}</p>`;
+}
+/** After a rule is made from a copy edit: the other copies and headlines of the batch that still say the old phrase. Nothing is changed by itself. */
+function ruleAlso(r, at){
+  const here = (r.touches?.here||[]).filter(x => (PB.data?.copy?.drafts||[]).some(d => d.id === x.id));
+  if (!here.length || STATE.tab !== 'publish') return false;
+  const text = (id) => { const d = (PB.data.copy.drafts||[]).find(x => x.id === id) || {}; return String(d.kind === 'headline' ? d.headline : d.message || d.headline || '').replace(/\s+/g, ' ').slice(0, 90); };
+  $('#gModal').innerHTML = `<div class="modal"><div class="card" id="ruleAlso"><h3>${here.length} more in this batch ${here.length===1?'says':'say'} “${esc(r.avoid)}”</h3>
+    <p class="hint">The rule is kept. These are not changed by themselves: a copy that is already on Facebook, once changed, makes its ads again. Edit the ones you want.</p>
+    ${here.map(x => `<div class="row" data-also="${esc(x.id)}" style="gap:8px;padding:6px 0;border-top:1px solid var(--line)"><span class="pill">${x.kind==='headline'?'headline':'copy'}${x.status==='keep'?' · kept':''}${x.own?' · a video’s own':''}</span><span style="flex:1">${esc(text(x.id))}…</span><button class="sm" onclick="$('#gModal').innerHTML='';cpEdit('${esc(x.id)}')">Edit…</button></div>`).join('')}
+    <div class="row" style="margin-top:10px"><div class="spacer"></div><button class="primary" id="ruleAlsoDone" onclick="ruleNext(${at})">Done</button></div></div></div>`;
+  return true;
 }
 function ruleNext(at){ $('#gModal').innerHTML = ''; ruleOffer(RULE_LIST, at + 1); }
 async function ruleKeep(at){
@@ -3444,7 +3509,7 @@ async function ruleKeep(at){
     await api(`/api/client/${STATE.sel}/wording`, { method:'POST', body:{ avoid: $('#ruleAvoid').value, say: $('#ruleSay').value, spoken: $('#ruleSpoken').checked } });
     toast('Rule kept: Profile → Brand & photography → Say this, not that.', 'ok'); await refreshProfile();
     if (STATE.tab === 'scenes') { try { VS.data = await api(`/api/client/${STATE.sel}/video`); paintScripts(); } catch {} }
-    ruleNext(at);
+    if (!ruleAlso(RULE_LIST[at], at)) ruleNext(at);
   } catch(e){ if (why) why.textContent = e.message; }
 }
 function vsDraft(offer, style){
@@ -3809,7 +3874,7 @@ function paintPublish(v){
   </div><div class="hint" style="margin-top:8px">Objective ${esc(P.campaign.objective)} · ${money(P.budget.per_day_total,cur)} a day in all · Advantage+ audience never on · every enhancement opted out</div></div>
   <h2 style="margin:18px 0 8px">Ad sets · one per location callout</h2>
   ${P.adsets.map(adsetCard).join('')}
-  <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap"><h3 style="margin:0">Ads · ${P.counts.ads} kept, ${P.counts.with_story} with a Stories version${P.counts.videos?`, ${P.counts.videos} video${P.counts.videos===1?'':'s'}`:''}</h3><div class="spacer"></div><button class="sm" id="pbZip" title="Every kept ad's feed image and its 9:16, one folder per ad set, named to pair in Ads Manager" onclick="location.href='/api/client/${esc(PB.gym)}/batch/${esc(PB.id)}/images.zip'">Download images (zip)</button></div><p class="hint">Each ad carries its feed image and its 9:16 for Stories and Reels (one creative, two images by placement).${P.counts.videos?' <span id="pbVideoHint">A video ad is uploaded to the ad account when you create, with its first frame as the cover and the same copy and form as the rest; one 9:16 video runs on every placement.</span>':''} Building the ads by hand in Ads Manager? Download images gives every kept ad's files, one folder per ad set.</p>
+  <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap"><h3 style="margin:0">Ads · ${P.counts.ads} kept, ${P.counts.with_story} with a Stories version${P.counts.videos?`, ${P.counts.videos} video${P.counts.videos===1?'':'s'}`:''}</h3><div class="spacer"></div>${PB.data.merged?`<button class="sm" id="pbAddAds" title="The ads of another finished batch join this one, numbered on. Nothing that is here moves${PB.data.merged.on_meta?', and only the new ads are made on Facebook':''}." onclick="aaOpen('${esc(PB.id)}')">Add ads from another batch…</button>`:''}<button class="sm" id="pbZip" title="Every kept ad's feed image and its 9:16, one folder per ad set, named to pair in Ads Manager" onclick="location.href='/api/client/${esc(PB.gym)}/batch/${esc(PB.id)}/images.zip'">Download images (zip)</button></div><p class="hint">Each ad carries its feed image and its 9:16 for Stories and Reels (one creative, two images by placement).${P.counts.videos?' <span id="pbVideoHint">A video ad is uploaded to the ad account when you create, with its first frame as the cover and the same copy and form as the rest; one 9:16 video runs on every placement.</span>':''} Building the ads by hand in Ads Manager? Download images gives every kept ad's files, one folder per ad set.</p>
     ${P.adsets.map(a=>`<div class="hint" style="margin:8px 0 4px"><b>${esc(a.callout)}</b> · ${a.ads.length}</div><div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-start">${P.ads.filter(x=>x.adset===a.callout).map(adRow).join('')}</div>`).join('')}</div>
   ${copyCard(D, P, sw)}
   <div class="card"><div class="row"><h3 style="margin:0">Destination and identity</h3><div class="spacer"></div><button class="sm" onclick="pbLoadLink()" ${PB.busy?'disabled':''}>${PB.link?'Reload the lists':'Load the Page\'s forms and Instagram accounts'}</button></div>
@@ -3959,7 +4024,7 @@ async function cpEditSave(){
   const f = PB.editForm; if (!f) return; const d = (PB.data.copy?.drafts||[]).find(x=>x.id===f.id); const isH = d?.kind==='headline';
   const body = { headline:$('#cpEditHead').value, description:$('#cpEditDesc').value, ...(isH ? {} : { message:$('#cpEditMsg').value }) };
   Object.assign(f, body);
-  try { await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${f.id}`, { method:'PUT', body }); cpEditClose(); await cpReload(); PB.cpmsg = 'Saved.'; paintPublish($('#view')); }
+  try { const saved = await api(`/api/client/${PB.gym}/batch/${PB.id}/copy/${f.id}`, { method:'PUT', body }); cpEditClose(); await cpReload(); PB.cpmsg = 'Saved.'; paintPublish($('#view')); if ((saved.suggest_rules||[]).length) ruleOffer(saved.suggest_rules); }
   catch(e){ cpEdit(f.id, 'Not saved: ' + e.message + '. Your text is kept here; fix it and try again.'); }
 }
 /** Copy a draft to the clipboard as it will read on the ad for one area: {AREA} and {BUTTON} filled, line breaks kept. */
@@ -4098,15 +4163,19 @@ function pbRoomBlock(){
   const R = PB.data.room; if (!R) return '';
   const over = Object.entries(R.by_adset||{}).filter(([,x]) => x.over); if (!over.length) return '';
   const n = (k, w='ad') => `${k} ${w}${k===1?'':'s'}`;
-  const lines = over.map(([c,x]) => `<div><b>${esc(c)}</b> holds ${n(x.have)} on Facebook and this adds ${x.adds}${x.replaced ? ` (${x.replaced} to replace an older version of ${x.replaced===1?'itself':'themselves'})` : ''}: ${x.after} in all.${x.short ? ` <span style="color:var(--err)">Even with the old ones archived it is ${x.short} over: archive ${n(x.short)} of this ad set in Ads Manager, or exclude ${n(x.short)} on Pick Ads.</span>` : ''}</div>`).join('');
+  const out = R.removed||[], pausedIn = (c) => out.filter(a => a.adset === c && a.paused === true).length, onIn = (c) => out.filter(a => a.adset === c && a.paused === false).length;
+  const lines = over.map(([c,x]) => { const left = x.removed ? x.short_after : x.short;
+    return `<div data-room="${esc(c)}"><b>${esc(c)}</b> holds ${n(x.have)} on Facebook and this adds ${x.adds}${x.replaced ? ` (${x.replaced} to replace an older version of ${x.replaced===1?'itself':'themselves'})` : ''}: ${x.after} in all, ${x.after - R.max} over.${x.removed ? ` <span data-room-out>${n(x.removed)} you took out on Pick Ads ${x.removed===1?'is':'are'} still in it${pausedIn(c)||onIn(c) ? ` (at the last pull of results: ${pausedIn(c)} paused, ${onIn(c)} switched on)` : ''}.</span>` : ''}${left ? ` <span style="color:var(--err)">${x.removed||x.replaced ? 'Even with those archived' : 'As it is'} it is ${left} over: take out ${n(left)} more on Pick Ads and pause ${left===1?'it':'them'} on Facebook, or exclude ${n(left)} of the new ones.</span>` : ''}</div>`; }).join('');
   return `<div class="summary" id="pbRoom" style="margin-top:-4px;border-color:var(--warn)"><b>An ad set is full.</b> Facebook allows ${R.max} ads in an ad set, and paused ones count. ${lines}
     ${R.archive ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px"><input type="checkbox" id="pbArchive" data-n="${R.archive}" style="margin-top:3px"><span>Archive the ${n(R.archive, 'old ad')} these replace, to make room. <b>An archived ad can never be turned on again.</b> Only paused ones are archived, and only if the ad set is still full when the run starts.</span></label>
-    <div class="hint" style="margin:6px 0 0">Without the tick nothing is uploaded and the run stops with this reason.</div>` : ''}</div>`;
+    <div class="hint" style="margin:6px 0 0">Without the tick nothing is uploaded and the run stops with this reason.</div>` : ''}
+    ${R.archive_removed ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px"><input type="checkbox" id="pbArchiveOut" data-n="${R.archive_removed}" style="margin-top:3px"><span>Archive the ${n(R.archive_removed)} you took out, to make room. <b>An archived ad can never be turned on again.</b> Only the ones that are paused on Facebook when the run starts are archived: one that is still switched on is never touched, so pause it first (Review Data → Pause on Meta, or Ads Manager).</span></label>
+    <div class="hint" style="margin:6px 0 0">Without the tick, or if too few of them are paused, nothing is uploaded and the run stops with the reason.</div>` : ''}</div>`;
 }
 function pbCreateGo(){
-  const P = PB.data.plan, v = $('#pbFirst').value.trim(), first = v ? parseInt(v, 10) : null, box = $('#pbArchive'), archive = box && box.checked ? Number(box.dataset.n) : 0; bClose();
+  const P = PB.data.plan, v = $('#pbFirst').value.trim(), first = v ? parseInt(v, 10) : null, box = $('#pbArchive'), archive = box && box.checked ? Number(box.dataset.n) : 0, box2 = $('#pbArchiveOut'), archiveOut = box2 && box2.checked ? Number(box2.dataset.n) : 0; bClose();
   if (v && !(Number.isInteger(first) && first >= 1)) { toast('"Only the first" is a whole number of ads.', 'err'); return; }
-  run({kind:'batch-publish', gym:PB.gym, batch:PB.id, confirm:{ ads:P.counts.ads, adsets:P.counts.adsets, per_day:P.budget.per_day_total, ...(first ? { first } : {}), ...(archive ? { archive } : {}) }}, async()=>{ PB.data = null; if (STATE.tab==='publish' && STATE.batch===PB.id) viewPublish($('#view')); });
+  run({kind:'batch-publish', gym:PB.gym, batch:PB.id, confirm:{ ads:P.counts.ads, adsets:P.counts.adsets, per_day:P.budget.per_day_total, ...(first ? { first } : {}), ...(archive ? { archive } : {}), ...(archiveOut ? { archive_removed: archiveOut } : {}) }}, async()=>{ PB.data = null; if (STATE.tab==='publish' && STATE.batch===PB.id) viewPublish($('#view')); });
   paintPublish($('#view'));
 }
 function pbSet(path, val){ setPath(PB.settings, path, val); pbSave(); }
@@ -4296,7 +4365,7 @@ const cdTimelineText = t => [t.title, ...t.steps.map(p=>[p.when, p.head, p.line|
 function cdParseTimeline(text){ const lines = text.split('\n').map(l=>l.trim()).filter(Boolean); return { title: lines[0]||'', steps: lines.slice(1).map(l=>{ const [when, head, ...rest] = l.split('|').map(x=>x.trim()); return { when: when||'', head: head||'', line: rest.join(' | ') }; }) }; }
 function cdModal(title, hint, value, rows, onSave, extra=''){
   $('#cdModal').innerHTML = `<div class="modal" onclick="if(event.target===this)cdClose()"><div class="card"><h2>${esc(title)}</h2><p class="hint">${hint}</p>${extra}<textarea id="cdBox" rows="${rows}">${esc(value)}</textarea><div id="cdErr"></div><div class="row" style="margin-top:12px"><button onclick="cdClose()">Cancel</button><div class="spacer"></div><button class="primary" id="cdSave">Save</button></div></div></div>`;
-  $('#cdSave').onclick = async () => { try { await onSave($('#cdBox').value); cdClose(); paintCards(); } catch(e){ $('#cdErr').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; } }; // a refused save keeps what was typed
+  $('#cdSave').onclick = async () => { try { await onSave($('#cdBox').value); cdClose(); paintCards(); if ((CD.data?.suggest_rules||[]).length) { const list = CD.data.suggest_rules; delete CD.data.suggest_rules; ruleOffer(list); } } catch(e){ $('#cdErr').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; } }; // a refused save keeps what was typed
 }
 function cdClose(){ const m = $('#cdModal'); if (m) m.innerHTML = ''; }
 const TL_HINT = 'The first line is the title. Then one step a line: <b>when | heading | line</b> (the line is optional). Three to five steps.';

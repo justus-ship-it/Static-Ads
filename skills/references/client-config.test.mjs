@@ -374,3 +374,24 @@ test("P25 a gym's own wording and its video counts (2026-11-22, F45 Xinyi: the o
   assert.deepEqual([C.defaultVideosProblems(undefined), C.defaultVideosProblems({ presenter: 8, active: 5, paper: 7 }), C.defaultVideosProblems({ presenter: 15, paper: 7 }), C.defaultVideosProblems({ talking: 1 }), C.defaultVideosProblems({ paper: 1.5 })], [[], [], ["videos: a batch makes at most 20 in all"], ["videos.talking is not a kind of video (presenter, active, paper)"], ["videos.paper must be a whole number from 0 to 20"]]);
   assert.ok(validateProfile({ ...profile, creative_defaults: { ...profile.creative_defaults, videos: { presenter: 30 } } }).errors.some((e) => /creative_defaults\.videos\.presenter must be a whole number from 0 to 20/.test(e)));
 });
+
+test("P26 an edit to written ad words offered back as a rule (2026-11-28): a phrase swapped for a phrase in a copy, a headline or a card's words is offered, line by line where the number of lines did not change; never a swap that touches a placeholder, an area the ad names or the offer's own words; never a rule the gym has, a rewritten line, or an edit that added or removed a line", async () => {
+  const C = await import("./client-config.mjs");
+  const opts = { offer: "6 Week Full Body Transformation", areas: ["BOAT QUAY & CBD"] };
+  const body = "Tired after work every day?\n\nOur coaches build a tailored plan around your week.\n\nTap {BUTTON} to start.";
+  // One phrase swapped in the body, the headline untouched.
+  assert.deepEqual(C.adWordSuggestions([body, "Start in {AREA}", null], [body.replace("a tailored plan", "a plan made for you"), "Start in {AREA}", null], {}, opts), [{ avoid: "tailored plan", say: "plan made for you" }]);
+  // A swap in the headline; a field that was not sent (null) is not compared.
+  assert.deepEqual(C.adWordSuggestions([null, "Get your stamina back", null], [null, "Get your energy back", null], {}, opts), [{ avoid: "stamina", say: "energy" }]);
+  // What is fixed on an ad is never a rule: a placeholder, the area, the offer's own words.
+  assert.deepEqual(C.adWordSuggestions(["Tap {BUTTON} to start today."], ["Tap the button to start today."], {}, opts), []);
+  assert.deepEqual(C.adWordSuggestions(["For people working in Boat Quay & CBD every day."], ["For people working in Raffles Place every day."], {}, opts), []);
+  assert.deepEqual(C.adWordSuggestions(["Join the 6 Week Full Body Transformation with us."], ["Join the 6 Week Full Body Reset with us."], {}, opts), []);
+  assert.deepEqual(C.adWordSuggestions(["我們的六週雕塑體態計畫開始了。"], ["我們的六週訓練計畫開始了。"], {}, { offer: "六週雕塑體態計畫", areas: ["信義區"] }), []);
+  // A rule the gym has, a line written afresh, and a line added: nothing offered.
+  assert.deepEqual(C.adWordSuggestions(["Our coaches build a tailored plan around your week."], ["Our coaches build a plan made for you around your week."], { brand_lock: { voice: { say_instead: ["tailored plan => plan made for you"] } } }, opts), []);
+  assert.deepEqual(C.adWordSuggestions(["Tired after work every day?"], ["Mornings are hard when sleep is short."], {}, opts), []);
+  assert.deepEqual(C.adWordSuggestions(["One line.\nTwo lines here."], ["One line.\nTwo lines here.\nAnd a third."], {}, opts), []);
+  // A card's timeline, flattened field by field.
+  assert.deepEqual(C.adWordSuggestions(["Your first weeks", "Assessment", "We check your baseline first."], ["Your first weeks", "Assessment", "We check where you are now first."], {}, opts), [{ avoid: "your baseline", say: "where you are now" }]);
+});

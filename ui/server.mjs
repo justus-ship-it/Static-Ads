@@ -33,7 +33,7 @@ import { spawn, execFileSync } from "child_process";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import {
   scaffold, validateProfile, profileCompleteness, PROFILE_SCHEMA, CREATIVE_DEFAULTS, PALETTE_MODES,
-  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase, FEED_RATIOS, mixOf, presentsOf, PRESENTS, wordingSuggestions, addSayInstead, sayInstead, addPinTo } from "../skills/references/client-config.mjs";
+  catalogueFor, brandPalettes, META_ID, CTA_ENUM, OFFER_TYPES, PRICE_QUALIFIERS, pinUsable, withPoint, countryRules, postalOk, profileCountry, COUNTRIES, pinFor, titleCase, adWordSuggestions, FEED_RATIOS, mixOf, presentsOf, PRESENTS, wordingSuggestions, addSayInstead, sayInstead, addPinTo } from "../skills/references/client-config.mjs";
 import { imageSize, ownerKept, OWNER_KEPT } from "../skills/references/check-visual.mjs";
 import { metaConfig, graphClient, checkLink, META_API_VERSION, META_PERMISSIONS, META_ENV_KEYS, scrubTokens } from "../skills/references/meta-api.mjs";
 import { readWordings, addWording, editWording, deleteWording, recordUse, wordingProblems } from "../skills/references/ad-wordings.mjs";
@@ -62,7 +62,7 @@ import { liveEntries, sendToLibrary, LIBRARY_DIR as COPY_LIBRARY, readLibrary as
 import { isRetargeting, readPresets, livePresets, importPresets, renamePreset, retirePreset, restorePreset, addPreset, rankPresets, specProblems, summarise, normaliseSpec } from "../skills/references/meta-targeting.mjs";
 import { FOOTAGE_NO_RUN, setFootageWords } from "../skills/references/footage-video.mjs";
 import { TARGETING_KINDS, takeTargeting, acknowledge as acknowledgeTargeting } from "../skills/references/targeting-drift.mjs";
-import { MERGED, MERGED_NO_RUN, mergePlan, mergeBatches, mergedInto, planView as mergeView } from "../skills/references/merge-batches.mjs";
+import { MERGED, MERGED_NO_RUN, mergePlan, mergeBatches, mergedInto, addPlan, addToMerged, planView as mergeView } from "../skills/references/merge-batches.mjs";
 import { correctName as correctTestimonialName, testimonialsView, testimonialAds, readTestimonials, draftTestimonialCopy, readReadings as readTestimonialReadings, USD_PER_VIDEO as TESTIMONIAL_USD, PER_VIDEO as TESTIMONIAL_COPIES } from "../skills/references/testimonial-video.mjs";
 /** Why a batch added or merged as it is cannot be run. */
 const noRunWhy = (brief) => (brief?.imported === MERGED ? MERGED_NO_RUN : FOOTAGE_NO_RUN);
@@ -204,7 +204,7 @@ const RUNNABLE = {
   "batch-stories": { label: "Make Stories versions", needsBrief: true, spends: "stories", argv: ({ gym, batch, confirm, only }) => [STORIES_SCRIPT, "--brand-dir", brandDir(gym), "--batch", batch, "--max-calls", String(confirm.max_calls), ...(only ? ["--only", only, "--fresh"] : [])] },
   // Publishing (E3): the plan on disk is created on Meta, every object paused. The confirmation names what
   // the plan holds now (ad sets, ads, the day's budget) so what is created is what was read; `first` limits a run.
-  "batch-publish": { label: "Create on Facebook (paused)", needsBrief: true, spends: "publish", argv: ({ gym, batch, confirm }) => [PUBLISH_SCRIPT, "--gym", gym, "--brand-dir", brandDir(gym), "--batch", batch, "--create", ...(confirm.first ? ["--first", String(confirm.first)] : []), ...(confirm.archive ? ["--archive-replaced"] : [])] },
+  "batch-publish": { label: "Create on Facebook (paused)", needsBrief: true, spends: "publish", argv: ({ gym, batch, confirm }) => [PUBLISH_SCRIPT, "--gym", gym, "--brand-dir", brandDir(gym), "--batch", batch, "--create", ...(confirm.first ? ["--first", String(confirm.first)] : []), ...(confirm.archive ? ["--archive-replaced"] : []), ...(confirm.archive_removed ? ["--archive-removed"] : [])] },
   // Another lead form on the ads already on Facebook, in place (2026-11-27): each ad keeps its id and its status and is
   // given the same creative with the campaign's form. The confirmation names the form and the ads as the files say now.
   "batch-form-swap": { label: "Change the form on the ads on Facebook", needsBrief: true, spends: "form-swap", argv: ({ gym, batch, confirm }) => [PUBLISH_SCRIPT, "--gym", gym, "--brand-dir", brandDir(gym), "--batch", batch, "--swap-form", ...(confirm.only ? ["--only", confirm.only.join(",")] : [])] },
@@ -1240,10 +1240,29 @@ function formSwapFor(dir, profile, plan, out) {
     last: last ? { swapped: last.swapped, of: last.of, finished: last.finished || null, error: last.error ? { what: last.error.what, message: last.error.message } : null } : null,
     changed: Object.values(record.ads || {}).filter((a) => (a.swaps || []).length).length };
 }
+/**
+ * What a wording rule would touch, said before the owner makes it one (2026-11-28): the kept video scripts and sheet
+ * scripts that say the old phrase (each would then read "needs an edit"), and — for an edit made in a batch — the other
+ * copies and headlines of that batch that still say it (nothing is changed by itself).
+ */
+function ruleTouches(gym, avoid, { out = null, except = null } = {}) {
+  // The phrase as whole words (a Chinese phrase anywhere): "plan" is not in "planning".
+  const k = String(avoid || "").toLowerCase().trim(), han = /[\u3400-\u9fff]/.test(k), re = k && !han ? new RegExp(`(^|[^a-z0-9'])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9']|$)`) : null;
+  const says = (t) => !!k && (han ? String(t ?? "").toLowerCase().includes(k) : re.test(String(t ?? "").toLowerCase()));
+  const v = readJsonFile(join(brandDir(gym), "video-scripts.json")) || {};
+  const scripts = (v.scripts || []).filter((x) => x.status === "kept" && (x.lines || []).some(says)).length, sheets = (v.sheets || []).filter((x) => x.status === "kept" && (x.sheets || []).some(says)).length;
+  const here = out ? ((readJsonFile(join(out, "copy.json")) || {}).drafts || []).filter((d) => d.id !== except && d.status !== "exclude" && (says(d.message) || says(d.headline) || says(d.description))).slice(0, 12).map((d) => ({ id: d.id, kind: d.kind || "copy", status: d.status, own: !!d.for })) : [];
+  return { scripts, sheets, here };
+}
 function roomFor(plan, out, first = null) {
   const rec = readJsonFile(join(out, "publish.json"));
   if (!rec?.campaign?.id) return null;
-  try { const r = remakePreview(plan, rec, out, { first }); return { max: ADSET_MAX_ADS, same: r.same, fresh: r.fresh.length, remade: r.remade, by_adset: r.by_adset, archive: r.archive, short: r.short }; } catch { return null; }
+  try {
+    const r = remakePreview(plan, rec, out, { first }), seen = readJsonFile(join(out, "results.json"))?.ads || null;
+    // Whether an ad taken out is paused, as far as the last pull of results knows (the run itself asks Meta again).
+    const removed = r.removed.map((a) => { const s = seen?.[a.ad_id]?.status; return { ...a, paused: s ? String(s).toUpperCase() === "PAUSED" : null }; });
+    return { max: ADSET_MAX_ADS, same: r.same, fresh: r.fresh.length, remade: r.remade, by_adset: r.by_adset, archive: r.archive, short: r.short, removed, archive_removed: r.archive_removed, short_after: r.short_after };
+  } catch { return null; }
 }
 const TERMINAL_STAGES = new Set(["done", "failed", "stopped"]);
 function killGroup(pid, signal) {
@@ -2086,7 +2105,15 @@ const server = createServer(async (req, res) => {
         if (what === "google/find" && req.method === "POST") { if (!placesKey()) return json(res, 409, { error: "no Google Places key yet: add GOOGLE_PLACES_KEY to .env, or paste the reviews" }); return json(res, 200, { ok: true, places: await findPlace(String(body.query || "").slice(0, 200)) }); }
         if (what === "google/pull" && req.method === "POST") { if (!placesKey()) return json(res, 409, { error: "no Google Places key yet: add GOOGLE_PLACES_KEY to .env, or paste the reviews" }); const r = await pullGoogleReviews(dir, { placeId: body.place_id || null, profile }); return json(res, 200, { ok: true, pull: r, ...view() }); }
         if (what === "words" && req.method === "POST") { const row = body.kind === "timeline" ? addTimeline(dir, body.timeline || {}, { source: "owner", profile }) : addStatement(dir, body.text, { source: "owner", profile }); return json(res, 200, { ok: true, row, ...view() }); }
-        if (what === "words" && req.method === "PUT" && x1 && x2) { const row = decideWords(dir, x1, x2, { status: body.status, reason: body.reason, text: body.text, timeline: body.timeline }, { profile }); return json(res, 200, { ok: true, row, ...view() }); }
+        if (what === "words" && req.method === "PUT" && x1 && x2) {
+          const flat = (r) => (r ? (x1 === "statement" ? [r.text] : [r.title, ...(r.steps || []).flatMap((st) => [st.heading, st.line])]) : []);
+          const was = flat((x1 === "statement" ? readWords(dir).statements : readWords(dir).timelines).find((r) => r.id === x2) || null);
+          const row = decideWords(dir, x1, x2, { status: body.status, reason: body.reason, text: body.text, timeline: body.timeline }, { profile });
+          // An edit to a card's words is offered back as a rule too (2026-11-28); bold marks are not words.
+          const plain = (list) => list.map((t) => (t == null ? null : String(t).replace(/\*\*/g, "")));
+          const suggest_rules = body.text != null || body.timeline != null ? adWordSuggestions(plain(was), plain(flat(row)), profile, { offer: row.offer || "", areas: profile.creative_defaults?.locations || [] }).map((r) => ({ ...r, spoken: false, touches: ruleTouches(gym, r.avoid) })) : [];
+          return json(res, 200, { ok: true, row, ...view(), suggest_rules });
+        }
         if (what === "draft" && req.method === "POST") {
           if (!["statement", "timeline"].includes(body.kind)) return json(res, 400, { error: "kind must be statement or timeline" });
           const count = Number.isInteger(body.count) ? body.count : 6;
@@ -2446,7 +2473,14 @@ const server = createServer(async (req, res) => {
         // The owner's one click: keep the recommended drafts of a kind.
         if (cid === "recommended" && req.method === "POST") { const { kind = "copy" } = await readBody(req); if (!kindOk(kind)) return json(res, 400, { error: "kind is copy or headline" }); const recs = keepRecommended(out, kind); return view({ kept_now: recs.map((d) => d.id) }); }
         if (!cid && req.method === "POST") { const { kind = "copy", message, headline, description } = await readBody(req); if (!kindOk(kind)) return json(res, 400, { error: "kind is copy or headline" }); mkdirSync(out, { recursive: true }); const d = addCopy(out, { kind, message, headline, description }, { offer: brief.offer, profile, offerDoc, locations: brief.locations || [] }); return view({ added: 1, draft: d }); }
-        if (cid && req.method === "PUT") { const b = await readBody(req); const d = decideCopy(out, cid, { status: b.status, message: b.message, headline: b.headline, description: b.description }, { offer: brief.offer, profile, offerDoc, locations: brief.locations || [] }); return view({ draft: d }); }
+        if (cid && req.method === "PUT") {
+          const b = await readBody(req), was = ((readJsonFile(join(out, "copy.json")) || {}).drafts || []).find((x) => x.id === cid) || null;
+          const d = decideCopy(out, cid, { status: b.status, message: b.message, headline: b.headline, description: b.description }, { offer: brief.offer, profile, offerDoc, locations: brief.locations || [] });
+          // An edit that swapped a phrase for a phrase is offered back as a rule for the gym (2026-11-28), with what the rule would touch.
+          const edited = was && [b.message, b.headline, b.description].some((x) => x != null);
+          const suggest_rules = edited ? adWordSuggestions([b.message != null ? was.message : null, b.headline != null ? was.headline : null, b.description != null ? was.description : null], [d.message, d.headline, d.description], profile, { offer: brief.offer, areas: brief.locations || [] }).map((r) => ({ ...r, spoken: false, touches: ruleTouches(gym, r.avoid, { out, except: cid }) })) : [];
+          return view({ draft: d, suggest_rules });
+        }
       } catch (e) { return json(res, e.code === 190 || e.trace ? 502 : 400, { error: scrubTokens(e.message) }); }
     }
     // The central copy library (CL3): one file for every gym, read and changed from Library → Copy. GET lists every
@@ -2507,7 +2541,7 @@ const server = createServer(async (req, res) => {
         if (rid && req.method === "PUT") { const { note, retired } = await readBody(req); return view({ ref: editCopyRef(dir, decodeURIComponent(rid), { note, retired }) }); }
       } catch (e) { return json(res, 400, { error: e.message }); }
     }
-    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull|drift\/take|video\/take|grow|footage-words|testimonials|testimonials\/read|testimonials\/draft|testimonials\/name)$/);
+    const rv = p.match(/^\/api\/client\/([^/]+)\/batch\/([^/]+)\/(progress|review|picks|publish|results|results\/pull|drift\/take|video\/take|grow|add-ads|footage-words|testimonials|testimonials\/read|testimonials\/draft|testimonials\/name)$/);
     if (rv) {
       const [, gym, id, what] = rv;
       if (!okSlug(gym) || !existsSync(brandDir(gym))) return json(res, 400, { error: "bad gym" });
@@ -2554,7 +2588,7 @@ const server = createServer(async (req, res) => {
         const form_whatsapp = plan.lead_form_id ? whatsappOf(readLeadForms(dir), plan.lead_form_id) : null;
         const readiness = publishReadiness(plan, { formName: lead_form_name, formWhatsapp: form_whatsapp });
         const thumbs = Object.fromEntries(kept.map((a) => [a.folder, { url: fileUrl(gym, join(out, a.file)), story: a.story ? fileUrl(gym, join(out, a.story)) : null }]));
-        return json(res, 200, { plan, readiness, lead_form_name, form_whatsapp, whatsapp: profile.meta_assets?.lead_form_whatsapp || null, form_swap: formSwapFor(dir, profile, plan, out), settings, settings_version: settingsVersion(settingsPath), thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account", retargeting: isRetargeting(p) }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")), room: roomFor(plan, out),
+        return json(res, 200, { plan, readiness, merged: batch?.imported === MERGED ? { from: (batch.merged_from || []).map((x) => x.batch || x), on_meta: !!readJsonFile(join(out, "publish.json"))?.campaign?.id } : null, lead_form_name, form_whatsapp, whatsapp: profile.meta_assets?.lead_form_whatsapp || null, form_swap: formSwapFor(dir, profile, plan, out), settings, settings_version: settingsVersion(settingsPath), thumbs, identity, pin_fill, presets_import, offer: batch?.offer || batch?.ads?.[0]?.words?.offer || null, pins: profile.targeting_defaults?.geo?.radius_pins || [], presets: [...liveTargeting(library).filter((e) => e.approved_on).map((e) => ({ id: `lib:${e.id}`, name: e.name, summary: summarise(e.spec), cost_per_lead: null, group: "shared", audience: e.audience, role: e.role })), ...livePresets(presets).map((p) => ({ id: p.id, name: p.name, summary: p.summary, cost_per_lead: p.stats?.cost_per_lead ?? null, group: "account", retargeting: isRetargeting(p) }))], cta: Object.fromEntries(Object.keys(CTA_TYPES).map((k) => [k, ctaLabel(k, gymLanguage(profile))])), words: { offer: batch.ads?.[0]?.words?.offer || null, audience: batch.ads?.[0]?.words?.audience || null, locations: [...new Set(batch.ads.map((a) => a.location))], areas: [...new Set(batch.ads.map((a) => a.location))].map(titleCase) }, copy: { drafts: readCopy(out).drafts, flat: flatCopies(out).map((d) => d.id), references: referencesFor(dir).length, library: { copy: liveEntries(undefined, "copy").length, headline: liveEntries(undefined, "headline").length }, max_options: MAX_OPTIONS }, published: readJsonFile(join(out, "publish.json")), room: roomFor(plan, out),
           // Testimonial videos and their own copy (2026-11-22): each video with what was read of it and its drafts; null for a batch with none.
           testimonials: (() => { const all = testimonialAds(out); if (!all.length) return null; const unread = all.filter((a) => !readTestimonialReadings(out).videos[a.id]?.reading).length; return { videos: testimonialsView(out), unread, per_video: TESTIMONIAL_COPIES, usd_read: Math.round(unread * TESTIMONIAL_USD * 100) / 100 }; })() });
       }
@@ -2623,6 +2657,25 @@ const server = createServer(async (req, res) => {
         const body = await readBody(req);
         try { const r = setFootageWords({ brandDir: brandDir(gym), batchId: id, offer: typeof body.offer === "string" ? body.offer.trim() : undefined, audience: body.audience === undefined ? undefined : String(body.audience || "").trim() }); try { recordUse(brandDir(gym), r.now.offer); } catch {} return json(res, 200, { ok: true, ...r }); }
         catch (e) { return json(res, /^no batch/.test(e.message) ? 404 : 400, { error: e.message }); }
+      }
+      // More ads for a merged batch (2026-11-28; merge-batches.mjs → addPlan / addToMerged): POST { sources, dry: true }
+      // says what adding comes to with nothing written; { sources, confirm: { adds } } adds them, only when what was
+      // confirmed is what is true now. Nothing that is in the batch moves; the picks file is written again.
+      if (what === "add-ads" && req.method === "POST") {
+        const dir = brandDir(gym), brief = readJsonFile(briefPath(gym, id));
+        if (!brief) return json(res, 404, { error: "no such batch" });
+        if (brief.imported !== MERGED) return json(res, 409, { error: "ads from another batch are added to a merged batch only: merge this batch with the other one instead (Publish Ads → Merge batches…)" });
+        const body = await readBody(req), sources = Array.isArray(body.sources) ? [...new Set(body.sources.map(String))].filter(okSlug) : [];
+        let plan; try { plan = addPlan({ brandDir: dir, batchId: id, sources }); } catch (e) { return json(res, 400, { error: e.message }); }
+        const busy = [id, ...sources].filter((b) => activeRun(gym, b) || orphanBatch(gym, b));
+        if (busy.length) plan.problems.push(`${busy.join(", ")} ${busy.length === 1 ? "has" : "have"} a run going right now: wait for it to end, or stop it`), plan.ready = false;
+        if (body.dry === true) return json(res, 200, mergeView(plan));
+        if (!plan.ready) return json(res, 409, { error: plan.problems[0], ...mergeView(plan) });
+        if (Number(body.confirm?.adds) !== plan.adds) return json(res, 409, { error: "what adding these ads comes to is not what was confirmed: read the numbers again and confirm", ...mergeView(plan) });
+        let made; try { made = addToMerged({ brandDir: dir, batchId: id, sources }); } catch (e) { return json(res, 400, { error: e.message }); }
+        savePicks(gym, id, {});
+        const { dir: _d, ...said } = made;
+        return json(res, 200, { ok: true, ...said });
       }
       if (what === "grow" && (req.method === "GET" || req.method === "POST")) {
         const dir = brandDir(gym), brief = readJsonFile(briefPath(gym, id));
@@ -2983,7 +3036,14 @@ const server = createServer(async (req, res) => {
             if (!Number.isInteger(c.archive) || c.archive !== (room?.archive || 0)) return json(res, 409, { error: `the old ads to archive are not what was confirmed (${room?.archive || 0} now): read the Publish Ads screen again and confirm` });
             archive = true;
           }
-          body.confirm = { first: c.first ?? null, archive };
+          // The ads taken out on Pick Ads that still sit in a full ad set: archived on a second tick, for the number shown.
+          let archiveRemoved = false;
+          if (c.archive_removed != null && c.archive_removed !== 0 && c.archive_removed !== false) {
+            const room = roomFor(plan, out, c.first ?? null);
+            if (!Number.isInteger(c.archive_removed) || c.archive_removed !== (room?.archive_removed || 0)) return json(res, 409, { error: `the ads you took out, to archive, are not what was confirmed (${room?.archive_removed || 0} now): read the Publish Ads screen again and confirm` });
+            archiveRemoved = true;
+          }
+          body.confirm = { first: c.first ?? null, archive, archive_removed: archiveRemoved };
         } else if (spec.spends === "form-swap") {
           // What was confirmed must be what is true now: the form the ads are given, and which ads.
           const c = body.confirm || {}, dir = brandDir(body.gym), out = join(dir, "outputs", body.batch), profile = readJsonFile(join(dir, "gym-profile.json")) || {};

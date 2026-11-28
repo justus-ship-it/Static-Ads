@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mergePlan, mergeBatches, mergedInto, planView, MERGED, MERGED_NO_RUN, ADSET_ADS } from "./merge-batches.mjs";
+import { mergePlan, mergeBatches, mergedInto, addPlan, addToMerged, planView, MERGED, MERGED_NO_RUN, ADSET_ADS } from "./merge-batches.mjs";
 import { keptAds } from "./meta-publish.mjs";
 import { batchRows } from "./meta-results.mjs";
 
@@ -128,5 +128,68 @@ test("MB3 what is refused or said: fewer than two batches; a batch with no ads, 
     assert.ok(P([made.batch_id, "c"]).problems.includes(`${made.batch_id} is itself a merged batch: merge the batches it came from`));
     assert.ok(P(["a", "c"]).notes.some((n) => n === `a is already in the merged batch ${made.batch_id}: its ads will be in both`));
     assert.equal(ADSET_ADS, 50);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+/** A third image batch for the same gym: two ads on one photo, one kept, Stories for both. */
+function third({ put, json }, id = "c", { offer = "6 Week Reset", area = "BOAT QUAY & CBD", n = 2 } = {}) {
+  const ads = Array.from({ length: n }, (_, i) => { const c = `c0${i + 1}`, folder = `${101 + i}-${c}-area-t3-white`, file = `${folder}/4x5/${c}-area_4x5_v1.png`; put(`outputs/${id}/${file}`, Buffer.from(`png-${id}-${i}`)); put(`outputs/${id}/${folder}/9x16/${c}-area_9x16_v1.png`);
+    return { folder, file, candidate: c, location: area, location_index: 0, photos: ["g01"], photo_files: ["g01.jpg"], treatment: "t3-left-column", style: "s2", palette: "white", ratio: "4x5", format: "studio-portrait", crop: [[0.5, 0.5]], words: { location: area, audience: null, offer, free: false }, replaced: null }; });
+  json(`batches/${id}/brief.json`, { batch_id: id, offer, locations: [area], audience: null, generated: 1 });
+  json(`outputs/${id}/batch.json`, { batch_id: id, made: "2026-11-27T01:00:00Z", ratio: "4x5", photos: [{ id: "g01", kind: "generated" }], ads, failed: [] });
+  json(`outputs/${id}/visuals.json`, { visuals: [{ id: "g01", scene_id: "w-p-dark-wall", tags: { backdrop: "dark-wall" } }] });
+  json(`outputs/${id}/stories.json`, { batch_id: id, ads: ads.map((a) => ({ folder: a.folder, file: `${a.folder}/9x16/${a.candidate}-area_9x16_v1.png` })), failed: [], left_out: [] });
+  json(`outputs/${id}/review.json`, { ads: { [ads[0].folder]: "keep" }, photos: {} });
+  return ads;
+}
+
+test("MB4 more ads for a merged batch (2026-11-28): the ads of another finished batch join it, numbered on from its last ad, with the Keep carried — and nothing that was there moves (its ads, the picks, the copy, the settings); what it comes to is said first with nothing written; an ad that is already here is not added twice, so adding a batch again brings only what is new in it; another offer, a batch on Facebook, a merged batch and a batch that is not merged are refused; an image naming another area is a new ad set, said; a full ad set is said with how to make room", () => {
+  const G = gym(), { d, g } = G;
+  try {
+    const NOW2 = new Date("2026-11-28T03:00:00Z"), id = mergeBatches({ brandDir: g, sources: ["a", "b"], now: NOW }).batch_id, out = join(g, "outputs", id), read = (f) => JSON.parse(readFileSync(join(out, f), "utf-8"));
+    const C = third(G), was = { batch: read("batch.json"), copy: readFileSync(join(out, "copy.json"), "utf-8"), settings: readFileSync(join(out, "publish-settings.json"), "utf-8"), review: read("review.json") };
+    // What it comes to, nothing written.
+    const p = planView(addPlan({ brandDir: g, batchId: id, sources: ["c"] }));
+    assert.deepEqual([p.ready, p.problems, p.notes, p.batch_id, p.on_meta, p.was, p.adds, p.images, p.videos, p.locations, p.new_locations, p.by_location], [true, [], [], id, false, 4, 2, 2, 0, ["BOAT QUAY & CBD"], [], { "BOAT QUAY & CBD": { have: 4, adds: 2, after: 6 } }]);
+    assert.deepEqual(p.sources, [{ id: "c", ads: 2, kept: 1, left: { excluded: 0, flagged: 0, missing: 0 }, of: 2, already: 0 }]);
+    assert.equal(readFileSync(join(out, "batch.json"), "utf-8"), JSON.stringify(was.batch, null, 2) + "\n", "a plan writes nothing");
+    // The add.
+    const log = [], r = addToMerged({ brandDir: g, batchId: id, sources: ["c"], now: NOW2, log: (m) => log.push(m) }), b = read("batch.json");
+    assert.deepEqual([r.adds, r.ads, r.added], [2, 6, ["105-c01-area-t3-white", "106-c02-area-t3-white"]]);
+    assert.deepEqual(b.ads.slice(0, 4), was.batch.ads, "the ads that were there are as they were");
+    assert.deepEqual(b.ads.slice(4).map((a) => [a.folder, a.file, a.story_file, a.location, a.photos, a.merged.batch, a.merged.folder, a.merged.added, a.merged.visuals[0].scene_id]), [
+      ["105-c01-area-t3-white", "105-c01-area-t3-white/4x5/c01-area_4x5_v1.png", "105-c01-area-t3-white/9x16/c01-area_9x16_v1.png", "BOAT QUAY & CBD", [], "c", C[0].folder, "2026-11-28", "w-p-dark-wall"],
+      ["106-c02-area-t3-white", "106-c02-area-t3-white/4x5/c02-area_4x5_v1.png", "106-c02-area-t3-white/9x16/c02-area_9x16_v1.png", "BOAT QUAY & CBD", [], "c", C[1].folder, "2026-11-28", "w-p-dark-wall"]]);
+    assert.equal(readFileSync(join(out, b.ads[4].file), "utf-8"), "png-c-0", "the file came as it is");
+    assert.deepEqual([b.merged_from, b.added.map((x) => [x.sources, x.ads.length]), read("review.json").ads], [[{ batch: "a", ads: 2 }, { batch: "b", ads: 2 }, { batch: "c", ads: 2 }], [[[{ batch: "c", ads: 2 }], 2]], { ...was.review.ads, "105-c01-area-t3-white": "keep" }]);
+    assert.deepEqual([readFileSync(join(out, "copy.json"), "utf-8"), readFileSync(join(out, "publish-settings.json"), "utf-8")], [was.copy, was.settings], "the copy and the settings are the owner's and stay");
+    assert.deepEqual([JSON.parse(readFileSync(join(g, "batches", id, "brief.json"), "utf-8")).merged_from, JSON.parse(readFileSync(join(g, "batches", "c", "brief.json"), "utf-8")).merged_into, mergedInto(g, JSON.parse(readFileSync(join(g, "batches", "c", "brief.json"), "utf-8")))], [["a", "b", "c"], id, id]);
+    assert.deepEqual(keptAds(out).map((a) => [a.folder, !!a.story]).slice(-2), [["105-c01-area-t3-white", true], ["106-c02-area-t3-white", true]], "the new ads are kept ads of the plan, with their Stories versions");
+    // The same batch again brings nothing; with a new ad in it, only that one.
+    assert.deepEqual(addPlan({ brandDir: g, batchId: id, sources: ["c"] }).problems, ["every ad of c that is not excluded is already in this batch"]);
+    assert.throws(() => addToMerged({ brandDir: g, batchId: id, sources: ["c"] }), /these ads cannot be added:\n- every ad of c/);
+    const cb = JSON.parse(readFileSync(join(g, "outputs", "c", "batch.json"), "utf-8")), extra = { ...cb.ads[0], folder: "103-c03-area-t3-white", file: "103-c03-area-t3-white/4x5/c03-area_4x5_v1.png", candidate: "c03" };
+    G.put(`outputs/c/${extra.file}`); cb.ads.push(extra); G.json("outputs/c/batch.json", cb);
+    const p2 = planView(addPlan({ brandDir: g, batchId: id, sources: ["c"] }));
+    assert.deepEqual([p2.ready, p2.adds, p2.sources[0].already, p2.notes], [true, 1, 2, ["c: 2 of its ads are in this batch already and are not added again", "1 image has no Stories version: make them in the batch they came from first (Pick Ads → Make Stories versions), or they run on the feed image alone"]]);
+    assert.deepEqual(addToMerged({ brandDir: g, batchId: id, sources: ["c"], now: NOW2 }).added, ["107-c03-area-t3-white"]);
+    // Refused.
+    assert.throws(() => addPlan({ brandDir: g, batchId: "a", sources: ["c"] }), /ads are added to a merged batch only/);
+    third(G, "other-offer", { offer: "12 Week Sculpt" }); third(G, "on-fb"); G.json("outputs/on-fb/publish.json", { ads: { x: { id: "1" } } });
+    const bad = addPlan({ brandDir: g, batchId: id, sources: ["other-offer", "on-fb", id, "nope"] });
+    assert.equal(bad.ready, false);
+    assert.match(bad.problems.join(" | "), /on-fb is on Facebook already \(1 ad\): adding it would make those ads a second time \| nope has no finished ads to add \| the images to add name another offer \("12 Week Sculpt"\) and this batch's is "6 Week Reset"/);
+    assert.deepEqual(addPlan({ brandDir: g, batchId: id, sources: [] }).problems, ["choose a batch whose ads to add"]);
+    // An image naming another area is a new ad set; a video goes to this batch's area.
+    third(G, "elsewhere", { area: "TANJONG PAGAR" });
+    const p3 = planView(addPlan({ brandDir: g, batchId: id, sources: ["elsewhere"] }));
+    assert.deepEqual([p3.ready, p3.locations, p3.new_locations, p3.by_location["TANJONG PAGAR"]], [true, ["BOAT QUAY & CBD", "TANJONG PAGAR"], ["TANJONG PAGAR"], { have: 0, adds: 2, after: 2 }]);
+    assert.match(p3.notes[0], /^2 images name the area TANJONG PAGAR, which this batch does not have: that is a new ad set\. For the ad set this batch has, re-render that batch with its area first/);
+    // A full ad set, on Facebook: said with how many fit and how to make room.
+    const full = read("batch.json"); while (full.ads.length < 49) full.ads.push({ ...full.ads[0], folder: `${200 + full.ads.length}-pad` }); G.json(`outputs/${id}/batch.json`, full); G.json(`outputs/${id}/publish.json`, { campaign: { id: "9" }, ads: {} });
+    third(G, "fresh", { n: 2 });
+    const p4 = planView(addPlan({ brandDir: g, batchId: id, sources: ["fresh"] }));
+    assert.deepEqual([p4.ready, p4.on_meta, p4.by_location["BOAT QUAY & CBD"]], [true, true, { have: 49, adds: 2, after: 51 }]);
+    assert.equal(p4.notes[0], `BOAT QUAY & CBD holds 49 ads and this adds 2: Facebook allows ${ADSET_ADS} in an ad set, paused ones included, so only 1 of them fits as it is. To make room, exclude 1 of the old ads on Pick Ads and pause them on Facebook: the create then offers to archive them`);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

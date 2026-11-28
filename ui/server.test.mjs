@@ -5130,3 +5130,144 @@ test("U78 the number behind a form's WhatsApp button, through the panel (2026-11
     assert.equal(JSON.parse(readFileSync(lfFile, "utf-8")).created[0].whatsapp_checked.number, "+6580001234");
   } finally { await panel.stop(); panel = main; graph.server.close(); writeFileSync(pf, profWas); if (lfWas == null) rmSync(lfFile, { force: true }); else writeFileSync(lfFile, lfWas); rmSync(join(out, "publish-settings.json"), { force: true }); }
 });
+
+test("U79 more ads for a merged batch, through the panel (2026-11-28): only a merged batch takes another batch's ads; what adding comes to is asked with nothing written and the add needs a confirmation that is still true; the new ads are numbered on and nothing that was there moves; the Publish Ads screen has Add ads from another batch… with the numbers before the button, and the plan then holds the new ads; a batch whose ads are all here already is refused; in a full ad set the ads taken out on Pick Ads are named with whether the last pull saw them paused, archiving them is a second tick that is never set for the owner, and the run takes it only for the number that is true now", async () => {
+  const g = join(brands, GYM), outs = join(g, "outputs"), ids = ["u79-a", "u79-b", "u79-c"];
+  const { readdirSync: ls } = await import("node:fs");
+  await linkTestGym();
+  const graph = await fakeGraph(), main = panel;
+  panel = await startPanel({ META_ACCESS_TOKEN: META_TOKEN, META_APP_ID: "1234567890", META_APP_SECRET: "app-secret", META_GRAPH_URL: graph.url });
+  const PNGB = Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 9, 9]);
+  const put = (rel, bytes = PNGB) => { const f = join(g, rel); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, bytes); };
+  const json = (rel, o) => put(rel, Buffer.from(JSON.stringify(o, null, 2)));
+  const clean = () => { for (const id of [...ids, ...(existsSync(join(g, "batches")) ? ls(join(g, "batches")).filter((x) => /u79/.test(x)) : [])]) { rmSync(join(g, "batches", id), { recursive: true, force: true }); rmSync(join(outs, id), { recursive: true, force: true }); } };
+  const images = (id, n, keep = []) => {
+    const ads = Array.from({ length: n }, (_, i) => { const c = `c0${i + 1}`, folder = `${101 + i}-${c}-bishan-${id}`, file = `${folder}/4x5/${c}_4x5_v1.png`; put(`outputs/${id}/${file}`, Buffer.from(`png ${id} ${i}`)); put(`outputs/${id}/${folder}/9x16/${c}_9x16_v1.png`);
+      return { folder, file, candidate: c, location: "BISHAN", location_index: 0, photos: ["g01"], photo_files: ["g01.jpg"], treatment: "t1-bottom-stack", style: "s1", palette: "navy", ratio: "4x5", format: "workout", crop: [[0.5, 0.5]], words: { location: "BISHAN", audience: null, offer: "U79 Six Week Reset", free: false }, replaced: null }; });
+    json(`batches/${id}/brief.json`, { batch_id: id, offer: "U79 Six Week Reset", locations: ["BISHAN"], audience: null, generated: 1 });
+    json(`outputs/${id}/batch.json`, { batch_id: id, made: "2026-11-27T01:00:00Z", ratio: "4x5", look: "reference", photos: [], ads, failed: [] });
+    json(`outputs/${id}/stories.json`, { batch_id: id, ads: ads.map((a) => ({ folder: a.folder, file: `${a.folder}/9x16/${a.candidate}_9x16_v1.png` })), failed: [], left_out: [] });
+    json(`outputs/${id}/review.json`, { ads: Object.fromEntries(keep.map((i) => [ads[i].folder, "keep"])), photos: {} });
+    return ads;
+  };
+  try {
+    clean();
+    images("u79-a", 3, [0]); images("u79-b", 2); images("u79-c", 2, [0]);
+    let r = await call(`/api/client/${GYM}/batches/merge`, { method: "POST", body: { sources: ["u79-a", "u79-b"], confirm: { ads: 5 } } });
+    const merged = (await r.json()).batch_id, out = join(outs, merged); assert.equal(r.status, 200); ids.push(merged);
+    const was = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
+    const A = async (id, body, opts = {}) => { const x = await call(`/api/client/${GYM}/batch/${id}/add-ads`, { method: "POST", body, ...opts }); return [x.status, await x.json()]; };
+    // Only a merged batch takes them; what it comes to, with nothing written; a confirmation that is not true; a wrong token.
+    let [st, D] = await A("u79-c", { sources: ["u79-a"], dry: true }); assert.equal(st, 409); assert.match(D.error, /added to a merged batch only: merge this batch with the other one instead/);
+    [st, D] = await A(merged, { sources: ["u79-c"], dry: true });
+    assert.deepEqual([st, D.ready, D.was, D.adds, D.images, D.on_meta, D.by_location, D.sources.map((s) => [s.id, s.ads, s.kept, s.already])], [200, true, 5, 2, 2, false, { BISHAN: { have: 5, adds: 2, after: 7 } }, [["u79-c", 2, 1, 0]]]);
+    [st, D] = await A(merged, { sources: ["u79-c"], confirm: { adds: 9 } }); assert.equal(st, 409); assert.match(D.error, /is not what was confirmed/);
+    assert.equal((await call(`/api/client/${GYM}/batch/${merged}/add-ads`, { method: "POST", body: { sources: ["u79-c"], confirm: { adds: 2 } }, token: "wrong" })).status, 403);
+    assert.equal(JSON.parse(readFileSync(join(out, "batch.json"), "utf-8")).ads.length, 5);
+    // The page: the Publish Ads screen of the merged batch has the button; tick, read the numbers, add.
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u79${Math.random()}#/${GYM}/${hash}` }, sessionId); await loaded; await until(ready); };
+    await open(`publish/${merged}`, "typeof PB !== 'undefined' && !!PB.data && !!document.querySelector('#pbAddAds')");
+    assert.equal(await ev("PB.data.plan.ads.length"), 5);
+    await ev("document.querySelector('#pbAddAds').click(); true"); await until("!!document.querySelector('#aaCard')");
+    assert.deepEqual(await ev("[document.querySelector('#aaGo').disabled, document.querySelector('#aaSum').textContent.trim(), !!document.querySelector('[data-aa=\"u79-c\"] input:not([disabled])'), !!document.querySelector(`[data-aa=\"${AA.id}\"]`)]"), [true, "Tick the batch whose ads to add.", true, false]);
+    await ev("(() => { const c = document.querySelector('[data-aa=\"u79-c\"] input'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })(); true");
+    await until("/2 ads added/.test(document.querySelector('#aaSum')?.textContent || '') && !document.querySelector('#aaGo').disabled");
+    assert.match(await ev("document.querySelector('#aaSum').textContent.replace(/\\s+/g, ' ')"), /2 ads added to the 5 here · 2 images.*BISHAN: 5 now \+ 2 = 7.*From u79-c: 2 of 2 ads/);
+    assert.equal(await ev("document.querySelector('#aaGo').textContent"), "Add 2 ads to this batch");
+    await ev("document.querySelector('#aaGo').click(); true");
+    await until("!document.querySelector('#aaCard') && !!PB.data && PB.data.plan.ads.length === 7");
+    // On disk: numbered on, the Keep carried, what was there as it was, the picks file written again.
+    const now = JSON.parse(readFileSync(join(out, "batch.json"), "utf-8"));
+    assert.deepEqual([now.ads.slice(0, 5), now.ads.slice(5).map((a) => [a.folder, a.merged.batch, !!a.story_file])], [was.ads, [["106-c01-bishan-u79-c", "u79-c", true], ["107-c02-bishan-u79-c", "u79-c", true]]]);
+    assert.equal(readFileSync(join(out, "106-c01-bishan-u79-c", "4x5", "c01_4x5_v1.png"), "utf-8"), "png u79-c 0");
+    const rev = await (await call(`/api/client/${GYM}/batch/${merged}/review`)).json();
+    assert.deepEqual([rev.counts.ads, rev.counts.kept, rev.ads.filter((a) => a.story).length], [7, 2, 7]);
+    const pv = await (await call(`/api/client/${GYM}/batch/${merged}/publish`)).json();
+    assert.deepEqual([pv.merged, pv.plan.ads.length, pv.plan.adsets.length], [{ from: ["u79-a", "u79-b", "u79-c"], on_meta: false }, 7, 1]);
+    // The same batch again has nothing new.
+    [st, D] = await A(merged, { sources: ["u79-c"], confirm: { adds: 2 } }); assert.equal(st, 409); assert.match(D.error, /every ad of u79-c that is not excluded is already in this batch/);
+    // A full ad set on Facebook: the first five ads are on the record, Meta holds 50, and the owner takes one out.
+    const first = now.ads[0].folder;
+    json(`outputs/${merged}/publish.json`, { batch_id: merged, account: "act_111000000001", campaign: { id: "120000000000001" }, adsets: { BISHAN: { id: "120000000000002", on_meta: { ads: 50 } } }, images: {}, ads: Object.fromEntries(now.ads.slice(0, 5).map((a, i) => [a.folder, { id: `12000000000001${i}`, adset: "BISHAN" }])), superseded: [], runs: [] });
+    const none = { spend: 0, leads: 0, cost_per_lead: null, impressions: 0, ctr: null };
+    json(`outputs/${merged}/results.json`, { pulled: "2026-11-28T01:00:00Z", campaign: { id: "120000000000001", words: "live", all_time: none, last_7d: none }, adsets: {}, drift: [], ads: { "120000000000010": { id: "120000000000010", status: "PAUSED", effective_status: "PAUSED", words: "paused" } } });
+    assert.equal((await call(`/api/client/${GYM}/batch/${merged}/picks`, { method: "PUT", body: { ads: { [first]: "exclude" } } })).status, 200);
+    const full = await (await call(`/api/client/${GYM}/batch/${merged}/publish`)).json(), set = full.room.by_adset.BISHAN;
+    assert.deepEqual([full.merged.on_meta, full.plan.ads.length, full.room.removed, full.room.archive_removed], [true, 6, [{ folder: first, adset: "BISHAN", ad_id: "120000000000010", paused: true }], 1], JSON.stringify(full.room));
+    assert.deepEqual([set.have, set.adds, set.over, set.taken_out, set.removed, set.short - set.short_after], [50, 6, true, 1, 1, 1]);
+    const agreed = { ads: full.plan.counts.ads, adsets: full.plan.counts.adsets, per_day: full.plan.budget.per_day_total };
+    r = await call("/api/run", { method: "POST", body: { kind: "batch-publish", gym: GYM, batch: merged, confirm: { ...agreed, archive_removed: 4 } } });
+    assert.equal(r.status, 409); assert.match((await r.json()).error, /the ads you took out, to archive, are not what was confirmed \(1 now\)/);
+    await open(`publish/${merged}`, "typeof PB !== 'undefined' && !!PB.data && !!PB.data.room && !!document.querySelector('#bModal')");
+    await ev("pbCreateConfirm(); true");
+    const roomText = await ev("(document.querySelector('#pbRoom')?.textContent || '').replace(/\\s+/g, ' ')");
+    assert.match(roomText, /BISHAN holds 50 ads on Facebook and this adds 6/); assert.match(roomText, /1 ad you took out on Pick Ads is still in it \(at the last pull of results: 1 paused, 0 switched on\)\./);
+    assert.match(roomText, /Archive the 1 ad you took out, to make room\. An archived ad can never be turned on again\. Only the ones that are paused on Facebook when the run starts are archived/);
+    assert.deepEqual(await ev("(() => { const b = document.querySelector('#pbArchiveOut'); return [b.checked, Number(b.dataset.n)]; })()"), [false, 1], "the archive is never ticked for the owner");
+    await ev("bClose(); true");
+  } finally { await panel.stop(); panel = main; graph.server.close(); clean(); }
+});
+
+test("U80 \"Make this a rule\" for an edit to ad copy (2026-11-28): saving an edit that swaps one phrase for another in a copy or a headline answers with the rule it could become and what that rule would touch — the kept video scripts and sheet scripts that say the old phrase, and the batch's other copies that still say it; a rewritten text, a change to the area or the offer's words, and a plain Keep offer nothing; the page asks, both sides editable, says what the rule touches before it is made, saves it to the gym's list, then lists the other copies with Edit beside each and changes none; a card's statement edit is offered the same way", async () => {
+  const g = join(brands, GYM), out = join(g, "outputs", BRIEF.batch_id), pf = join(g, "gym-profile.json"), profWas = readFileSync(pf, "utf-8");
+  const copyFile = join(out, "copy.json"), copyWas = existsSync(copyFile) ? readFileSync(copyFile, "utf-8") : null, scriptsFile = join(g, "video-scripts.json"), scriptsWas = existsSync(scriptsFile) ? readFileSync(scriptsFile, "utf-8") : null;
+  const wordsFile = join(g, "card-words.json"), wordsWas = existsSync(wordsFile) ? readFileSync(wordsFile, "utf-8") : null;
+  try {
+    rmSync(copyFile, { force: true });
+    writeFileSync(scriptsFile, JSON.stringify({ schema: 1, scripts: [{ id: "v-u80a", status: "kept", offer: WORDS.offer, lines: ["Our coaches build a tailored plan around your week.", "Then we get to work."] }, { id: "v-u80b", status: "draft", offer: WORDS.offer, lines: ["A tailored plan, written as a draft."] }], sheets: [{ id: "p-u80a", status: "kept", offer: WORDS.offer, sheets: ["A tailored plan for you", "Click the link below"] }], samples: [], facts: {}, pains: {} }));
+    const P = async (body) => (await (await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy`, { method: "POST", body })).json()).draft;
+    const text = (n) => `Copy ${n}: the ${WORDS.offer} is open.\n\nOur coaches build a tailored plan around your week.\n\nTap {BUTTON} to start.`;
+    const a = await P({ message: text(1), headline: "Headline one", description: "" }), b = await P({ message: text(2), headline: "Headline two", description: "" }), h = await P({ kind: "headline", headline: "A tailored plan in {AREA}", description: "" });
+    const put = async (id, body) => { const r = await call(`/api/client/${GYM}/batch/${BRIEF.batch_id}/copy/${id}`, { method: "PUT", body }); return [r.status, await r.json()]; };
+    // A plain Keep, a rewritten text, and a change that touches the offer's words or the area: nothing offered.
+    let [st, D] = await put(a.id, { status: "keep" }); assert.deepEqual([st, D.suggest_rules], [200, []]);
+    [st, D] = await put(b.id, { message: `All new words about the ${WORDS.offer}, said another way from start to finish. Tap {BUTTON}.`, headline: "Headline two", description: "" }); assert.deepEqual([st, D.suggest_rules], [200, []]);
+    [st, D] = await put(b.id, { message: text(2), headline: "Headline two", description: "" }); assert.equal(st, 200);
+    [st, D] = await put(h.id, { headline: "A tailored plan near {AREA}", description: "" }); assert.deepEqual([st, D.suggest_rules], [200, []], "one small word is no rule");
+    [st, D] = await put(h.id, { headline: "A tailored plan in {AREA}", description: "" }); assert.equal(st, 200);
+    [st, D] = await put(b.id, { message: text(2).replace("around your week", "around your month"), headline: "Headline two", description: "" }); assert.deepEqual([st, D.suggest_rules], [200, []], "a word of the offer is not a rule");
+    [st, D] = await put(b.id, { message: text(2), headline: "Headline two", description: "" }); assert.equal(st, 200);
+    // One phrase swapped: the rule it could become, and what it would touch.
+    [st, D] = await put(a.id, { message: text(1).replace("a tailored plan", "a plan made for you"), headline: "Headline one", description: "" });
+    assert.equal(st, 200);
+    assert.deepEqual(D.suggest_rules, [{ avoid: "tailored plan", say: "plan made for you", spoken: false, touches: { scripts: 1, sheets: 1, here: [{ id: b.id, kind: "copy", status: "keep", own: false }, { id: h.id, kind: "headline", status: "keep", own: false }] } }]);
+    assert.ok(!(JSON.parse(readFileSync(pf, "utf-8")).brand_lock?.voice?.say_instead || []).some((l) => /tailored plan/.test(l)), "nothing is a rule until the owner says so");
+    // The page: the same edit made in the dialog, the offer, what it touches, the rule saved, then the others listed.
+    [st, D] = await put(a.id, { message: text(1), headline: "Headline one", description: "" }); assert.equal(st, 200);
+    const { cdp, sessionId } = browser;
+    const ev = async (expression) => { const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || "page error"); return result.value; };
+    const until = async (ready) => { const t0 = Date.now(); while (Date.now() - t0 < 20000 && !(await ev(ready))) await new Promise((x) => setTimeout(x, 120)); assert.ok(await ev(ready), `never: ${ready}`); };
+    const open = async (hash, ready) => { const loaded = cdp.once("Page.loadEventFired", sessionId); await cdp.send("Page.navigate", { url: `${panel.url}/?u80${Math.random()}#/${GYM}/${hash}` }, sessionId); await loaded; await until(ready); };
+    await open(`publish/${BRIEF.batch_id}`, "typeof PB !== 'undefined' && !!PB.data && !!PB.data.copy && !!document.querySelector('#bModal')");
+    await ev(`cpEdit(${JSON.stringify(a.id)}); true`); await until("!!document.querySelector('#cpEditMsg')");
+    await ev("(() => { const m = document.querySelector('#cpEditMsg'); m.value = m.value.replace('a tailored plan', 'a plan made for you'); m.dispatchEvent(new Event('input', { bubbles: true })); cpEditSave(); })(); true");
+    await until("!!document.querySelector('#ruleCard')");
+    assert.deepEqual(await ev("[document.querySelector('#ruleAvoid').value, document.querySelector('#ruleSay').value, document.querySelector('#ruleSpoken').checked]"), ["tailored plan", "plan made for you", false]);
+    assert.match(await ev("document.querySelector('#ruleTouches').textContent"), /1 kept video script and 1 kept white-paper script say the old phrase: as a rule, each would read “needs an edit” and is not filmed until it has one/);
+    await ev("document.querySelector('#ruleGo').click(); true");
+    await until("!!document.querySelector('#ruleAlso')");
+    assert.ok((JSON.parse(readFileSync(pf, "utf-8")).brand_lock.voice.say_instead || []).includes("tailored plan => plan made for you"));
+    assert.match(await ev("document.querySelector('#ruleAlso').textContent.replace(/\\s+/g, ' ')"), /2 more in this batch say “tailored plan”.*The rule is kept\. These are not changed by themselves/);
+    assert.deepEqual(await ev("[...document.querySelectorAll('#ruleAlso [data-also]')].map(x => x.dataset.also)"), [b.id, h.id]);
+    const after = JSON.parse(readFileSync(copyFile, "utf-8")).drafts;
+    assert.ok(/a tailored plan/.test(after.find((x) => x.id === b.id).message) && /A tailored plan/.test(after.find((x) => x.id === h.id).headline), "the others are not changed by themselves");
+    await ev("document.querySelector('#ruleAlsoDone').click(); true"); await until("!document.querySelector('#ruleAlso') && !document.querySelector('#ruleCard')");
+    // The gym has the rule now: the same swap is not offered twice, and "Not a rule" keeps nothing.
+    [st, D] = await put(b.id, { message: text(2).replace("a tailored plan", "a plan made for you"), headline: "Headline two", description: "" }); assert.deepEqual([st, D.suggest_rules], [200, []]);
+    [st, D] = await put(b.id, { message: text(2).replace("a tailored plan", "a plan made for you").replace("is open", "has started"), headline: "Headline two", description: "" });
+    assert.deepEqual([st, D.suggest_rules.map((r) => [r.avoid, r.say, r.touches.scripts, r.touches.here])], [200, [["is open", "has started", 0, [{ id: a.id, kind: "copy", status: "keep", own: false }]]]], "the other copy says it too");
+    // A card's statement: the same offer.
+    let r = await call(`/api/client/${GYM}/cards/words`, { method: "POST", body: { kind: "statement", text: "Feeling worn out is not about age. A **steady routine** changes it." } });
+    assert.equal(r.status, 200); const row = (await r.json()).statements.find((x) => /worn out/.test(x.text));
+    r = await call(`/api/client/${GYM}/cards/words/statement/${row.id}`, { method: "PUT", body: { text: "Feeling run down is not about age. A **steady routine** changes it." } });
+    D = await r.json(); assert.deepEqual([r.status, D.suggest_rules.map((x) => [x.avoid, x.say, x.spoken, x.touches.scripts, x.touches.sheets, x.touches.here])], [200, [["worn out", "run down", false, 0, 0, []]]]);
+    r = await call(`/api/client/${GYM}/cards/words/statement/${row.id}`, { method: "PUT", body: { status: "retired", reason: "test over" } }); assert.deepEqual((await r.json()).suggest_rules, []);
+  } finally {
+    writeFileSync(pf, profWas); if (copyWas == null) rmSync(copyFile, { force: true }); else writeFileSync(copyFile, copyWas);
+    if (scriptsWas == null) rmSync(scriptsFile, { force: true }); else writeFileSync(scriptsFile, scriptsWas);
+    if (wordsWas == null) rmSync(wordsFile, { force: true }); else writeFileSync(wordsFile, wordsWas);
+  }
+});

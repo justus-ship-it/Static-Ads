@@ -499,13 +499,20 @@ export const ADSET_MAX_ADS = 50;
  * so two remade video ads were refused after their upload): `have` — the ads the app knows it holds (the record's, the
  * replaced ones still there, or Meta's own count when a run has read it) — `adds`, `after`, and when that passes the
  * limit, how many old ads archiving the replaced ones would clear (`replaced`) and how many would still be over (`short`).
+ *
+ * Ads taken out (2026-11-28, more ads for a merged batch whose ad set held 49 of 50): `removed` — the ads on the
+ * record, not archived, that the plan no longer has (excluded on Pick Ads since they were made). They still sit in the
+ * ad set and count. Per ad set `taken_out` (how many), and where it would be over: `removed` (the ones the owner's
+ * second tick would archive, if they are paused when the run starts) and `short_after` (still over with those gone too).
  */
 const SHA_SEEN = new Map();
 export function remakePreview(plan, record, batchDir, { first = null } = {}) {
   const rec = record || {}, ads = first ? plan.ads.slice(0, first) : plan.ads;
   // A file's hash is kept while the file is as it was (the publish screen asks on every change of a setting).
   const sha = (file) => { try { const p = join(batchDir, file), st = statSync(p), k = `${p}:${st.mtimeMs}:${st.size}`; if (!SHA_SEEN.has(k)) SHA_SEEN.set(k, sha16(readFileSync(p))); return SHA_SEEN.get(k); } catch { return null; } };
-  const out = { same: 0, fresh: [], remade: [], by_adset: {}, archive: 0, short: 0 };
+  const out = { same: 0, fresh: [], remade: [], removed: [], by_adset: {}, archive: 0, short: 0, archive_removed: 0, short_after: 0 };
+  const inPlan = new Set(plan.ads.map((a) => a.folder));
+  out.removed = Object.entries(rec.ads || {}).filter(([folder, a]) => a?.id && !a.archived && !inPlan.has(folder)).map(([folder, a]) => ({ folder, adset: a.adset, ad_id: a.id }));
   for (const ad of ads) {
     const had = rec.ads?.[ad.folder];
     if (!had?.id) { out.fresh.push({ folder: ad.folder, adset: ad.adset }); continue; }
@@ -519,8 +526,9 @@ export function remakePreview(plan, record, batchDir, { first = null } = {}) {
     const have = rec.adsets?.[c]?.id ? Math.max(onRecord, rec.adsets[c].on_meta?.ads || 0) : 0;
     const fresh = out.fresh.filter((a) => a.adset === c).length, remade = out.remade.filter((a) => a.adset === c).length, after = have + fresh + remade;
     const over = after > ADSET_MAX_ADS, short = over ? Math.max(0, after - remade - ADSET_MAX_ADS) : 0;
-    out.by_adset[c] = { have, adds: fresh + remade, after, over, replaced: over ? remade : 0, short };
-    out.archive += over ? remade : 0; out.short += short;
+    const takenOut = out.removed.filter((a) => a.adset === c).length, shortAfter = Math.max(0, short - takenOut);
+    out.by_adset[c] = { have, adds: fresh + remade, after, over, replaced: over ? remade : 0, short, taken_out: takenOut, removed: over ? takenOut : 0, short_after: over ? shortAfter : 0 };
+    out.archive += over ? remade : 0; out.short += short; out.archive_removed += over ? takenOut : 0; out.short_after += over ? shortAfter : 0;
   }
   return out;
 }
@@ -535,7 +543,7 @@ export const VIDEO_POLL_MS = 4000, VIDEO_READY_MS = 6 * 60000;
  */
 export const TRANSIENT_WAITS = [3000, 10000, 30000];
 export const isTransient = (e) => !!e && e.name === "MetaError" && (e.transient === true || e.code === 2 || (e.code === 1 && Number(e.status) >= 500) || /try again later|temporarily unavailable/i.test(String(e.message || "")));
-export async function createPlan(plan, { client: given, batchDir, record, log = console.log, first = null, archiveReplaced = false, wait = (ms) => new Promise((r) => setTimeout(r, ms)), waits = TRANSIENT_WAITS }) {
+export async function createPlan(plan, { client: given, batchDir, record, log = console.log, first = null, archiveReplaced = false, archiveRemoved = false, wait = (ms) => new Promise((r) => setTimeout(r, ms)), waits = TRANSIENT_WAITS }) {
   if (!plan.ready) throw new Error(`the plan has problems: ${plan.problems.join("; ")}`);
   let retried = 0;
   const again = async (what, fn) => { for (let i = 0; ; i++) { try { return await fn(); } catch (e) { if (!isTransient(e) || i >= waits.length) throw e; retried++; log(`  Meta answered with a temporary error on ${what} (${scrubTokens(e.message)}): trying again in ${Math.round(waits[i] / 1000)} s (${i + 1} of ${waits.length})`); await wait(waits[i]); } } };
@@ -682,6 +690,8 @@ export async function createPlan(plan, { client: given, batchDir, record, log = 
    * new ads would not fit: with `archiveReplaced` (the owner's tick on the create confirmation) the old ads being
    * replaced are archived first, only the paused ones, each noted on the record; without it, or when that would not
    * clear enough, the run stops here in words. An archived ad can never be turned on again, so it is never done unasked.
+   * The ads the owner took out on Pick Ads after they were made (2026-11-28) still sit in the ad set: with
+   * `archiveRemoved` (a second tick) the PAUSED ones are archived too — one that is switched on never is.
    */
   const pre = remakePreview(plan, rec, batchDir, { first });
   for (const callout of callouts) {
@@ -697,11 +707,23 @@ export async function createPlan(plan, { client: given, batchDir, record, log = 
     const paused = remade.filter((a) => !live || live.some((x) => String(x.id) === String(a.old_id) && String(x.status).toUpperCase() === "PAUSED"));
     const n = (k, w = "ad") => `${k} ${w}${k === 1 ? "" : "s"}`;
     const facts = `the ad set ${callout} holds ${n(have)} on Meta and this run adds ${adds} (${[fresh.length && `${fresh.length} new`, remade.length && `${remade.length} to replace an older version`].filter(Boolean).join(", ")}): Meta allows ${ADSET_MAX_ADS} in an ad set, paused ones included`;
+    // The ads taken out of the plan that are still in this ad set: only the paused ones may be archived, and only when Meta said which are.
+    const removed = pre.removed.filter((a) => a.adset === callout), pausedRemoved = live ? removed.filter((a) => live.some((x) => String(x.id) === String(a.ad_id) && String(x.status).toUpperCase() === "PAUSED")) : [];
+    const stillOn = live ? removed.filter((a) => live.some((x) => String(x.id) === String(a.ad_id) && String(x.status).toUpperCase() !== "PAUSED")).length : 0;
+    const could = paused.length + pausedRemoved.length, can = (archiveReplaced ? paused.length : 0) + (archiveRemoved ? pausedRemoved.length : 0);
     try {
-      if (paused.length < over) throw new Error(`${facts}. ${paused.length ? `Archiving the ${n(paused.length, "old ad")} being replaced would still leave it ${over - paused.length} over` : "None of the new ads replaces an old one that could be archived"}: archive ${n(over - (archiveReplaced ? paused.length : 0))} of this ad set in Ads Manager, or exclude some ads on Pick Ads. Nothing was uploaded.`);
-      if (!archiveReplaced) throw new Error(`${facts}. Nothing was uploaded. Press Continue creating and tick "Archive the old ads these replace" (${n(paused.length, "old ad")}; an archived ad can never be turned on again), or archive ${n(over)} of this ad set in Ads Manager yourself.`);
+      if (removed.length && could < over) throw new Error(`${facts}. ${n(removed.length)} you took out on Pick Ads ${removed.length === 1 ? "is" : "are"} still in it${stillOn ? `, ${stillOn} of them switched on` : ""}${live ? "" : " (Meta could not be asked which are paused)"}: archiving the ${n(could)} that ${could === 1 ? "is" : "are"} paused would still leave it ${over - could} over. Pause ${stillOn ? "the ones still on" : "and take out more"} (Review Data → Pause on Meta, or Ads Manager), or exclude some of the new ads on Pick Ads. Nothing was uploaded.`);
+      if (removed.length && can < over) throw new Error(`${facts}. Nothing was uploaded. Press Continue creating and tick ${[!archiveReplaced && paused.length && `"Archive the old ads these replace" (${n(paused.length, "old ad")})`, !archiveRemoved && pausedRemoved.length && `"Archive the ads you took out" (${n(pausedRemoved.length, "paused ad")})`].filter(Boolean).join(" and ")}; an archived ad can never be turned on again.`);
+      if (!removed.length && paused.length < over) throw new Error(`${facts}. ${paused.length ? `Archiving the ${n(paused.length, "old ad")} being replaced would still leave it ${over - paused.length} over` : "None of the new ads replaces an old one that could be archived"}: archive ${n(over - (archiveReplaced ? paused.length : 0))} of this ad set in Ads Manager, or exclude some ads on Pick Ads. Nothing was uploaded.`);
+      if (!removed.length && !archiveReplaced) throw new Error(`${facts}. Nothing was uploaded. Press Continue creating and tick "Archive the old ads these replace" (${n(paused.length, "old ad")}; an archived ad can never be turned on again), or archive ${n(over)} of this ad set in Ads Manager yourself.`);
     } catch (e) { fail("room", callout, e); }
-    for (const a of paused) {
+    for (const a of archiveRemoved ? pausedRemoved : []) {
+      try { await client.post(a.ad_id, { status: "ARCHIVED" }); } catch (e) { fail("archive", a.folder, e); }
+      Object.assign(rec.ads[a.folder], { archived: new Date().toISOString().slice(0, 10), archived_why: `archived to make room: you took this ad out on Pick Ads, it was paused, and the ad set held ${have} of Meta's ${ADSET_MAX_ADS} ads` });
+      run.archived = (run.archived || 0) + 1; run.archived_removed = (run.archived_removed || 0) + 1; save();
+      log(`· ad ${a.folder}: ${a.ad_id} archived to make room (you took it out, and it was paused)`);
+    }
+    for (const a of archiveReplaced ? paused : []) {
       try { await client.post(a.old_id, { status: "ARCHIVED" }); } catch (e) { fail("archive", a.folder, e); }
       Object.assign(rec.ads[a.folder], { archived: new Date().toISOString().slice(0, 10), archived_why: `archived to make room: the ad set held ${have} of Meta's ${ADSET_MAX_ADS} ads and this ad was made again` });
       run.archived = (run.archived || 0) + 1; save();
@@ -908,7 +930,7 @@ export const adsManagerUrl = (account, campaignId) => `https://adsmanager.facebo
 // ── CLI ──────────────────────────────────────────────────────────────────────
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
-  const { values: v } = parseArgs({ options: { gym: { type: "string" }, "brand-dir": { type: "string" }, batch: { type: "string" }, ad: { type: "string" }, "test-one": { type: "boolean", default: false }, create: { type: "boolean", default: false }, first: { type: "string" }, "archive-replaced": { type: "boolean", default: false }, "swap-form": { type: "boolean", default: false }, only: { type: "string" }, "dry-run": { type: "boolean", default: false } } });
+  const { values: v } = parseArgs({ options: { gym: { type: "string" }, "brand-dir": { type: "string" }, batch: { type: "string" }, ad: { type: "string" }, "test-one": { type: "boolean", default: false }, create: { type: "boolean", default: false }, first: { type: "string" }, "archive-replaced": { type: "boolean", default: false }, "archive-removed": { type: "boolean", default: false }, "swap-form": { type: "boolean", default: false }, only: { type: "string" }, "dry-run": { type: "boolean", default: false } } });
   if (!v.gym || !v.batch || !(v["test-one"] ? v.ad : v.create || v["swap-form"])) { console.error("Usage: meta-publish.mjs --gym <slug> --batch <id> (--create [--first N] | --swap-form [--only folder,folder] | --ad <folder> --test-one) [--dry-run] [--brand-dir <dir>]"); process.exit(1); }
   if (v.create || v["swap-form"]) {
     try {
@@ -942,7 +964,7 @@ if (isMain) {
         process.exit(0);
       }
       { const room = remakePreview(plan, record, out, { first }); for (const [c, x] of Object.entries(room.by_adset)) if (x.over) console.log(`room: the ad set ${c} holds ${x.have} ads as far as the record knows and this run adds ${x.adds}; Meta allows ${ADSET_MAX_ADS}${v["archive-replaced"] ? ` — the ${x.replaced} old ad(s) being replaced are archived first if it is still full` : " — without --archive-replaced the run stops before anything is uploaded"}`); }
-      const r = await createPlan(plan, { client, batchDir: out, record, first, archiveReplaced: v["archive-replaced"] });
+      const r = await createPlan(plan, { client, batchDir: out, record, first, archiveReplaced: v["archive-replaced"], archiveRemoved: v["archive-removed"] });
       const m = r.run.made, u = r.run.reused;
       console.log(`\ndone: ${r.ads} of ${r.of} ads on Meta (this run made ${m.ads} ad(s), ${m.creatives} creative(s), ${m.adsets} ad set(s), ${m.campaign} campaign, ${m.images} image(s); reused ${u.ads} ad(s), ${u.images} image(s)${r.run.superseded ? `; ${r.run.superseded} remade` : ""}${r.run.archived ? `; ${r.run.archived} old ad(s) archived to make room` : ""}) — all ${AD_STATUS}\n${r.url}\nrecord: ${path}`);
       process.exit(0);
